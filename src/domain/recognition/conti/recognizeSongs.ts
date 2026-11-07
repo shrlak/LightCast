@@ -194,7 +194,7 @@ export async function recognizeSongs(job: ContiJob, targets: Song[], ctx: Recogn
       run.enterPhase('rescue', needRescue.map(({ song }) => song.id));
       await rescuePages(run, needRescue, { settings, memory, deadline, lyricEngine, scoreById, furtherFor });
     }
-    await runWebLyricsPass(run);
+    await runWebLyricsPass(run, { settings, reliabilities });
     run.reportFailures();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -44,7 +44,7 @@ export function startContiJob(doc: ContiDocument, lib: LibraryEntry[], shared: A
   const { linesPerSlide, notify } = opts;
   const job: ContiJob = {
     doc, info: parsed.info, songs: [], library: lib, linesPerSlide, spares: [], listedOrder: false, postSermonTitle: null, englishTitles: new Map(),
-    standIns: new Map(), outcomes: new Map(), confidence: new Map(), webCandidates: new Map(), sources: new Map(),
+    standIns: new Map(), outcomes: new Map(), confidence: new Map(), webCandidates: new Map(), webChecks: new Map(), sources: new Map(),
     autoRetried: new Set(), reportedUnclaimed: '', notify, changed: opts.changed,
   };
 

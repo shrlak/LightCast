@@ -22,7 +22,7 @@ const SEARCH_URLS = (q) => [
   `https://search.naver.com/search.naver?ssc=tab.blog.all&query=${encodeURIComponent(q)}`,
 ];
 
-const decodeEntities = (s) =>
+export const decodeEntities = (s) =>
   s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#0?39;|&apos;/g, "'")
     .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n))).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
 
@@ -32,8 +32,11 @@ const formatOf = (name) => (/\.pptx$|\.ppsx$/i.test(name) ? 'pptx' : 'ppt');
 /** Hosts of search-engine furniture (menus, ads, maps…), never a result. */
 const NOT_RESULTS = /(^|\.)(search\.naver\.com|help\.naver\.com|nid\.naver\.com|keep\.naver\.com|dict\.naver\.com|map\.naver\.com|shopping\.naver\.com|search\.shopping\.naver\.com|mkt\.naver\.com|ader\.naver\.com|adcr\.naver\.com|navercorp\.com|pstatic\.net|youtube\.com|youtu\.be|music\.bugs\.co\.kr|melon\.com|genie\.co\.kr|www\.naver\.com|naver\.com)$/i;
 
-/** Result links of a search page, in the order shown, without the engine's own menus and sites' home pages. */
-export function resultLinks(html) {
+/**
+ * Result links of a search page, in the order shown, without the engine's own menus and sites' home pages.
+ * `keep` names hosts that are results here although they are furniture elsewhere (music sites, for lyrics).
+ */
+export function resultLinks(html, { keep } = {}) {
   const out = [];
   const seen = new Set();
   for (const m of html.matchAll(/href="(https?:\/\/[^"]+)"/g)) {
@@ -46,7 +49,7 @@ export function resultLinks(html) {
     if (/^(m\.)?blog\.naver\.com$/i.test(url.hostname)) {
       // A blog's front page is the "source" line above a result; only posts are results.
       if (!naverBlogPost(url.href)) continue;
-    } else if (NOT_RESULTS.test(url.hostname) && !PPT_NAME.test(url.pathname)) continue;
+    } else if (NOT_RESULTS.test(url.hostname) && !PPT_NAME.test(url.pathname) && !keep?.test(url.hostname)) continue;
     // A site's home page is the "source" line above a result, not the result.
     if (!url.search && /^\/([\w-]+\/)?$/.test(url.pathname)) continue;
     const key = url.href;
@@ -198,7 +201,7 @@ async function assertPublic(url) {
 }
 
 /** GET with redirects checked one by one, a size cap and a timeout. */
-async function fetchPublic(href, { limit, timeout, referer }) {
+export async function fetchPublic(href, { limit, timeout, referer }) {
   let url = new URL(href);
   const signal = AbortSignal.timeout(timeout);
   for (let hop = 0; hop < 6; hop++) {
@@ -222,7 +225,7 @@ async function fetchPublic(href, { limit, timeout, referer }) {
   throw new Error('too many redirects');
 }
 
-const fetchText = async (href, referer) => (await fetchPublic(href, { limit: PAGE_LIMIT, timeout: PAGE_TIMEOUT, referer })).body.toString('utf8');
+export const fetchText = async (href, referer) => (await fetchPublic(href, { limit: PAGE_LIMIT, timeout: PAGE_TIMEOUT, referer })).body.toString('utf8');
 
 /** Attachments of one result page (a Naver blog post is read through its PostView page). */
 async function attachmentsOf(page, get) {
@@ -280,7 +283,7 @@ function send(res, status, data) {
   res.end(JSON.stringify(data));
 }
 
-const loopback = (req) => {
+export const loopback = (req) => {
   const ip = req.socket?.remoteAddress ?? '';
   return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 };

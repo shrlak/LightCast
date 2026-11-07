@@ -106,6 +106,16 @@ export function planAdaptiveAttempts(
   };
 }
 
+/**
+ * The models that read every page first — for a later, smaller question about a page (whether
+ * a web page's lyrics are the ones on it, see lyricsCheck), asked of them alone.
+ */
+export function championAttempts(settings: AiSettings, reliabilities: ModelReliability[] = []): RecognitionAttempt[] {
+  const catalog = configuredCatalog(settings);
+  if (catalog.length === 0) return [];
+  return planAdaptiveAttempts(catalog, rankModels(catalog, reliabilities), new Set(), [], settings.roleOverrides).champions;
+}
+
 /** The pool the administrator configured, in catalog form. */
 function configuredCatalog(settings: AiSettings): RecognitionModelInfo[] {
   return settings.attempts

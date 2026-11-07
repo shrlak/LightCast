@@ -45,6 +45,12 @@ export interface ContiJob {
   confidence: Map<string, number>;
   /** Several plausible web pages and none sure: the song keeps the 악보's reading. */
   webCandidates: Map<string, ScoredLyricsCandidate[]>;
+  /**
+   * For a song whose 악보 gave no lyrics: what the 악보 said about the lyrics found on the internet —
+   * 'confirmed' (the models found them printed on it, and they are in) or 'unconfirmed' (they
+   * could not, so they wait in webCandidates for the operator).
+   */
+  webChecks: Map<string, 'confirmed' | 'unconfirmed'>;
   /** Where each card's lyrics came from in the end. */
   sources: Map<string, 'library' | 'models' | 'web' | 'sheet'>;
   autoRetried: Set<string>;

@@ -683,6 +683,7 @@ export function OperatorView() {
         return (
           <SongEditor key={song.id} library={state.library} dispatch={dispatch} song={null} notify={notify} reloadOnline={loadOnline} onClose={service.cancelReview}
             review={{ draft: song.draft, index: r.index, total: r.reading.songs.length, note: reviewNote(song, r), warn: song.needsReview, pageImages: song.pageImages,
+              fromLibrary: song.source === 'library', webOptions: song.webOptions,
               onAccept: service.answerReview, onSkip: () => service.answerReview(null), onCancel: () => confirm('콘티 확인을 그만둘까요? 아직 예배에 넣지 않은 곡은 버려집니다.') && service.cancelReview() }} />
         );
       })()}
