@@ -140,7 +140,7 @@ export function extractOpenRouterText(response: unknown): string {
   return '';
 }
 
-async function callOpenRouter(body: unknown, apiKey: string, proxyUrl?: string): Promise<string> {
+export async function callOpenRouter(body: unknown, apiKey: string, proxyUrl?: string): Promise<string> {
   const useProxy = !apiKey.trim() && !!proxyUrl;
   const url = useProxy ? `${trimTrailingSlash(proxyUrl!)}/openrouter` : ENDPOINT;
   const requestBody =

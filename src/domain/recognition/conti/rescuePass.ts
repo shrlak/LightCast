@@ -60,7 +60,7 @@ export async function rescuePages(run: RecognitionRun, pages: { song: Song; imag
     // enough for the web pass to find them.
     const toWebOrFail = (score: ParsedScore, engine: string, failure: string, why?: string) => {
       const lookupTitle = lyricsLookupTitle(song.title, score.title);
-      if (lookupTitle && !isPlaceholderTitle(lookupTitle)) run.webQueue.set(song.id, { score, engine, title: lookupTitle, unread: why });
+      if (lookupTitle && !isPlaceholderTitle(lookupTitle)) run.webQueue.set(song.id, { score, engine, title: lookupTitle, unread: why, image });
       else run.failures.set(song.id, failure);
     };
     if (deadline.remainingTotal() < MIN_ATTEMPT_MS) {

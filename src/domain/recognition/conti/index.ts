@@ -24,8 +24,25 @@ export interface RecognizedSong {
   confidence?: number;
   /** Web pages that might be this song, none sure enough to use. */
   webCandidates: number;
+  /** Those pages' lyrics, for the operator to put in while looking at the 악보. */
+  webOptions?: WebLyricsOption[];
+  /** The 악보 gave no lyrics: whether the models found the web's on it ('confirmed') or not. */
+  webCheck?: 'confirmed' | 'unconfirmed';
   /** The song's 악보 page(s), as small JPEG previews for the review. */
   pageImages: string[];
+}
+
+/** Lyrics a web page printed for a song, as parts. */
+export interface WebLyricsOption {
+  id: string;
+  /** Where it came from (blog.naver.com, bugs.co.kr …). */
+  host: string;
+  url: string;
+  /** The page's own title. */
+  title: string;
+  sections: { label: string; lines: string[] }[];
+  /** The order the page printed the parts in. */
+  order: string[];
 }
 
 export interface ContiReading {
@@ -118,6 +135,8 @@ export async function readConti(file: File, opts: ReadContiOptions): Promise<Con
         needsReview: outcome?.status === 'error' || (outcome?.status === 'done' && !!outcome.needsReview) || !song.sections.length,
         confidence: job.confidence.get(song.id),
         webCandidates: job.webCandidates.get(song.id)?.length ?? 0,
+        webOptions: (job.webCandidates.get(song.id) ?? []).map((c) => ({ id: c.id, host: c.sourceHost, url: c.sourceUrl, title: c.title, sections: c.sections.map((s) => ({ label: s.label, lines: [...s.lines] })), order: [...c.order] })),
+        webCheck: job.webChecks.get(song.id),
         pageImages: pageImages.filter(Boolean),
       });
     }

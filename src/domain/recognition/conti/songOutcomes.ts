@@ -30,6 +30,8 @@ export interface WebQueued {
   title: string;
   /** Why the 악보 gave no lyrics, said on the card if the web has none either. */
   unread?: string;
+  /** The 악보 page as the models saw it, to check lyrics found on the web against. */
+  image?: string;
 }
 
 /** One recognition run's bookkeeping over the job. */

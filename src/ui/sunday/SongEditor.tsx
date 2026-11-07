@@ -9,6 +9,7 @@ import { useAutosave } from '../hooks';
 import { PROTECTED_MESSAGE } from '../../domain/materialProtection';
 import { ProtectedMaterialNotice } from '../MaterialProtection';
 import { AutoTextarea } from '../AutoTextarea';
+import type { WebLyricsOption } from '../../domain/recognition/conti';
 
 interface Part { id: string; label: string; text: string }
 
@@ -54,6 +55,10 @@ export interface SongReview {
   warn: boolean;
   /** The song's 악보 page(s), to compare against. */
   pageImages: string[];
+  /** The lyrics are 찬양 라이브러리's own: left as they were, there is nothing to save again. */
+  fromLibrary?: boolean;
+  /** Lyrics found on the web and not put in: the operator may, comparing them with the 악보. */
+  webOptions?: WebLyricsOption[];
   onAccept: (draft: SongDraft) => void;
   onSkip: () => void;
   onCancel: () => void;
@@ -66,6 +71,9 @@ export interface SongReview {
  * the song replaces its entry in this computer's 찬양 라이브러리 at once (one song per title, the
  * newest). Existing shared songs also save to the church library without a password;
  * 등록 registers a song there. Only deletion requires the administrator password.
+ *
+ * Checking a 콘티's songs (review), 확인 does it all at once: the song as checked goes into this
+ * computer's 찬양 라이브러리 and the church's, into this week's 예배, and the next song comes up.
  */
 export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnline, review }: {
   library: Library; dispatch: Dispatch<Action>; song: Presentation | null; onClose: () => void; notify: (m: string) => void; reloadOnline: () => void;
@@ -155,14 +163,34 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
     }
     setBusy(null);
     reloadOnline();
-    if (review) accept();
-    else onClose();
+    onClose();
   };
 
-  /** The song as checked, into this week's 예배. */
-  const accept = () => {
+  /**
+   * 확인: the song as checked into 찬양 라이브러리 — this computer's at once, the church's in the
+   * background (a library song left as it was is not saved again) — then into this week's 예배,
+   * and on to the next song. The church library being out of reach does not hold the 예배 up.
+   */
+  const confirmReview = () => {
+    if (!review) return;
     const e = entry();
-    review?.onAccept({ ...review.draft, title: e.title, key: e.key, sections: e.sections, progression: tokens.length ? tokens : undefined });
+    const asRead = JSON.stringify([review.draft.title.trim(), review.draft.key ?? '', review.draft.sections.map((x) => ({ label: x.label, lines: x.lines.map((l) => l.trimEnd()) })), review.draft.progression ?? []]);
+    const unchanged = JSON.stringify([e.title, e.key ?? '', e.sections, tokens]) === asRead;
+    if (!protectedSong && !(review.fromLibrary && unchanged)) {
+      writeLocal(e);
+      registerSharedSong(e)
+        .then(reloadOnline)
+        .catch((err: Error) => notify(`“${e.title}”은(는) 이 컴퓨터의 찬양 라이브러리에만 저장했습니다 — 교회 공유 라이브러리에는 반영하지 못했습니다 (${err.message})`));
+    }
+    review.onAccept({ ...review.draft, title: e.title, key: e.key, sections: e.sections, progression: tokens.length ? tokens : undefined });
+  };
+
+  /** Put a web page's lyrics in, part by part (the 진행 the 콘티 wrote stays). */
+  const putWebOption = (option: WebLyricsOption) => {
+    const typed = parts.some((p) => p.text.trim());
+    if (typed && !confirm(`지금 입력된 가사를 ${option.host || '웹'}의 가사로 바꿀까요?`)) return;
+    setParts(option.sections.map((x) => ({ id: uid('pt'), label: x.label, text: x.lines.join('\n') })));
+    if (!tokens.length && option.order.length) setOrder(option.order.join('-'));
   };
 
   const register = () => save('등록 중…', async () => {
@@ -220,6 +248,21 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
           </div>
           <div className="song-editor-preview">
             {review?.pageImages.map((src, i) => <img key={i} className="song-review-page" src={src} alt={`악보 ${i + 1}`} />)}
+            {!!review?.webOptions?.length && (
+              <div className="song-web-options">
+                <div className="small"><b>🌐 웹에서 찾은 가사</b> <span className="muted">— 악보와 같은 곡이면 ‘넣기’</span></div>
+                {review.webOptions.map((option) => (
+                  <div key={option.id} className="song-web-option">
+                    <div className="row gap-xs">
+                      <span className="grow small"><b>{option.host || '웹'}</b>{option.title ? ` · ${option.title}` : ''}</span>
+                      {option.url && <a className="small" href={option.url} target="_blank" rel="noreferrer">열기</a>}
+                      <button className="mini-btn" onClick={() => putWebOption(option)}>넣기</button>
+                    </div>
+                    <div className="muted small">{option.sections.flatMap((x) => x.lines).filter((l) => l.trim()).slice(0, 3).join(' / ')}</div>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="muted small">미리보기 · 제목 슬라이드 + 가사 슬라이드 {slideCount}장</div>
             <div className="song-preview-slide title">{title || '제목'}</div>
             {plan.flatMap((part) => part.slides.map((lines, k) => (
@@ -239,8 +282,8 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
           {review ? (
             <>
               <button disabled={!!busy} onClick={review.onSkip} title="이 곡은 예배에 넣지 않습니다">빼기</button>
-              <button disabled={!valid || !!busy} onClick={register} title="라이브러리에 등록하고 예배에 넣습니다">{busy ?? '라이브러리에 등록 + 확인'}</button>
-              <button className="primary" disabled={!valid || !!busy} onClick={accept}>{review.index + 1 < review.total ? '확인 · 다음 곡' : '확인 · 예배에 넣기'}</button>
+              <button className="primary" disabled={!valid || !!busy} onClick={confirmReview}
+                title={`찬양 라이브러리(이 컴퓨터 + 교회 공유)에 저장하고 예배에 넣은 뒤 ${review.index + 1 < review.total ? '다음 곡으로 넘어갑니다' : '콘티 확인을 마칩니다'}`}>확인</button>
             </>
           ) : (
             <>

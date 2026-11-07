@@ -218,3 +218,59 @@ export async function fetchWebLyricsForTitles(
     links: [...links.values()],
   };
 }
+
+/** This computer's own internet search (server/songLyrics.mjs). */
+const SEARCH_URL = '/api/song-lyrics/search';
+
+/** How long the search may take: it opens several result pages. */
+const SEARCH_TIMEOUT_MS = 25_000;
+
+/**
+ * Search the internet for "<제목> <작곡자> 찬양 가사" (then "<제목> 찬양 가사") and read the lyrics
+ * off the top results, for a song whose 악보 gave none.
+ *
+ * Every page comes back as a 'review' candidate: a search result is only ranked by its title and
+ * the words around it, so whether it is THIS song is for the 악보 to say (see lyricsCheck).
+ * An empty list whenever the search cannot help.
+ */
+export async function searchLyricsOnline(
+  query: { title: string; artist?: string },
+  signal?: AbortSignal,
+): Promise<ScoredLyricsCandidate[]> {
+  const title = query.title.trim();
+  if (!title || /^새 찬양/.test(title)) return [];
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort);
+  try {
+    const params = new URLSearchParams({ title });
+    if (query.artist?.trim()) params.set('artist', query.artist.trim());
+    const response = await fetch(`${SEARCH_URL}?${params.toString()}`, { headers: { Accept: 'application/json' }, signal: controller.signal });
+    if (!response.ok) return [];
+    const payload = (await response.json()) as { candidates?: unknown };
+    if (!Array.isArray(payload.candidates)) return [];
+    return payload.candidates
+      .map((raw) => {
+        if (!raw || typeof raw !== 'object') return null;
+        const value = raw as Record<string, unknown>;
+        // A search hit is never applied on its say-so alone.
+        const candidate = toCandidate({ ...value, decision: 'review', title: value.pageTitle ?? value.title });
+        if (!candidate) return null;
+        return { ...candidate, titleScore: candidate.score };
+      })
+      .filter((candidate): candidate is ScoredLyricsCandidate => candidate !== null);
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', onAbort);
+  }
+}
+
+/** Two candidates printing the same words (one page found by both lookups): the same lyrics. */
+export function sameLyrics(a: ScoredLyricsCandidate, b: ScoredLyricsCandidate): boolean {
+  const key = (c: ScoredLyricsCandidate) => lyricSample(c.sections).slice(0, 120);
+  const left = key(a);
+  return left.length >= 20 && left === key(b);
+}
