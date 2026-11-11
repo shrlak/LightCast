@@ -6,7 +6,6 @@ import { activePlaylist, slideAt, nextCursor } from '../../domain/live';
 import { groupColor } from '../../domain/lyrics';
 import { SlideCanvas } from '../SlideCanvas';
 import { liveCanvasProps } from '../liveProps';
-import { LivePanel } from '../LivePanel';
 import { SlideDesigner } from '../SlideDesigner';
 import { useNow } from '../hooks';
 import { SlideFormat } from './SlideFormat';
@@ -74,7 +73,6 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
   const now = useNow(1000);
   const [started] = useState(() => Date.now());
   const [mode, setMode] = useState<'next' | 'all'>('next');
-  const [controls, setControls] = useState(false);
   const [edit, setEdit] = useState<{ presId: string; slideId: string; seq: number } | null>(null);
   const [follow, setFollow] = useState(true);
   const [designing, setDesigning] = useState(false);
@@ -112,7 +110,7 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
   };
 
   return (
-    <div className={`presenter split ${controls ? 'with-controls' : ''}`}>
+    <div className="presenter split">
       <section className="presenter-main">
         <div className="presenter-top">
           <span className="presenter-clock">⏱ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</span>
@@ -131,7 +129,6 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
             <button onClick={() => dispatch({ type: 'live/chords', capo: (live.capo ?? 0) + 1 })}>＋</button>
             {(!!live.chordShift || !!live.capo) && <button onClick={() => dispatch({ type: 'live/chords', shift: 0, capo: 0 })}>↺</button>}
           </span>
-          <button className={controls ? 'active' : ''} onClick={() => setControls(!controls)} title="매크로 · 메시지 · 타이머 · 화면 지우기">🎛 컨트롤</button>
           <button className="danger" onClick={cmd.endShow}>쇼 마침 (Esc)</button>
         </div>
         {mode === 'next' ? (
@@ -195,7 +192,6 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
         )}
       </section>
 
-      {controls && <LivePanel state={state} dispatch={dispatch} />}
 
       {designing && editPres && editSlide && (
         <SlideDesigner readOnly={editPres.protected} slide={editSlide} theme={editTheme} background={resolveBackground(editSlide, editPres)} media={lib.media}

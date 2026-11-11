@@ -6,9 +6,7 @@ import { openOutput } from './LivePanel';
 import { DesktopAi, DesktopDisplays, DesktopRemote, DesktopUpdate, useDesktopInfo } from './DesktopSettings';
 import { desktop } from '../domain/desktop';
 import { contentServer, DEFAULT_SERVER, setContentServer } from '../domain/online';
-import { dmxSettings, saveDmxSettings, sendDmx } from '../domain/effects';
 import { FEATURES, loadFeatures, setFeature, type FeatureId } from '../domain/features';
-import { NameDialog } from './NameDialog';
 import { X32SettingsCard } from './X32SettingsCard';
 import type { X32Settings } from '../domain/x32';
 
@@ -36,8 +34,7 @@ const PAGES: { id: SettingsPage; icon: string; label: string; intro: string; des
 ];
 
 const LAYERS: { id: keyof ScreenLayers; label: string }[] = [
-  { id: 'background', label: '배경' }, { id: 'slide', label: '슬라이드' }, { id: 'announcements', label: '광고' },
-  { id: 'props', label: '소품' }, { id: 'messages', label: '메시지' }, { id: 'timer', label: '타이머' },
+  { id: 'background', label: '배경' }, { id: 'slide', label: '슬라이드' },
 ];
 
 const STAGE_FLAGS: { id: keyof StageLayout; label: string }[] = [
@@ -131,7 +128,6 @@ function GeneralPage({ desk, onFeatures }: { desk: ReturnType<typeof useDesktopI
 
 function OutputsPage({ state, dispatch, desk }: { state: AppState; dispatch: Dispatch<Action>; desk: ReturnType<typeof useDesktopInfo> }) {
   const { screens, themes } = state.library;
-  const [naming, setNaming] = useState(false);
   const save = (s: Screen) => dispatch({ type: 'screen/upsert', screen: s });
   const base = `${location.origin}${location.pathname}`;
   return (
@@ -189,25 +185,9 @@ function OutputsPage({ state, dispatch, desk }: { state: AppState; dispatch: Dis
         ))}
         <div className="row gap-xs wrap">
           <button onClick={() => save({ id: uid('screen'), name: '새 화면', themeId: null, key: 'black', layers: { background: true, slide: true, props: true, messages: true, timer: true } })}>＋ 화면 추가</button>
-          <button onClick={() => window.open(`${base}?view=multiview`, 'freecast-multiview', 'popup,width=1280,height=760')}>멀티뷰 열기 ↗</button>
         </div>
         <p className="hint">영상 스위처용 키 · 필 출력: “키 (매트)” 화면 하나와 일반 화면 하나를 함께 쓰세요.</p>
       </Card>
-      <Card title="화면 구성 저장 (Look)" hint="모든 화면이 무엇을 보여 주는지 저장해 두고 한 번에 바꿉니다. 예) 예배 · 광고만">
-        <div className="row gap-xs wrap">
-          {state.library.looks.map((l) => (
-            <span key={l.id} className="look-chip">
-              <button onClick={() => dispatch({ type: 'look/apply', id: l.id })}>{l.name}</button>
-              <button className="mini-btn" title="삭제" onClick={() => dispatch({ type: 'look/delete', id: l.id })}>✕</button>
-            </span>
-          ))}
-          <button onClick={() => setNaming(true)}>＋ 지금 구성 저장</button>
-        </div>
-      </Card>
-      {naming && <NameDialog title="화면 구성 이름" initialValue="예배" onClose={() => setNaming(false)} onSave={(name) => {
-        dispatch({ type: 'look/save', look: { id: uid('look'), name, screens: Object.fromEntries(screens.map((sc) => [sc.id, { ...sc.layers }])) } });
-        setNaming(false);
-      }} />}
     </>
   );
 }
@@ -263,13 +243,6 @@ function DevicesPage({ mixer, onMixer }: { mixer: X32Settings; onMixer: (s: X32S
   return (
     <>
       <X32SettingsCard settings={mixer} onChange={onMixer} />
-      <Card title="조명 (DMX · Art-Net)" hint="매크로와 슬라이드 동작으로 DMX 채널을 바꿀 수 있습니다. Art-Net 노드나 조명 콘솔의 IP를 넣으세요 (255.255.255.255 = 전체).">
-        <div className="row gap-xs wrap">
-          <input className="grow" defaultValue={dmxSettings().ip} aria-label="Art-Net IP" onBlur={(e) => saveDmxSettings({ ip: e.target.value.trim() || '255.255.255.255' })} />
-          <button onClick={() => sendDmx(0, { 1: 255 })}>1번 채널 켜기 (테스트)</button>
-          <button onClick={() => sendDmx(0, { 1: 0 })}>끄기</button>
-        </div>
-      </Card>
       <Card title="찬양 · 성경 서버" hint="찬양 라이브러리(library.json)와 성경(bible-text/*.json)을 FreeCast를 켤 때마다 이 주소에서 읽습니다.">
         <form className="row gap-xs wrap" onSubmit={(e) => {
           e.preventDefault();

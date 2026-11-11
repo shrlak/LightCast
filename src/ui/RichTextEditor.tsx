@@ -226,15 +226,19 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
 
   useEffect(() => {
     const root = ref.current!;
-    const remember = () => {
+    /** Read the live selection; true when it moved. */
+    const remember = (): boolean => {
       const s = window.getSelection();
-      if (!s || !s.rangeCount || !root.contains(s.anchorNode)) return;
+      if (!s || !s.rangeCount || !root.contains(s.anchorNode)) return false;
       const r = s.getRangeAt(0);
       const a = offsetOf(root, r.startContainer, r.startOffset), b = offsetOf(root, r.endContainer, r.endOffset);
-      sel.current = [Math.min(a, b), Math.max(a, b)];
-      notify();
+      const next: [number, number] = [Math.min(a, b), Math.max(a, b)];
+      if (next[0] === sel.current[0] && next[1] === sel.current[1]) return false;
+      sel.current = next;
+      return true;
     };
-    document.addEventListener('selectionchange', remember);
+    const onSelection = () => { if (remember()) notify(); };
+    document.addEventListener('selectionchange', onSelection);
     const restore = () => {
       const [a, b] = sel.current;
       const [na, oa] = pointAt(root, a), [nb, ob] = pointAt(root, b);
@@ -246,6 +250,8 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
       s?.addRange(range);
     };
     const reformat = (fn: (r: TextRun) => RunFormat) => {
+      // selectionchange arrives after the keys that moved the selection: read it now while typing here.
+      if (document.activeElement === root) remember();
       const [a, b] = sel.current;
       const cur = readLines(root);
       const all = a === b;
@@ -258,8 +264,9 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
       notify();
     };
     const api: RichTextApi = {
-      hasSelection: () => sel.current[0] !== sel.current[1],
+      hasSelection: () => { if (document.activeElement === root) remember(); return sel.current[0] !== sel.current[1]; },
       current: () => {
+        if (document.activeElement === root) remember();
         const r = runAt(readLines(root), sel.current[0]) ?? { text: '' };
         const b = latest.current.base;
         return { fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, italic: r.italic ?? b.italic, underline: r.underline, color: r.color ?? b.color };
@@ -270,7 +277,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
     if (!plain) active = api;
     notify();
     return () => {
-      document.removeEventListener('selectionchange', remember);
+      document.removeEventListener('selectionchange', onSelection);
       if (active === api) active = null;
       notify();
     };

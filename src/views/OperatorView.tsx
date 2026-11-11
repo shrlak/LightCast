@@ -78,9 +78,8 @@ import { featureEnabled } from '../domain/features';
 const KEYS: Record<string, Action> = {
   ArrowRight: { type: 'live/next' }, ArrowDown: { type: 'live/next' }, PageDown: { type: 'live/next' }, ' ': { type: 'live/next' },
   ArrowLeft: { type: 'live/prev' }, ArrowUp: { type: 'live/prev' }, PageUp: { type: 'live/prev' },
-  F1: { type: 'live/clearAll' }, F2: { type: 'live/clearText' }, F3: { type: 'live/clearBackground' },
-  F4: { type: 'prop/clearAll' }, F6: { type: 'announce/stop' },
-  b: { type: 'live/toggleBlack' }, B: { type: 'live/toggleBlack' }, l: { type: 'live/logo' }, L: { type: 'live/logo' },
+  // As in PowerPoint's slide show: B or . turns the screen black and back.
+  b: { type: 'live/toggleBlack' }, B: { type: 'live/toggleBlack' }, '.': { type: 'live/toggleBlack' },
 };
 
 function isTyping(t: EventTarget | null): boolean {
