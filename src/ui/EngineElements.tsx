@@ -22,7 +22,8 @@ const DASH: Record<DashStyle, (w: number) => string | undefined> = {
 
 /** The preset a shape object draws: its own, or the plain box / circle of slides made before presets. */
 export const presetOf = (el: SlideElement): string => el.shape ?? (el.ellipse ? 'ellipse' : el.radius ? 'roundRect' : 'rect');
-export const isLineShape = (el: SlideElement) => el.kind === 'shape' && !!el.shape && !!shapeCatalog().find((p) => p.name === el.shape)?.line;
+export const isLinePreset = (name: string) => !!shapeCatalog().find((p) => p.name === name)?.line;
+export const isLineShape = (el: SlideElement) => el.kind === 'shape' && !!el.shape && !el.path && isLinePreset(el.shape);
 
 /** Adjust values for the engine: the object's own, or for a legacy rounded box its corner radius. */
 export function adjOf(el: SlideElement): number[] | undefined {

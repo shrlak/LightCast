@@ -6,7 +6,8 @@ import type { Ed } from './editor';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, RI, Small } from './ribbonParts';
-import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup } from '../../domain/editOps';
+import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
+import { shapeToPath } from '../../engine';
 import { layoutTable } from '../../engine';
 
 export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart';
@@ -81,12 +82,30 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
         <Gallery rows={3} className="rb-shape-strip">
           {['rect', 'ellipse', 'triangle', 'roundRect', 'rightArrow', 'star5', 'line', 'straightConnector1', 'textBox'].map((n) => <button key={n} type="button" className="shape-cell" onClick={() => ed.setTool({ kind: 'shape', name: n })}><ShapeThumb name={n} size={16} /></button>)}
         </Gallery>
-        <DropButton icon="⬠" label="도형 편집" title="도형 모양 변경" disabled={!shapes.length} wide render={(close) => (
+        <DropButton icon="⬠" label="도형 편집" title="도형 모양 변경 · 점 편집" disabled={!shapes.length} wide render={(close) => (
           <>
+            <MenuItem label="점 편집" hint="점을 끌어 모양을 바꿉니다 (Enter: 끝)" disabled={shapes.length !== 1} onClick={() => {
+              const el = shapes[0];
+              // A preset first becomes its own outline (curves kept), as PowerPoint does.
+              if (!el.path) {
+                const p = shapeToPath(pathShapeOf(el));
+                if (p) ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, path: p.path, pathW: p.pathW, pathH: p.pathH, shape: undefined, adj: undefined } : e)));
+              }
+              ed.setTool({ kind: 'points', id: el.id });
+              close();
+            }} />
             <MenuHead>도형 모양 변경</MenuHead>
-            <ShapeGallery compact onPick={(n) => { ed.setElements((els) => els.map((e) => (shapes.some((s) => s.id === e.id) ? { ...e, shape: n, adj: undefined, ellipse: undefined, radius: undefined } : e))); close(); }} />
+            <ShapeGallery compact onPick={(n) => { ed.setElements((els) => els.map((e) => (shapes.some((s) => s.id === e.id) ? { ...e, shape: n, adj: undefined, ellipse: undefined, radius: undefined, path: undefined, pathW: undefined, pathH: undefined } : e))); close(); }} />
           </>
         )} />
+        <DropButton icon="◒" label="도형 병합" title="선택한 순서대로: 첫 도형의 서식이 남습니다" disabled={!canMerge(ed.elements, ed.sel)} render={(close) => (
+          <>
+            {([['union', '통합'], ['combine', '결합'], ['fragment', '조각'], ['intersect', '교차'], ['subtract', '빼기']] as const).map(([m, l]) => (
+              <MenuItem key={m} label={l} onClick={() => { const r = mergeSelection(ed.elements, ed.sel, m); if (r.ids.length) { ed.setElements(() => r.elements); ed.setSel(r.ids); } close(); }} />
+            ))}
+          </>
+        )} />
+        <Small icon="★" label="기본 도형으로 설정" title="새로 그리는 도형이 이 서식을 따릅니다" disabled={shapes.length !== 1} onClick={() => { const e = shapes[0]; ed.updatePres({ defaultShape: { fill: e.fill, stroke: e.stroke, strokeWidth: e.strokeWidth, gradient: e.gradient, gradientAngle: e.gradientAngle, dropShadow: e.dropShadow, glow: e.glow, color: e.color, fontSize: e.fontSize } }); ed.cmd.notify('새 도형이 이 서식으로 그려집니다'); }} />
       </Group>
       <Group label="도형 스타일"><ShapeStyleButtons ed={ed} big /></Group>
       <Group label="WordArt 스타일">

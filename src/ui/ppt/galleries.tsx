@@ -17,7 +17,7 @@ export function ShapeThumb({ name, size = 20 }: { name: string; size?: number })
 }
 
 /** The Shapes gallery: `recent` first, then every category. */
-export function ShapeGallery({ onPick, compact }: { onPick: (name: string) => void; compact?: boolean }) {
+export function ShapeGallery({ onPick, compact, onFreeform }: { onPick: (name: string) => void; compact?: boolean; /** Freeform: Shape / Scribble (Lines). */ onFreeform?: (scribble: boolean) => void }) {
   const cat = shapeCatalog();
   const groups = useMemo(() => {
     const m = new Map<ShapeCategory, typeof cat>();
@@ -34,6 +34,10 @@ export function ShapeGallery({ onPick, compact }: { onPick: (name: string) => vo
         <div key={c}>
           <MenuHead>{SHAPE_CATEGORY[c]}</MenuHead>
           <div className="shape-grid">
+            {c === 'lines' && onFreeform && <>
+              <button type="button" className="shape-cell" title="자유형: 도형 (클릭으로 점 찍기, 시작점을 누르면 닫힘, 두 번 클릭하면 끝)" onClick={() => onFreeform(false)}><svg width="20" height="20" viewBox="0 0 20 20"><path d="M2 16 L6 4 L11 12 L18 3 L16 17 Z" fill="#dbe7f6" stroke="#3a5f8f" /></svg></button>
+              <button type="button" className="shape-cell" title="자유형: 자유 곡선 (끌어서 그리기)" onClick={() => onFreeform(true)}><svg width="20" height="20" viewBox="0 0 20 20"><path d="M2 14 C5 2 8 18 11 8 S17 4 18 12" fill="none" stroke="#3a5f8f" strokeWidth="1.5" /></svg></button>
+            </>}
             {list.map((p) => (
               <button key={p.name} type="button" className="shape-cell" title={shapeLabel(p.name, p.label)} onClick={() => onPick(p.name)}><ShapeThumb name={p.name} /></button>
             ))}

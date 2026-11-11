@@ -1736,3 +1736,9 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .para-spaced > div { margin-top: var(--sp-before); margin-bottom: var(--sp-after); }
 .audio-object { cursor: pointer; }
 .zoom-object { overflow: hidden; }
+
+.ce-point { position: absolute; width: 9px; height: 9px; margin: -5px 0 0 -5px; background: #000; border: 1px solid #fff; pointer-events: none; }
+.ce-guide.ce-user { border-color: #f2a900; border-style: dashed; }
+.ce-frame.crop { border: 2px solid #000; }
+.ce-frame.crop .ce-h { border-radius: 0; background: #000; border-color: #fff; width: 12px; height: 12px; margin: -6px 0 0 -6px; }
+.ce-root.tool-freeform, .ce-root.tool-crop { cursor: crosshair; }

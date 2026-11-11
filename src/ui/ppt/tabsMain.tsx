@@ -142,18 +142,38 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
             <MenuItem label="양쪽 화살표 ↔" onClick={() => { set({ arrowStart: true, arrowEnd: true }); close(); }} />
           </>
         )} />
-        <DropButton icon={RI.effects} label="도형 효과" disabled={none} render={(close) => (
-          <>
-            <MenuItem label="그림자" on={!!first?.dropShadow} onClick={() => { set({ dropShadow: first?.dropShadow ? undefined : true }); close(); }} />
-            <MenuHead>네온</MenuHead>
-            <div className="rb-chip-row">{['#ffd966', '#9cc3e6', '#a9d18e', '#f4b183', '#ff7c80', '#c9b6f0'].map((c) => <button key={c} type="button" className="rb-chip" style={{ background: c }} onClick={() => { set({ glow: c }); close(); }} />)}</div>
-            <MenuItem label="네온 없음" onClick={() => { set({ glow: undefined }); close(); }} />
-            <MenuSep />
-            <MenuItem label="효과 없음" onClick={() => { set({ dropShadow: undefined, glow: undefined }); close(); }} />
-          </>
-        )} />
+        <DropButton icon={RI.effects} label="도형 효과" disabled={none} wide render={(close) => <EffectsMenu first={first} set={set} close={close} />} />
       </Col>
     </>
+  );
+}
+
+/** Shape Format › Shape Effects: shadow, reflection, glow, soft edges, bevel, 3-D rotation. */
+export function EffectsMenu({ first, set, close }: { first?: SlideElement; set: (p: Partial<SlideElement>) => void; close: () => void }) {
+  const GLOWS = ['#ffd966', '#9cc3e6', '#a9d18e', '#f4b183', '#ff7c80', '#c9b6f0'];
+  const ROT: [string, { x: number; y: number } | undefined][] = [['없음', undefined], ['평행 투시: 왼쪽', { x: 0, y: 25 }], ['평행 투시: 오른쪽', { x: 0, y: -25 }], ['원근감: 위', { x: 30, y: 0 }], ['원근감: 아래', { x: -30, y: 0 }], ['등각: 왼쪽 아래', { x: 20, y: 30 }]];
+  return (
+    <div className="effects-menu">
+      <MenuHead>그림자</MenuHead>
+      <MenuItem label="그림자 없음" on={!first?.dropShadow} onClick={() => { set({ dropShadow: undefined, shadowKind: undefined }); close(); }} />
+      <MenuItem label="바깥쪽" on={!!first?.dropShadow && (first.shadowKind ?? 'outer') === 'outer'} onClick={() => { set({ dropShadow: true, shadowKind: 'outer' }); close(); }} />
+      <MenuItem label="안쪽" on={first?.shadowKind === 'inner'} onClick={() => { set({ dropShadow: true, shadowKind: 'inner' }); close(); }} />
+      <MenuItem label="원근감" on={first?.shadowKind === 'perspective'} onClick={() => { set({ dropShadow: true, shadowKind: 'perspective' }); close(); }} />
+      <MenuHead>반사</MenuHead>
+      <MenuItem label={first?.reflection ? '반사 없음' : '근접 반사'} onClick={() => { set({ reflection: first?.reflection ? undefined : true }); close(); }} />
+      <MenuHead>네온</MenuHead>
+      <div className="rb-chip-row">{GLOWS.map((c) => <button key={c} type="button" className="rb-chip" style={{ background: c }} onClick={() => { set({ glow: c }); close(); }} />)}</div>
+      <div className="rb-chip-row">{[8, 18, 32].map((g) => <button key={g} type="button" className="mini-btn" onClick={() => { set({ glowSize: g, glow: first?.glow ?? GLOWS[0] }); close(); }}>{g / 2} pt</button>)}</div>
+      <MenuItem label="네온 없음" onClick={() => { set({ glow: undefined, glowSize: undefined }); close(); }} />
+      <MenuHead>부드러운 가장자리</MenuHead>
+      <div className="rb-chip-row">{[0, 5, 10, 25, 50].map((v) => <button key={v} type="button" className={`mini-btn ${(first?.softEdge ?? 0) === v ? 'on' : ''}`} onClick={() => { set({ softEdge: v || undefined }); close(); }}>{v ? `${v / 2} pt` : '없음'}</button>)}</div>
+      <MenuHead>입체 효과</MenuHead>
+      <MenuItem label={first?.bevel ? '입체 효과 없음' : '원형 입체'} onClick={() => { set({ bevel: first?.bevel ? undefined : true }); close(); }} />
+      <MenuHead>3차원 회전</MenuHead>
+      {ROT.map(([l, r]) => <MenuItem key={l} label={l} on={JSON.stringify(first?.rotate3d) === JSON.stringify(r)} onClick={() => { set({ rotate3d: r }); close(); }} />)}
+      <MenuSep />
+      <MenuItem label="효과 모두 없애기" onClick={() => { set({ dropShadow: undefined, shadowKind: undefined, glow: undefined, glowSize: undefined, reflection: undefined, softEdge: undefined, bevel: undefined, rotate3d: undefined }); close(); }} />
+    </div>
   );
 }
 
@@ -208,7 +228,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
       <Group label="그리기">
         <Gallery rows={3} className="rb-shape-strip">
           {QUICK_SHAPES.map((n) => <button key={n} type="button" className="shape-cell" title={shapeLabel(n, shapeCatalog().find((p) => p.name === n)?.label ?? n)} onClick={() => !blocked(ed) && ed.setTool({ kind: 'shape', name: n })}><ShapeThumb name={n} size={16} /></button>)}
-          <DropButton icon={<span className="rb-more">▾</span>} title="모든 도형" render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} />} wide />
+          <DropButton icon={<span className="rb-more">▾</span>} title="모든 도형" render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} wide />
         </Gallery>
         <DropButton big icon={RI.arrange} label="정렬" render={(close) => <ArrangeMenu ed={ed} close={close} />} />
         <ShapeStyleButtons ed={ed} big />
@@ -276,7 +296,7 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
         <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*'; fileRef.current.click(); } }} />
       </Group>
       <Group label="일러스트레이션">
-        <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} />} />
+        <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} />
         <DropButton big icon={RI.icons} label="아이콘" wide render={(close) => <IconGallery onPick={(n) => { add(makeIcon(n)); close(); }} />} />
         <DropButton big icon={RI.chart} label="차트" render={(close) => <>{CHARTS.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { add(makeChart(k)); close(); }} />)}</>} />
       </Group>
