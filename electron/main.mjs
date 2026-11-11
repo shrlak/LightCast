@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 // FreeCast desktop app: runs the FreeCast server inside the app and shows the console,
 // audience outputs and stage displays as native windows placed on your displays.
-import { app, BrowserWindow, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, shell, dialog } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, session, shell, dialog } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -134,7 +134,7 @@ function showSplash() {
   const height = Math.round(Math.min(sh * 0.82, width * 0.6));
   splashWindow = new BrowserWindow({
     width, height, frame: false, resizable: false, center: true, show: false,
-    backgroundColor: '#ffffff', alwaysOnTop: true, skipTaskbar: true, roundedCorners: true,
+    backgroundColor: '#030805', alwaysOnTop: true, skipTaskbar: true, roundedCorners: true,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   splashWindow.loadFile(path.join(here, 'splash.html'));
@@ -475,6 +475,12 @@ app.whenReady().then(async () => {
   if (!SMOKE) showSplash();
   loadSettings();
   setAiConfigProvider(() => settings.ai);
+  // Spelling in Korean and English where this system's checker has them (macOS uses its own languages).
+  try {
+    const have = session.defaultSession.availableSpellCheckerLanguages ?? [];
+    const want = ['ko', 'ko-KR', 'en-US'].filter((l) => have.includes(l));
+    if (want.length) session.defaultSession.setSpellCheckerLanguages(want);
+  } catch { /* not supported here */ }
   try {
     await restartServer();
     syncTunnel();

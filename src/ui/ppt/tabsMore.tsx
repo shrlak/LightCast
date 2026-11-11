@@ -56,8 +56,16 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
   return (
     <>
       <Group label="언어 교정">
-        <Big icon="abc✓" label="맞춤법 검사" title="텍스트를 입력할 때 맞춤법이 틀린 단어에 밑줄을 긋습니다" active={spell} onClick={() => { setSpellCheck(!spell); setSpell(!spell); }} />
+        <Big icon="abc✓" label="맞춤법 검사" title="프레젠테이션의 틀린 단어를 하나씩 찾아 고칩니다" active={ed.pane === 'spelling'} onClick={() => ed.setPane(ed.pane === 'spelling' ? null : 'spelling')} />
+        <Col>
+          <label className="rb-check" title="입력할 때 틀린 단어에 빨간 밑줄"><input type="checkbox" checked={spell} onChange={() => { setSpellCheck(!spell); setSpell(!spell); }} /> 입력할 때 검사</label>
+          <Small icon="🌐" label="언어" title="교정 언어 설정 · 맞춤법 검사 안 함" onClick={() => ed.setDialog('language')} />
+        </Col>
         <Big icon="📖" label="동의어 사전" title="선택한 단어와 뜻이 같은 단어" onClick={() => ed.setDialog('thesaurus')} />
+      </Group>
+      <Group label="비교">
+        <Big icon="⇆" label="비교" title="다른 버전과 비교해 바뀐 내용을 하나씩 적용하거나 거부합니다" disabled={!ed.p} onClick={() => ed.setDialog('compare')} />
+        <Big icon="☑" label="수정 내용" active={ed.pane === 'revisions'} onClick={() => ed.setPane(ed.pane === 'revisions' ? null : 'revisions')} />
       </Group>
       <Group label="접근성">
         <Big icon={RI.access} label="접근성 검사" title="대체 텍스트 · 글자와 배경 대비 · 빈 슬라이드를 확인합니다" active={ed.pane === 'accessibility'} onClick={() => ed.setPane(ed.pane === 'accessibility' ? null : 'accessibility')} />
@@ -91,10 +99,13 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
       </Group>
       <Group label="마스터 보기">
         <Big icon="▤" label="슬라이드 마스터" title="모든 슬라이드에 나오는 개체와 배경" disabled={!ed.p} onClick={() => ed.setDialog('master')} />
+        <Big icon="▥" label="유인물 마스터" title="유인물 인쇄: 페이지당 슬라이드 수, 머리글 · 바닥글" disabled={!ed.p} onClick={() => ed.setDialog('handoutMaster')} />
+        <Big icon="▦" label="슬라이드 노트 마스터" title="슬라이드 노트 페이지 인쇄 모양" disabled={!ed.p} onClick={() => ed.setDialog('notesMaster')} />
       </Group>
       <Group label="표시">
         <Col>
           <label className="rb-check"><input type="checkbox" checked={!!ed.view.grid} onChange={(e) => ed.setView({ ...ed.view, grid: e.target.checked })} /> 눈금선</label>
+          <label className="rb-check"><input type="checkbox" checked={!!ed.view.ruler} onChange={(e) => ed.setView({ ...ed.view, ruler: e.target.checked })} /> 눈금자</label>
           <label className="rb-check"><input type="checkbox" checked={!!ed.view.guides} onChange={(e) => ed.setView({ ...ed.view, guides: e.target.checked })} /> 안내선</label>
           <label className="rb-check"><input type="checkbox" checked={ed.notesOpen} onChange={(e) => ed.setNotesOpen(e.target.checked)} /> 슬라이드 노트</label>
         </Col>
@@ -205,6 +216,11 @@ export function ToolsTab({ ed }: { ed: Ed }) {
             <Big icon="📊" label="찬양 통계 · 추천" title="많이 부른 곡, 쉬었던 곡 추천, 키 점검" onClick={() => cmd.open('songStats')} />
             <Big icon="©" label="저작권(CCLI) 보고" title="기간별 사용 곡과 CCLI 번호를 CSV로" onClick={() => cmd.open('ccli')} />
           </Group>
+          {cmd.templateMarket && (
+            <Group label="템플릿">
+              <Big icon="🛍" label="템플릿 마켓" title="슬라이드 템플릿을 파일로 주고받기 (실험 기능 — 설정에서 켭니다)" onClick={() => cmd.open('templateMarket')} />
+            </Group>
+          )}
     </>
   );
 }

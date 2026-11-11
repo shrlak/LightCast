@@ -126,12 +126,12 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
       <div className="two-col">
         <div className="card stack">
           <h3>콘티 PDF</h3>
-          <p className="hint">AI reads the cover (date, 본문, 설교 제목) and each song's sheet: title, key, progression (I-V1-C-V2-C-B-C) and lyrics.</p>
-          <button className="primary" disabled={!!busy} onClick={() => pdfRef.current?.click()}>Upload 콘티 PDF</button>
+          <p className="hint">AI가 표지(날짜, 본문, 설교 제목)와 곡마다 악보의 제목 · 키 · 진행(I-V1-C-V2-C-B-C) · 가사를 읽습니다.</p>
+          <button className="primary" disabled={!!busy} onClick={() => pdfRef.current?.click()}>콘티 PDF 올리기</button>
           <input ref={pdfRef} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => readConti(e.target.files?.[0])} />
         </div>
         <div className="card stack">
-          <h3>카톡 공지 (optional)</h3>
+          <h3>카톡 공지 (선택)</h3>
           <AutoTextarea rows={6} placeholder={'🎶찬양곡:\n1️⃣ 주님의 은혜 넘치네 (G)\n2️⃣ …\n📖 본문: 로마서 5장 1-11절\n🤝공동체 고백: …'} value={notice} onChange={(e) => setNotice(e.target.value)} />
           <div className="row gap-xs">
             <button disabled={!notice.trim()} onClick={applyNotice}>공지대로 순서·이름 확정</button>
@@ -143,11 +143,11 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
 
       <div className="row gap-s wrap">
         <strong>찬양 {songs.length}곡</strong>
-        <label className="field-inline">Lines per slide
+        <label className="field-inline">슬라이드당 줄 수
           <select value={linesPerSlide} onChange={(e) => setLinesPerSlide(Number(e.target.value))}>{[1, 2, 3, 4].map((n) => <option key={n}>{n}</option>)}</select>
         </label>
-        <button onClick={() => setSongs([...songs, { title: '새 찬양', sections: [] }])}>＋ Song</button>
-        <button onClick={() => mdRef.current?.click()} title="Lyrics files: # Title / ## Verse (`V`) / lines">＋ Lyrics .md files</button>
+        <button onClick={() => setSongs([...songs, { title: '새 찬양', sections: [] }])}>＋ 찬양</button>
+        <button onClick={() => mdRef.current?.click()} title="가사 파일: # 제목 / ## 절 (`V`) / 줄">＋ 가사 .md 파일</button>
         <input ref={mdRef} type="file" accept=".md,.txt,text/markdown,text/plain" multiple hidden onChange={(e) => importMd(e.target.files)} />
       </div>
 
@@ -169,7 +169,7 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
             {linked ? (
               <div className="row gap-xs small">
                 <span className="ok">📚 Using library lyrics: {linked.title} ({linked.slides.length} slides)</span>
-                <button className="mini-btn" onClick={() => update(i, { presentationId: undefined, sections: song.sections.length ? song.sections : [] })}>Edit lyrics here instead</button>
+                <button className="mini-btn" onClick={() => update(i, { presentationId: undefined, sections: song.sections.length ? song.sections : [] })}>여기서 가사 편집</button>
               </div>
             ) : (
               <>

@@ -1,5 +1,5 @@
 // Bridge between the FreeCast console page and the desktop app (no Node access in the page).
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('freecastDesktop', {
   info: () => ipcRenderer.invoke('desktop:info'),
@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   copyRemoteCode: () => ipcRenderer.invoke('desktop:copyRemoteCode'),
   pptxToPdf: (bytes) => ipcRenderer.invoke('desktop:pptxToPdf', bytes),
   pptToPptx: (bytes) => ipcRenderer.invoke('desktop:pptToPptx', bytes),
+  // Review › Spelling: the system / Chromium spell checker the text boxes already use.
+  isMisspelled: (word) => webFrame.isWordMisspelled(String(word)),
+  spellSuggestions: (word) => webFrame.getWordSuggestions(String(word)),
   openView: (url, displayId) => ipcRenderer.invoke('desktop:openView', url, displayId),
   present: (url) => ipcRenderer.invoke('desktop:present', url),
   endShow: () => ipcRenderer.invoke('desktop:endShow'),

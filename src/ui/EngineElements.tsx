@@ -5,7 +5,10 @@ import type { DashStyle, SlideElement } from '../domain/types';
 import { lineRuns } from '../domain/richText';
 
 import { runStyle as runCss } from './runStyle';
-import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry } from '../engine';
+import { useMediaUrl } from './hooks';
+import { patternPath } from '../domain/patterns';
+import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry, type TableData } from '../engine';
+import { sideOf } from '../domain/tableBorders';
 
 let epoch = 0;
 onEngineReady(() => { epoch++; });
@@ -79,7 +82,8 @@ export function ShapeElement({ el }: { el: SlideElement }) {
   const line = isLineShape(el);
   const sw = el.strokeWidth ?? (el.stroke || line ? DEFAULT_STROKE_WIDTH : 0);
   const stroke = el.stroke ?? (line ? el.fill ?? '#ffffff' : undefined);
-  const fill = el.gradient ? `url(#g${gid})` : el.fill ?? '#ffffff';
+  const imageUrl = useMediaUrl(el.fillImage);
+  const fill = el.fillImage && imageUrl ? `url(#i${gid})` : el.pattern ? `url(#p${gid})` : el.gradient ? `url(#g${gid})` : el.fill ?? '#ffffff';
   if (!g) {
     // Engine not loaded: the plain box or circle FreeCast always drew.
     return <div style={{ ...box, background: el.gradient ? `linear-gradient(${(el.gradientAngle ?? 90) + 90}deg, ${el.gradient[0]}, ${el.gradient[1]})` : el.fill ?? '#ffffff', borderRadius: el.ellipse || el.shape === 'ellipse' ? '50%' : el.radius ?? 0, border: el.stroke ? `${sw}px solid ${el.stroke}` : undefined }} />;
@@ -90,7 +94,23 @@ export function ShapeElement({ el }: { el: SlideElement }) {
     <div style={box} data-shape={presetOf(el)}>
       <svg width={el.w} height={el.h} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} style={{ position: 'absolute', inset: 0, overflow: 'visible' }} aria-label={el.alt}>
         <defs>
-          {el.gradient && (
+          {el.fillImage && imageUrl && (
+            <pattern id={`i${gid}`} patternUnits="objectBoundingBox" patternContentUnits="objectBoundingBox" width="1" height="1">
+              <image href={imageUrl} width="1" height="1" preserveAspectRatio="xMidYMid slice" />
+            </pattern>
+          )}
+          {el.pattern && (
+            <pattern id={`p${gid}`} patternUnits="userSpaceOnUse" width="16" height="16">
+              <rect width="16" height="16" fill={el.pattern.bg} />
+              <path d={patternPath(el.pattern.kind, 2)} fill={el.pattern.fg} />
+            </pattern>
+          )}
+          {el.gradient && el.gradientType === 'radial' && (
+            <radialGradient id={`g${gid}`} cx="0.5" cy="0.5" r="0.7">
+              <stop offset="0" stopColor={el.gradient[0]} /><stop offset="1" stopColor={el.gradient[1]} />
+            </radialGradient>
+          )}
+          {el.gradient && el.gradientType !== 'radial' && (
             <linearGradient id={`g${gid}`} x1={0.5 - Math.cos(a) / 2} y1={0.5 - Math.sin(a) / 2} x2={0.5 + Math.cos(a) / 2} y2={0.5 + Math.sin(a) / 2}>
               <stop offset="0" stopColor={el.gradient[0]} /><stop offset="1" stopColor={el.gradient[1]} />
             </linearGradient>
@@ -129,11 +149,23 @@ export function ShapeElement({ el }: { el: SlideElement }) {
           textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, transform: [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ') || undefined,
         }}>{(() => {
           const runs = lineRuns(el);
-          return el.text.split('\n').map((line, i) => <div key={i}>{runs[i] ? runs[i]!.map((r, j) => <span key={j} style={runCss(r)}>{r.text}</span>) : line || '\u00a0'}</div>);
+          return el.text.split('\n').map((line, i) => <div key={i} data-para={i}>{runs[i] ? runs[i]!.map((r, j) => <span key={j} style={runCss(r)}>{r.text}</span>) : line || '\u00a0'}</div>);
         })()}</div>
       ) : null}
     </div>
   );
+}
+
+/** Table Design › Borders drawn on a cell, over the table style's own lines (a shared line is drawn by either cell). */
+function ownBorders(t: TableData, r: number, c: number): CSSProperties {
+  const css: CSSProperties = {};
+  const side = (k: 't' | 'r' | 'b' | 'l', prop: 'borderTop' | 'borderRight' | 'borderBottom' | 'borderLeft') => {
+    const b = sideOf(t, r, c, k);
+    if (b === null) css[prop] = 'none';
+    else if (b) css[prop] = `${b.width}px solid ${b.color}`;
+  };
+  side('t', 'borderTop'); side('r', 'borderRight'); side('b', 'borderBottom'); side('l', 'borderLeft');
+  return css;
 }
 
 export function TableElement({ el }: { el: SlideElement }) {
@@ -148,9 +180,9 @@ export function TableElement({ el }: { el: SlideElement }) {
       {cells.map((c) => (
         <div key={`${c.r}:${c.c}`} style={{
           position: 'absolute', left: c.x, top: c.y, width: c.w, height: c.h, boxSizing: 'border-box', background: c.fill ?? undefined,
-          border: c.border ? `${c.borderWidth}px solid ${c.border}` : undefined, color: c.color ?? el.color ?? '#ffffff', fontWeight: c.bold ? 700 : 400,
+          border: c.border ? `${c.borderWidth}px solid ${c.border}` : undefined, ...ownBorders(t, c.r, c.c), color: c.color ?? el.color ?? '#ffffff', fontWeight: c.bold ? 700 : 400,
           display: 'flex', alignItems: 'center', justifyContent: c.align === 'center' ? 'center' : c.align === 'right' ? 'flex-end' : 'flex-start',
-          textAlign: (c.align as CSSProperties['textAlign']) ?? 'left', padding: `${fs * 0.15}px ${fs * 0.35}px`, overflow: 'hidden', whiteSpace: 'pre-wrap', lineHeight: 1.2,
+          textAlign: (c.align as CSSProperties['textAlign']) ?? 'left', padding: t.margins ? `${t.margins[1]}px ${t.margins[2]}px ${t.margins[3]}px ${t.margins[0]}px` : `${fs * 0.15}px ${fs * 0.35}px`, overflow: 'hidden', whiteSpace: 'pre-wrap', lineHeight: 1.2,
         }}>{c.text}</div>
       ))}
     </div>

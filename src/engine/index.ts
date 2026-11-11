@@ -152,9 +152,12 @@ export type AnimClass = 'entrance' | 'emphasis' | 'exit' | 'path';
 export interface AnimEffectInfo { id: string; label: string; class: AnimClass; durationMs: number; options: string[] }
 export const animationCatalog = () => (once('anims', () => engineCall<AnimEffectInfo[]>('anim.catalog')) as AnimEffectInfo[] | null) ?? [];
 export interface AnimSpec {
-  anims: { elementId: string; effect: string; class: AnimClass; option?: string; start: 'click' | 'with' | 'after'; durationMs: number; delayMs: number; repeat?: number }[];
-  boxes: EBox[];
+  /** `sequence: 'paragraph'`: a by-paragraph build (DeckCraft's TextBuild::ByParagraph). */
+  anims: { elementId: string; effect: string; class: AnimClass; option?: string; start: 'click' | 'with' | 'after'; durationMs: number; delayMs: number; repeat?: number; sequence?: 'one' | 'paragraph'; path?: string }[];
+  /** `paras`: the paragraphs (outline level, shows text) of an object built by paragraph. */
+  boxes: (EBox & { paras?: AnimPara[] })[];
 }
+export interface AnimPara { level: number; filled: boolean }
 export interface PreparedTimeline {
   key: string;
   /** Click steps. */
@@ -164,10 +167,12 @@ export interface PreparedTimeline {
   /** Seconds each step plays. */
   durations: number[];
   total: number;
-  effects: { index: number; elementId: string; step: number; start: number; duration: number; span: number; class: AnimClass }[];
+  /** Every (sub-)effect; `paragraph` is set for each paragraph of a by-paragraph build. */
+  effects: { index: number; elementId: string; paragraph: number | null; step: number; start: number; duration: number; span: number; class: AnimClass }[];
 }
 export interface AnimState { visible: boolean; opacity: number; dx: number; dy: number; sx: number; sy: number; rotate: number; clip: [number, number, number, number] | null; tint: string | null }
 export const prepareTimeline = (spec: AnimSpec) => engineCall<PreparedTimeline>('anim.prepare', { ...spec, ...SLIDE });
+/** States by element id, and by `elementId#paragraph` for the paragraphs of a by-paragraph build. */
 export const sampleTimeline = (spec: AnimSpec, step: number, t: number) => engineCall<Record<string, AnimState>>('anim.sample', { spec: { ...spec, ...SLIDE }, step, t });
 
 // ── Transitions ───────────────────────────────────────────────────────────────────────────────
@@ -188,13 +193,18 @@ export const transitionFrame = (kind: string, option: string, t: number, aspect 
   engineCall<{ layers: TransitionLayer[]; parts: boolean }>('transition.frame', { kind, option, t, aspect })?.layers ?? null;
 
 // ── Tables ────────────────────────────────────────────────────────────────────────────────────
-export interface TableCell { text: string; span?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; fill?: string; color?: string; bold?: boolean; align?: string }
+export interface CellBorder { color: string; width: number }
+/** Sides drawn by Table Design › Borders; `null` = that side has no line. */
+export interface CellBorders { t?: CellBorder | null; r?: CellBorder | null; b?: CellBorder | null; l?: CellBorder | null }
+export interface TableCell { text: string; span?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; fill?: string; color?: string; bold?: boolean; align?: string; borders?: CellBorders }
 export interface TableData {
   rows: TableCell[][];
   cols: number[];
   heights: number[];
   style: string;
   firstRow: boolean; firstCol: boolean; lastRow: boolean; lastCol: boolean; bandRow: boolean; bandCol: boolean;
+  /** Cell margins in canvas pixels: left, top, right, bottom. */
+  margins?: [number, number, number, number];
 }
 export interface TableCellBox { r: number; c: number; x: number; y: number; w: number; h: number; text: string; fill: string | null; color: string | null; bold: boolean; align: string | null; border: string | null; borderWidth: number }
 export type TableAction = 'insertRowAbove' | 'insertRowBelow' | 'insertColLeft' | 'insertColRight' | 'deleteRow' | 'deleteCol' | 'merge' | 'split' | 'distributeRows' | 'distributeCols';
@@ -284,3 +294,11 @@ export function processPicture(rgba: Uint8ClampedArray, w: number, h: number, st
 
 // ── Review ────────────────────────────────────────────────────────────────────────────────────
 export const thesaurus = (word: string) => engineCall<{ word: string; synonyms: string[] }[]>('review.thesaurus', { word }) ?? [];
+
+// ── WordArt Transform (text warps) and Smooth Corners ─────────────────────────────────────────
+export type WarpBand =
+  | { kind: 'fill'; top: [number, number][]; bottom: [number, number][] }
+  | { kind: 'follow'; path: [number, number][]; closed: boolean; anchor: 'first' | 'last' | 'middle' };
+export const warpCatalog = () => (once('warpcat', () => engineCall<{ id: string; label: string; follow: boolean }[]>('text.warpCatalog')) ?? []) as { id: string; label: string; follow: boolean }[];
+export const warpGuides = (preset: string, w: number, h: number, adj?: number[]) => engineCall<{ bands: WarpBand[] }>('text.warpGuides', { preset, w, h, adj: adj ?? [] })?.bands ?? null;
+export const smoothCorners = (w: number, h: number, smoothing: number, radius?: number) => engineCall<{ path: string; pathW: number; pathH: number }>('shape.smoothCorners', { w, h, smoothing, radius });

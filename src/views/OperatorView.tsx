@@ -23,6 +23,7 @@ import { ServicePreparationModal } from '../ui/ServicePreparationModal';
 import { FindPalette } from '../ui/FindPalette';
 import { RestorePointsModal } from '../ui/RestorePointsModal';
 import { useLiveBroadcast, useRelay } from '../ui/hooks';
+import { liveActionFor } from '../domain/showActions';
 import { SlideEditorModal } from '../ui/SlideEditorModal';
 import { isSong } from '../domain/templates/fill';
 import { EditorModal } from '../ui/EditorModal';
@@ -312,7 +313,14 @@ export function OperatorView() {
     if (c.type === 'macro/run' || c.type === 'timer/op') dispatch({ ...c, now: Date.now() } as Action);
     else dispatch(c);
   });
-  useLiveBroadcast(state.live, relay.send);
+  // Objects clicked on the projector window (Action Settings, slide zooms) drive the live show.
+  const showStateRef = useRef(state);
+  showStateRef.current = state;
+  useLiveBroadcast(state.live, relay.send, (a) => {
+    if (a.kind === 'end') { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); return; }
+    const act = liveActionFor(showStateRef.current, a);
+    if (act) dispatch(act);
+  });
   useEffect(() => { relay.send({ type: 'rehearsal', active: !!rehearsalPreview, state: rehearsalPreview?.live, cursor: rehearsalPreview?.cursor }); }, [rehearsalPreview, relay.connected]);
 
   // Share the complete running order and the upcoming slides with remotes.

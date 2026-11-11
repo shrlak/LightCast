@@ -26,6 +26,24 @@ import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, 
 import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AccessibilityPane, AnimationPane, CommentsPane, SelectionPane, accessibilityIssues } from './panes';
 import { Dialogs } from './dialogs';
+import { RevisionsPane, SpellingPane } from './reviewPanes';
+import { uid as newId } from '../../domain/lyrics';
+
+/** A picture chosen from this computer, stored as media: its id (null when none was chosen). */
+function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
+  return new Promise((resolve) => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.onchange = () => {
+      const f = inp.files?.[0];
+      if (!f) return resolve(null);
+      const id = newId('m');
+      void putMedia(id, f).then(() => { dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image' } }); resolve(id); });
+    };
+    inp.click();
+  });
+}
 import { withMaster } from '../../domain/master';
 import { Backstage, FindReplaceDialog, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
@@ -48,7 +66,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [sel, setSel] = useState<string[]>([]);
   const [tool, setTool] = useState<CanvasTool | null>(null);
   const [view, setView] = useState<ViewOptions>({});
-  const [pane, setPane] = useState<TaskPane>('format');
+  const [pane, setPane] = useState<TaskPane>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);
@@ -387,6 +405,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
                   onContextMenu={(e) => { if (!ed.selEls.length) return; e.preventDefault(); setObjMenu(new DOMRect(e.clientX, e.clientY, 0, 0)); }}>
                   <CanvasEditor key={`${p.id}:${selected?.key}`} readOnly={p.protected} slide={slide} theme={theme} background={background} bgEffect={p.bgEffect}
                     selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)} view={view} badges={badges} defaultShape={p.defaultShape} customGuides={view.guides ? p.guides : undefined}
+                    pickPicture={() => pickPictureFile(dispatch)} motionPaths
                     onLockedDelete={cmd.locked && state.live.slide?.id === slide.id ? () => cmd.notify(LOCK_MSG) : undefined}
                     onChange={(patch) => dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch })} />
                   {preview && <PlayPreview ed={ed} what={preview} onDone={() => setPreview(null)} />}
@@ -436,6 +455,8 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
             )}
             {pane === 'animation' && <AnimationPane ed={ed} onPlay={() => setPreview('animation')} />}
             {pane === 'selection' && <SelectionPane ed={ed} />}
+            {pane === 'spelling' && <SpellingPane ed={ed} />}
+            {pane === 'revisions' && <RevisionsPane ed={ed} />}
             {pane === 'comments' && <CommentsPane ed={ed} draftOpen={commentDraft} onDraftDone={() => setCommentDraft(false)} />}
             {pane === 'accessibility' && <AccessibilityPane ed={ed} onGo={(seq, elementId) => { const s = sequence(p)[seq]?.slide; if (s) cmd.setSlideId(s.id, seq); if (elementId) setTimeout(() => setSel([elementId]), 0); }} />}
           </aside>

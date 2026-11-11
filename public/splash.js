@@ -1,4 +1,4 @@
-// Ends the KCCP start screen (splash.css) after its animation, or right away on a click.
+// Ends the KCCP start screen (splash.css, ~1.6 s) after its animation, or right away on a click.
 // Signals with a `fc-splash-done` event on window and by setting the document title to
 // "fc-done" for a moment — the desktop app watches the title of its splash window.
 (function () {
@@ -16,5 +16,5 @@
     window.dispatchEvent(new Event('fc-splash-done'));
   }
   root.addEventListener('click', done);
-  setTimeout(done, reduce ? 600 : 2700);
+  setTimeout(done, reduce ? 500 : 1700);
 })();

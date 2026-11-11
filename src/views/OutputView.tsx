@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { actionAt, actionOf } from '../domain/showActions';
 import { SlideCanvas } from '../ui/SlideCanvas';
 import { CANVAS_W } from '../domain/canvas';
 import { useLiveFeed } from '../ui/hooks';
@@ -12,6 +13,8 @@ import { openLiveChannel } from '../domain/sync';
  */
 export function OutputView() {
   const live = useLiveFeed();
+  const latest = useRef(live);
+  latest.current = live;
   const screenId = new URLSearchParams(location.search).get('screen');
   const screen = live?.screens.find((s) => s.id === screenId) ?? live?.screens[0];
 
@@ -33,10 +36,25 @@ export function OutputView() {
       e.preventDefault();
       ch.post({ type: 'key', key: e.key, shiftKey: e.shiftKey });
     };
+    // A click on an object with an action (Action Settings, a link, a slide zoom) does it, as in
+    // PowerPoint's slide show; clicks elsewhere are left alone (double-click is full screen).
+    const onClick = (e: MouseEvent) => {
+      const canvas = document.querySelector('.output-canvas');
+      const r = canvas?.getBoundingClientRect();
+      if (!r?.width) return;
+      const k = CANVAS_W / r.width;
+      const el = actionAt(latest.current?.slide, (e.clientX - r.left) * k, (e.clientY - r.top) * k);
+      const a = el ? actionOf(el) : null;
+      if (!a) return;
+      if (a.kind === 'url') { if (a.url) window.open(a.url, '_blank', 'noopener'); return; }
+      ch.post({ type: 'show', action: a });
+    };
     window.addEventListener('keydown', onKey);
+    window.addEventListener('click', onClick);
     window.addEventListener('dblclick', toggle);
     return () => {
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('click', onClick);
       window.removeEventListener('dblclick', toggle);
       ch.close();
     };

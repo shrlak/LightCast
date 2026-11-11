@@ -240,6 +240,12 @@ export interface SlideElement {
   /** Two-colour gradient fill, drawn at `gradientAngle` degrees (0 = left to right, 90 = top to bottom). */
   gradient?: [string, string];
   gradientAngle?: number;
+  /** Shape Fill › Gradient: linear (default, along gradientAngle) or radial (from the centre). */
+  gradientType?: 'linear' | 'radial';
+  /** Shape Fill › Picture: a media id; the picture fills the outline (cropped to fit). */
+  fillImage?: string;
+  /** Shape Fill › Pattern: one of PATTERNS, foreground over background colour. */
+  pattern?: { kind: string; fg: string; bg: string };
   /** Shape effects. */
   dropShadow?: boolean;
   glow?: string;
@@ -251,6 +257,13 @@ export interface SlideElement {
   flipV?: boolean;
   /** Objects with the same group id are selected, moved and sized together (Arrange › Group). */
   groupId?: string;
+  /** Review › Language: the proofing language (BCP-47), and "do not check spelling". */
+  lang?: string;
+  noProof?: boolean;
+  /** The group this object was in before Ungroup (Arrange › Regroup puts it back). */
+  prevGroupId?: string;
+  /** A layout placeholder: shows a prompt in the editor while empty (Slide Master › Insert Placeholder). */
+  placeholder?: 'title' | 'body' | 'text' | 'picture';
   /** Name shown in the Selection pane. */
   name?: string;
   /** Hidden in the Selection pane: kept on the slide, not drawn. */
@@ -293,7 +306,7 @@ export interface SlideElement {
   /** Text effects. */
   caps?: 'all' | 'small';
   /** WordArt › Text Effects › Transform: the text follows this path. */
-  warp?: 'archUp' | 'archDown' | 'wave' | 'slantUp' | 'slantDown';
+  warp?: string;
   textOutline?: { color: string; width: number };
   /** 0–1 transparency of the text. */
   textTransparency?: number;
@@ -305,6 +318,10 @@ export interface SlideElement {
   spaceAfter?: number;
   firstIndent?: number;
   rtl?: boolean;
+  /** Home › Paragraph › Tabs…: tab stops in canvas px from the text area's left, sorted. */
+  tabStops?: { pos: number; align: 'left' | 'center' | 'right' | 'decimal' }[];
+  /** Default tab spacing in canvas px (144 = 2.54 cm when unset). */
+  defaultTab?: number;
   /** 'ink' objects: SVG path drawn in a `pathW`×`pathH` box that is stretched to the object. */
   path?: string;
   pathW?: number;
@@ -325,6 +342,13 @@ export interface SlideAnimation {
   durationMs: number;
   delayMs: number;
   repeat?: number;
+  /** Motion Paths › Custom Path: `M 0 0 L dx dy …` in slide fractions from where the object sits. */
+  path?: string;
+  /**
+   * Effect Options › 순서, for objects with text: 하나의 개체로 (default) or 단락별로 — each
+   * first-level paragraph its own step, deeper paragraphs going with the one above them.
+   */
+  sequence?: 'one' | 'paragraph';
 }
 
 /** A review comment on a slide (Review › New Comment). */
@@ -379,6 +403,15 @@ export interface Slide {
   transition?: Transition;
   animations?: SlideAnimation[];
   comments?: SlideComment[];
+  /** Review › Language for the slide's own text. */
+  lang?: string;
+  noProof?: boolean;
+  /** Insert › Photo Album: the album this slide belongs to (Edit Photo Album rebuilds it). */
+  album?: { id: string; per: 1 | 2 | 4; frame: string; titles: boolean; captions: boolean };
+  /** The Slide Master layout this slide was made from. */
+  layoutId?: string;
+  /** Character formatting of the slide's own text, one list of runs per line (ignored for a line they no longer spell). */
+  textRuns?: TextRun[][];
   /** Header & Footer on this slide. */
   footer?: SlideFooter;
   /** Format Background › Hide background graphics: the master's objects are not shown here. */
@@ -473,13 +506,21 @@ export interface Presentation {
   /** Design › Variants › Colors: the engine colour scheme tables, charts and the colour picker use. */
   colorScheme?: string;
   /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
-  master?: { elements: SlideElement[]; background?: Background };
+  master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[] };
   /** Slide Show › Set Up Slide Show. */
   showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean };
   /** Slide Show › Custom Slide Show: named lists of slides. */
   customShows?: { id: string; name: string; slideIds: string[] }[];
   /** View › Guides the user placed (canvas pixels). */
   guides?: { v: number[]; h: number[] };
+  /** Design › Variants › Effects: how strong the shape styles' shadows and bevels are. */
+  themeEffects?: 'subtle' | 'moderate' | 'intense';
+  /** View › Handout Master: how handouts print. */
+  handoutMaster?: HandoutMaster;
+  /** View › Notes Master: what notes pages show. */
+  notesMaster?: NotesMaster;
+  /** File › Info › Properties (written to the .pptx). */
+  properties?: DocProperties;
   /** Home › Drawing › Set as Default Shape: the look new shapes get. */
   defaultShape?: Partial<SlideElement>;
 }
@@ -762,3 +803,12 @@ export interface LiveState {
   /** Where the live slide's animations are (click builds); absent when it has none. */
   build?: import('./animations').LiveBuild;
 }
+
+/** Handout and notes page placeholders (View › Handout / Notes Master). */
+export interface PagePlaceholders { header?: string; footer?: string; date?: boolean; pageNumber?: boolean }
+export interface HandoutMaster extends PagePlaceholders { perPage: 1 | 2 | 3 | 4 | 6 | 9; landscape?: boolean }
+export interface NotesMaster extends PagePlaceholders { landscape?: boolean }
+export interface DocProperties { title?: string; subject?: string; author?: string; manager?: string; company?: string; category?: string; keywords?: string; comments?: string }
+
+/** View › Slide Master › Insert Layout: a named set of placeholders new slides can start from. */
+export interface MasterLayout { id: string; name: string; elements: SlideElement[]; preserve?: boolean }

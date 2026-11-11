@@ -9,7 +9,7 @@ import { SLIDE_TEMPLATES } from '../../domain/slideTemplates';
 import { qrElement } from '../../domain/qrElements';
 import {
   alignSelection, canGroup, canUngroup, cloneElements, copyStyle, deleteSelection, distributeSelection, flipSelection, groupSelection, makeChart, makeIcon,
-  makeTable, orderSelection, rotateSelection, ungroupSelection,
+  makeTable, orderSelection, rotateSelection, ungroupSelection, regroupSelection, canRegroup,
 } from '../../domain/editOps';
 import { shapeQuickStyles, type ChartKind } from '../../engine';
 import { TextFormatPanel } from './TextFormatPanel';
@@ -18,7 +18,9 @@ import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
-import { withMaster } from '../../domain/master';
+import { seedSmartArt } from './dialogsMore';
+import { PATTERNS, patternPath } from '../../domain/patterns';
+import { slideFromLayout, withMaster } from '../../domain/master';
 import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
 
@@ -50,6 +52,14 @@ export function NewSlideButton({ ed, big = true }: { ed: Ed; big?: boolean }) {
           <button type="button" className="layout-cell" onClick={() => { insert(() => ({ id: uid('s'), group: slide?.group ?? 'Slide', text: '' })); close(); }}><span className="layout-thumb blank" />빈 화면</button>
           {SLIDE_TEMPLATES.map((t) => <button key={t.id} type="button" className="layout-cell" onClick={() => { insert(() => t.make(slide?.group ?? 'Slide')); close(); }}><span className="layout-thumb">{t.icon}</span>{t.name}</button>)}
         </div>
+        {!!p?.master?.layouts?.length && (
+          <>
+            <MenuHead>슬라이드 마스터 레이아웃</MenuHead>
+            <div className="layout-grid">
+              {p.master.layouts.map((l) => <button key={l.id} type="button" className="layout-cell" onClick={() => { insert(() => slideFromLayout(l, slide?.group ?? 'Slide')); close(); }}><span className="layout-thumb">▤</span>{l.name}</button>)}
+            </div>
+          </>
+        )}
         <MenuSep />
         <MenuItem icon="⧉" label="선택한 슬라이드 복제" hint="Ctrl+D" disabled={!slide} onClick={() => { if (slide) insert(() => ({ ...slide, id: uid('s') })); close(); }} />
         <MenuItem icon="☰" label="개요에서 슬라이드…" disabled={!p} onClick={() => { ed.setDialog('outline'); close(); }} />
@@ -75,6 +85,7 @@ export function ArrangeMenu({ ed, close }: { ed: Ed; close: () => void }) {
       <MenuHead>개체 그룹화</MenuHead>
       <MenuItem icon={RI.group} label="그룹" hint="Ctrl+G" disabled={!canGroup(els, sel)} onClick={() => act((e) => groupSelection(e, sel))} />
       <MenuItem label="그룹 해제" hint="Ctrl+Shift+G" disabled={!canUngroup(els, sel)} onClick={() => act((e) => ungroupSelection(e, sel))} />
+      <MenuItem label="다시 그룹" disabled={!canRegroup(els, sel)} onClick={() => { const r = regroupSelection(els, sel); ed.setElements(() => r.elements); ed.setSel(r.ids); close(); }} />
       <MenuHead>개체 위치</MenuHead>
       <AlignItems ed={ed} close={close} />
       <MenuSep />
@@ -126,13 +137,20 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
           <div className="quick-style-grid">
             {styles.map((s) => (
               <button key={`${s.row}-${s.col}`} type="button" className="quick-style" title={s.label} style={{ background: s.gradient ? `linear-gradient(${s.gradient[0]}, ${s.gradient[1]})` : s.fill, border: s.stroke ? `2px solid ${s.stroke}` : '2px solid transparent', color: s.text, boxShadow: s.shadow ? '0 3px 6px rgba(0,0,0,.35)' : undefined }}
-                onClick={() => { set({ fill: s.fill, stroke: s.stroke ?? undefined, strokeWidth: s.stroke ? 3 : undefined, gradient: s.gradient, gradientAngle: s.gradient ? 90 : undefined, dropShadow: s.shadow || undefined, color: s.text }); close(); }}>Abc</button>
+                onClick={() => {
+                  // Design › Effects: subtle drops the styles' shadows, intense adds a bevel and a deeper shadow.
+                  const fx = ed.p?.themeEffects ?? 'moderate';
+                  const shadow = fx === 'subtle' ? false : fx === 'intense' ? s.shadow || s.row >= 3 : s.shadow;
+                  set({ fill: s.fill, stroke: s.stroke ?? undefined, strokeWidth: s.stroke ? 3 : undefined, gradient: s.gradient, gradientAngle: s.gradient ? 90 : undefined, dropShadow: shadow || undefined, shadowKind: shadow && fx === 'intense' ? 'perspective' : undefined, bevel: fx === 'intense' && s.row >= 3 ? true : undefined, color: s.text });
+                  close();
+                }}>Abc</button>
             ))}
           </div>
         </>
       )} />
       <Col>
-        <ColorButton icon={RI.fill} label={big ? undefined : '도형 채우기'} title="도형 채우기" disabled={none} value={first?.fill} onPick={(c) => set({ fill: c, gradient: undefined })} onNone={() => set({ fill: 'transparent', gradient: undefined })} noneLabel="채우기 없음" />
+        <ColorButton icon={RI.fill} label={big ? undefined : '도형 채우기'} title="도형 채우기" disabled={none} value={first?.fill} onPick={(c) => set({ fill: c, ...NO_FILL_EXTRAS })} onNone={() => set({ fill: 'transparent', ...NO_FILL_EXTRAS })} noneLabel="채우기 없음"
+          extra={(close) => <FillExtras ed={ed} first={first} set={set} close={close} />} />
         <DropButton icon={RI.outline} label="도형 윤곽선" disabled={none} render={(close) => (
           <>
             <ColorButtonInline value={first?.stroke} onPick={(c) => { set({ stroke: c, strokeWidth: first?.strokeWidth ?? 4 }); close(); }} onNone={() => { set({ stroke: undefined, strokeWidth: undefined }); close(); }} />
@@ -149,6 +167,46 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
         <DropButton icon={RI.effects} label="도형 효과" disabled={none} wide render={(close) => <EffectsMenu first={first} set={set} close={close} />} />
       </Col>
     </>
+  );
+}
+
+const NO_FILL_EXTRAS: Partial<SlideElement> = { gradient: undefined, gradientType: undefined, fillImage: undefined, pattern: undefined };
+const GRADIENTS: [string, string, string][] = [['#ffffff', '#7f7f7f', '회색'], ['#9cc3e6', '#1f4e79', '파랑'], ['#ffe699', '#c55a11', '주황'], ['#c5e0b4', '#375623', '녹색'], ['#f4b183', '#843c0c', '갈색'], ['#d9b3ff', '#4b0082', '보라']];
+
+/** Shape Fill ▾ › 그림… / 그라데이션 / 패턴 (DeckCraft's picture, gradient and pattern fills). */
+function FillExtras({ ed, first, set, close }: { ed: Ed; first?: SlideElement; set: (p: Partial<SlideElement>) => void; close: () => void }) {
+  const file = useRef<HTMLInputElement>(null);
+  const [fg, setFg] = useState(first?.pattern?.fg ?? '#000000');
+  const [bg, setBg] = useState(first?.pattern?.bg ?? '#ffffff');
+  const picture = async (f: File | undefined) => {
+    if (!f) return;
+    const id = uid('m');
+    await putMedia(id, f);
+    ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image', backgroundHidden: true } });
+    set({ ...NO_FILL_EXTRAS, fillImage: id });
+    close();
+  };
+  return (
+    <div className="fill-extras">
+      <MenuItem icon="🖼" label="그림…" onClick={() => file.current?.click()} />
+      <input ref={file} type="file" accept="image/*" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
+      <MenuHead>그라데이션</MenuHead>
+      <div className="grad-grid">
+        {GRADIENTS.map(([a, b, l]) => (['linear', 'radial'] as const).map((t) => (
+          <button key={l + t} type="button" className="grad-cell" title={`${l} — ${t === 'radial' ? '방사형' : '선형'}`} style={{ background: t === 'radial' ? `radial-gradient(${a}, ${b})` : `linear-gradient(${a}, ${b})` }}
+            onClick={() => { set({ ...NO_FILL_EXTRAS, gradient: [a, b], gradientAngle: 90, gradientType: t === 'radial' ? 'radial' : undefined }); close(); }} />
+        )))}
+      </div>
+      <MenuHead>패턴</MenuHead>
+      <div className="dlg-row"><label className="rb-check">전경 <input type="color" value={fg} onChange={(e) => setFg(e.target.value)} /></label><label className="rb-check">배경 <input type="color" value={bg} onChange={(e) => setBg(e.target.value)} /></label></div>
+      <div className="pattern-grid">
+        {PATTERNS.map((p) => (
+          <button key={p.id} type="button" className={`pattern-cell ${first?.pattern?.kind === p.id ? 'on' : ''}`} title={p.label} onClick={() => { set({ ...NO_FILL_EXTRAS, pattern: { kind: p.id, fg, bg } }); close(); }}>
+            <svg viewBox="0 0 16 16" width="22" height="22"><defs><pattern id={`pp-${p.id}`} patternUnits="userSpaceOnUse" width="8" height="8"><rect width="8" height="8" fill={bg} /><path d={patternPath(p.id)} fill={fg} /></pattern></defs><rect width="16" height="16" fill={`url(#pp-${p.id})`} /></svg>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -243,6 +301,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
       </Group>
       <Group label="단락" className="rb-para" launcher={t ? () => ed.setDialog('paragraph') : undefined}>
         {t ? <TextFormatPanel part="paragraph" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} shortcuts={false} /> : <span className="rb-disabled-note">텍스트 없음</span>}
+        <ConvertToSmartArt ed={ed} />
       </Group>
       <Group label="그리기">
         <Gallery rows={3} className="rb-shape-strip">
@@ -310,6 +369,28 @@ function PasteButton({ ed, paste }: { ed: Ed; paste: () => void }) {
   );
 }
 
+/** Home › Paragraph › Convert to SmartArt: the selected text box's lines (tab or list level = SmartArt level) as a graphic. */
+function ConvertToSmartArt({ ed }: { ed: Ed }) {
+  const box = ed.selEls.length === 1 && ed.selEls[0].kind === 'text' && ed.selEls[0].text?.trim() ? ed.selEls[0] : null;
+  const convert = (kind?: string) => {
+    if (!box) return;
+    // A line's level is its leading tabs (or pairs of spaces).
+    seedSmartArt({ text: box.text ?? '', box: { x: box.x, y: box.y, w: box.w, h: Math.max(box.h, 300) }, replaceId: box.id, kind });
+    ed.setDialog('smartArt');
+  };
+  const QUICK: [string, string][] = [['list', '세로 글머리 기호 목록'], ['blockList', '기본 블록 목록'], ['process', '기본 프로세스'], ['cycle', '기본 주기형'], ['hierarchy', '계층 구조'], ['venn', '기본 벤형'], ['pyramid', '기본 피라미드형'], ['matrix', '기본 행렬형']];
+  return (
+    <DropButton icon="⧉" title="SmartArt로 변환 — 선택한 텍스트 상자의 줄을 SmartArt 그래픽으로" disabled={!box || !ed.canEdit} render={(close) => (
+      <>
+        <MenuHead>SmartArt로 변환</MenuHead>
+        {QUICK.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { convert(k); close(); }} />)}
+        <MenuSep />
+        <MenuItem label="기타 SmartArt 그래픽…" onClick={() => { convert(); close(); }} />
+      </>
+    )} />
+  );
+}
+
 const SYMBOLS = '©®™°±×÷≠≤≥∞→←↑↓↔⇒★☆♥♡♪♫✓✔✝☩✞☀☁☂☺♠♣♦•·…—–「」『』《》〈〉※§¶€£¥₩'.split('');
 const WORDART = [
   { label: '채우기: 흰색, 그림자', patch: { color: '#ffffff', shadow: true, bold: true } },
@@ -355,7 +436,12 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
       </Group>
       <Group label="이미지">
         <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*'; fileRef.current.click(); } }} />
-        <Big icon="🖼" label="사진 앨범" title="그림 여러 장으로 슬라이드를 만듭니다" disabled={!ed.p} onClick={() => ed.setDialog('photoAlbum')} />
+        <DropButton big icon="🖼" label="사진 앨범" disabled={!ed.p} split onMain={() => ed.setDialog('photoAlbum')} render={(close) => (
+          <>
+            <MenuItem label="새 사진 앨범…" onClick={() => { ed.setDialog('photoAlbum'); close(); }} />
+            <MenuItem label="사진 앨범 편집…" disabled={!ed.p?.slides.some((x) => x.album)} onClick={() => { ed.setDialog('albumEdit'); close(); }} />
+          </>
+        )} />
       </Group>
       <Group label="일러스트레이션">
         <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} />

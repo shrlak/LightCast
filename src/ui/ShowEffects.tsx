@@ -1,9 +1,9 @@
 // Slide-show effects whose frames come from the Rust engine: PowerPoint slide transitions (as
 // layers of the old and new slide) and object animations (per-object state over time).
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Slide, SlideElement } from '../domain/types';
 import { CANVAS_H, CANVAS_W } from '../domain/canvas';
-import { buildStates, type LiveBuild } from '../domain/animations';
+import { buildStates, byParagraph, type LiveBuild } from '../domain/animations';
 import { transitionFrame, type AnimState, type TransitionLayer } from '../engine';
 
 type Pt = [number, number];
@@ -100,13 +100,48 @@ function applyState(node: HTMLElement, el: SlideElement, s: AnimState | undefine
 }
 
 /**
+ * Set around an object built paragraph by paragraph: its text draws each paragraph in its own
+ * element marked `data-para`, so each one can take its own animation state.
+ */
+export const ParagraphBuild = createContext(false);
+
+const pct = (v: number) => `${+(v * 100).toFixed(4)}%`;
+
+/**
+ * The style a paragraph of a by-paragraph build takes from its state (relative to its object, whose
+ * wrapper carries the object's own state): it turns about its own centre, and a reveal clip is cut
+ * in the paragraph's own box. No state: the paragraph is left as the text draws it.
+ */
+export function paragraphStyle(s: AnimState | undefined): { visibility: string; opacity: string; transform: string; clipPath: string } {
+  if (!s) return { visibility: '', opacity: '', transform: '', clipPath: '' };
+  return {
+    visibility: s.visible ? 'visible' : 'hidden',
+    opacity: String(s.opacity),
+    transform: `translate(${s.dx}px, ${s.dy}px) rotate(${s.rotate}deg) scale(${s.sx}, ${s.sy})`,
+    clipPath: s.clip ? `inset(${pct(s.clip[1])} ${pct(1 - s.clip[2])} ${pct(1 - s.clip[3])} ${pct(s.clip[0])})` : '',
+  };
+}
+
+function applyParagraphs(node: HTMLElement, id: string, states: Record<string, AnimState> | undefined) {
+  node.querySelectorAll<HTMLElement>('[data-para]').forEach((p) => {
+    const css = paragraphStyle(states?.[`${id}#${p.dataset.para}`]);
+    p.style.visibility = css.visibility;
+    p.style.opacity = css.opacity;
+    p.style.transform = css.transform;
+    p.style.clipPath = css.clipPath;
+  });
+}
+
+/**
  * A slide's objects with its animations playing: each object sits in a slide-sized wrapper whose
- * opacity, transform and clip follow the engine's timeline for the current click step.
+ * opacity, transform and clip follow the engine's timeline for the current click step; in an object
+ * built by paragraph each paragraph (`data-para`) follows its own state inside it.
  */
 export function AnimatedElements({ slide, elements, build, render }: { slide: Slide; elements: SlideElement[]; build: LiveBuild; render: (el: SlideElement) => ReactNode }) {
   const nodes = useRef(new Map<string, HTMLDivElement>());
   const key = useMemo(() => JSON.stringify([slide.animations, elements.map((e) => [e.id, e.x, e.y, e.w, e.h, e.rotation, e.hidden])]), [slide.animations, elements]);
   const latest = useRef({ slide, elements }); latest.current = { slide, elements };
+  const paraIds = new Set((slide.animations ?? []).filter((a) => byParagraph(a, elements.find((e) => e.id === a.elementId))).map((a) => a.elementId));
   useLayoutEffect(() => {
     let raf = 0;
     const tick = () => {
@@ -114,7 +149,9 @@ export function AnimatedElements({ slide, elements, build, render }: { slide: Sl
       const r = buildStates(slide, elements, build, Date.now());
       for (const el of elements) {
         const node = nodes.current.get(el.id);
-        if (node) applyState(node, el, r?.states[el.id]);
+        if (!node) continue;
+        applyState(node, el, r?.states[el.id]);
+        applyParagraphs(node, el.id, r?.states);
       }
       if (r && !r.settled) raf = requestAnimationFrame(tick);
     };
@@ -125,7 +162,7 @@ export function AnimatedElements({ slide, elements, build, render }: { slide: Sl
     <>
       {elements.map((el) => (
         <div key={el.id} data-anim={el.id} style={{ position: 'absolute', inset: 0 }} ref={(n) => { if (n) nodes.current.set(el.id, n); else nodes.current.delete(el.id); }}>
-          {render(el)}
+          <ParagraphBuild.Provider value={paraIds.has(el.id)}>{render(el)}</ParagraphBuild.Provider>
         </div>
       ))}
     </>

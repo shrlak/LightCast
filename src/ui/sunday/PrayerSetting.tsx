@@ -24,7 +24,7 @@ export function PrayerSetting({ library, dispatch, onClose }: { library: Library
       <div className="modal confession-modal" role="dialog" aria-label="이번 주 기도제목">
         <header className="modal-head">
           <h2>🙏 이번 주 기도제목</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button className="icon-btn" onClick={onClose} aria-label="닫기">✕</button>
         </header>
         <div className="wizard-body stack">
           <p className="hint">여기 적은 기도제목이 주일예배 Front의 “지금은 기도로 예배를 준비하는 시간입니다” 슬라이드에 들어가고, 두 번째 슬라이드의 날짜는 이번 주일({sunday})로 자동으로 바뀝니다. 번호를 붙이면 제목, 그 아래 줄은 세부 내용이 됩니다.</p>

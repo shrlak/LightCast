@@ -1,7 +1,12 @@
 import { isFrontSlide } from '../domain/frontLayout';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, Theme, Timer, Transition } from '../domain/types';
-import { lineRuns } from '../domain/richText';
+import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
+import { lineRuns, slideLineRuns } from '../domain/richText';
+import { morphFrame, smooth } from '../domain/morph';
+import { DEFAULT_TAB, decimalAt, layoutTabLine, splitRunsAtTabs } from '../domain/tabStops';
+import { PLACEHOLDER_PROMPT } from '../domain/master';
+import { warpGuides } from '../engine';
+import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
 import { INDENT_PX, listMarkers } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
@@ -10,10 +15,10 @@ import { formatClock, timerValue } from '../domain/timers';
 import { isDecoded, preloadImage, useMediaUrl, useNow, useReadyImage, useWidth } from './hooks';
 import { mediaUrl, peekMediaUrl } from '../domain/media';
 import { MotionLayer } from './MotionLayer';
-import { AnimatedElements, FxTransition } from './ShowEffects';
+import { AnimatedElements, FxTransition, ParagraphBuild } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
 import { shapeGeometry } from '../engine';
-import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform } from './EngineElements';
+import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform, useEngineEpoch } from './EngineElements';
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
@@ -188,7 +193,7 @@ function ListLine({ marker, highlight, children }: { marker: string | null; high
 }
 
 /** Lines wrapped in **…** render bold (prayer topic titles); bullets / numbering and highlight as the slide sets. */
-function Lines({ text, list, highlight }: { text: string; list?: ListStyle; highlight?: string }) {
+function Lines({ text, list, highlight, runs }: { text: string; list?: ListStyle; highlight?: string; runs?: (TextRun[] | null)[] }) {
   const lines = stripChords(text).split('\n');
   const markers = listMarkers(lines, list);
   return (
@@ -196,7 +201,9 @@ function Lines({ text, list, highlight }: { text: string; list?: ListStyle; high
       {lines.map((line, i) => {
         const bold = /^\*\*(.+)\*\*$/.exec(line);
         const content = bold ? bold[1] : line;
-        const body = TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
+        // Runs only stand for a line they still spell once chords are taken out.
+        const own = runs?.[i] && runs[i]!.map((r) => r.text).join('') === line ? runs[i] : null;
+        const body = own ? own.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
         return <div key={i}><ListLine marker={markers[i]} highlight={line.trim() ? highlight : undefined}>{bold ? <strong style={{ fontWeight: 800 }}>{body}</strong> : body}</ListLine></div>;
       })}
     </>
@@ -276,6 +283,15 @@ export function ElementView({ el }: { el: SlideElement }) {
   };
   const show = useContext(ShowContext);
   if (el.hidden) return null;
+  // An empty layout placeholder: its prompt while editing, nothing in the slide show.
+  if (el.placeholder && (el.placeholder === 'picture' || !el.text)) {
+    if (show) return null;
+    return (
+      <div className={`placeholder-prompt ${el.placeholder}`} style={{ ...box, fontSize: el.placeholder === 'title' ? Math.min(el.fontSize ?? 64, 64) : Math.min(el.fontSize ?? 48, 44), textAlign: el.align ?? 'left', justifyContent: el.placeholder === 'picture' || el.align === 'center' ? 'center' : 'flex-start', alignItems: el.vAlign === 'top' ? 'flex-start' : 'center' }}>
+        <span>{el.placeholder === 'picture' ? '🖼 ' : ''}{PLACEHOLDER_PROMPT[el.placeholder]}</span>
+      </div>
+    );
+  }
   // While a picture is still loading nothing is drawn (a placeholder box would flash); the slide waits for it, see useReadySlide.
   if (el.kind === 'image') {
     if (!url) return null;
@@ -312,49 +328,103 @@ export function ElementView({ el }: { el: SlideElement }) {
 export { runStyle } from './runStyle';
 import { runStyle } from './runStyle';
 
-/** The path a warped (Transform) text follows, in its box. */
-export function warpPath(kind: NonNullable<SlideElement['warp']>, w: number, h: number): string {
-  switch (kind) {
-    case 'archUp': return `M 0 ${h * 0.85} Q ${w / 2} ${-h * 0.55} ${w} ${h * 0.85}`;
-    case 'archDown': return `M 0 ${h * 0.25} Q ${w / 2} ${h * 1.6} ${w} ${h * 0.25}`;
-    case 'wave': return `M 0 ${h * 0.6} C ${w / 4} ${h * 0.05} ${w / 4} ${h * 1.1} ${w / 2} ${h * 0.6} S ${w * 0.75} ${h * 0.05} ${w} ${h * 0.6}`;
-    case 'slantUp': return `M 0 ${h * 0.9} L ${w} ${h * 0.3}`;
-    default: return `M 0 ${h * 0.3} L ${w} ${h * 0.9}`;
-  }
+/** Home › Paragraph › Tabs: a line whose tabs go to the box's tab stops (domain/tabStops). */
+function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; size: number }) {
+  const segs = splitRunsAtTabs(runs);
+  const font = (r?: TextRun) => `${(r?.italic ?? el.italic) ? 'italic ' : ''}${(r?.bold ?? el.bold) ? 800 : 500} ${r?.fontSize ?? size}px ${el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif'}`;
+  const measured = segs.map((seg) => {
+    const ws = seg.map((r) => glyphWidths([...r.text], font(r)).reduce((a, b) => a + b, 0));
+    const text = seg.map((r) => r.text).join('');
+    const dot = decimalAt(text);
+    let dec = 0, n = 0;
+    seg.forEach((r, k) => { const take = Math.max(0, Math.min(r.text.length, dot - n)); dec += take === r.text.length ? ws[k] : glyphWidths([...r.text.slice(0, take)], font(r)).reduce((a, b) => a + b, 0); n += r.text.length; });
+    return { w: ws.reduce((a, b) => a + b, 0), dec };
+  });
+  const { gaps } = layoutTabLine(0, measured, el.tabStops ?? [], el.defaultTab ?? DEFAULT_TAB);
+  return <>{segs.map((seg, i) => (
+    <span key={i}>
+      {i > 0 && <span style={{ display: 'inline-block', width: gaps[i - 1] }} />}
+      {seg.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>)}
+    </span>
+  ))}</>;
 }
 
+let measureCtx: CanvasRenderingContext2D | null = null;
+/** Advance widths of a line's characters in a font (canvas text metrics). */
+function glyphWidths(chars: string[], font: string): number[] {
+  measureCtx ??= typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+  if (!measureCtx) return chars.map(() => 1);
+  measureCtx.font = font;
+  return chars.map((c) => measureCtx!.measureText(c).width);
+}
+
+/** WordArt › Transform: the text laid on DeckCraft's warp guides (see domain/textWarp). */
 function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
+  useEngineEpoch();
   const id = `warp-${el.id}`;
-  const text = (el.text ?? '').replace(/\n/g, ' ');
+  const bands = warpGuides(warpPreset(el.warp!), el.w, el.h);
+  const size = el.fontSize ?? 64;
+  const family = el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif';
+  const weight = el.bold ? 800 : 500;
+  const font = `${el.italic ? 'italic ' : ''}${weight} ${size}px ${family}`;
+  const lines = (el.text ?? '').split('\n').filter((l, _i, all) => l.length || all.length === 1);
+  const paint = {
+    fill: el.color ?? '#fff', stroke: el.textOutline?.color, strokeWidth: el.textOutline?.width, paintOrder: 'stroke' as const,
+    opacity: el.textTransparency ? 1 - el.textTransparency : undefined, fontFamily: family, fontWeight: weight, fontStyle: el.italic ? 'italic' : undefined,
+  };
+  const content: ReactNode[] = [];
+  (bands ?? []).forEach((band, bi) => {
+    const mine = lines.map((l, i) => ({ l, i })).filter(({ i }) => bandOfLine(i, lines.length, (bands ?? []).length) === bi);
+    if (!mine.length) return;
+    if (band.kind === 'fill') {
+      const glyphs = fillGlyphs(band, mine.map(({ l }) => { const chars = [...l]; return { chars, widths: glyphWidths(chars, font) }; }), size);
+      glyphs.forEach((g, k) => content.push(<text key={`${bi}-${k}`} transform={`matrix(${g.matrix.join(' ')})`} y={size * 0.8} fontSize={size} {...paint}>{g.ch}</text>));
+    } else {
+      const pid = `${id}-${bi}`;
+      const len = band.path.reduce((acc, p, i, all) => acc + (i ? Math.hypot(p[0] - all[i - 1][0], p[1] - all[i - 1][1]) : 0), 0);
+      content.push(<path key={pid} id={pid} d={polyD(band.path, band.closed)} fill="none" />);
+      mine.forEach(({ l }, j) => {
+        const w = glyphWidths([...l], font).reduce((a, b) => a + b, 0);
+        const k = w > len && w > 0 ? len / w : 1;
+        // Lines stack away from the guide: earlier lines outwards for arch up and circle, later ones for arch down.
+        const off = band.anchor === 'first' ? j : band.anchor === 'last' ? j - (mine.length - 1) : j - (mine.length - 1) / 2;
+        content.push(
+          <text key={`${pid}-${j}`} fontSize={size * k} dy={off * size * 1.1 * k} textAnchor="middle" {...paint}>
+            <textPath href={`#${pid}`} startOffset="50%">{l}</textPath>
+          </text>,
+        );
+      });
+    }
+  });
   return (
-    <svg style={{ ...box, left: el.x, top: el.y, width: el.w, height: el.h, overflow: 'visible', ...elementTextStyle(el) }} viewBox={`0 0 ${el.w} ${el.h}`}>
-      <path id={id} d={warpPath(el.warp!, el.w, el.h)} fill="none" />
-      <text fill={el.color ?? '#fff'} fontSize={el.fontSize ?? 64} fontFamily={el.fontFamily} fontWeight={el.bold ? 800 : 500} fontStyle={el.italic ? 'italic' : undefined} textAnchor="middle"
-        stroke={el.textOutline?.color} strokeWidth={el.textOutline?.width} paintOrder="stroke" opacity={el.textTransparency ? 1 - el.textTransparency : undefined}
-        style={{ filter: el.shadow ? 'drop-shadow(0 3px 6px rgba(0,0,0,.8))' : undefined }}>
-        <textPath href={`#${id}`} startOffset="50%">{text}</textPath>
-      </text>
+    <svg style={{ ...box, left: el.x, top: el.y, width: el.w, height: el.h, overflow: 'visible', ...elementTextStyle(el) }} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`}
+      aria-label={el.text} filter={el.shadow ? undefined : undefined}>
+      <g style={{ filter: el.shadow ? 'drop-shadow(0 3px 6px rgba(0,0,0,.8))' : undefined }}>{content}</g>
     </svg>
   );
 }
 
 function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
+  // Built by paragraph (Effect Options › 단락별로): every line its own element, so it can animate alone.
+  const byPara = useContext(ParagraphBuild);
   if (el.warp && el.text) return <WarpText el={el} box={box} />;
   const base = el.fontSize ?? 64;
   const lines = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
   const markers = listMarkers(lines, el.list);
   const runs = lineRuns(el);
-  const styled = !!(el.list || el.highlight || runs.some(Boolean));
+  const tabbed = !!el.tabStops?.length && lines.some((l) => l.includes('\t'));
+  const styled = !!(el.list || el.highlight || runs.some(Boolean) || tabbed) || byPara;
   const lineBody = (text: string, i: number) => (
     <ListLine marker={markers[i]} highlight={text.trim() ? el.highlight : undefined}>
-      {runs[i] ? runs[i]!.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(text) ? <DynamicText text={text} /> : text}
+      {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
+        : runs[i] ? runs[i]!.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(text) ? <DynamicText text={text} /> : text}
     </ListLine>
   );
   return (
     <div data-text-element={el.id} style={{
       ...box, left: el.x, top: el.y, width: el.w, height: el.h, ...elementTextStyle(el), display: 'flex', flexDirection: 'column', whiteSpace: 'pre-wrap',
       justifyContent: V_ALIGN[el.vAlign ?? 'middle'], textAlign: el.align ?? 'center',
-      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff',
+      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff', tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
       fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500, fontStyle: el.italic ? 'italic' : undefined, lineHeight: el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25),
       textDecoration: decoration(el), letterSpacing: el.letterSpacing ? el.letterSpacing : undefined,
       paddingLeft: el.indent ? el.indent * INDENT_PX : undefined, ...columnsAndDirection(el),
@@ -367,14 +437,14 @@ function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
     }} className={el.spaceBefore || el.spaceAfter ? 'para-spaced' : undefined}>
       {el.paragraphs
         ? el.paragraphs.map((p, i) => (
-            <div key={i} style={{
+            <div key={i} data-para={i} style={{
               fontSize: (p.fontSize ?? base), fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
               color: p.color, textAlign: p.align, minHeight: '1.2em', flexShrink: 0,
             }}>
               {lineBody(p.text, i)}
             </div>
           ))
-        : styled ? lines.map((l, i) => <div key={i}>{l ? lineBody(l, i) : '\u00a0'}</div>)
+        : styled ? lines.map((l, i) => <div key={i} data-para={i}>{l ? lineBody(l, i) : '\u00a0'}</div>)
           : el.text && TOKEN.test(el.text) ? <DynamicText text={el.text} /> : el.text}
     </div>
   );
@@ -408,7 +478,7 @@ function SlideBody({ slide, theme: base, build }: { slide: Slide; theme: Theme; 
       >
         <div ref={inner} data-slide-text-box data-fitted-font-size={resolved.fontSize} data-preferred-font-size={originalTheme.fontSize} style={{ ...textStyle(t), width: frame.w, flexShrink: 0, whiteSpace: noWrap ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere', paddingLeft: theme.indent ? theme.indent * INDENT_PX : undefined }}>
           {slide.title && <div className="slide-title" style={{ fontSize: t.fontSize * 0.72, marginBottom: t.fontSize * 0.35 }}>{slide.title}</div>}
-          {slide.text && <Lines text={slide.text} list={theme.list} highlight={theme.highlight} />}
+          {slide.text && <Lines text={slide.text} list={theme.list} highlight={theme.highlight} runs={slide.textRuns ? slideLineRuns(slide) : undefined} />}
           {slide.subtext && (
             <div style={{ fontSize: t.fontSize * (theme.subScale ?? 0.62), color: theme.subColor ?? theme.color, marginTop: t.fontSize * 0.35, fontWeight: Math.min(theme.fontWeight, 500) }}>
               <Lines text={slide.subtext} />
@@ -473,6 +543,39 @@ function useReadyFrame(slide: Slide | null, background: Background | null, theme
 
 const sameSlide = (a: Slide, b: Slide) => a === b || (a.id === b.id && JSON.stringify(a) === JSON.stringify(b));
 
+/** Transitions › Morph: paired objects travel from the old slide to the new one (domain/morph). */
+function MorphTransition({ from, to, duration, onDone }: { from: { slide: Slide; theme: Theme }; to: { slide: Slide; theme: Theme }; duration: number; onDone: () => void }) {
+  const [t, setT] = useState(0);
+  const done = useRef(onDone); done.current = onDone;
+  useEffect(() => {
+    const start = performance.now();
+    let raf = 0;
+    const tick = () => {
+      const p = Math.min(1, (performance.now() - start) / Math.max(1, duration));
+      setT(p);
+      if (p < 1) raf = requestAnimationFrame(tick);
+      else done.current();
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [duration]);
+  const f = morphFrame(from.slide.elements ?? [], to.slide.elements ?? [], t);
+  const e = smooth(t);
+  // The slides' own text cross-fades unless it stays the same.
+  const sameText = from.slide.text === to.slide.text && from.slide.title === to.slide.title && from.slide.subtext === to.slide.subtext;
+  const oldText = useMemo(() => <SlideBody slide={{ ...from.slide, elements: undefined }} theme={from.theme} />, [from]);
+  const newText = useMemo(() => <SlideBody slide={{ ...to.slide, elements: undefined }} theme={to.theme} />, [to]);
+  return (
+    <>
+      {!sameText && <div className="layer" style={{ opacity: 1 - e }}>{oldText}</div>}
+      <div className="layer" style={{ opacity: sameText ? 1 : e }}>{newText}</div>
+      <div className="layer">
+        {[...f.oldOnly, ...f.fadingOut, ...f.moving, ...f.fadingIn, ...f.newOnly].map((el) => <ElementView key={el.id} el={el} />)}
+      </div>
+    </>
+  );
+}
+
 /** Keeps the outgoing slide on screen while the new one transitions in. */
 function TransitionLayer({ slide, theme, transition, animate, build }: { slide: Slide | null; theme: Theme; transition?: Transition; animate: boolean; build?: LiveBuild | null }) {
   const [prev, setPrev] = useState<{ slide: Slide; theme: Theme } | null>(null);
@@ -495,6 +598,9 @@ function TransitionLayer({ slide, theme, transition, animate, build }: { slide: 
   // re-place them without drawing them again.
   const oldBody = useMemo(() => (prev ? <SlideBody slide={prev.slide} theme={prev.theme} /> : null), [prev]);
   const newBody = useMemo(() => (slide ? <SlideBody slide={slide} theme={theme} build={build} /> : null), [slide, theme, build]);
+  if (fx === 'morph' && prev && slide) {
+    return <MorphTransition key={`morph-${prev.slide.id}-${slide.id}`} from={prev} to={{ slide, theme }} duration={duration} onDone={() => setPrev(null)} />;
+  }
   if (fx && prev && slide) {
     return <FxTransition key={`fx-${prev.slide.id}-${slide.id}`} kind={fx} option={transition?.option ?? ''} duration={duration} oldBody={oldBody} newBody={newBody} onDone={() => setPrev(null)} />;
   }

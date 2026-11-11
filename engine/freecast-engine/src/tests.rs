@@ -129,6 +129,46 @@ fn animations_build_click_steps() {
 }
 
 #[test]
+fn a_by_paragraph_build_takes_a_click_per_paragraph() {
+    // Three top paragraphs, the second with a deeper one under it and a blank line after.
+    let paras = json!([
+        {"level": 0, "filled": true}, {"level": 0, "filled": true}, {"level": 1, "filled": true},
+        {"level": 0, "filled": false}, {"level": 0, "filled": true}
+    ]);
+    let spec = |start: &str| json!({
+        "anims": [{"elementId": "t", "effect": "fade", "class": "entrance", "start": start, "durationMs": 500, "sequence": "paragraph"}],
+        "boxes": [{"id": "t", "x": 100, "y": 100, "w": 400, "h": 400, "paras": paras}],
+        "slideW": 1440, "slideH": 1080
+    });
+    let mut req = spec("click");
+    req["op"] = json!("anim.prepare");
+    let p = ok(req);
+    assert_eq!(p["steps"], 3, "one click per top paragraph");
+    let fx = p["effects"].as_array().unwrap();
+    assert_eq!(fx.iter().map(|e| e["paragraph"].as_u64().unwrap()).collect::<Vec<_>>(), vec![0, 1, 4]);
+    assert_eq!(fx.iter().map(|e| e["step"].as_u64().unwrap()).collect::<Vec<_>>(), vec![0, 1, 2]);
+    let key = p["key"].as_str().unwrap().to_string();
+    let at = |step: usize| ok(json!({"op": "anim.sample", "key": key, "step": step, "t": 0.0}));
+    let s1 = at(1);
+    assert_eq!(s1["t"]["visible"], true, "the box itself stays put");
+    assert_eq!(s1["t#0"]["visible"], true);
+    assert_eq!(s1["t#1"]["visible"], false);
+    assert_eq!(s1["t#2"]["visible"], false, "a deeper paragraph follows its parent");
+    assert_eq!(s1["t#3"]["visible"], false);
+    let s2 = at(2);
+    assert_eq!(s2["t#2"]["visible"], true);
+    assert_eq!(s2["t#4"]["visible"], false);
+    assert_eq!(at(3)["t#4"]["visible"], true);
+    // After Previous: one step, the paragraphs one after another.
+    let mut req = spec("after");
+    req["op"] = json!("anim.prepare");
+    let p = ok(req);
+    assert_eq!(p["steps"], 1);
+    let starts: Vec<f64> = p["effects"].as_array().unwrap().iter().map(|e| e["start"].as_f64().unwrap()).collect();
+    assert!(starts[0] < starts[1] && starts[1] < starts[2], "{starts:?}");
+}
+
+#[test]
 fn transitions_give_frames() {
     let cat = ok(json!({"op": "transition.catalog"}));
     assert!(cat.as_array().unwrap().len() >= 45);
@@ -297,4 +337,27 @@ fn thesaurus_and_picture_catalogs() {
     let p = ok(json!({"op": "picture.catalog"}));
     assert_eq!(p["artistic"].as_array().unwrap().len(), 7);
     assert!(p["recolor"].as_array().unwrap().len() >= 19);
+}
+
+#[test]
+fn text_warp_guides_and_smooth_corners() {
+    let cat = ok(json!({"op": "text.warpCatalog"}));
+    assert_eq!(cat.as_array().unwrap().len(), 40);
+    let arch = ok(json!({"op": "text.warpGuides", "preset": "textArchUp", "w": 400.0, "h": 200.0}));
+    assert_eq!(arch["bands"][0]["kind"], "follow");
+    let inflate = ok(json!({"op": "text.warpGuides", "preset": "textInflate", "w": 400.0, "h": 200.0}));
+    let top = inflate["bands"][0]["top"].as_array().unwrap();
+    // Inflate: the top guide bulges up in the middle.
+    let mid = top[top.len() / 2][1].as_f64().unwrap();
+    let end = top[0][1].as_f64().unwrap();
+    assert!(mid < end, "{mid} {end}");
+    let sq = ok(json!({"op": "shape.smoothCorners", "w": 200.0, "h": 100.0, "smoothing": 0.6}));
+    assert!(sq["path"].as_str().unwrap().contains('C'));
+}
+
+#[test]
+fn a_custom_scheme_from_a_theme_file_is_used() {
+    let s = crate::color::scheme_named(Some("custom:Church|#000000,#ffffff,#1f2a44,#e7e6e6,#c00000,#ed7d31,#a5a5a5,#ffc000,#5b9bd5,#70ad47,#0563c1,#954f72"));
+    assert_eq!(s.name, "Church");
+    assert_eq!(crate::color::hex(s.colors[4]).to_lowercase(), "#c00000");
 }

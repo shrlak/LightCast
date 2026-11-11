@@ -1,7 +1,7 @@
 // The dialog boxes behind Insert (Header & Footer, SmartArt, Photo Album, Action, Zoom, Audio
 // playback), Home › New Slide (Reuse Slides, Slides from Outline), Slide Show (Set Up Slide Show,
 // Custom Shows), View (Guides) and Review (Thesaurus).
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ElementAction, MediaPlayback, Presentation, Slide, SlideElement } from '../../domain/types';
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
@@ -10,11 +10,13 @@ import { uid } from '../../domain/lyrics';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { sections } from '../../domain/sections';
 import { withMaster } from '../../domain/master';
+import { albumSlides, readAlbum, replaceAlbum, type AlbumPicture } from '../../domain/photoAlbum';
 import { nodesFromText, smartArtElements, smartArtOwner, relayoutSmartArt, textFromNodes, type SmartArtSpec } from '../../domain/smartArt';
 import { smartArtCatalog, thesaurus } from '../../engine';
 import { SlideCanvas } from '../SlideCanvas';
 import { activeTextEditor } from '../RichTextEditor';
 import { Check, Dialog, Field, Num } from './dialogs';
+import { SMARTART_CATEGORIES, SMARTART_LAYOUT, SMARTART_STYLE, smartArtColorLabel } from './ko';
 import type { DialogKind, Ed } from './editor';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
@@ -170,15 +172,21 @@ function CustomShowsDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
 
 // ── Insert › SmartArt (and SmartArt Design › Text Pane / Change Layout) ─────────────────────
 const SAMPLE = '첫째 항목\n\t세부 내용\n둘째 항목\n\t세부 내용\n셋째 항목';
+/** Home › Paragraph › Convert to SmartArt: the text box whose lines become the graphic. */
+let smartArtSeed: { text: string; box: { x: number; y: number; w: number; h: number }; replaceId: string; kind?: string } | null = null;
+export const seedSmartArt = (seed: typeof smartArtSeed) => { smartArtSeed = seed; };
 function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const cat = smartArtCatalog();
-  const owner = smartArtOwner(ed.elements, ed.selEls);
+  // Read the seed once; it is forgotten when the dialog closes (the next SmartArt starts fresh).
+  const [seed] = useState(() => smartArtSeed);
+  useEffect(() => () => { smartArtSeed = null; }, []);
+  const owner = seed ? undefined : smartArtOwner(ed.elements, ed.selEls);
   const spec0 = owner?.smartArt;
-  const [kind, setKind] = useState(spec0?.kind ?? cat?.layouts[0]?.id ?? 'list');
+  const [kind, setKind] = useState(spec0?.kind ?? seed?.kind ?? cat?.layouts[0]?.id ?? 'list');
   const [style, setStyle] = useState(spec0?.style ?? 'flat');
   const [colors, setColors] = useState(spec0?.colors ?? 'colorful');
-  const [text, setText] = useState(spec0 ? textFromNodes(spec0.nodes) : SAMPLE);
-  const box = spec0?.box ?? { x: 220, y: 190, w: 1000, h: 700 };
+  const [text, setText] = useState(spec0 ? textFromNodes(spec0.nodes) : seed?.text ?? SAMPLE);
+  const box = spec0?.box ?? seed?.box ?? { x: 220, y: 190, w: 1000, h: 700 };
   const spec: SmartArtSpec = useMemo(() => ({ kind, style, colors, nodes: nodesFromText(text), box }), [kind, style, colors, text, box]);
   const preview = useMemo(() => smartArtElements(spec, ed.p?.colorScheme), [spec, ed.p?.colorScheme]);
   if (!cat) return <Dialog title="SmartArt 그래픽 선택" onClose={onClose}><p>엔진을 불러오지 못했습니다.</p></Dialog>;
@@ -187,7 +195,7 @@ function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
       const r = relayoutSmartArt(ed.elements, owner.id, spec, ed.p?.colorScheme);
       if (r) { ed.setElements(() => r.elements); ed.setSel(r.ids); }
     } else if (preview) {
-      ed.setElements((els) => [...els, ...preview]);
+      ed.setElements((els) => [...els.filter((e) => e.id !== seed?.replaceId), ...preview]);
       ed.setSel([preview[0].id]);
     }
     onClose();
@@ -195,7 +203,17 @@ function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   return (
     <Dialog title={owner ? 'SmartArt 편집' : 'SmartArt 그래픽 선택'} onClose={onClose} onOk={ok} okLabel={owner ? '적용' : '삽입'} okDisabled={!preview?.length || !ed.canEdit} wide>
       <div className="smartart-dlg">
-        <div className="dlg-list smartart-layouts">{cat.layouts.map((l) => <button key={l.id} type="button" className={kind === l.id ? 'on' : ''} onClick={() => setKind(l.id)}>{l.label}</button>)}</div>
+        <div className="dlg-list smartart-layouts">
+          {SMARTART_CATEGORIES.map((c) => {
+            const items = cat.layouts.filter((l) => (SMARTART_LAYOUT[l.id]?.[1] ?? '목록형') === c);
+            return items.length ? (
+              <div key={c} className="smartart-cat">
+                <div className="smartart-cat-head">{c}</div>
+                {items.map((l) => <button key={l.id} type="button" className={kind === l.id ? 'on' : ''} title={l.label} onClick={() => setKind(l.id)}>{SMARTART_LAYOUT[l.id]?.[0] ?? l.label}</button>)}
+              </div>
+            ) : null;
+          })}
+        </div>
         <div className="smartart-side">
           <div className="smartart-preview">{preview && ed.theme && <SlideCanvas slide={{ id: '__sa', group: '', text: '', elements: preview }} theme={ed.theme} background={ed.slide && ed.p ? resolveBackground(ed.slide, ed.p) : null} />}</div>
           <Field label="텍스트 창 (Tab 키 = 한 수준 아래)">
@@ -209,8 +227,8 @@ function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             }} />
           </Field>
           <div className="dlg-cols">
-            <Field label="SmartArt 스타일"><select value={style} onChange={(e) => setStyle(e.target.value)}>{cat.styles.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></Field>
-            <Field label="색 변경"><select value={colors} onChange={(e) => setColors(e.target.value)}>{cat.colors.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></Field>
+            <Field label="SmartArt 스타일"><select value={style} onChange={(e) => setStyle(e.target.value)}>{cat.styles.map((s) => <option key={s.id} value={s.id}>{SMARTART_STYLE[s.id] ?? s.label}</option>)}</select></Field>
+            <Field label="색 변경"><select value={colors} onChange={(e) => setColors(e.target.value)}>{cat.colors.map((s) => <option key={s.id} value={s.id}>{smartArtColorLabel(s.id, s.label)}</option>)}</select></Field>
           </div>
         </div>
       </div>
@@ -219,49 +237,60 @@ function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
 }
 
 // ── Insert › Photo Album ──────────────────────────────────────────────────────────────────────
-function PhotoAlbumDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
-  const [files, setFiles] = useState<File[]>([]);
-  const [per, setPer] = useState<1 | 2 | 4>(1);
-  const [titles, setTitles] = useState(false);
-  const [captions, setCaptions] = useState(false);
-  const [frame, setFrame] = useState<string>('');
+function PhotoAlbumDialog({ ed, onClose, edit }: { ed: Ed; onClose: () => void; edit?: boolean }) {
+  // Edit Photo Album: the album of the current slide (or the presentation's first album).
+  const albumId = edit ? (ed.slide?.album?.id ?? ed.p?.slides.find((x) => x.album)?.album?.id) : undefined;
+  const existing = albumId && ed.p ? readAlbum(ed.p.slides, albumId) : null;
+  const [pics, setPics] = useState<AlbumPicture[]>(existing?.pictures ?? []);
+  const [per, setPer] = useState<1 | 2 | 4>(existing?.options.per ?? 1);
+  const [titles, setTitles] = useState(existing?.options.titles ?? false);
+  const [captions, setCaptions] = useState(existing?.options.captions ?? false);
+  const [frame, setFrame] = useState<string>(existing?.options.frame ?? '');
+  const [at, setAt] = useState<number | null>(null);
   const input = useRef<HTMLInputElement>(null);
-  const make = async () => {
-    if (!files.length) return;
-    const group = ed.slide?.group ?? '사진 앨범';
-    const slides: Slide[] = [];
-    const top = titles ? 170 : 60, bottom = 60;
-    const cells = per === 1 ? [[0, 0, 1, 1]] : per === 2 ? [[0, 0, 0.5, 1], [0.5, 0, 0.5, 1]] : [[0, 0, 0.5, 0.5], [0.5, 0, 0.5, 0.5], [0, 0.5, 0.5, 0.5], [0.5, 0.5, 0.5, 0.5]];
-    const W = CANVAS_W - 120, H = CANVAS_H - top - bottom;
-    for (let i = 0; i < files.length; i += per) {
-      const els: SlideElement[] = [];
-      for (const [k, f] of files.slice(i, i + per).entries()) {
-        const id = uid('m');
-        await putMedia(id, f);
-        ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image' } });
-        const [cx, cy, cw, ch] = cells[k];
-        const pad = 20, capH = captions ? 60 : 0;
-        const box = { x: 60 + cx * W + pad, y: top + cy * H + pad, w: cw * W - pad * 2, h: ch * H - pad * 2 - capH };
-        els.push({ id: uid('el'), kind: 'image', mediaId: id, fit: 'contain', ...box, name: f.name, alt: f.name.replace(/\.[^.]+$/, ''), ...(frame ? { pictureStyle: frame } : {}) });
-        if (captions) els.push({ id: uid('el'), kind: 'text', text: f.name.replace(/\.[^.]+$/, ''), x: box.x, y: box.y + box.h + 6, w: box.w, h: 50, fontSize: 28, color: '#ffffff', align: 'center' });
-      }
-      if (titles) els.unshift({ id: uid('el'), kind: 'text', text: '앨범 제목', x: 60, y: 40, w: CANVAS_W - 120, h: 110, fontSize: 64, bold: true, color: '#ffffff', align: 'center' });
-      slides.push({ id: uid('s'), group, text: '', elements: els, background: { kind: 'color', value: '#000000' } });
+  if (edit && !existing) return <Dialog title="사진 앨범 편집" onClose={onClose}><p>이 프레젠테이션에 사진 앨범이 없습니다. 삽입 › 사진 앨범으로 먼저 만드세요.</p></Dialog>;
+  const addFiles = async (files: File[]) => {
+    const added: AlbumPicture[] = [];
+    for (const f of files) {
+      const id = uid('m');
+      await putMedia(id, f);
+      ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image' } });
+      added.push({ mediaId: id, name: f.name });
     }
-    insertSlides(ed, slides);
+    setPics((cur) => [...cur, ...added]);
+  };
+  const move = (d: -1 | 1) => {
+    if (at == null) return;
+    const j = at + d;
+    if (j < 0 || j >= pics.length) return;
+    const next = [...pics];
+    [next[at], next[j]] = [next[j], next[at]];
+    setPics(next);
+    setAt(j);
+  };
+  const ok = () => {
+    if (!pics.length || !ed.p) return;
+    const o = { per, frame, titles, captions };
+    if (existing && albumId) ed.updatePres({ slides: replaceAlbum(ed.p.slides, albumId, pics, o) });
+    else insertSlides(ed, albumSlides(pics, o, ed.slide?.group ?? '사진 앨범'));
     onClose();
   };
   return (
-    <Dialog title="사진 앨범" onClose={onClose} onOk={() => void make()} okLabel="만들기" okDisabled={!files.length || !ed.canEdit} wide>
-      <div className="dlg-row"><button type="button" onClick={() => input.current?.click()}>파일/디스크…</button><span>{files.length ? `그림 ${files.length}개` : '앨범에 넣을 그림을 고르세요'}</span></div>
-      <div className="dlg-list">{files.map((f, i) => <button key={i} type="button" onClick={() => setFiles(files.filter((_, j) => j !== i))} title="클릭하면 뺍니다">{i + 1}. {f.name} ✕</button>)}</div>
+    <Dialog title={existing ? '사진 앨범 편집' : '사진 앨범'} onClose={onClose} onOk={ok} okLabel={existing ? '업데이트' : '만들기'} okDisabled={!pics.length || !ed.canEdit} wide>
+      <div className="dlg-row"><button type="button" onClick={() => input.current?.click()}>파일/디스크…</button><span>{pics.length ? `그림 ${pics.length}개` : '앨범에 넣을 그림을 고르세요'}</span></div>
+      <div className="dlg-list">{pics.map((f, i) => <button key={`${f.mediaId}-${i}`} type="button" className={at === i ? 'on' : ''} onClick={() => setAt(i)}>{i + 1}. {f.name}</button>)}</div>
+      <div className="dlg-row">
+        <button type="button" disabled={at == null || at === 0} onClick={() => move(-1)}>▲</button>
+        <button type="button" disabled={at == null || at === pics.length - 1} onClick={() => move(1)}>▼</button>
+        <button type="button" disabled={at == null} onClick={() => { if (at == null) return; setPics(pics.filter((_, j) => j !== at)); setAt(null); }}>제거</button>
+      </div>
       <div className="dlg-grid3">
         <Field label="그림 레이아웃"><select value={per} onChange={(e) => setPer(Number(e.target.value) as 1 | 2 | 4)}><option value={1}>그림 1개</option><option value={2}>그림 2개</option><option value={4}>그림 4개</option></select></Field>
         <Field label="프레임 모양"><select value={frame} onChange={(e) => setFrame(e.target.value)}><option value="">사각형</option><option value="rounded">둥근 사각형</option><option value="simpleFrame">단순형 프레임, 흰색</option><option value="softEdge">부드러운 가장자리 사각형</option><option value="shadowRect">그림자 사각형</option></select></Field>
       </div>
       <Check label="제목 포함" checked={titles} onChange={setTitles} />
       <Check label="모든 그림 아래에 캡션 넣기" checked={captions} onChange={setCaptions} />
-      <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => { setFiles([...files, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }} />
+      <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
     </Dialog>
   );
 }
@@ -479,6 +508,7 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'customShows': return <CustomShowsDialog ed={ed} onClose={onClose} />;
     case 'smartArt': return <SmartArtDialog ed={ed} onClose={onClose} />;
     case 'photoAlbum': return <PhotoAlbumDialog ed={ed} onClose={onClose} />;
+    case 'albumEdit': return <PhotoAlbumDialog ed={ed} onClose={onClose} edit />;
     case 'action': return <ActionDialog ed={ed} onClose={onClose} />;
     case 'reuse': return <ReuseDialog ed={ed} onClose={onClose} />;
     case 'outline': return <OutlineDialog ed={ed} onClose={onClose} />;

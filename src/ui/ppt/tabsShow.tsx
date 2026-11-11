@@ -7,11 +7,12 @@ import { SlideCanvas, assetUrl } from '../SlideCanvas';
 import { useMediaUrl } from '../hooks';
 import { animationCatalog, colorSchemes, transitionCatalog, type AnimEffectInfo } from '../../engine';
 import { moveAnimation, setAnimation, addAnimation } from '../../domain/editOps';
-import { slideTimeline } from '../../domain/animations';
+import { canBuildByParagraph, slideTimeline } from '../../domain/animations';
 import type { Ed } from './editor';
 import { useRef } from 'react';
 import { withMaster } from '../../domain/master';
 import { FONT_OPTIONS } from '../../domain/fonts';
+import { customSchemeName, readThemeFile } from '../../domain/io/themeFile';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { Big, Col, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
@@ -28,7 +29,29 @@ export function DesignTab({ ed }: { ed: Ed }) {
   const lib = state.library;
   const sample = { id: 'sample', group: '', text: '가나다\nAaBb' };
   const applyBackground = (bg: Background | undefined) => p && ed.updatePres({ background: bg });
-  const schemes = colorSchemes();
+  // A scheme brought in by Browse for Themes is listed first (the engine reads its colours from its name).
+  const schemes = [...colorSchemes()];
+  const custom = p?.colorScheme?.startsWith('custom:') ? p.colorScheme : null;
+  if (custom) schemes.unshift({ name: custom, colors: custom.split('|')[1]?.split(',') ?? [] });
+  const schemeLabel = (n: string) => (n.startsWith('custom:') ? n.slice(7).split('|')[0] : n);
+  const themeFile = useRef<HTMLInputElement>(null);
+  const browseTheme = async (f: File | undefined) => {
+    if (!f || !p) return;
+    const t = await readThemeFile(f).catch(() => null);
+    if (!t) return ed.cmd.notify('이 파일에서 테마를 찾지 못했습니다');
+    const font = t.majorEa || t.major;
+    ed.updatePres({ colorScheme: customSchemeName(t), ...(font ? { slides: p.slides.map((x) => ({ ...x, style: { ...x.style, fontFamily: `"${font}", ${t.minorEa ? `"${t.minorEa}", ` : ''}sans-serif` } })) } : {}) });
+    ed.cmd.notify(`“${t.name}” 테마의 색${font ? `과 글꼴(${font})` : ''}을 적용했습니다`);
+  };
+  // Design › Variants: the theme with other colours and backgrounds.
+  const cur = p?.colorScheme ?? schemes[0]?.name ?? '';
+  const others = schemes.filter((s) => s.name !== cur);
+  const variants: { scheme: string; background: Background; label: string }[] = [
+    { scheme: cur, background: presetBackground('Black'), label: '현재 색 · 검정 배경' },
+    { scheme: cur, background: { kind: 'color', value: '#ffffff' } as Background, label: '현재 색 · 흰색 배경' },
+    { scheme: others[0]?.name ?? cur, background: { kind: 'color', value: '#1f2a44' } as Background, label: `${schemeLabel(others[0]?.name ?? '')} · 남색 배경` },
+    { scheme: others[1]?.name ?? cur, background: { kind: 'color', value: '#f2f2f2' } as Background, label: `${schemeLabel(others[1]?.name ?? '')} · 밝은 회색 배경` },
+  ];
   return (
     <>
       <Group label="테마">
@@ -40,7 +63,28 @@ export function DesignTab({ ed }: { ed: Ed }) {
             </button>
           ))}
         </Gallery>
-        <Small icon="Aa" label="테마 편집" onClick={() => ed.cmd.open('themes')} />
+        <Col>
+          <Small icon="Aa" label="테마 편집" onClick={() => ed.cmd.open('themes')} />
+          <Small icon="📂" label="테마 찾아보기…" title="PowerPoint 테마 · 서식 파일(.thmx, .potx, .pptx)의 색과 글꼴을 가져옵니다" disabled={!p || !ed.canEdit} onClick={() => themeFile.current?.click()} />
+        </Col>
+        <input ref={themeFile} type="file" accept=".thmx,.potx,.pptx,.ppsx" hidden onChange={(e) => { void browseTheme(e.target.files?.[0]); e.target.value = ''; }} />
+      </Group>
+      <Group label="변형">
+        <Gallery className="rb-variants">
+          {variants.map((v, i) => (
+            <button key={i} type="button" className="rb-theme" title={v.label} disabled={!p || !ed.canEdit} onClick={() => ed.updatePres({ colorScheme: v.scheme, background: v.background })}>
+              <SlideCanvas slide={sample} theme={lib.themes.find((t) => t.id === p?.themeId) ?? lib.themes[0]} background={v.background} />
+              <span className="variant-chip">{(schemes.find((s) => s.name === v.scheme)?.colors ?? []).slice(4, 8).map((c, k) => <i key={k} style={{ background: c }} />)}</span>
+            </button>
+          ))}
+        </Gallery>
+        <DropButton icon="✦" label="효과" title="도형 스타일의 그림자 · 입체 효과 정도" disabled={!p || !ed.canEdit} render={(close) => (
+          <>
+            {([['subtle', '미묘한 효과'], ['moderate', '보통 효과'], ['intense', '강한 효과']] as const).map(([k, l]) => (
+              <MenuItem key={k} label={l} on={(p?.themeEffects ?? 'moderate') === k} onClick={() => { ed.updatePres({ themeEffects: k === 'moderate' ? undefined : k }); close(); }} />
+            ))}
+          </>
+        )} />
       </Group>
       <Group label="적용">
         <DropButton big icon={<span style={{ fontFamily: 'serif', fontSize: 20 }}>가A</span>} label="글꼴" title="모든 슬라이드와 텍스트 상자의 테마 글꼴" disabled={!p || !ed.canEdit} render={(close) => (
@@ -58,7 +102,7 @@ export function DesignTab({ ed }: { ed: Ed }) {
         <DropButton big icon={<span className="scheme-chip">{(schemes.find((s) => s.name === p?.colorScheme) ?? schemes[0])?.colors.slice(4, 8).map((c) => <i key={c} style={{ background: c }} />)}</span>} label="색" title="표 · 차트 · 도형 스타일 · 색 선택에 쓰는 테마 색" disabled={!p || !ed.canEdit} render={(close) => (
           <>
             {schemes.map((s) => (
-              <MenuItem key={s.name} on={(p?.colorScheme ?? schemes[0]?.name) === s.name} label={<span className="scheme-row"><span className="scheme-chip">{s.colors.slice(4, 10).map((c, i) => <i key={i} style={{ background: c }} />)}</span>{s.name}</span>} onClick={() => { ed.updatePres({ colorScheme: s.name }); close(); }} />
+              <MenuItem key={s.name} on={(p?.colorScheme ?? schemes[0]?.name) === s.name} label={<span className="scheme-row"><span className="scheme-chip">{s.colors.slice(4, 10).map((c, i) => <i key={i} style={{ background: c }} />)}</span>{schemeLabel(s.name)}</span>} onClick={() => { ed.updatePres({ colorScheme: s.name }); close(); }} />
             ))}
           </>
         )} />
@@ -127,7 +171,7 @@ export function TransitionsTab({ ed, onPreview }: { ed: Ed; onPreview: () => voi
       <Group label="미리 보기"><Big icon={RI.preview} label="미리 보기" disabled={!ed.slide} onClick={onPreview} /></Group>
       <Group label="이 슬라이드로 화면 전환">
         <Gallery className="rb-tr-gallery">
-          {['none', 'fade', 'push', 'wipe', 'split', 'reveal', 'randomBar', 'shape', 'uncover', 'cover', 'flash'].map((id) => (
+          {['none', 'morph', 'fade', 'push', 'wipe', 'split', 'reveal', 'randomBar', 'shape', 'uncover', 'cover', 'flash'].map((id) => (
             <button key={id} type="button" className={`rb-tr ${cur === id ? 'on' : ''}`} disabled={!ed.slide || !ed.canEdit} onClick={() => pick(id)}><TransitionIcon id={id} /><span>{TRANSITION[id] ?? id}</span></button>
           ))}
           <DropButton icon={<span className="rb-more">▾</span>} title="모든 화면 전환" disabled={!ed.slide || !ed.canEdit} wide render={(close) => (
@@ -202,6 +246,8 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
   const pick = (e: AnimEffectInfo | null) => slide && setList(setAnimation(slide, ids, e));
   const quick = [...ENTRANCE_QUICK, ...EMPHASIS_QUICK, ...EXIT_QUICK].map((id) => cat.find((c) => c.id === id)).filter((e): e is AnimEffectInfo => !!e);
   const steps = slide ? slideTimeline(slide)?.steps ?? 0 : 0;
+  // Effect Options › 순서 for a text box or shape with text (motion paths move the whole object).
+  const seqable = !!first && first.class !== 'path' && canBuildByParagraph(ed.selEls.find((e) => e.id === first.elementId));
   return (
     <>
       <Group label="미리 보기"><Big icon={RI.preview} label="미리 보기" title={`이 슬라이드의 애니메이션 재생 (${steps}단계)`} disabled={!slide?.animations?.length} onClick={onPreview} /></Group>
@@ -211,15 +257,33 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
           {quick.map((e) => <AnimButton key={`${e.class}-${e.id}`} e={e} on={first?.effect === e.id} onClick={() => can && pick(e)} />)}
           <DropButton icon={<span className="rb-more">▾</span>} title="모든 애니메이션" disabled={!can} wide render={(close) => <AnimGallery current={first?.effect} onPick={(e) => { pick(e); close(); }} />} />
         </Gallery>
-        <DropButton big icon={RI.effectOptions} label="효과 옵션" disabled={!info?.options.length} render={(close) => <>{info?.options.map((o) => <MenuItem key={o} label={animOptionLabel(o)} on={(first?.option ?? info.options[0]) === o} onClick={() => { patchMine({ option: o }); close(); }} />)}</>} />
+        <DropButton big icon={RI.effectOptions} label="효과 옵션" disabled={!info?.options.length && !seqable} render={(close) => (
+          <>
+            {info?.options.map((o) => <MenuItem key={o} label={animOptionLabel(o)} on={(first?.option ?? info.options[0]) === o} onClick={() => { patchMine({ option: o }); close(); }} />)}
+            {seqable && (
+              <>
+                {!!info?.options.length && <MenuSep />}
+                <MenuHead>순서</MenuHead>
+                <MenuItem label="하나의 개체로" on={first?.sequence !== 'paragraph'} onClick={() => { patchMine({ sequence: undefined }); close(); }} />
+                <MenuItem label="단락별로" on={first?.sequence === 'paragraph'} onClick={() => { patchMine({ sequence: 'paragraph' }); close(); }} />
+              </>
+            )}
+          </>
+        )} />
       </Group>
       <Group label="고급 애니메이션">
-        <DropButton big icon={RI.addAnim} label="애니메이션 추가" disabled={!can} wide render={(close) => <AnimGallery onPick={(e) => { if (slide && e) setList(addAnimation(slide, ids, e)); close(); }} />} />
+        <DropButton big icon={RI.addAnim} label="애니메이션 추가" disabled={!can} wide render={(close) => (
+          <>
+            <MenuItem icon="✎" label="사용자 지정 경로 그리기" hint="두 번 클릭: 끝" disabled={ids.length !== 1} onClick={() => { ed.setTool({ kind: 'motionPath', id: ids[0], add: true }); close(); }} />
+            <AnimGallery onPick={(e) => { if (slide && e) setList(addAnimation(slide, ids, e)); close(); }} />
+          </>
+        )} />
+        <Small icon="✎" label="사용자 지정 경로" title="이동 경로를 직접 그립니다 (이 개체의 애니메이션을 바꿈)" disabled={!can || ids.length !== 1} onClick={() => ed.setTool({ kind: 'motionPath', id: ids[0], add: false })} />
         <Col>
           <Small icon={RI.animPane} label="애니메이션 창" active={ed.pane === 'animation'} onClick={() => ed.setPane(ed.pane === 'animation' ? null : 'animation')} />
           <Small icon="⧉" label="애니메이션 복사" title="선택한 개체의 애니메이션을 다른 개체에 (다른 개체를 고른 뒤 다시 누르기)" disabled={!can || !first}
             onClick={() => { if (!slide || !first) return; (window as unknown as { __fcAnim?: SlideAnimation }).__fcAnim = first; ed.cmd.notify('애니메이션을 복사했습니다 — 적용할 개체를 고르고 “애니메이션 붙여넣기”를 누르세요'); }} />
-          <Small icon="📋" label="애니메이션 붙여넣기" disabled={!can} onClick={() => { const a = (window as unknown as { __fcAnim?: SlideAnimation }).__fcAnim; const e = a && cat.find((c) => c.id === a.effect && c.class === a.class); if (slide && e) setList(addAnimation(slide, ids, e).map((x) => (ids.includes(x.elementId) && x.effect === a.effect ? { ...x, option: a.option, durationMs: a.durationMs, delayMs: a.delayMs, start: a.start } : x))); }} />
+          <Small icon="📋" label="애니메이션 붙여넣기" disabled={!can} onClick={() => { const a = (window as unknown as { __fcAnim?: SlideAnimation }).__fcAnim; const e = a && cat.find((c) => c.id === a.effect && c.class === a.class); if (slide && e) setList(addAnimation(slide, ids, e).map((x) => (ids.includes(x.elementId) && x.effect === a.effect ? { ...x, option: a.option, durationMs: a.durationMs, delayMs: a.delayMs, start: a.start, sequence: a.sequence } : x))); }} />
         </Col>
       </Group>
       <Group label="타이밍">

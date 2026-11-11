@@ -15,6 +15,17 @@ pub fn hex(c: Rgba) -> String {
 
 /// The scheme named `name` (case-insensitive), else the first built-in one.
 pub fn scheme_named(name: Option<&str>) -> ColorScheme {
+    // Design › Browse for Themes: a scheme read from a theme file travels as
+    // `custom:<name>|<dk1>,<lt1>,<dk2>,<lt2>,<accent1…6>,<hlink>,<folHlink>`.
+    if let Some(spec) = name.and_then(|n| n.strip_prefix("custom:")) {
+        let (label, list) = spec.split_once('|').unwrap_or(("Custom", spec));
+        let cols: Vec<Rgba> = list.split(',').filter_map(|h| Rgba::from_hex(h.trim())).collect();
+        if cols.len() == 12 {
+            let mut colors = [Rgba::BLACK; 12];
+            colors.copy_from_slice(&cols);
+            return ColorScheme { name: label.into(), colors };
+        }
+    }
     let all = builtin_color_schemes();
     let pick = name.and_then(|n| all.iter().find(|s| s.name.eq_ignore_ascii_case(n)).cloned());
     match pick {

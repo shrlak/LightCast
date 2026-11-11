@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import type { Presentation, Slide, SlideElement } from '../../domain/types';
 import { CANVAS_W } from '../../domain/canvas';
+import { actionAt } from '../../domain/showActions';
+export { actionAt };
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
 import { findText, replaceText, type TextItem } from '../../engine';
@@ -13,6 +15,7 @@ import type { Ed } from './editor';
 import { ACCEPT } from './commands';
 import { RI } from './ribbonParts';
 import { TRANSITION } from './ko';
+import { PrintRun, PropertiesForm, type PrintMode } from './printing';
 
 // ── Find and replace ──────────────────────────────────────────────────────────────────────────
 type Key = { slideId: string; field: 'text' | 'title' | 'subtext' | 'notes' | 'el'; elementId?: string };
@@ -158,12 +161,6 @@ export function SlideSorter({ ed }: { ed: Ed }) {
 
 // ── Reading view and previews ─────────────────────────────────────────────────────────────────
 /** 읽기용 보기: the slide show inside the window, with transitions and animations, without sending anything to the screens. */
-/** The object with a click action (Action Settings, a link or a slide zoom) under a canvas point. */
-export function actionAt(slide: Slide | null, x: number, y: number): SlideElement | null {
-  const els = [...(slide?.elements ?? [])].reverse();
-  return els.find((e) => !e.hidden && (e.action || e.href || (e.kind === 'zoom' && e.targetSlideId)) && x >= e.x && x <= e.x + e.w && y >= e.y && y <= e.y + Math.max(e.h, 1)) ?? null;
-}
-
 /**
  * Reading view: the slide show in a window — click or the arrow keys to advance, objects with an
  * action (Action Settings, links, slide zooms) do what they say. With `ids` it plays a custom show;
@@ -309,6 +306,7 @@ function Card({ icon, title, text, onClick }: { icon: ReactNode; title: string; 
 
 export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [page, setPage] = useState<Page>('home');
+  const [printing, setPrinting] = useState<PrintMode | null>(null);
   const { cmd, p, state } = ed;
   const lib = state.library;
   const run = (fn: () => void) => { fn(); onClose(); };
@@ -371,7 +369,9 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
                   <Card icon="🕘" title="복원 지점" text="자동 저장된 때로 되돌리기" onClick={() => run(() => cmd.open('restore'))} />
                   <Card icon="🗑" title="휴지통" onClick={() => run(() => cmd.open('trash'))} />
                   <Card icon="📋" title="사용 기록" onClick={() => run(() => cmd.open('activity'))} />
+                  <Card icon="🔍" title="문제 확인 › 문서 검사" text="메모 · 노트 · 숨긴 내용" onClick={() => run(() => ed.setDialog('inspect'))} />
                 </div>
+                <PropertiesForm ed={ed} />
               </div>
             ) : <p>프레젠테이션이 열려 있지 않습니다.</p>}
           </>
@@ -391,7 +391,11 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <>
             <h1>인쇄</h1>
             <div className="bs-cards">
-              <Card icon="🖨" title="개요 인쇄" text="슬라이드마다 텍스트와 노트" onClick={printOutline} />
+              <Card icon="🖨" title="전체 페이지 슬라이드" text="한 페이지에 슬라이드 한 장" onClick={() => setPrinting('slides')} />
+              <Card icon="▥" title={`유인물 (${p?.handoutMaster?.perPage ?? 3}슬라이드)`} text="유인물 마스터 설정대로" onClick={() => setPrinting('handout')} />
+              <Card icon="▦" title="슬라이드 노트" text="슬라이드와 발표자 노트" onClick={() => setPrinting('notes')} />
+              <Card icon="☰" title="개요 인쇄" text="슬라이드마다 텍스트와 노트" onClick={printOutline} />
+              <Card icon="⚙" title="유인물 마스터…" onClick={() => run(() => ed.setDialog('handoutMaster'))} />
               <Card icon="🎼" title="코드 · 키 악보 인쇄" text="밴드용" onClick={() => run(() => cmd.open('chords'))} />
             </div>
           </>
@@ -408,6 +412,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           </>
         )}
       </main>
+      {printing && p && <PrintRun ed={ed} mode={printing} onDone={() => setPrinting(null)} />}
     </div>
   );
 }

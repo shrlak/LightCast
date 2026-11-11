@@ -61,7 +61,7 @@ export function SongLibraryModal({ songs, dispatch, onEdit, reloadOnline, notify
       <div className="modal" role="dialog" aria-label="찬양 라이브러리">
         <header className="modal-head">
           <h2>☁ 찬양 라이브러리 · {songs.filter(isLibrarySong).length}곡</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button className="icon-btn" onClick={onClose} aria-label="닫기">✕</button>
         </header>
         <div className="wizard-body stack">
           <div className="row gap-s">

@@ -11,6 +11,9 @@ import { activeTextEditor } from '../RichTextEditor';
 import { textTarget, type DialogKind, type Ed } from './editor';
 import { MoreDialogs } from './dialogsMore';
 import { MasterView } from './MasterView';
+import { TabsDialog } from './dialogsTabs';
+import { InspectDialog, PageMasterDialog } from './printing';
+import { CompareDialog, LanguageDialog } from './reviewPanes';
 
 export function Dialog({ title, onClose, onOk, okLabel = '확인', okDisabled, wide, children }: { title: string; onClose: () => void; onOk?: () => void; okLabel?: string; okDisabled?: boolean; wide?: boolean; children: ReactNode }) {
   return (
@@ -71,7 +74,8 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
     }
     onClose();
   };
-  const boxOnly = !t.els.length;
+  // Superscript, subscript and caps need characters to act on: a text box, or selected slide text.
+  const boxOnly = !t.els.length && !sel;
   return (
     <Dialog title="글꼴" onClose={onClose} onOk={ok} wide>
       <div className="dlg-tabs">
@@ -217,6 +221,7 @@ function ParagraphDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           </div>
           <Check label="도형의 텍스트 배치 (자동 줄 바꿈)" checked={wrap} onChange={setWrap} />
           <Check label="넘치면 도형 크기 조정" checked={autoFit} onChange={setAutoFit} />
+          <div className="dlg-row"><button type="button" onClick={() => ed.setDialog('tabs')}>탭…</button></div>
         </fieldset>
       )}
     </Dialog>
@@ -274,6 +279,11 @@ export function Dialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; onClo
   if (kind === 'paragraph') return <ParagraphDialog ed={ed} onClose={onClose} />;
   if (kind === 'replaceFonts') return <ReplaceFontsDialog ed={ed} onClose={onClose} />;
   if (kind === 'master') return <MasterView ed={ed} onClose={onClose} />;
+  if (kind === 'handoutMaster' || kind === 'notesMaster') return <PageMasterDialog ed={ed} kind={kind === 'handoutMaster' ? 'handout' : 'notes'} onClose={onClose} />;
+  if (kind === 'inspect') return <InspectDialog ed={ed} onClose={onClose} />;
+  if (kind === 'language') return <LanguageDialog ed={ed} onClose={onClose} />;
+  if (kind === 'tabs') return <TabsDialog ed={ed} onClose={onClose} />;
+  if (kind === 'compare') return <CompareDialog ed={ed} onClose={onClose} />;
   return <MoreDialogs ed={ed} kind={kind} onClose={onClose} />;
 }
 
