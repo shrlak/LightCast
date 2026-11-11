@@ -8,7 +8,6 @@ import { useAutoTextBoxes } from '../textBoxLayout';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
 import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
-import { uid } from '../../domain/lyrics';
 import {
   boxOf, cloneElements, deleteSelection, duplicateSelection, expandSelection, groupSelection, inkToShape, makeInk, makeShape, nudgeSelection,
   orderSelection, pasteStyle, selectionUnits, ungroupSelection, type CopiedStyle,
@@ -21,6 +20,8 @@ import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, shapeSi
 import { adjOf, geometryOf, isLinePreset, presetOf } from '../EngineElements';
 import { RichTextEditor } from '../RichTextEditor';
 import { Ruler } from './Ruler';
+import { clipboardToElements, copyObjectsToClipboard, lastCopiedObjects, sourceOf } from './pasteObjects';
+import { desktop } from '../../domain/desktop';
 import { centreOf, drawnMotionPath, motionPathOverlays, pathArrow, startAtCentre, withCustomPath } from '../../domain/motionPath';
 
 /** The slide's own text (lyrics, scripture…) drawn by the theme, selectable like an object. */
@@ -81,6 +82,8 @@ interface Props {
   onChange: (patch: Partial<Slide>) => void;
   /** Called instead of deleting when 🔒 is on and this slide is on screen. */
   onLockedDelete?: () => void;
+  /** A picture a paste brought in (to list in the presentation's media). */
+  onAddMedia?: (m: import('../../domain/types').MediaMeta) => void;
   readOnly?: boolean;
   tool?: CanvasTool | null;
   onToolDone?: () => void;
@@ -99,16 +102,9 @@ interface Props {
   motionPaths?: boolean;
 }
 
-/** Copied objects, shared by every slide (the PowerPoint clipboard within FreeCast). */
-const CLIP_TYPE = 'application/x-freecast-objects';
-let clipboard: SlideElement[] = [];
-/** Home › Clipboard: copy objects (also as text for other programs). */
-export function copyObjects(els: SlideElement[]) {
-  clipboard = els.map((e) => ({ ...e }));
-  const text = els.map((e) => e.text ?? '').filter(Boolean).join('\n');
-  if (text) void navigator.clipboard?.writeText(text).catch(() => undefined);
-}
-export const objectClipboard = () => clipboard;
+/** Home › Clipboard › Copy: the objects go on the system clipboard with every property (see pasteObjects). */
+export function copyObjects(els: SlideElement[]) { copyObjectsToClipboard(els); }
+export const objectClipboard = () => lastCopiedObjects();
 
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const HANDLE_POS: Record<Handle, [number, number]> = { nw: [0, 0], n: [0.5, 0], ne: [1, 0], e: [1, 0.5], se: [1, 1], s: [0.5, 1], sw: [0, 1], w: [0, 0.5] };
@@ -142,7 +138,7 @@ function toSlide(el: SlideElement, lx: number, ly: number): [number, number] {
  * italic, underline or colour. Every geometric answer — hits, sizes, angles, snapping — comes from
  * the Rust engine. Changes apply as you go, so a slide that is live updates on screen.
  */
-export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, pickPicture, motionPaths }: Props) {
+export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, onAddMedia, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, pickPicture, motionPaths }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const k = width / CANVAS_W || 1;
   const [session, setSession] = useState<{ slideId: string; id: string } | null>(null);
@@ -743,37 +739,26 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const onCopy = (e: RClipboardEvent, cut = false) => {
     if (editing || !sel.length) return;
     const chosen = elements.filter((el) => sel.includes(el.id));
-    copyObjects(chosen);
-    e.clipboardData.setData(CLIP_TYPE, JSON.stringify(chosen));
-    e.clipboardData.setData('text/plain', chosen.map((el) => el.text ?? '').filter(Boolean).join('\n'));
+    copyObjectsToClipboard(chosen, e.clipboardData);
     e.preventDefault();
     e.stopPropagation();
     if (cut) { if (onLockedDelete) onLockedDelete(); else { onChange(deleteSelection(slide, sel)); onSelect([]); } }
   };
+  // The objects on the slide when an (asynchronous) paste finishes.
+  const elsRef = useRef(elements);
+  elsRef.current = elements;
   const onPaste = (e: RClipboardEvent) => {
     if (editing || readOnly) return;
-    const raw = e.clipboardData.getData(CLIP_TYPE);
-    let source: SlideElement[] = [];
-    try { source = raw ? (JSON.parse(raw) as SlideElement[]) : []; } catch { source = []; }
-    if (!source.length && !e.clipboardData.files.length && clipboard.length && !e.clipboardData.getData('text/plain')) source = clipboard;
-    if (source.length) {
-      // Pasted on the slide they came from, copies are set off a little; elsewhere they keep their place.
-      const same = source.some((s) => elements.some((el) => el.id === s.id || (el.x === s.x && el.y === s.y && el.kind === s.kind)));
-      const copies = cloneElements(source, same ? 30 : 0);
-      setElements([...elements, ...copies]);
-      onSelect(copies.map((c) => c.id));
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    const text = e.clipboardData.getData('text/plain');
-    if (text && !e.clipboardData.files.length) {
-      const el: SlideElement = { id: uid('el'), kind: 'text', text, x: 220, y: 340, w: 1000, h: 400, fontSize: 56, color: '#ffffff', align: 'center' };
-      setElements([...elements, el]);
-      onSelect([el.id]);
-      e.preventDefault();
-      e.stopPropagation();
-    }
+    const src = sourceOf(e.clipboardData);
+    if (!src.custom && !src.html && !src.text && !src.images.length && !desktop?.readOfficeClipboard) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void clipboardToElements(src, elements).then((r) => {
+      if (!r) return;
+      r.media.forEach((m) => onAddMedia?.(m));
+      setElements([...elsRef.current, ...r.elements]);
+      onSelect(r.elements.map((c) => c.id));
+    }).catch(() => undefined);
   };
 
   // ── Drawing the editor chrome ───────────────────────────────────────────────────────────────
@@ -798,7 +783,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       return (
         <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
           <div className="ce-edit-box" style={{ left: textBox.x, top: textBox.y, width: textBox.w, minHeight: textBox.h, justifyContent: theme.vAlign === 'top' ? 'flex-start' : theme.vAlign === 'bottom' ? 'flex-end' : 'center' }}>
-            <RichTextEditor key={`${identity}:slide`} lines={lines} lang={slide.lang} noProof={slide.noProof} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color }}
+            <RichTextEditor key={`${identity}:slide`} lines={lines} lang={slide.lang} noProof={slide.noProof} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color, fontFamily: theme.fontFamily }}
               style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, textAlign: theme.align, lineHeight: theme.lineHeight }}
               onChange={(l) => typed(SLIDE_TEXT, l)} onDone={stopEditing} />
           </div>
@@ -809,7 +794,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const runs = lineRuns(editEl);
     const texts = editEl.paragraphs ? editEl.paragraphs.map((p) => p.text) : (editEl.text ?? '').split('\n');
     const lines: TextRun[][] = texts.map((t, i) => runs[i] ?? (t ? [{ text: t, ...(editEl.paragraphs?.[i] ? { fontSize: editEl.paragraphs[i].fontSize, bold: editEl.paragraphs[i].bold, italic: editEl.paragraphs[i].italic, color: editEl.paragraphs[i].color } : {}) }] : []));
-    const base = { fontSize: editEl.fontSize ?? (editEl.kind === 'shape' ? 40 : 64), bold: !!editEl.bold, italic: !!editEl.italic, color: editEl.color ?? '#ffffff' };
+    const base = { fontSize: editEl.fontSize ?? (editEl.kind === 'shape' ? 40 : 64), bold: !!editEl.bold, italic: !!editEl.italic, color: editEl.color ?? '#ffffff', fontFamily: editEl.fontFamily, underline: editEl.underline || undefined, strike: editEl.strike || undefined, highlight: editEl.highlight };
     let area: Box = { x: editEl.x, y: editEl.y, w: editEl.w, h: editEl.h };
     if (editEl.kind === 'shape') {
       const tr = geometryOf(editEl)?.textRect;

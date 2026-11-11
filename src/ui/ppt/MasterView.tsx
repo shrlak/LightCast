@@ -73,7 +73,7 @@ export function MasterView({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         </aside>
         <div className="master-stage">
           <CanvasEditor slide={slide} theme={ed.theme} background={bg} selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)}
-            readOnly={!!p.protected} onChange={(patch) => { if ('elements' in patch) saveEls(patch.elements ?? []); if (patch.background) saveMaster({ background: patch.background }); }} />
+            readOnly={!!p.protected} onAddMedia={(m) => ed.dispatch({ type: 'media/add', media: m })} onChange={(patch) => { if ('elements' in patch) saveEls(patch.elements ?? []); if (patch.background) saveMaster({ background: patch.background }); }} />
           <p className="dlg-note">{layout ? `“${layout.name}” 레이아웃 — 홈 › 새 슬라이드에서 이 레이아웃으로 슬라이드를 만듭니다.` : '여기에 놓은 개체는 모든 슬라이드에 나옵니다.'}</p>
         </div>
       </div>

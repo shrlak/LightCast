@@ -378,6 +378,22 @@ ipcMain.handle('desktop:copyTeamLink', (e) => {
 });
 ipcMain.handle('desktop:pptxToPdf', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptxToPdf(bytes) : null));
 ipcMain.handle('desktop:pptToPptx', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptToPptx(bytes) : null));
+// Paste from PowerPoint: Office puts the copied shapes on the clipboard as a small Office package
+// (DrawingML), under this name on Windows and as a pasteboard type on macOS.
+const OFFICE_SHAPES = ['Art::GVML ClipFormat', 'com.microsoft.Art--GVML-ClipFormat', 'Art--GVML-ClipFormat'];
+ipcMain.handle('desktop:readOfficeClipboard', (e) => {
+  if (!fromMain(e)) return null;
+  const formats = clipboard.availableFormats();
+  const names = [...OFFICE_SHAPES, ...formats.filter((f) => /GVML/i.test(f))];
+  for (const name of names) {
+    try {
+      const buf = clipboard.readBuffer(name);
+      // A zip package starts with "PK".
+      if (buf?.length > 4 && buf[0] === 0x50 && buf[1] === 0x4b) return new Uint8Array(buf);
+    } catch { /* not on the clipboard */ }
+  }
+  return null;
+});
 ipcMain.handle('desktop:openView', (e, url, displayId) => {
   if (!fromMain(e) || typeof url !== 'string') return;
   openView(url, typeof displayId === 'number' ? displayId : displayId === null ? null : undefined);

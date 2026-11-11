@@ -4,7 +4,7 @@
 // unchanged; runs that no longer spell that text (it was retyped somewhere else) are ignored.
 import type { ElementParagraph, Slide, SlideElement, TextRun } from './types';
 
-const FORMAT_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'color', 'strike', 'baseline'] as const;
+const FORMAT_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'color', 'strike', 'baseline', 'fontFamily', 'highlight'] as const;
 export type RunFormat = Pick<TextRun, (typeof FORMAT_KEYS)[number]>;
 
 const sameFormat = (a: TextRun, b: TextRun) => FORMAT_KEYS.every((k) => a[k] === b[k]);
@@ -97,4 +97,53 @@ export function slideLineRuns(slide: Pick<Slide, 'text' | 'textRuns'>): (TextRun
 export function slideTextPatch(lines: TextRun[][]): Pick<Slide, 'text' | 'textRuns'> {
   const clean = lines.map(normalizeRuns);
   return { text: clean.map((l) => l.map((r) => r.text).join('')).join('\n'), textRuns: clean.some((l) => l.some(runHasFormat)) ? clean : undefined };
+}
+
+/** The characters [a, b) of the lines (lines joined by \n), with their runs. */
+export function sliceLines(lines: TextRun[][], a: number, b: number): TextRun[][] {
+  const out: TextRun[][] = [];
+  let at = 0;
+  lines.forEach((line) => {
+    const len = line.reduce((n, r) => n + r.text.length, 0);
+    const s = at, e = at + len;
+    at = e + 1;
+    // A line is in the slice when the range touches it (a range ending at a line's start took the
+    // line break before it, so the slice ends with an empty line).
+    if (e < a || s > b) return;
+    const part: TextRun[] = [];
+    let pos = s;
+    for (const r of line) {
+      const rs = pos, re = pos + r.text.length;
+      pos = re;
+      const from = Math.max(rs, a), to = Math.min(re, b);
+      if (to > from) part.push({ ...r, text: r.text.slice(from - rs, to - rs) });
+    }
+    out.push(normalizeRuns(part));
+  });
+  return out.length ? out : [[]];
+}
+
+/** The lines with [a, b) replaced by `ins` (itself lines); also where the caret goes after it. */
+export function insertLines(lines: TextRun[][], a: number, b: number, ins: TextRun[][]): { lines: TextRun[][]; caret: number } {
+  const total = lines.reduce((n, l) => n + l.reduce((m, r) => m + r.text.length, 0), 0) + Math.max(0, lines.length - 1);
+  const before = sliceLines(lines, 0, a), after = sliceLines(lines, b, total);
+  const add = ins.length ? ins : [[]];
+  const joined: TextRun[][] = [
+    ...before.slice(0, -1),
+    normalizeRuns([...(before[before.length - 1] ?? []), ...add[0]]),
+    ...add.slice(1),
+  ];
+  const caretLine = joined.length - 1;
+  const caret = joined.reduce((n, l, i) => n + l.reduce((m, r) => m + r.text.length, 0) + (i < caretLine ? 1 : 0), 0);
+  joined[caretLine] = normalizeRuns([...joined[caretLine], ...(after[0] ?? [])]);
+  return { lines: [...joined, ...after.slice(1)], caret };
+}
+
+/** Every run given the box's own formatting where it has none of its own (for copying it out). */
+export function withBoxFormat(lines: TextRun[][], box: RunFormat): TextRun[][] {
+  return lines.map((l) => l.map((r) => {
+    const q: TextRun = { ...r };
+    for (const k of FORMAT_KEYS) if (q[k] === undefined && box[k] !== undefined) (q as unknown as Record<string, unknown>)[k] = box[k];
+    return q;
+  }));
 }

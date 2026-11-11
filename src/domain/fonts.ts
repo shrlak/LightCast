@@ -28,3 +28,23 @@ export function pptxFont(family: string): string {
   const first = family.split(',')[0].replace(/"/g, '').trim();
   return first === 'Nanum Gothic' ? '나눔고딕' : first;
 }
+
+const OFFICE_ALIAS: Record<string, string> = {
+  '맑은 고딕': '"맑은 고딕", "Malgun Gothic"', 'Malgun Gothic': '"Malgun Gothic", "맑은 고딕"',
+  '굴림': '"굴림", Gulim', '돋움': '"돋움", Dotum', '바탕': '"바탕", Batang', '궁서': '"궁서", Gungsuh',
+  '나눔고딕': '"Nanum Gothic", NanumGothic, "나눔고딕"', '나눔명조': '"Nanum Myeongjo", "나눔명조"',
+  Calibri: 'Calibri, Carlito', 'Calibri Light': '"Calibri Light", Calibri, Carlito', Arial: 'Arial, Arimo',
+};
+
+/**
+ * A typeface named by PowerPoint / Word / a web page → the CSS font stack FreeCast stores: one of the
+ * editor's own fonts when it is one of them, else that face with the Korean fallbacks after it.
+ */
+export function officeFont(name: string): string {
+  const face = name.replace(/^['"]|['"]$/g, '').trim();
+  const known = FONT_OPTIONS.find((f) => f.pptx === face || f.label === face);
+  if (known) return known.family;
+  const head = OFFICE_ALIAS[face] ?? (/^[\w-]+$/.test(face) ? face : `"${face.replace(/"/g, '')}"`);
+  const serif = /명조|바탕|Myeongjo|Batang|Times|Georgia|serif/i.test(face) && !/sans/i.test(face);
+  return serif ? `${head}, "Nanum Myeongjo", AppleMyungjo, serif` : `${head}, ${KO}`;
+}

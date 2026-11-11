@@ -9,4 +9,6 @@ export const runStyle = (r: TextRun): CSSProperties => ({
   fontStyle: r.italic === undefined ? undefined : r.italic ? 'italic' : 'normal',
   textDecoration: [r.underline && 'underline', r.strike && 'line-through'].filter(Boolean).join(' ') || undefined,
   color: r.color,
+  fontFamily: r.fontFamily,
+  backgroundColor: r.highlight,
 });
