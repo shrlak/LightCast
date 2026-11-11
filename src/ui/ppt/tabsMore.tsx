@@ -216,6 +216,11 @@ export function ToolsTab({ ed }: { ed: Ed }) {
             <Big icon="📊" label="찬양 통계 · 추천" title="많이 부른 곡, 쉬었던 곡 추천, 키 점검" onClick={() => cmd.open('songStats')} />
             <Big icon="©" label="저작권(CCLI) 보고" title="기간별 사용 곡과 CCLI 번호를 CSV로" onClick={() => cmd.open('ccli')} />
           </Group>
+          {cmd.templateMarket && (
+            <Group label="템플릿">
+              <Big icon="🛍" label="템플릿 마켓" title="슬라이드 템플릿을 파일로 주고받기 (실험 기능 — 설정에서 켭니다)" onClick={() => cmd.open('templateMarket')} />
+            </Group>
+          )}
     </>
   );
 }
