@@ -135,7 +135,7 @@ async function fromFreeCast(p: ClipPayload, existing: SlideElement[]): Promise<P
     media.push({ id, name: carried.name, type: 'image' });
   }
   // On the slide they came from, copies are set off (again for each paste); elsewhere they keep their place.
-  const taken = (dx: number) => p.elements.some((s) => existing.some((el) => el.id === s.id || (Math.abs(el.x - (s.x + dx)) < 0.5 && Math.abs(el.y - (s.y + dx)) < 0.5 && el.kind === s.kind)));
+  const taken = (dx: number) => p.elements.some((s) => existing.some((el) => el.kind === s.kind && Math.abs(el.x - (s.x + dx)) < 0.5 && Math.abs(el.y - (s.y + dx)) < 0.5));
   let off = 0;
   while (taken(off) && off < 600) off += 30;
   return { elements: cloneElements(p.elements, off), media, from: 'freecast' };
