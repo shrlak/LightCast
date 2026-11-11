@@ -1,50 +1,125 @@
 import { isFrontSlide } from '../../domain/frontLayout';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent } from 'react';
-import type { Background, BackgroundEffect, Slide, SlideElement, Theme } from '../../domain/types';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as RClipboardEvent, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent } from 'react';
+import type { Background, BackgroundEffect, Slide, SlideElement, TextRun, Theme } from '../../domain/types';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
-import { patchElement } from '../../domain/templates/convert';
-import { NO_GUIDES, snapMove, type SnapGuides } from '../../domain/snap';
 import { SlideCanvas, slideTheme } from '../SlideCanvas';
 import { useWidth } from '../hooks';
 import { useAutoTextBoxes } from '../textBoxLayout';
-import { AutoTextarea } from '../AutoTextarea';
 import { isPdfSlide } from '../../domain/importedSlides';
+import { elementTextStyle } from '../../domain/textBoxLayout';
+import { lineRuns, withRichLines } from '../../domain/richText';
+import { uid } from '../../domain/lyrics';
+import {
+  boxOf, cloneElements, deleteSelection, duplicateSelection, expandSelection, groupSelection, inkToShape, makeInk, makeShape, nudgeSelection,
+  orderSelection, pasteStyle, selectionUnits, ungroupSelection, type CopiedStyle,
+} from '../../domain/editOps';
+import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, snapBox, type EBox, type Handle } from '../../engine';
+import { adjOf, geometryOf, presetOf } from '../EngineElements';
+import { RichTextEditor } from '../RichTextEditor';
 
 /** The slide's own text (lyrics, scripture…) drawn by the theme, selectable like an object. */
 export const SLIDE_TEXT = '__slide-text';
 
 type Box = { x: number; y: number; w: number; h: number };
-interface Drag { id: string; mode: 'move' | 'resize'; startX: number; startY: number; orig: Box; moved: boolean }
+
+/** What a pointer press on the slide does when a ribbon tool is on (Insert › Shapes, Draw). */
+export type CanvasTool =
+  | { kind: 'shape'; name: string }
+  | { kind: 'pen'; color: string; width: number; highlighter?: boolean; toShape?: boolean }
+  | { kind: 'eraser' }
+  /** 서식 복사: the next object clicked takes this look (kept on with a double-click in the ribbon). */
+  | { kind: 'painter'; style: CopiedStyle; keep?: boolean };
+
+export interface ViewOptions {
+  /** 눈금선: draw the grid and snap to it. */
+  grid?: boolean;
+  /** 안내선: the slide's centre lines. */
+  guides?: boolean;
+}
+
+type Drag =
+  | { mode: 'move'; ids: string[]; startX: number; startY: number; orig: Map<string, Box>; moved: boolean; copy: boolean; clickedText: string | null }
+  | { mode: 'resize'; ids: string[]; handle: Handle; startX: number; startY: number; unit: EBox; orig: Map<string, Box & { rot: number }>; moved: boolean }
+  | { mode: 'rotate'; id: string; unit: EBox; moved: boolean }
+  | { mode: 'adjust'; id: string; index: number; moved: boolean }
+  | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; add: boolean }
+  | { mode: 'draw'; x0: number; y0: number; x1: number; y1: number }
+  | { mode: 'ink'; points: [number, number][] };
 
 interface Props {
   slide: Slide;
   theme: Theme;
   background: Background | null;
   bgEffect?: BackgroundEffect;
-  selectedId: string | null;
-  onSelect: (id: string | null) => void;
+  /** Objects selected on the canvas (ids; SLIDE_TEXT for the slide's own text). */
+  selected: string[];
+  onSelect: (ids: string[]) => void;
   /** Apply a change to the slide (objects moved, resized, retyped, deleted). */
   onChange: (patch: Partial<Slide>) => void;
   /** Called instead of deleting when 🔒 is on and this slide is on screen. */
   onLockedDelete?: () => void;
   readOnly?: boolean;
+  tool?: CanvasTool | null;
+  onToolDone?: () => void;
+  view?: ViewOptions;
+  /** Animations tab: the click numbers shown beside animated objects. */
+  badges?: Record<string, number[]>;
+  /** Show the objects as the slide show would at the start (hidden objects stay hidden). */
+  zoom?: number;
+}
+
+/** Copied objects, shared by every slide (the PowerPoint clipboard within FreeCast). */
+const CLIP_TYPE = 'application/x-freecast-objects';
+let clipboard: SlideElement[] = [];
+/** Home › Clipboard: copy objects (also as text for other programs). */
+export function copyObjects(els: SlideElement[]) {
+  clipboard = els.map((e) => ({ ...e }));
+  const text = els.map((e) => e.text ?? '').filter(Boolean).join('\n');
+  if (text) void navigator.clipboard?.writeText(text).catch(() => undefined);
+}
+export const objectClipboard = () => clipboard;
+
+const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+const HANDLE_POS: Record<Handle, [number, number]> = { nw: [0, 0], n: [0.5, 0], ne: [1, 0], e: [1, 0.5], se: [1, 1], s: [0.5, 1], sw: [0, 1], w: [0, 0.5] };
+const CURSOR: Record<Handle, string> = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
+const KEEP_ASPECT = new Set(['image', 'icon', 'qr', 'camera', 'video']);
+
+/** A point in an object's own (unrotated, unflipped) coordinates. */
+function toLocal(el: SlideElement, x: number, y: number): [number, number] {
+  const cx = el.x + el.w / 2, cy = el.y + el.h / 2;
+  const a = (-(el.rotation ?? 0) * Math.PI) / 180;
+  let lx = (x - cx) * Math.cos(a) - (y - cy) * Math.sin(a);
+  let ly = (x - cx) * Math.sin(a) + (y - cy) * Math.cos(a);
+  if (el.flipH) lx = -lx;
+  if (el.flipV) ly = -ly;
+  return [lx + el.w / 2, ly + el.h / 2];
+}
+function toSlide(el: SlideElement, lx: number, ly: number): [number, number] {
+  let x = lx - el.w / 2, y = ly - el.h / 2;
+  if (el.flipH) x = -x;
+  if (el.flipV) y = -y;
+  const a = ((el.rotation ?? 0) * Math.PI) / 180;
+  return [el.x + el.w / 2 + x * Math.cos(a) - y * Math.sin(a), el.y + el.h / 2 + x * Math.sin(a) + y * Math.cos(a)];
 }
 
 /**
- * The slide, edited in place like PowerPoint: click any object — text, logo, picture, box, or the
- * slide's own text — to select it; drag to move, drag the corner to resize, arrow keys to nudge,
- * Delete to remove; double-click (or click again) text to type on the slide. Changes apply as you
- * go, so a slide that is live updates on screen.
+ * The slide, edited in place like PowerPoint: click an object to select it (Shift/Ctrl+click adds,
+ * drag on empty space draws a selection box), drag to move (Ctrl+drag copies, Shift keeps to one
+ * axis, Alt turns snapping off), the eight white handles size it (Shift keeps the proportions, Ctrl
+ * sizes from the centre), the round handle above turns it (Shift: 15° steps), the yellow handles
+ * reshape it. Click into text to type; select part of it to give that part its own size, bold,
+ * italic, underline or colour. Every geometric answer — hits, sizes, angles, snapping — comes from
+ * the Rust engine. Changes apply as you go, so a slide that is live updates on screen.
  */
-export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selectedId, onSelect, onChange, onLockedDelete, readOnly }: Props) {
+export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, readOnly, tool, onToolDone, view, badges }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const k = width / CANVAS_W || 1;
   const [session, setSession] = useState<{ slideId: string; id: string } | null>(null);
   const identity = slide.sourceSlideId ?? slide.id;
-  const editing = session?.slideId === identity && (session.id === SLIDE_TEXT || slide.elements?.some((el) => el.id === session.id)) ? session.id : null;
-  const [draft, setDraft] = useState('');
-  const [preview, setPreview] = useState<{ id: string; box: Box } | null>(null);
-  const [guides, setGuides] = useState<SnapGuides>(NO_GUIDES);
+  const [preview, setPreview] = useState<Map<string, Box & { rot?: number; adj?: number[] }> | null>(null);
+  const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
+  const [band, setBand] = useState<Box | null>(null);
+  const [inkPath, setInkPath] = useState<[number, number][] | null>(null);
   const drag = useRef<Drag | null>(null);
   const commitTimer = useRef<number | undefined>(undefined);
   const pendingText = useRef<(() => void) | null>(null);
@@ -56,6 +131,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   }, []);
   const theme = slideTheme(baseTheme, slide);
   const elements = useAutoTextBoxes(slide.elements ?? [], readOnly || isPdfSlide(slide) ? undefined : (elements) => onChange({ elements }), isFrontSlide(slide));
+  const visible = useMemo(() => elements.filter((e) => !e.hidden), [elements]);
+  const editing = session?.slideId === identity && (session.id === SLIDE_TEXT || elements.some((el) => el.id === session.id)) ? session.id : null;
   const defaultTextBox: Box = { x: theme.padding, y: theme.padding, w: CANVAS_W - theme.padding * 2, h: CANVAS_H - theme.padding * 2 };
   const [bodyBox, setBodyBox] = useState<{ identity: string; box: Box } | null>(null);
   const latestBody = useRef({ slide, onChange }); latestBody.current = { slide, onChange };
@@ -83,163 +160,442 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     return () => { observer.disconnect(); mutations.disconnect(); };
   }, [identity, editing, theme.padding, theme.fontSize, theme.align, theme.vAlign, width, readOnly]);
 
-  // A different slide: stop typing and drop the selection.
-  useEffect(() => {
-    setSession(null);
-    setPreview(null);
-  }, [identity]);
+  // A different slide: stop typing.
+  useEffect(() => { setSession(null); setPreview(null); }, [identity]);
   // The last keystroke belongs to the old slide, even if it is switched or closed immediately.
   useEffect(() => flushText, [identity, flushText]);
 
-  const boxOf = (el: SlideElement): Box => (preview?.id === el.id ? preview.box : { x: el.x, y: el.y, w: el.w, h: el.h });
-  const updateElement = (id: string, patch: Partial<SlideElement>) =>
-    onChange({ elements: elements.map((e) => (e.id === id ? patchElement(e, patch) : e)) });
+  const hasSlideText = !!(slide.text.trim() || slide.title || slide.subtext);
+  const sel = expandSelection(elements, selected.filter((id) => id !== SLIDE_TEXT));
+  const units = selectionUnits(elements, sel);
+  const elOf = (id: string) => elements.find((e) => e.id === id);
+  const shownEl = (el: SlideElement): SlideElement => {
+    const p = preview?.get(el.id);
+    return p ? { ...el, x: p.x, y: p.y, w: p.w, h: p.h, ...(p.rot !== undefined ? { rotation: p.rot } : {}), ...(p.adj ? { adj: p.adj } : {}) } : el;
+  };
+  const setElements = (next: SlideElement[]) => onChange({ elements: next.length ? next : undefined });
 
-  // What the canvas shows: the object being dragged where it is going, the text being typed hidden
-  // underneath the typing box.
+  // What the canvas shows: objects being dragged where they are going, the text being typed
+  // hidden underneath the typing box.
   const shown: Slide = {
     ...slide,
     text: editing === SLIDE_TEXT ? '' : slide.text,
     title: editing === SLIDE_TEXT ? undefined : slide.title,
     subtext: editing === SLIDE_TEXT ? undefined : slide.subtext,
     elements: elements.map((e) => {
-      const b = boxOf(e);
-      const moved = { ...e, ...b };
-      return editing === e.id ? { ...moved, text: '', paragraphs: undefined } : moved;
+      const m = shownEl(e);
+      return editing === e.id ? { ...m, text: '', paragraphs: undefined, runs: undefined } : m;
     }),
   };
 
-  const commitText = (id: string, text: string) => {
-    if (id === SLIDE_TEXT) onChange({ text });
-    else updateElement(id, { text });
-  };
-  const type = (text: string) => {
-    setDraft(text);
-    window.clearTimeout(commitTimer.current);
-    const id = editing!;
-    pendingText.current = () => commitText(id, text);
-    commitTimer.current = window.setTimeout(flushText, 250);
-  };
+  // ── Typing ──────────────────────────────────────────────────────────────────────────────────
   const startEditing = (id: string) => {
-    const el = elements.find((e) => e.id === id);
-    if (id !== SLIDE_TEXT && el?.kind !== 'text') return;
-    setDraft(id === SLIDE_TEXT ? slide.text : el?.text ?? '');
+    const el = elOf(id);
+    if (id !== SLIDE_TEXT && el?.kind !== 'text' && el?.kind !== 'shape') return;
+    if (el?.kind === 'shape' && /line|Connector/i.test(el.shape ?? '')) return;
     setSession({ slideId: identity, id });
-    onSelect(id);
+    onSelect([id]);
   };
   const stopEditing = () => {
     flushText();
     setSession(null);
   };
+  const typed = (id: string, lines: TextRun[][]) => {
+    window.clearTimeout(commitTimer.current);
+    pendingText.current = () => {
+      if (id === SLIDE_TEXT) {
+        const text = lines.map((l) => l.map((r) => r.text).join('')).join('\n');
+        latestBody.current.onChange({ text });
+        return;
+      }
+      const el = latestEls.current.find((e) => e.id === id);
+      if (el) latestBody.current.onChange({ elements: latestEls.current.map((e) => (e.id === id ? { ...e, ...withRichLines(e, lines) } : e)) });
+    };
+    commitTimer.current = window.setTimeout(flushText, 250);
+  };
+  const latestEls = useRef(elements); latestEls.current = elements;
 
-  const onPointerDown = (e: RPointerEvent, id: string, mode: Drag['mode']) => {
-    if (editing === id) return;
-    e.stopPropagation();
+  // ── Pointer ─────────────────────────────────────────────────────────────────────────────────
+  const pointer = (e: { clientX: number; clientY: number }): [number, number] => {
+    const r = ref.current!.getBoundingClientRect();
+    return [(e.clientX - r.left) / k, (e.clientY - r.top) / k];
+  };
+  const focusRoot = () => ref.current?.focus({ preventScroll: true });
+
+  const onRootDown = (e: RPointerEvent) => {
+    if (e.button !== 0) return;
     if (editing) stopEditing();
-    onSelect(id);
-    (e.currentTarget.closest('.ce-root') as HTMLElement | null)?.focus();
-    const el = elements.find((x) => x.id === id);
-    if (!el) return;
-    drag.current = { id, mode, startX: e.clientX, startY: e.clientY, orig: { x: el.x, y: el.y, w: el.w, h: el.h }, moved: false };
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-  };
-  const onPointerMove = (e: RPointerEvent) => {
-    const d = drag.current;
-    if (!d) return;
-    const dx = (e.clientX - d.startX) / k;
-    const dy = (e.clientY - d.startY) / k;
-    if (Math.abs(dx) + Math.abs(dy) < 3 && !d.moved) return;
-    d.moved = true;
-    if (d.mode === 'move') {
-      // Hold Alt to move freely, without snapping to the guides.
-      const moved = { ...d.orig, x: Math.round(d.orig.x + dx), y: Math.round(d.orig.y + dy) };
-      const snapped = e.altKey ? { box: moved, guides: NO_GUIDES } : snapMove(moved, elements.filter((x) => x.id !== d.id));
-      setGuides(snapped.guides);
-      setPreview({ id: d.id, box: snapped.box });
-    } else {
-      setPreview({ id: d.id, box: { ...d.orig, w: Math.max(20, Math.round(d.orig.w + dx)), h: Math.max(20, Math.round(d.orig.h + dy)) } });
+    focusRoot();
+    const [x, y] = pointer(e);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    if (tool?.kind === 'shape') { drag.current = { mode: 'draw', x0: x, y0: y, x1: x, y1: y }; return; }
+    if (tool?.kind === 'pen') { drag.current = { mode: 'ink', points: [[x, y]] }; setInkPath([[x, y]]); return; }
+    if (tool?.kind === 'painter') {
+      const hit = hitBox(visible.map(boxOf), x, y, 3);
+      if (hit) { setElements(pasteStyle(elements, [hit], tool.style)); onSelect([hit]); }
+      if (!tool.keep) onToolDone?.();
+      return;
     }
-  };
-  const onPointerUp = () => {
-    const d = drag.current;
-    drag.current = null;
-    if (d && preview?.id === d.id) updateElement(d.id, preview.box);
-    setPreview(null);
-    setGuides(NO_GUIDES);
-    // A click on text (no drag) puts the cursor in it, as in PowerPoint.
-    if (d && !d.moved && d.mode === 'move' && elements.find((e) => e.id === d.id)?.kind === 'text') startEditing(d.id);
-  };
-
-  const onKeyDown = (e: RKeyboardEvent) => {
-    if (editing || !selectedId) return;
-    const el = elements.find((x) => x.id === selectedId);
-    const step = e.shiftKey ? 10 : 1;
-    const nudge = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[e.key];
-    if (nudge && el) updateElement(el.id, { x: el.x + nudge[0], y: el.y + nudge[1] });
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && el && onLockedDelete) onLockedDelete();
-    else if ((e.key === 'Delete' || e.key === 'Backspace') && el) {
-      onChange({ elements: elements.filter((x) => x.id !== el.id) });
-      onSelect(null);
-    } else if (e.key === 'Enter') startEditing(selectedId);
-    else if (e.key === 'Escape') onSelect(null);
-    else return;
-    // Handled here: keep the slide navigation / end-show shortcuts from also acting on it.
-    e.preventDefault();
-    e.stopPropagation();
-  };
-
-  const editorStyle = (id: string): CSSProperties => {
-    if (id === SLIDE_TEXT) {
-      return {
-        fontFamily: theme.fontFamily, fontSize: theme.fontSize * k, fontWeight: theme.fontWeight, color: theme.color,
-        textAlign: theme.align, lineHeight: theme.lineHeight,
-      };
+    if (tool?.kind === 'eraser') {
+      const hit = hitBox(visible.filter((el) => el.kind === 'ink').map(boxOf), x, y, 6);
+      if (hit) setElements(elements.filter((el) => el.id !== hit));
+      return;
     }
-    const el = elements.find((e) => e.id === id)!;
-    const size = el.paragraphs?.find((p) => p.text.trim())?.fontSize ?? el.fontSize ?? 64;
-    return {
-      fontFamily: el.fontFamily, fontSize: size * k, fontWeight: el.bold ? 700 : 400, fontStyle: el.italic ? 'italic' : undefined,
-      color: el.color ?? '#ffffff', textAlign: el.align ?? 'center', lineHeight: 1.2,
+    // Front-most object under the pointer (rotated boxes, in drawing order).
+    const hit = hitBox(visible.map((el) => boxOf(shownEl(el))), x, y, 3);
+    if (!hit) {
+      if (hasSlideText && x >= textBox.x && x <= textBox.x + textBox.w && y >= textBox.y && y <= textBox.y + textBox.h) {
+        startEditing(SLIDE_TEXT);
+        return;
+      }
+      const add = e.shiftKey || e.ctrlKey || e.metaKey;
+      if (!add) onSelect([]);
+      drag.current = { mode: 'marquee', x0: x, y0: y, x1: x, y1: y, add };
+      return;
+    }
+    let next = selected.filter((id) => id !== SLIDE_TEXT);
+    const already = sel.includes(hit);
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      const group = expandSelection(elements, [hit]);
+      next = already ? next.filter((id) => !group.includes(id)) : [...next, hit];
+      onSelect(next);
+      if (already) return;
+    } else if (!already) {
+      next = [hit];
+      onSelect(next);
+    }
+    const ids = expandSelection(elements, next.length ? next : [hit]);
+    const el = elOf(hit);
+    drag.current = {
+      mode: 'move', ids, startX: x, startY: y, moved: false, copy: false,
+      orig: new Map(ids.map((id) => { const o = elOf(id)!; return [id, { x: o.x, y: o.y, w: o.w, h: o.h }]; })),
+      clickedText: already && ids.length === 1 && (el?.kind === 'text' || (el?.kind === 'shape' && !!el.text)) ? hit : el?.kind === 'text' && ids.length === 1 && !el.groupId ? hit : null,
     };
   };
-  const at = (b: Box): CSSProperties => ({ left: b.x * k, top: b.y * k, width: b.w * k, height: b.h * k });
-  const hasSlideText = !!(slide.text.trim() || slide.title || slide.subtext);
 
+  const startHandle = (e: RPointerEvent, handle: Handle) => {
+    e.stopPropagation();
+    if (e.button !== 0 || units.length !== 1) return;
+    focusRoot();
+    const [x, y] = pointer(e);
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    const u = units[0];
+    drag.current = {
+      mode: 'resize', ids: u.members, handle, startX: x, startY: y, unit: u.box, moved: false,
+      orig: new Map(u.members.map((id) => { const o = elOf(id)!; return [id, { x: o.x, y: o.y, w: o.w, h: o.h, rot: o.rotation ?? 0 }]; })),
+    };
+  };
+  const startRotate = (e: RPointerEvent) => {
+    e.stopPropagation();
+    if (e.button !== 0 || units.length !== 1 || units[0].members.length !== 1) return;
+    focusRoot();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    drag.current = { mode: 'rotate', id: units[0].members[0], unit: units[0].box, moved: false };
+  };
+  const startAdjust = (e: RPointerEvent, id: string, index: number) => {
+    e.stopPropagation();
+    if (e.button !== 0) return;
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    drag.current = { mode: 'adjust', id, index, moved: false };
+  };
+
+  const onMove = (e: RPointerEvent) => {
+    const d = drag.current;
+    if (!d) return;
+    const [x, y] = pointer(e);
+    if (d.mode === 'marquee' || d.mode === 'draw') {
+      d.x1 = x; d.y1 = y;
+      if (d.mode === 'draw' && e.shiftKey) {
+        const s = Math.max(Math.abs(x - d.x0), Math.abs(y - d.y0));
+        d.x1 = d.x0 + Math.sign(x - d.x0 || 1) * s; d.y1 = d.y0 + Math.sign(y - d.y0 || 1) * s;
+      }
+      setBand({ x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) });
+      return;
+    }
+    if (d.mode === 'ink') {
+      d.points.push([Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
+      setInkPath([...d.points]);
+      return;
+    }
+    if (d.mode === 'move') {
+      let dx = x - d.startX, dy = y - d.startY;
+      if (!d.moved && Math.abs(dx) + Math.abs(dy) < 3) return;
+      d.moved = true;
+      d.copy = e.ctrlKey || e.metaKey;
+      if (e.shiftKey) { if (Math.abs(dx) > Math.abs(dy)) dy = 0; else dx = 0; }
+      const boxes = d.ids.map((id) => { const o = d.orig.get(id)!; const el = elOf(id)!; return { id, x: o.x + dx, y: o.y + dy, w: o.w, h: o.h, rot: el.rotation ?? 0 }; });
+      const united = boundsOf(boxes);
+      let sx = 0, sy = 0;
+      if (united && !e.altKey) {
+        const others = visible.filter((el) => !d.ids.includes(el.id)).map(boxOf);
+        const s = snapBox({ id: 'm', ...united, rot: 0 }, others, { grid: view?.grid ? 30 : 0, smart: true });
+        if (s) { sx = s.x - united.x; sy = s.y - united.y; setGuides(s.guides); }
+      } else setGuides({ v: [], h: [] });
+      setPreview(new Map(boxes.map((b) => [b.id, { x: Math.round(b.x + sx), y: Math.round(b.y + sy), w: b.w, h: b.h }])));
+      return;
+    }
+    if (d.mode === 'resize') {
+      const dx = x - d.startX, dy = y - d.startY;
+      if (!d.moved && Math.abs(dx) + Math.abs(dy) < 2) return;
+      d.moved = true;
+      const one = d.ids.length === 1 ? elOf(d.ids[0]) : null;
+      const corner = d.handle.length === 2;
+      const keep = e.shiftKey !== (corner && !!one && KEEP_ASPECT.has(one.kind));
+      const unit = one ? { ...d.unit, rot: one.rotation ?? 0 } : d.unit;
+      const r = resizeBox(unit, d.handle, dx, dy, keep, e.ctrlKey || e.metaKey, 4);
+      if (!r) return;
+      if (one) {
+        setPreview(new Map([[one.id, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) }]]));
+      } else {
+        // A group scales its members with it.
+        const sxk = r.w / Math.max(1, d.unit.w), syk = r.h / Math.max(1, d.unit.h);
+        setPreview(new Map(d.ids.map((id) => {
+          const o = d.orig.get(id)!;
+          return [id, { x: Math.round(r.x + (o.x - d.unit.x) * sxk), y: Math.round(r.y + (o.y - d.unit.y) * syk), w: Math.max(1, Math.round(o.w * sxk)), h: Math.max(1, Math.round(o.h * syk)) }];
+        })));
+      }
+      return;
+    }
+    if (d.mode === 'rotate') {
+      const el = elOf(d.id)!;
+      const a = rotateTo(boxOf(el), x, y, e.shiftKey);
+      if (a === null) return;
+      d.moved = true;
+      setPreview(new Map([[el.id, { x: el.x, y: el.y, w: el.w, h: el.h, rot: a }]]));
+      return;
+    }
+    if (d.mode === 'adjust') {
+      const el = elOf(d.id)!;
+      const [lx, ly] = toLocal(el, x, y);
+      const adj = shapeAdjust(presetOf(el), el.w, el.h, adjOf(el), d.index, lx, ly);
+      if (!adj) return;
+      d.moved = true;
+      setPreview(new Map([[el.id, { x: el.x, y: el.y, w: el.w, h: el.h, adj }]]));
+    }
+  };
+
+  const onUp = (e: RPointerEvent) => {
+    const d = drag.current;
+    drag.current = null;
+    setGuides({ v: [], h: [] });
+    setBand(null);
+    if (!d) return;
+    if (d.mode === 'marquee') {
+      const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
+      if (r.w < 3 && r.h < 3) return;
+      const ids = expandSelection(elements, marqueeIds(visible.map(boxOf), r));
+      onSelect(d.add ? [...new Set([...selected.filter((s) => s !== SLIDE_TEXT), ...ids])] : ids);
+      return;
+    }
+    if (d.mode === 'draw' && tool?.kind === 'shape') {
+      const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
+      // A click without a drag puts a default-sized shape there.
+      const el = r.w < 6 && r.h < 6 ? (() => { const m = makeShape(tool.name); return { ...m, x: Math.round(d.x0 - m.w / 2), y: Math.round(d.y0 - m.h / 2) }; })() : makeShape(tool.name, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
+      setElements([...elements, el]);
+      onSelect([el.id]);
+      onToolDone?.();
+      if (el.kind === 'text') setSession({ slideId: identity, id: el.id });
+      return;
+    }
+    if (d.mode === 'ink' && tool?.kind === 'pen') {
+      setInkPath(null);
+      const made = (tool.toShape && inkToShape(d.points, tool.color, tool.width)) || makeInk(d.points, tool.color, tool.width, !!tool.highlighter);
+      if (made && (made.w > 2 || made.h > 2)) setElements([...elements, made]);
+      return;
+    }
+    if (d.mode === 'move') {
+      if (!d.moved) {
+        // A click on text (no drag) puts the cursor in it, as in PowerPoint.
+        if (d.clickedText && !(e.shiftKey || e.ctrlKey || e.metaKey)) startEditing(d.clickedText);
+        return;
+      }
+      const p = preview;
+      setPreview(null);
+      if (!p) return;
+      if (d.copy) {
+        const copies = cloneElements(elements.filter((el) => d.ids.includes(el.id))).map((c, i) => { const b = p.get(d.ids[i]); return b ? { ...c, x: b.x, y: b.y } : c; });
+        setElements([...elements, ...copies]);
+        onSelect(copies.map((c) => c.id));
+      } else setElements(elements.map((el) => { const b = p.get(el.id); return b ? { ...el, x: b.x, y: b.y } : el; }));
+      return;
+    }
+    const p = preview;
+    setPreview(null);
+    if (!p || !('moved' in d) || !d.moved) return;
+    setElements(elements.map((el) => {
+      const b = p.get(el.id);
+      if (!b) return el;
+      const next = { ...el, x: b.x, y: b.y, w: b.w, h: b.h, ...(b.rot !== undefined ? { rotation: b.rot || undefined } : {}), ...(b.adj ? { adj: b.adj } : {}) };
+      // A text box sized by hand keeps that size, as PowerPoint's "Do not autofit".
+      return d.mode === 'resize' && el.kind === 'text' ? { ...next, autoFit: false } : next;
+    }));
+  };
+
+  // ── Keyboard and clipboard ──────────────────────────────────────────────────────────────────
+  const onKeyDown = (e: RKeyboardEvent) => {
+    if (editing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    const handled = () => { e.preventDefault(); e.stopPropagation(); };
+    if (mod && key === 'a' && !e.shiftKey) { onSelect(visible.map((el) => el.id)); return handled(); }
+    if (!sel.length) {
+      if (key === 'escape' && tool) { onToolDone?.(); return handled(); }
+      return;
+    }
+    if (mod && key === 'g' && !e.shiftKey) { setElements(groupSelection(elements, sel)); return handled(); }
+    if (mod && key === 'g' && e.shiftKey) { setElements(ungroupSelection(elements, sel)); return handled(); }
+    if (mod && key === 'd') { const r = duplicateSelection(elements, sel); setElements(r.elements); onSelect(r.ids); return handled(); }
+    if (mod && e.shiftKey && (e.key === '}' || e.key === ']')) { setElements(orderSelection(elements, sel, 'front')); return handled(); }
+    if (mod && e.shiftKey && (e.key === '{' || e.key === '[')) { setElements(orderSelection(elements, sel, 'back')); return handled(); }
+    const step = mod ? 1 : e.shiftKey ? 30 : 10;
+    const nudge = ({ arrowleft: [-step, 0], arrowright: [step, 0], arrowup: [0, -step], arrowdown: [0, step] } as Record<string, number[]>)[key];
+    if (nudge) { setElements(nudgeSelection(elements, sel, nudge[0], nudge[1])); return handled(); }
+    if (key === 'delete' || key === 'backspace') {
+      if (onLockedDelete) onLockedDelete();
+      else { onChange(deleteSelection(slide, sel)); onSelect([]); }
+      return handled();
+    }
+    if (key === 'tab') {
+      const order = visible.map((el) => el.id);
+      const at = order.indexOf(sel[sel.length - 1]);
+      const next = order[(at + (e.shiftKey ? -1 : 1) + order.length) % order.length];
+      if (next) onSelect([next]);
+      return handled();
+    }
+    if (key === 'enter' || key === 'f2') { if (sel.length === 1) startEditing(sel[0]); return handled(); }
+    if (key === 'escape') { onSelect([]); return handled(); }
+  };
+  const onCopy = (e: RClipboardEvent, cut = false) => {
+    if (editing || !sel.length) return;
+    const chosen = elements.filter((el) => sel.includes(el.id));
+    copyObjects(chosen);
+    e.clipboardData.setData(CLIP_TYPE, JSON.stringify(chosen));
+    e.clipboardData.setData('text/plain', chosen.map((el) => el.text ?? '').filter(Boolean).join('\n'));
+    e.preventDefault();
+    e.stopPropagation();
+    if (cut) { if (onLockedDelete) onLockedDelete(); else { onChange(deleteSelection(slide, sel)); onSelect([]); } }
+  };
+  const onPaste = (e: RClipboardEvent) => {
+    if (editing || readOnly) return;
+    const raw = e.clipboardData.getData(CLIP_TYPE);
+    let source: SlideElement[] = [];
+    try { source = raw ? (JSON.parse(raw) as SlideElement[]) : []; } catch { source = []; }
+    if (!source.length && !e.clipboardData.files.length && clipboard.length && !e.clipboardData.getData('text/plain')) source = clipboard;
+    if (source.length) {
+      // Pasted on the slide they came from, copies are set off a little; elsewhere they keep their place.
+      const same = source.some((s) => elements.some((el) => el.id === s.id || (el.x === s.x && el.y === s.y && el.kind === s.kind)));
+      const copies = cloneElements(source, same ? 30 : 0);
+      setElements([...elements, ...copies]);
+      onSelect(copies.map((c) => c.id));
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const text = e.clipboardData.getData('text/plain');
+    if (text && !e.clipboardData.files.length) {
+      const el: SlideElement = { id: uid('el'), kind: 'text', text, x: 220, y: 340, w: 1000, h: 400, fontSize: 56, color: '#ffffff', align: 'center' };
+      setElements([...elements, el]);
+      onSelect([el.id]);
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+
+  // ── Drawing the editor chrome ───────────────────────────────────────────────────────────────
+  const at = (b: Box, rot = 0): CSSProperties => ({ left: b.x * k, top: b.y * k, width: b.w * k, height: b.h * k, transform: rot ? `rotate(${rot}deg)` : undefined });
   if (readOnly || isPdfSlide(slide)) return <div className="ce-root" ref={ref} tabIndex={0} aria-label={readOnly ? '보호된 자료 미리보기' : 'PDF 읽기 전용 미리보기'}>
     <SlideCanvas slide={slide} theme={baseTheme} background={background} bgEffect={bgEffect} />
   </div>;
 
+  const single = units.length === 1 ? units[0] : null;
+  const singleEl = single && single.members.length === 1 ? shownEl(elOf(single.members[0])!) : null;
+  const frame: { box: Box; rot: number } | null = singleEl
+    ? { box: { x: singleEl.x, y: singleEl.y, w: singleEl.w, h: singleEl.h }, rot: singleEl.rotation ?? 0 }
+    : single ? (() => { const b = boundsOf(single.members.map((id) => boxOf(shownEl(elOf(id)!)))); return b ? { box: b, rot: 0 } : null; })() : null;
+  const adjustHandles = singleEl && singleEl.kind === 'shape' && !editing ? geometryOf(singleEl)?.handles ?? [] : [];
+  const editEl = editing && editing !== SLIDE_TEXT ? elOf(editing) : null;
+
+  const editor = (() => {
+    if (!editing) return null;
+    if (editing === SLIDE_TEXT) {
+      const lines: TextRun[][] = slide.text.split('\n').map((t) => (t ? [{ text: t }] : []));
+      return (
+        <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
+          <div className="ce-edit-box" style={{ left: textBox.x, top: textBox.y, width: textBox.w, minHeight: textBox.h, justifyContent: theme.vAlign === 'top' ? 'flex-start' : theme.vAlign === 'bottom' ? 'flex-end' : 'center' }}>
+            <RichTextEditor key={`${identity}:slide`} plain lines={lines} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color }}
+              style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, textAlign: theme.align, lineHeight: theme.lineHeight }}
+              onChange={(l) => typed(SLIDE_TEXT, l)} onDone={stopEditing} />
+          </div>
+        </div>
+      );
+    }
+    if (!editEl) return null;
+    const runs = lineRuns(editEl);
+    const texts = editEl.paragraphs ? editEl.paragraphs.map((p) => p.text) : (editEl.text ?? '').split('\n');
+    const lines: TextRun[][] = texts.map((t, i) => runs[i] ?? (t ? [{ text: t, ...(editEl.paragraphs?.[i] ? { fontSize: editEl.paragraphs[i].fontSize, bold: editEl.paragraphs[i].bold, italic: editEl.paragraphs[i].italic, color: editEl.paragraphs[i].color } : {}) }] : []));
+    const base = { fontSize: editEl.fontSize ?? (editEl.kind === 'shape' ? 40 : 64), bold: !!editEl.bold, italic: !!editEl.italic, color: editEl.color ?? '#ffffff' };
+    let area: Box = { x: editEl.x, y: editEl.y, w: editEl.w, h: editEl.h };
+    if (editEl.kind === 'shape') {
+      const tr = geometryOf(editEl)?.textRect;
+      if (tr) area = { x: editEl.x + tr[0], y: editEl.y + tr[1], w: tr[2], h: tr[3] };
+    }
+    const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: editEl.lineHeight ?? 1.2, whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const };
+    const { display: _d, flexDirection: _f, ...rest } = textStyle;
+    return (
+      <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
+        <div className="ce-edit-box" style={{
+          left: area.x, top: area.y, width: area.w, minHeight: area.h,
+          transform: editEl.rotation ? `rotate(${editEl.rotation}deg)` : undefined, transformOrigin: `${editEl.x + editEl.w / 2 - area.x}px ${editEl.y + editEl.h / 2 - area.y}px`,
+          justifyContent: editEl.vAlign === 'top' ? 'flex-start' : editEl.vAlign === 'bottom' ? 'flex-end' : 'center',
+        }}>
+          <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base}
+            style={{ ...rest, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+            onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
+        </div>
+      </div>
+    );
+  })();
+
   return (
-    <div className="ce-root" ref={ref} tabIndex={0} onKeyDown={onKeyDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-      onPointerDown={() => { if (editing) stopEditing(); onSelect(null); }}>
+    <div className={`ce-root ${tool ? `tool-${tool.kind}` : ''}`} ref={ref} tabIndex={0} onKeyDown={onKeyDown} onPointerDown={onRootDown} onPointerMove={onMove} onPointerUp={onUp}
+      onCopy={(e) => onCopy(e)} onCut={(e) => onCopy(e, true)} onPaste={onPaste} onDoubleClick={(e) => {
+        const [x, y] = pointer(e);
+        const hit = hitBox(visible.map(boxOf), x, y, 3);
+        if (hit) startEditing(hit);
+      }}>
       <SlideCanvas slide={shown} theme={baseTheme} background={background} bgEffect={bgEffect} />
       <div className="ce-overlay">
-        {hasSlideText && (
-          <div className={`ce-box slide-text ${selectedId === SLIDE_TEXT ? 'on' : ''}`} style={at(textBox)}
-            title="클릭하면 바로 입력"
-            onPointerDown={(e) => {
-              // preventDefault: the browser would otherwise move focus to the canvas and close the typing box.
-              e.preventDefault();
-              e.stopPropagation();
-              if (editing && editing !== SLIDE_TEXT) stopEditing();
-              if (editing !== SLIDE_TEXT) startEditing(SLIDE_TEXT);
-            }}
-            onDoubleClick={() => startEditing(SLIDE_TEXT)} />
-        )}
-        {elements.map((el) => (
-          <div key={el.id} className={`ce-box ${el.kind} ${selectedId === el.id ? 'on' : ''}`} style={at(boxOf(el))}
-            title={el.kind === 'text' ? '클릭: 바로 입력 · 드래그: 이동' : '클릭: 선택 · 드래그: 이동 · 모서리: 크기'}
-            onPointerDown={(e) => onPointerDown(e, el.id, 'move')} onDoubleClick={() => startEditing(el.id)}>
-            {selectedId === el.id && !editing && <span className="ce-handle" onPointerDown={(e) => onPointerDown(e, el.id, 'resize')} />}
+        {view?.grid && <div className="ce-grid" style={{ backgroundSize: `${30 * k}px ${30 * k}px` }} />}
+        {view?.guides && <><div className="ce-guide ce-guide-v ce-fixed" style={{ left: (CANVAS_W / 2) * k }} /><div className="ce-guide ce-guide-h ce-fixed" style={{ top: (CANVAS_H / 2) * k }} /></>}
+        {hasSlideText && !editing && <div className={`ce-box slide-text ${selected.includes(SLIDE_TEXT) ? 'on' : ''}`} style={at(textBox)} />}
+        {visible.map((raw) => {
+          const el = shownEl(raw);
+          const on = sel.includes(el.id);
+          return <div key={el.id} className={`ce-outline ${on ? 'on' : ''} ${on && units.length > 1 ? 'multi' : ''} ${editing === el.id ? 'editing' : ''}`} style={at(el, el.rotation)}>
+            {badges?.[el.id] && <span className="ce-badge">{badges[el.id].join(',')}</span>}
+          </div>;
+        })}
+        {frame && !editing && (
+          <div className={`ce-frame ${single && single.members.length > 1 ? 'group' : ''}`} style={at(frame.box, frame.rot)}>
+            {HANDLES.map((h) => (
+              <span key={h} className={`ce-h ce-h-${h}`} style={{ left: `${HANDLE_POS[h][0] * 100}%`, top: `${HANDLE_POS[h][1] * 100}%`, cursor: CURSOR[h] }} onPointerDown={(e) => startHandle(e, h)} />
+            ))}
+            {singleEl && <span className="ce-rot" title="회전 (Shift: 15°씩)" onPointerDown={startRotate} />}
           </div>
-        ))}
+        )}
+        {singleEl && adjustHandles.map((h) => {
+          const [sx, sy] = toSlide(singleEl, h.x, h.y);
+          return <span key={h.index} className="ce-adj" title="모양 조정" style={{ left: sx * k, top: sy * k }} onPointerDown={(e) => startAdjust(e, singleEl.id, h.index)} />;
+        })}
         {guides.v.map((x) => <div key={`v${x}`} className="ce-guide ce-guide-v" style={{ left: x * k }} />)}
         {guides.h.map((y) => <div key={`h${y}`} className="ce-guide ce-guide-h" style={{ top: y * k }} />)}
-        {editing && (
-          <AutoTextarea className="ce-typing" autoFocus value={draft} style={{ ...at(editing === SLIDE_TEXT ? textBox : boxOf(elements.find((e) => e.id === editing)!)), ...editorStyle(editing) }}
-            onChange={(e) => type(e.target.value)} onBlur={stopEditing} onPointerDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); stopEditing(); } }} />
+        {band && <div className={`ce-band ${tool?.kind === 'shape' ? 'draw' : ''}`} style={at(band)} />}
+        {inkPath && tool?.kind === 'pen' && (
+          <svg className="ce-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
+            <polyline points={inkPath.map((p) => p.join(',')).join(' ')} fill="none" stroke={tool.color} strokeWidth={tool.width} strokeOpacity={tool.highlighter ? 0.45 : 1} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
         )}
+        {editor}
       </div>
     </div>
   );

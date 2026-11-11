@@ -1,7 +1,10 @@
 // Slide objects whose drawing comes from the Rust engine: PowerPoint preset shapes (with text inside
 // them), tables, charts, icons and ink.
 import { useId, useSyncExternalStore, type CSSProperties } from 'react';
-import type { DashStyle, SlideElement } from '../domain/types';
+import type { DashStyle, SlideElement, TextRun } from '../domain/types';
+import { lineRuns } from '../domain/richText';
+
+const runCss = (r: TextRun): CSSProperties => ({ fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? 800 : 400, fontStyle: r.italic === undefined ? undefined : r.italic ? 'italic' : 'normal', textDecoration: r.underline ? 'underline' : undefined, color: r.color });
 import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry } from '../engine';
 
 let epoch = 0;
@@ -94,7 +97,10 @@ export function ShapeElement({ el }: { el: SlideElement }) {
           fontSize: el.fontSize ?? 40, fontFamily: el.fontFamily, color: el.color ?? '#ffffff', fontWeight: el.bold ? 800 : 500, fontStyle: el.italic ? 'italic' : undefined,
           lineHeight: el.lineHeight ?? 1.2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textDecoration: [el.underline && 'underline', el.strike && 'line-through'].filter(Boolean).join(' ') || undefined,
           textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, transform: [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ') || undefined,
-        }}>{el.text}</div>
+        }}>{(() => {
+          const runs = lineRuns(el);
+          return el.text.split('\n').map((line, i) => <div key={i}>{runs[i] ? runs[i]!.map((r, j) => <span key={j} style={runCss(r)}>{r.text}</span>) : line || '\u00a0'}</div>);
+        })()}</div>
       ) : null}
     </div>
   );

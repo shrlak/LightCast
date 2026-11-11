@@ -181,7 +181,7 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
           <div className="presenter-edit-body">
             <div className="presenter-edit-canvas">
               <CanvasEditor key={`${editPres.id}:${target?.seq}`} readOnly={editPres.protected} slide={editSlide} theme={editTheme} background={resolveBackground(editSlide, editPres)} bgEffect={editPres.bgEffect}
-                selectedId={selEl} onSelect={setSelEl}
+                selected={selEl ? [selEl] : []} onSelect={(ids) => setSelEl(ids[ids.length - 1] ?? null)}
                 onLockedDelete={cmd.locked && editingLive ? () => cmd.notify('🔒 화면에 표시 중이라 삭제가 잠겨 있습니다 — 상태 표시줄의 🔒를 눌러 해제하세요') : undefined}
                 onChange={(patch) => dispatch({ type: 'slide/update', presentationId: editPres.id, slideId: editSlide.id, seq: target?.seq, sequenceLength: sequence(editPres).length, patch })} />
               <div className="muted small">{editPres.title} · {editSlide.group}</div>

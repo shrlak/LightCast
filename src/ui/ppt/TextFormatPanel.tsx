@@ -4,6 +4,7 @@ import { FONT_OPTIONS } from '../../domain/fonts';
 import { LINE_SPACINGS, SINGLE_SPACING, listMarker, stepFontSize, type CaseKind } from '../../domain/textFormat';
 import { FontSize } from './FontSize';
 import { Icon } from './pptIcons';
+import { ColorGrid } from './ribbonParts';
 
 /** The text formatting PowerPoint's 홈 → 글꼴 / 단락 groups set, for slide text or a text box. */
 export interface TextFormatValue {
@@ -29,9 +30,6 @@ export interface TextFormatValue {
   autoFit: boolean;
 }
 
-// Office theme colours and PowerPoint's 표준 색.
-const THEME_COLORS = ['#FFFFFF', '#000000', '#E7E6E6', '#44546A', '#4472C4', '#ED7D31', '#A5A5A5', '#FFC000', '#5B9BD5', '#70AD47'];
-const STANDARD_COLORS = ['#C00000', '#FF0000', '#FFC000', '#FFFF00', '#92D050', '#00B050', '#00B0F0', '#0070C0', '#002060', '#7030A0'];
 const HIGHLIGHTS = ['#FFFF00', '#00FF00', '#00FFFF', '#FF00FF', '#0000FF', '#FF0000', '#000080', '#008080', '#008000', '#800080', '#800000', '#808000', '#808080', '#C0C0C0', '#000000'];
 const SPACINGS: [string, number][] = [['매우 좁게', -6], ['좁게', -3], ['보통', 0], ['넓게', 6], ['매우 넓게', 12]];
 const CASES: [CaseKind, string][] = [['sentence', '문장의 첫 글자를 대문자로.'], ['lower', '모두 소문자로'], ['upper', '모두 대문자로'], ['title', '각 단어를 대문자로'], ['toggle', '대/소문자 전환']];
@@ -98,7 +96,9 @@ function Palette({ colors, value, onPick }: { colors: string[]; value?: string; 
  * 바꾸기, 텍스트 강조 색, 글꼴 색; 글머리 기호, 번호 매기기, 목록 수준 줄임 / 늘림, 줄 간격, 단;
  * 왼쪽 / 가운데 / 오른쪽 / 양쪽 맞춤, 텍스트 방향, 텍스트 맞춤 — plus 자동 맞춤.
  */
-export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, shortcuts = true }: {
+export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, shortcuts = true, part }: {
+  /** Only the 글꼴 or the 단락 group (the ribbon shows them as two groups). */
+  part?: 'font' | 'paragraph';
   value: TextFormatValue;
   onChange: (patch: Partial<TextFormatValue>) => void;
   onChangeCase: (kind: CaseKind) => void;
@@ -130,8 +130,9 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, sho
   }, [shortcuts]);
   const spacing = Math.round((f.lineHeight / SINGLE_SPACING) * 100) / 100;
   return (
-    <div className="ppt-text-format">
-      <div className="ppt-group-label">글꼴</div>
+    <div className={`ppt-text-format ${part ? `part-${part}` : ''}`}>
+      {part !== 'paragraph' && <>
+      {!part && <div className="ppt-group-label">글꼴</div>}
       <div className="ppt-row">
         <select className="ppt-font" title="글꼴" value={FONT_OPTIONS.find((o) => o.family === f.fontFamily)?.family ?? ''} onChange={(e) => onChange({ fontFamily: e.target.value || undefined })}>
           {!FONT_OPTIONS.some((o) => o.family === f.fontFamily) && <option value="">{f.fontFamily ? f.fontFamily.split(',')[0].replace(/"/g, '') : '테마 글꼴'}</option>}
@@ -169,18 +170,16 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, sho
         <Drop icon={Icon.fontColor(f.color)} title="글꼴 색" onMain={() => colorRef.current?.click()}>
           {(close) => (
             <>
-              <div className="ppt-menu-label">테마 색</div>
-              <Palette colors={THEME_COLORS} value={f.color} onPick={(c) => { onChange({ color: c }); close(); }} />
-              <div className="ppt-menu-label">표준 색</div>
-              <Palette colors={STANDARD_COLORS} value={f.color} onPick={(c) => { onChange({ color: c }); close(); }} />
-              <button type="button" className="ppt-item" onClick={() => { colorRef.current?.click(); close(); }}>다른 색…</button>
+              <ColorGrid value={f.color} onPick={(c) => { onChange({ color: c }); close(); }} />
             </>
           )}
         </Drop>
         <input ref={colorRef} type="color" hidden value={f.color.slice(0, 7)} onChange={(e) => onChange({ color: e.target.value })} />
       </div>
+      </>}
 
-      <div className="ppt-group-label">단락</div>
+      {part !== 'font' && <>
+      {!part && <div className="ppt-group-label">단락</div>}
       <div className="ppt-row">
         <Drop icon={Icon.bullets} title="글머리 기호" active={!!f.list && BULLETS.includes(f.list)} onMain={() => onChange({ list: f.list && BULLETS.includes(f.list) ? undefined : 'bullet' })}>
           {(close) => (
@@ -236,7 +235,8 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, sho
           ))}
         </Drop>
       </div>
-      <label className="check small ppt-autofit"><input type="checkbox" checked={f.autoFit} onChange={(e) => onChange({ autoFit: e.target.checked })} /> 넘치면 텍스트 상자 크기 조정</label>
+      {!part && <label className="check small ppt-autofit"><input type="checkbox" checked={f.autoFit} onChange={(e) => onChange({ autoFit: e.target.checked })} /> 넘치면 텍스트 상자 크기 조정</label>}
+      </>}
     </div>
   );
 }
