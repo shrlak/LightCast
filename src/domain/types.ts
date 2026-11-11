@@ -344,6 +344,11 @@ export interface SlideAnimation {
   repeat?: number;
   /** Motion Paths › Custom Path: `M 0 0 L dx dy …` in slide fractions from where the object sits. */
   path?: string;
+  /**
+   * Effect Options › 순서, for objects with text: 하나의 개체로 (default) or 단락별로 — each
+   * first-level paragraph its own step, deeper paragraphs going with the one above them.
+   */
+  sequence?: 'one' | 'paragraph';
 }
 
 /** A review comment on a slide (Review › New Comment). */

@@ -149,7 +149,7 @@ export function ShapeElement({ el }: { el: SlideElement }) {
           textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, transform: [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ') || undefined,
         }}>{(() => {
           const runs = lineRuns(el);
-          return el.text.split('\n').map((line, i) => <div key={i}>{runs[i] ? runs[i]!.map((r, j) => <span key={j} style={runCss(r)}>{r.text}</span>) : line || '\u00a0'}</div>);
+          return el.text.split('\n').map((line, i) => <div key={i} data-para={i}>{runs[i] ? runs[i]!.map((r, j) => <span key={j} style={runCss(r)}>{r.text}</span>) : line || '\u00a0'}</div>);
         })()}</div>
       ) : null}
     </div>

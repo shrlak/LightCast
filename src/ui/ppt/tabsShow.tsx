@@ -7,7 +7,7 @@ import { SlideCanvas, assetUrl } from '../SlideCanvas';
 import { useMediaUrl } from '../hooks';
 import { animationCatalog, colorSchemes, transitionCatalog, type AnimEffectInfo } from '../../engine';
 import { moveAnimation, setAnimation, addAnimation } from '../../domain/editOps';
-import { slideTimeline } from '../../domain/animations';
+import { canBuildByParagraph, slideTimeline } from '../../domain/animations';
 import type { Ed } from './editor';
 import { useRef } from 'react';
 import { withMaster } from '../../domain/master';
@@ -246,6 +246,8 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
   const pick = (e: AnimEffectInfo | null) => slide && setList(setAnimation(slide, ids, e));
   const quick = [...ENTRANCE_QUICK, ...EMPHASIS_QUICK, ...EXIT_QUICK].map((id) => cat.find((c) => c.id === id)).filter((e): e is AnimEffectInfo => !!e);
   const steps = slide ? slideTimeline(slide)?.steps ?? 0 : 0;
+  // Effect Options › 순서 for a text box or shape with text (motion paths move the whole object).
+  const seqable = !!first && first.class !== 'path' && canBuildByParagraph(ed.selEls.find((e) => e.id === first.elementId));
   return (
     <>
       <Group label="미리 보기"><Big icon={RI.preview} label="미리 보기" title={`이 슬라이드의 애니메이션 재생 (${steps}단계)`} disabled={!slide?.animations?.length} onClick={onPreview} /></Group>
@@ -255,7 +257,19 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
           {quick.map((e) => <AnimButton key={`${e.class}-${e.id}`} e={e} on={first?.effect === e.id} onClick={() => can && pick(e)} />)}
           <DropButton icon={<span className="rb-more">▾</span>} title="모든 애니메이션" disabled={!can} wide render={(close) => <AnimGallery current={first?.effect} onPick={(e) => { pick(e); close(); }} />} />
         </Gallery>
-        <DropButton big icon={RI.effectOptions} label="효과 옵션" disabled={!info?.options.length} render={(close) => <>{info?.options.map((o) => <MenuItem key={o} label={animOptionLabel(o)} on={(first?.option ?? info.options[0]) === o} onClick={() => { patchMine({ option: o }); close(); }} />)}</>} />
+        <DropButton big icon={RI.effectOptions} label="효과 옵션" disabled={!info?.options.length && !seqable} render={(close) => (
+          <>
+            {info?.options.map((o) => <MenuItem key={o} label={animOptionLabel(o)} on={(first?.option ?? info.options[0]) === o} onClick={() => { patchMine({ option: o }); close(); }} />)}
+            {seqable && (
+              <>
+                {!!info?.options.length && <MenuSep />}
+                <MenuHead>순서</MenuHead>
+                <MenuItem label="하나의 개체로" on={first?.sequence !== 'paragraph'} onClick={() => { patchMine({ sequence: undefined }); close(); }} />
+                <MenuItem label="단락별로" on={first?.sequence === 'paragraph'} onClick={() => { patchMine({ sequence: 'paragraph' }); close(); }} />
+              </>
+            )}
+          </>
+        )} />
       </Group>
       <Group label="고급 애니메이션">
         <DropButton big icon={RI.addAnim} label="애니메이션 추가" disabled={!can} wide render={(close) => (
@@ -269,7 +283,7 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
           <Small icon={RI.animPane} label="애니메이션 창" active={ed.pane === 'animation'} onClick={() => ed.setPane(ed.pane === 'animation' ? null : 'animation')} />
           <Small icon="⧉" label="애니메이션 복사" title="선택한 개체의 애니메이션을 다른 개체에 (다른 개체를 고른 뒤 다시 누르기)" disabled={!can || !first}
             onClick={() => { if (!slide || !first) return; (window as unknown as { __fcAnim?: SlideAnimation }).__fcAnim = first; ed.cmd.notify('애니메이션을 복사했습니다 — 적용할 개체를 고르고 “애니메이션 붙여넣기”를 누르세요'); }} />
-          <Small icon="📋" label="애니메이션 붙여넣기" disabled={!can} onClick={() => { const a = (window as unknown as { __fcAnim?: SlideAnimation }).__fcAnim; const e = a && cat.find((c) => c.id === a.effect && c.class === a.class); if (slide && e) setList(addAnimation(slide, ids, e).map((x) => (ids.includes(x.elementId) && x.effect === a.effect ? { ...x, option: a.option, durationMs: a.durationMs, delayMs: a.delayMs, start: a.start } : x))); }} />
+          <Small icon="📋" label="애니메이션 붙여넣기" disabled={!can} onClick={() => { const a = (window as unknown as { __fcAnim?: SlideAnimation }).__fcAnim; const e = a && cat.find((c) => c.id === a.effect && c.class === a.class); if (slide && e) setList(addAnimation(slide, ids, e).map((x) => (ids.includes(x.elementId) && x.effect === a.effect ? { ...x, option: a.option, durationMs: a.durationMs, delayMs: a.delayMs, start: a.start, sequence: a.sequence } : x))); }} />
         </Col>
       </Group>
       <Group label="타이밍">

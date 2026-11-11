@@ -9,6 +9,7 @@ use std::hash::{Hash, Hasher};
 
 use deckcraft_anim::{AnimState, Timeline};
 use deckcraft_model::anim::{ANIMATIONS, TextBuild};
+use deckcraft_model::text::{Paragraph, TextBody};
 use deckcraft_model::{AnimClass, AnimStart, Animation, Shape, ShapeId, Slide, Xfrm};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -68,6 +69,20 @@ pub struct AnimIn {
     /// fractions, as offsets from where the object sits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
+    /// Effect Options › Sequence: `paragraph` builds the text one paragraph at a time (단락별로);
+    /// anything else animates the object as one (하나의 개체로).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sequence: String,
+}
+
+/// One paragraph of an object's text, as much as a by-paragraph build needs: its outline level and
+/// whether it shows any text (blank paragraphs follow the one before them).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub struct ParaRef {
+    #[serde(default)]
+    pub level: u8,
+    #[serde(default)]
+    pub filled: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -79,6 +94,9 @@ pub struct BoxRef {
     pub h: f64,
     #[serde(default)]
     pub rot: f64,
+    /// The object's paragraphs, sent for objects with a by-paragraph build.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paras: Vec<ParaRef>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -108,7 +126,25 @@ fn build(r: &PrepareReq) -> Prepared {
         .iter()
         .map(|b| Xfrm { x: fin(b.x, 0.0), y: fin(b.y, 0.0), w: fin(b.w, 1.0), h: fin(b.h, 1.0), rot: fin(b.rot, 0.0), flip_h: false, flip_v: false })
         .collect();
-    let shapes: Vec<Shape> = xfrms.iter().enumerate().map(|(i, x)| Shape { id: ShapeId(i as u32 + 1), xfrm: Some(*x), ..Default::default() }).collect();
+    // Only the paragraph structure matters to the timeline (DeckCraft's `paragraph_build_roles`):
+    // a level per paragraph and a stand-in run for one that shows text.
+    let text_of = |b: &BoxRef| {
+        (!b.paras.is_empty()).then(|| TextBody {
+            paragraphs: b
+                .paras
+                .iter()
+                .take(10_000)
+                .map(|p| Paragraph { level: p.level.min(8), ..Paragraph::new(if p.filled { "x" } else { "" }) })
+                .collect(),
+            ..Default::default()
+        })
+    };
+    let shapes: Vec<Shape> = xfrms
+        .iter()
+        .zip(&r.boxes)
+        .enumerate()
+        .map(|(i, (x, b))| Shape { id: ShapeId(i as u32 + 1), xfrm: Some(*x), text: text_of(b), ..Default::default() })
+        .collect();
     let animations: Vec<Animation> = r
         .anims
         .iter()
@@ -130,7 +166,7 @@ fn build(r: &PrepareReq) -> Prepared {
                 delay_ms: a.delay_ms.min(600_000),
                 repeat: a.repeat.clamp(1, 1000),
                 rewind: a.rewind,
-                text_build: TextBuild::AsOne,
+                text_build: if a.sequence == "paragraph" { TextBuild::ByParagraph } else { TextBuild::AsOne },
                 path: match &a.path {
                     Some(p) if class == AnimClass::Path && !p.trim().is_empty() => Some(p.clone()),
                     _ if class == AnimClass::Path => deckcraft_model::anim::preset_path(&a.effect),
@@ -171,11 +207,11 @@ pub fn prepare(r: PrepareReq) -> Res {
             .tl
             .effects()
             .iter()
-            .filter(|e| e.paragraph.is_none())
             .map(|e| {
                 json!({
                     "index": e.anim,
                     "elementId": p.ids.get((e.shape.0 as usize).wrapping_sub(1)),
+                    "paragraph": e.paragraph,
                     "step": e.step,
                     "start": e.start,
                     "duration": e.duration,
@@ -239,7 +275,8 @@ pub struct SampleReq {
     pub t: f64,
 }
 
-/// `{elementId: state}` for every animated object at (`step`, `t`).
+/// `{elementId: state}` for every animated object at (`step`, `t`), and `{"elementId#p": state}` for
+/// each paragraph `p` a by-paragraph build animates (relative to the object's own state).
 pub fn sample(r: SampleReq) -> Res {
     let key = match (&r.key, &r.spec) {
         (_, Some(spec)) => {
@@ -266,6 +303,10 @@ pub fn sample(r: SampleReq) -> Res {
             let Some(id) = p.ids.get((shape.0 as usize).wrapping_sub(1)) else { continue };
             let st: StateOut = p.tl.state(shape, None, r.step, fin(r.t, 0.0)).into();
             out.insert(id.clone(), to_value(st)?);
+            for para in p.tl.paragraph_targets(shape) {
+                let st: StateOut = p.tl.state(shape, Some(para), r.step, fin(r.t, 0.0)).into();
+                out.insert(format!("{id}#{para}"), to_value(st)?);
+            }
         }
         Ok(Value::Object(out))
     })
