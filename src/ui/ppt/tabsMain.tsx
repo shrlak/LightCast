@@ -9,7 +9,7 @@ import { SLIDE_TEMPLATES } from '../../domain/slideTemplates';
 import { qrElement } from '../../domain/qrElements';
 import {
   alignSelection, canGroup, canUngroup, cloneElements, copyStyle, deleteSelection, distributeSelection, flipSelection, groupSelection, makeChart, makeIcon,
-  makeTable, orderSelection, rotateSelection, ungroupSelection,
+  makeTable, orderSelection, rotateSelection, ungroupSelection, regroupSelection, canRegroup,
 } from '../../domain/editOps';
 import { shapeQuickStyles, type ChartKind } from '../../engine';
 import { TextFormatPanel } from './TextFormatPanel';
@@ -75,6 +75,7 @@ export function ArrangeMenu({ ed, close }: { ed: Ed; close: () => void }) {
       <MenuHead>개체 그룹화</MenuHead>
       <MenuItem icon={RI.group} label="그룹" hint="Ctrl+G" disabled={!canGroup(els, sel)} onClick={() => act((e) => groupSelection(e, sel))} />
       <MenuItem label="그룹 해제" hint="Ctrl+Shift+G" disabled={!canUngroup(els, sel)} onClick={() => act((e) => ungroupSelection(e, sel))} />
+      <MenuItem label="다시 그룹" disabled={!canRegroup(els, sel)} onClick={() => { const r = regroupSelection(els, sel); ed.setElements(() => r.elements); ed.setSel(r.ids); close(); }} />
       <MenuHead>개체 위치</MenuHead>
       <AlignItems ed={ed} close={close} />
       <MenuSep />

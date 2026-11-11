@@ -251,6 +251,8 @@ export interface SlideElement {
   flipV?: boolean;
   /** Objects with the same group id are selected, moved and sized together (Arrange › Group). */
   groupId?: string;
+  /** The group this object was in before Ungroup (Arrange › Regroup puts it back). */
+  prevGroupId?: string;
   /** Name shown in the Selection pane. */
   name?: string;
   /** Hidden in the Selection pane: kept on the slide, not drawn. */

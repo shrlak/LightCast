@@ -13,7 +13,7 @@ import type { Ed } from './editor';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
-import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
+import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canRegroup, regroupSelection, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
 import { shapeToPath } from '../../engine';
 import { smartArtOwner } from '../../domain/smartArt';
 import { layoutTable } from '../../engine';
@@ -47,6 +47,7 @@ function ArrangeGroup({ ed }: { ed: Ed }) {
           <>
             <MenuItem label="그룹" hint="Ctrl+G" disabled={!canGroup(ed.elements, sel)} onClick={() => { act((e) => groupSelection(e, sel)); close(); }} />
             <MenuItem label="그룹 해제" hint="Ctrl+Shift+G" disabled={!canUngroup(ed.elements, sel)} onClick={() => { act((e) => ungroupSelection(e, sel)); close(); }} />
+            <MenuItem label="다시 그룹" disabled={!canRegroup(ed.elements, sel)} onClick={() => { const r = regroupSelection(ed.elements, sel); ed.setElements(() => r.elements); ed.setSel(r.ids); close(); }} />
           </>
         )} />
         <DropButton icon={RI.rotate} label="회전" render={(close) => (

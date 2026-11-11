@@ -90,8 +90,20 @@ export function groupSelection(els: Elements, sel: string[]): Elements {
 /** 그룹 해제. */
 export function ungroupSelection(els: Elements, sel: string[]): Elements {
   const ids = expandSelection(els, sel);
-  return els.map((e) => (ids.includes(e.id) && e.groupId ? { ...e, groupId: undefined } : e));
+  return els.map((e) => (ids.includes(e.id) && e.groupId ? { ...e, groupId: undefined, prevGroupId: e.groupId } : e));
 }
+
+/** 다시 그룹: the objects of the group the selected object was last in, grouped again. */
+export function regroupSelection(els: Elements, sel: string[]): { elements: Elements; ids: string[] } {
+  const prev = els.find((e) => sel.includes(e.id) && e.prevGroupId && !e.groupId)?.prevGroupId;
+  if (!prev) return { elements: els, ids: [] };
+  const ids = els.filter((e) => e.prevGroupId === prev && !e.groupId).map((e) => e.id);
+  if (ids.length < 2) return { elements: els, ids: [] };
+  const grouped = groupSelection(els, ids);
+  const gid = grouped.find((e) => e.id === ids[0])?.groupId;
+  return { elements: grouped.map((e) => (ids.includes(e.id) ? { ...e, groupId: gid, prevGroupId: undefined } : e)), ids };
+}
+export const canRegroup = (els: Elements, sel: string[]) => regroupSelection(els, sel).ids.length > 1;
 
 export const canGroup = (els: Elements, sel: string[]) => selectionUnits(els, sel).length > 1;
 export const canUngroup = (els: Elements, sel: string[]) => els.some((e) => sel.includes(e.id) && e.groupId);

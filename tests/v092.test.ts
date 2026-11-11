@@ -57,3 +57,57 @@ describe('Character formatting in the slide text', async () => {
     expect(slideLineRuns({ text: 'H3O\nplain', textRuns: p.textRuns })[0]).toBeNull();
   });
 });
+
+describe('Arrange › Regroup', async () => {
+  const { groupSelection, ungroupSelection, regroupSelection } = await import('../src/domain/editOps');
+  it('puts ungrouped objects back into one group', () => {
+    const els: SlideElement[] = ['a', 'b', 'c'].map((id, i) => ({ id, kind: 'shape', x: i * 10, y: 0, w: 5, h: 5 }));
+    const g = groupSelection(els, ['a', 'b']);
+    const u = ungroupSelection(g, ['a']);
+    expect(u.every((e) => !e.groupId)).toBe(true);
+    const r = regroupSelection(u, ['b']);
+    expect(r.ids.sort()).toEqual(['a', 'b']);
+    expect(r.elements.find((e) => e.id === 'a')!.groupId).toBe(r.elements.find((e) => e.id === 'b')!.groupId);
+    expect(r.elements.find((e) => e.id === 'c')!.groupId).toBeUndefined();
+  });
+});
+
+describe('Edit Points operations', async () => {
+  const pe = await import('../src/domain/pathEdit');
+  const sq = () => pe.parsePath('M0 0 L100 0 L100 100 L0 100 Z');
+  it('adds a point on a segment and deletes it again', () => {
+    const added = pe.insertPoint(sq(), 1, 0.5);
+    expect(pe.anchors(added).map((a) => a.p)).toContainEqual([50, 0]);
+    expect(pe.writePath(pe.deletePoint(added, 1))).toBe(pe.writePath(sq()));
+  });
+  it('splits a curve where clicked, keeping its shape', () => {
+    const c = pe.parsePath('M0 0 C0 100 100 100 100 0');
+    const mid = pe.pointOn(c, 1, 0.5)!;
+    const split = pe.insertPoint(c, 1, 0.5);
+    expect(split[1].pts[2][0]).toBeCloseTo(mid[0]);
+    expect(split[1].pts[2][1]).toBeCloseTo(mid[1]);
+    expect(pe.pointOn(split, 2, 0.5)![1]).toBeCloseTo(pe.pointOn(c, 1, 0.75)![1]);
+  });
+  it('changes segment and point types', () => {
+    const curved = pe.setSegmentType(sq(), 1, 'curve');
+    expect(curved[1].cmd).toBe('C');
+    expect(pe.setSegmentType(curved, 1, 'line')[1].cmd).toBe('L');
+    const smooth = pe.setPointType(pe.parsePath('M0 0 C10 0 40 0 50 50 C60 0 90 0 100 0'), 1, 'smooth');
+    const [inH, p] = [smooth[1].pts[1], smooth[1].pts[2]], outH = smooth[2].pts[0];
+    // Collinear and equal arms.
+    expect(Math.hypot(p[0] - inH[0], p[1] - inH[1])).toBeCloseTo(Math.hypot(outH[0] - p[0], outH[1] - p[1]));
+    expect((p[0] - inH[0]) * (outH[1] - p[1]) - (p[1] - inH[1]) * (outH[0] - p[0])).toBeCloseTo(0);
+  });
+  it('opens, closes and deletes segments', () => {
+    const opened = pe.openPath(sq(), 2);
+    expect(opened.some((s) => s.cmd === 'Z')).toBe(false);
+    expect(opened[0].pts[0]).toEqual([100, 100]);
+    expect(pe.anchors(opened)).toHaveLength(5);
+    expect(pe.closePath(opened, 1).at(-1)!.cmd).toBe('Z');
+    const cut = pe.deleteSegment(sq(), 1);
+    expect(cut.some((s) => s.cmd === 'Z')).toBe(false);
+    expect(pe.anchors(cut)).toHaveLength(4);
+    const nearest = pe.nearestOnPath(sq(), [50, 2]);
+    expect(nearest?.seg).toBe(1);
+  });
+});
