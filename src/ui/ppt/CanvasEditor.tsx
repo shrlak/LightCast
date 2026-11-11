@@ -20,6 +20,7 @@ import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, i
 import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
 import { adjOf, geometryOf, isLinePreset, presetOf } from '../EngineElements';
 import { RichTextEditor } from '../RichTextEditor';
+import { centreOf, drawnMotionPath, motionPathOverlays, pathArrow, startAtCentre, withCustomPath } from '../../domain/motionPath';
 
 /** The slide's own text (lyrics, scripture…) drawn by the theme, selectable like an object. */
 export const SLIDE_TEXT = '__slide-text';
@@ -42,7 +43,9 @@ export type CanvasTool =
   /** Table Design › Draw Table (drag to split a cell) / Eraser (click a line between cells). */
   | { kind: 'tableDraw'; id: string; erase?: boolean }
   /** Picture Format › Color › Set Transparent Color: the next click on the picture picks the colour. */
-  | { kind: 'eyedrop'; id: string; onPick: (fx: number, fy: number) => void };
+  | { kind: 'eyedrop'; id: string; onPick: (fx: number, fy: number) => void }
+  /** Animations › Motion Paths › Custom Path for object `id`: drawn like Freeform: Shape (`add`: Add Animation). */
+  | { kind: 'motionPath'; id: string; add: boolean };
 
 export interface ViewOptions {
   /** 눈금선: draw the grid and snap to it. */
@@ -89,6 +92,8 @@ interface Props {
   pickPicture?: () => Promise<string | null>;
   /** Show the objects as the slide show would at the start (hidden objects stay hidden). */
   zoom?: number;
+  /** Animations tab / Animation pane: draw the selected objects' motion paths. */
+  motionPaths?: boolean;
 }
 
 /** Copied objects, shared by every slide (the PowerPoint clipboard within FreeCast). */
@@ -134,7 +139,7 @@ function toSlide(el: SlideElement, lx: number, ly: number): [number, number] {
  * italic, underline or colour. Every geometric answer — hits, sizes, angles, snapping — comes from
  * the Rust engine. Changes apply as you go, so a slide that is live updates on screen.
  */
-export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, pickPicture }: Props) {
+export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, pickPicture, motionPaths }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const k = width / CANVAS_W || 1;
   const [session, setSession] = useState<{ slideId: string; id: string } | null>(null);
@@ -158,6 +163,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   /** What a click can pick: not locked (Selection pane) and not the slide master's. */
   const pickable = useMemo(() => visible.filter((e) => !e.locked && !e.master), [visible]);
   const [freePts, setFreePts] = useState<[number, number][] | null>(null);
+  /** Custom Path being drawn (starts at the object's centre). */
+  const [pathPts, setPathPts] = useState<[number, number][] | null>(null);
   const [pointPreview, setPointPreview] = useState<{ id: string; path: string } | null>(null);
   /** Edit Points: the anchor picked (its Bézier handles show) and the right-click menu. */
   const [ptSel, setPtSel] = useState<number | null>(null);
@@ -205,6 +212,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     return p ? { ...el, x: p.x, y: p.y, w: p.w, h: p.h, ...(p.rot !== undefined ? { rotation: p.rot } : {}), ...(p.adj ? { adj: p.adj } : {}) } : el;
   };
   const setElements = (next: SlideElement[]) => onChange({ elements: next.length ? routeConnectors(next) : undefined });
+  // Motion paths follow their objects while they are dragged (preset ones are traced by the engine, so only when something changed).
+  const selKey = sel.join();
+  const pathOverlays = useMemo(() => (motionPaths ? motionPathOverlays(slide, elements.map(shownEl), sel) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [motionPaths, slide.animations, elements, preview, selKey]);
 
   // What the canvas shows: objects being dragged where they are going, the text being typed
   // hidden underneath the typing box.
@@ -235,6 +247,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const toolKind = tool?.kind;
   useEffect(() => {
     if (toolKind && toolKind !== 'eyedrop') { flushText(); setSession(null); }
+    if (toolKind !== 'motionPath') setPathPts(null);
   }, [toolKind, flushText]);
   const typed = (id: string, lines: TextRun[][]) => {
     window.clearTimeout(commitTimer.current);
@@ -271,6 +284,16 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       // Clicking near the first point closes the outline.
       if (pts.length > 2 && Math.hypot(pts[0][0] - x, pts[0][1] - y) < 14 / k) { finishFreeform(pts, true); return; }
       setFreePts([...pts, [x, y]]);
+      drag.current = { mode: 'ink', points: [[x, y]] };
+      return;
+    }
+    if (tool?.kind === 'motionPath') {
+      const el = elOf(tool.id);
+      if (!el) { onToolDone?.(); return; }
+      const pts = pathPts ?? [centreOf(el)];
+      // Clicking near the start (the object's centre) closes the path.
+      if (pts.length > 2 && Math.hypot(pts[0][0] - x, pts[0][1] - y) < 14 / k) { finishMotionPath(pts, true); return; }
+      setPathPts(pathPts ? [...pts, [x, y]] : startAtCentre([[x, y]], pts[0]));
       drag.current = { mode: 'ink', points: [[x, y]] };
       return;
     }
@@ -431,6 +454,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     if (d.mode === 'ink') {
       d.points.push([Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
       if (tool?.kind === 'freeform' && !tool.scribble) { if (d.points.length > 2) setFreePts((pts) => [...(pts ?? []), [x, y]]); return; }
+      // Custom Path: a drag draws freehand, like Scribble.
+      if (tool?.kind === 'motionPath') { if (d.points.length > 2) setPathPts((pts) => [...(pts ?? []), [x, y]]); return; }
       setInkPath([...d.points]);
       return;
     }
@@ -548,6 +573,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       setElements(elements.map((e) => (e.id === el.id ? refitPath(e, p.path) : e)));
       return;
     }
+    if (d.mode === 'ink' && tool?.kind === 'motionPath') return;
     if (d.mode === 'ink' && tool?.kind === 'freeform') {
       setInkPath(null);
       if (tool.scribble) {
@@ -638,6 +664,14 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     if (el) { setElements([...elements, el]); onSelect([el.id]); }
     onToolDone?.();
   };
+  /** Custom Path drawn: the object gets (or adds) the 2 s on-click motion along it. */
+  const finishMotionPath = (pts: [number, number][], closed: boolean) => {
+    setPathPts(null);
+    const el = tool?.kind === 'motionPath' ? elOf(tool.id) : undefined;
+    const path = el && drawnMotionPath(pts, centreOf(el), closed);
+    if (el && path && tool?.kind === 'motionPath') { onChange({ animations: withCustomPath(slide, el.id, path, tool.add) }); onSelect([el.id]); }
+    onToolDone?.();
+  };
   /** A point of an outline (path units) on the slide. */
   const pathToSlide = (el: SlideElement, p: [number, number]): [number, number] =>
     toSlide(el, (p[0] * el.w) / Math.max(0.01, el.pathW ?? el.w), (p[1] * el.h) / Math.max(0.01, el.pathH ?? el.h));
@@ -665,6 +699,12 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const onKeyDown = (e: RKeyboardEvent) => {
     if (editing) return;
     if (e.key === 'Escape' && tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); e.preventDefault(); e.stopPropagation(); return; }
+    if (tool?.kind === 'motionPath' && (e.key === 'Enter' || e.key === 'Escape')) {
+      // Enter ends the path, Esc drops it.
+      if (e.key === 'Enter' && pathPts) finishMotionPath(pathPts, false);
+      else { setPathPts(null); onToolDone?.(); }
+      e.preventDefault(); e.stopPropagation(); return;
+    }
     if ((e.key === 'Enter' || e.key === 'Escape') && (tool?.kind === 'crop' || tool?.kind === 'points')) { onToolDone?.(); e.preventDefault(); e.stopPropagation(); return; }
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
@@ -794,6 +834,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       onCopy={(e) => onCopy(e)} onCut={(e) => onCopy(e, true)} onPaste={onPaste} onDoubleClick={(e) => {
         const [x, y] = pointer(e);
         if (tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); return; }
+        if (tool?.kind === 'motionPath') { if (pathPts) finishMotionPath(pathPts, false); return; }
         const hit = hitBox(pickable.map(boxOf), x, y, 3);
         const ph = hit ? elOf(hit) : undefined;
         if (ph?.placeholder === 'picture' && pickPicture) {
@@ -838,6 +879,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
             <polyline points={freePts.map((p) => p.join(',')).join(' ')} fill="none" stroke="#0078d4" strokeWidth={3} strokeDasharray="8 5" />
           </svg>
         )}
+        {!pathPts && pathOverlays.map((o) => <MotionPathMarks key={o.id} points={o.points} closed={o.closed} k={k} />)}
+        {pathPts && tool?.kind === 'motionPath' && <MotionPathMarks points={pathPts} closed={false} k={k} drawing />}
         {inkPath && tool?.kind === 'freeform' && tool.scribble && (
           <svg className="ce-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
             <polyline points={inkPath.map((p) => p.join(',')).join(' ')} fill="none" stroke="#0078d4" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
@@ -888,5 +931,21 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         {editor}
       </div>
     </div>
+  );
+}
+
+/** A motion path on the editing canvas, as PowerPoint draws it: dashed, a green arrowhead where it starts and a red one where it ends. */
+function MotionPathMarks({ points, closed, k, drawing }: { points: [number, number][]; closed: boolean; k: number; drawing?: boolean }) {
+  const px = 1 / Math.max(0.05, k);
+  const tri = (pts: [number, number][]) => pts.map((p) => p.join(',')).join(' ');
+  return (
+    <svg className="ce-handles-svg ce-motion-path" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
+      {closed ? <polygon points={tri(points)} fill="none" stroke="#fff" strokeWidth={3.5 * px} /> : <polyline points={tri(points)} fill="none" stroke="#fff" strokeWidth={3.5 * px} />}
+      {closed
+        ? <polygon points={tri(points)} fill="none" stroke="#333" strokeWidth={1.5 * px} strokeDasharray={`${6 * px} ${4 * px}`} />
+        : <polyline points={tri(points)} fill="none" stroke="#333" strokeWidth={1.5 * px} strokeDasharray={`${6 * px} ${4 * px}`} />}
+      <polygon points={tri(pathArrow(points, false, 12 * px))} fill="#2e9e66" stroke="#fff" strokeWidth={px} />
+      {!drawing && points.length > 1 && <polygon points={tri(pathArrow(points, true, 12 * px))} fill="#d13438" stroke="#fff" strokeWidth={px} />}
+    </svg>
   );
 }

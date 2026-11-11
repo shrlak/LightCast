@@ -258,7 +258,13 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
         <DropButton big icon={RI.effectOptions} label="효과 옵션" disabled={!info?.options.length} render={(close) => <>{info?.options.map((o) => <MenuItem key={o} label={animOptionLabel(o)} on={(first?.option ?? info.options[0]) === o} onClick={() => { patchMine({ option: o }); close(); }} />)}</>} />
       </Group>
       <Group label="고급 애니메이션">
-        <DropButton big icon={RI.addAnim} label="애니메이션 추가" disabled={!can} wide render={(close) => <AnimGallery onPick={(e) => { if (slide && e) setList(addAnimation(slide, ids, e)); close(); }} />} />
+        <DropButton big icon={RI.addAnim} label="애니메이션 추가" disabled={!can} wide render={(close) => (
+          <>
+            <MenuItem icon="✎" label="사용자 지정 경로 그리기" hint="두 번 클릭: 끝" disabled={ids.length !== 1} onClick={() => { ed.setTool({ kind: 'motionPath', id: ids[0], add: true }); close(); }} />
+            <AnimGallery onPick={(e) => { if (slide && e) setList(addAnimation(slide, ids, e)); close(); }} />
+          </>
+        )} />
+        <Small icon="✎" label="사용자 지정 경로" title="이동 경로를 직접 그립니다 (이 개체의 애니메이션을 바꿈)" disabled={!can || ids.length !== 1} onClick={() => ed.setTool({ kind: 'motionPath', id: ids[0], add: false })} />
         <Col>
           <Small icon={RI.animPane} label="애니메이션 창" active={ed.pane === 'animation'} onClick={() => ed.setPane(ed.pane === 'animation' ? null : 'animation')} />
           <Small icon="⧉" label="애니메이션 복사" title="선택한 개체의 애니메이션을 다른 개체에 (다른 개체를 고른 뒤 다시 누르기)" disabled={!can || !first}
