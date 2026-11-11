@@ -1800,3 +1800,7 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .master-stage > * { width: min(100%, calc((100vh - 120px) * 4 / 3)); }
 .rehearse-clock { font-variant-numeric: tabular-nums; font-weight: 600; }
 @media (max-width: 600px) { .smartart-dlg { grid-template-columns: 1fr; } .smartart-layouts { max-height: 140px; } }
+.smartart-cat { display: flex; flex-direction: column; }
+.smartart-cat-head { font-size: 11px; font-weight: 600; color: #605e5c; padding: 6px 8px 2px; background: #faf9f8; position: sticky; top: 0; }
+.smartart-cat > button { text-align: left; border: 0; background: transparent; padding: 4px 8px 4px 14px; }
+.smartart-cat > button.on { background: #e1dfdd; }

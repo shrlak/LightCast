@@ -85,3 +85,30 @@ export function animOptionLabel(o: string): string {
   };
   return m[o] ?? o;
 }
+
+/** Insert › SmartArt: layouts as PowerPoint's Korean UI names them, with their category. */
+export const SMARTART_LAYOUT: Record<string, [string, string]> = {
+  list: ['세로 글머리 기호 목록', '목록형'], blockList: ['기본 블록 목록', '목록형'], hBulletList: ['가로 글머리 기호 목록', '목록형'],
+  verticalBoxList: ['세로 상자 목록', '목록형'], trapezoidList: ['사다리꼴 목록', '목록형'], tableList: ['표 목록', '목록형'],
+  process: ['기본 프로세스', '프로세스형'], chevron: ['기본 갈매기형 수장 프로세스', '프로세스형'], verticalProcess: ['세로 프로세스', '프로세스형'],
+  stepUp: ['단계 상향 프로세스', '프로세스형'], timeline: ['기본 시간 표시 막대', '프로세스형'], accentProcess: ['강조 프로세스', '프로세스형'],
+  continuousBlockProcess: ['연속 블록 프로세스', '프로세스형'], bendingProcess: ['기본 굽은 프로세스', '프로세스형'], funnel: ['깔때기형', '프로세스형'], gear: ['톱니바퀴', '프로세스형'],
+  cycle: ['기본 주기형', '주기형'], blockCycle: ['블록 주기형', '주기형'], textCycle: ['텍스트 주기형', '주기형'], continuousCycle: ['연속 주기형', '주기형'],
+  segmentedCycle: ['분할 주기형', '주기형'], multidirectionalCycle: ['다방향 주기형', '주기형'], radial: ['기본 방사형', '주기형'], pie: ['기본 원형', '주기형'],
+  hierarchy: ['계층 구조', '계층 구조형'], horizontalHierarchy: ['가로 계층 구조', '계층 구조형'], orgChart: ['조직도', '계층 구조형'],
+  halfCircleOrgChart: ['반원형 조직도', '계층 구조형'], nameTitleOrgChart: ['이름 및 직위 조직도', '계층 구조형'],
+  venn: ['기본 벤형', '관계형'], linearVenn: ['선형 벤형', '관계형'], stackedVenn: ['누적 벤형', '관계형'], target: ['기본 대상형', '관계형'], nestedTarget: ['중첩 대상형', '관계형'],
+  matrix: ['기본 행렬형', '행렬형'], titledMatrix: ['제목 있는 행렬형', '행렬형'], gridMatrix: ['눈금 행렬형', '행렬형'], cycleMatrix: ['주기 행렬형', '행렬형'],
+  pyramid: ['기본 피라미드형', '피라미드형'], invertedPyramid: ['역 피라미드형', '피라미드형'], segmentedPyramid: ['분할 피라미드형', '피라미드형'],
+  pictureList: ['세로 그림 목록', '그림'], pictureCaption: ['그림 캡션 목록', '그림'], pictureProcess: ['그림 강조 프로세스', '그림'], pictureHList: ['가로 그림 목록', '그림'],
+};
+export const SMARTART_CATEGORIES = ['목록형', '프로세스형', '주기형', '계층 구조형', '관계형', '행렬형', '피라미드형', '그림'];
+export const SMARTART_STYLE: Record<string, string> = {
+  flat: '단순 채우기', subtle: '미세 효과', intense: '강한 효과', outline: '흰색 윤곽선', polished: '광택 처리',
+  inset: '안쪽', cartoon: '만화', powder: '파우더', brick: '벽돌 장면',
+};
+export const smartArtColorLabel = (id: string, fallback: string) =>
+  id === 'colorful' ? '색상형 - 강조색' :
+    id.startsWith('range') ? `색상형 범위 - 강조색 ${id[5]}~${id[6]}` :
+      id.endsWith('Grad') ? `그라데이션 범위 - 강조 ${id[6]}` :
+        id.startsWith('accent') ? `강조 ${id[6]}` : fallback;

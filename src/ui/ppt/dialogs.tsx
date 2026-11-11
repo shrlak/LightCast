@@ -71,7 +71,8 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
     }
     onClose();
   };
-  const boxOnly = !t.els.length;
+  // Superscript, subscript and caps need characters to act on: a text box, or selected slide text.
+  const boxOnly = !t.els.length && !sel;
   return (
     <Dialog title="글꼴" onClose={onClose} onOk={ok} wide>
       <div className="dlg-tabs">

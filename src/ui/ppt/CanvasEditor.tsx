@@ -7,7 +7,7 @@ import { useWidth } from '../hooks';
 import { useAutoTextBoxes } from '../textBoxLayout';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
-import { lineRuns, withRichLines } from '../../domain/richText';
+import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
 import { uid } from '../../domain/lyrics';
 import {
   boxOf, cloneElements, deleteSelection, duplicateSelection, expandSelection, groupSelection, inkToShape, makeInk, makeShape, nudgeSelection,
@@ -228,8 +228,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     window.clearTimeout(commitTimer.current);
     pendingText.current = () => {
       if (id === SLIDE_TEXT) {
-        const text = lines.map((l) => l.map((r) => r.text).join('')).join('\n');
-        latestBody.current.onChange({ text });
+        latestBody.current.onChange(slideTextPatch(lines));
         return;
       }
       const el = latestEls.current.find((e) => e.id === id);
@@ -649,11 +648,12 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const editor = (() => {
     if (!editing) return null;
     if (editing === SLIDE_TEXT) {
-      const lines: TextRun[][] = slide.text.split('\n').map((t) => (t ? [{ text: t }] : []));
+      const own = slideLineRuns(slide);
+      const lines: TextRun[][] = slide.text.split('\n').map((t, i) => own[i] ?? (t ? [{ text: t }] : []));
       return (
         <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
           <div className="ce-edit-box" style={{ left: textBox.x, top: textBox.y, width: textBox.w, minHeight: textBox.h, justifyContent: theme.vAlign === 'top' ? 'flex-start' : theme.vAlign === 'bottom' ? 'flex-end' : 'center' }}>
-            <RichTextEditor key={`${identity}:slide`} plain lines={lines} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color }}
+            <RichTextEditor key={`${identity}:slide`} lines={lines} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color }}
               style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, textAlign: theme.align, lineHeight: theme.lineHeight }}
               onChange={(l) => typed(SLIDE_TEXT, l)} onDone={stopEditing} />
           </div>

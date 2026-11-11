@@ -379,6 +379,8 @@ export interface Slide {
   transition?: Transition;
   animations?: SlideAnimation[];
   comments?: SlideComment[];
+  /** Character formatting of the slide's own text, one list of runs per line (ignored for a line they no longer spell). */
+  textRuns?: TextRun[][];
   /** Header & Footer on this slide. */
   footer?: SlideFooter;
   /** Format Background › Hide background graphics: the master's objects are not shown here. */

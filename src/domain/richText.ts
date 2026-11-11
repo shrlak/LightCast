@@ -2,7 +2,7 @@
 // underline and colour (PowerPoint's character formatting). The plain text stays in `text` /
 // `paragraph.text`, so everything that reads a box's words (find, lyrics, export, fitting) is
 // unchanged; runs that no longer spell that text (it was retyped somewhere else) are ignored.
-import type { ElementParagraph, SlideElement, TextRun } from './types';
+import type { ElementParagraph, Slide, SlideElement, TextRun } from './types';
 
 const FORMAT_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'color', 'strike', 'baseline'] as const;
 export type RunFormat = Pick<TextRun, (typeof FORMAT_KEYS)[number]>;
@@ -83,4 +83,18 @@ export function formatAllRuns(el: SlideElement, patch: RunFormat): Partial<Slide
     return q;
   }));
   return withRichLines(el, lines);
+}
+
+/** The runs of each line of the slide's own text (null: the line is drawn plainly). */
+export function slideLineRuns(slide: Pick<Slide, 'text' | 'textRuns'>): (TextRun[] | null)[] {
+  const lines = slide.text.split('\n');
+  const runs = slide.textRuns;
+  if (!runs || runs.length !== lines.length) return lines.map(() => null);
+  return lines.map((line, i) => (spells(runs[i], line) && runs[i].some(runHasFormat) && !/^\*\*.+\*\*$/.test(line) ? runs[i] : null));
+}
+
+/** What typing in the slide's own text leaves on the slide: the text, and runs only when formatted. */
+export function slideTextPatch(lines: TextRun[][]): Pick<Slide, 'text' | 'textRuns'> {
+  const clean = lines.map(normalizeRuns);
+  return { text: clean.map((l) => l.map((r) => r.text).join('')).join('\n'), textRuns: clean.some((l) => l.some(runHasFormat)) ? clean : undefined };
 }

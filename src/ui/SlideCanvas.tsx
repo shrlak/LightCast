@@ -1,7 +1,7 @@
 import { isFrontSlide } from '../domain/frontLayout';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, Theme, Timer, Transition } from '../domain/types';
-import { lineRuns } from '../domain/richText';
+import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
+import { lineRuns, slideLineRuns } from '../domain/richText';
 import { INDENT_PX, listMarkers } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
@@ -188,7 +188,7 @@ function ListLine({ marker, highlight, children }: { marker: string | null; high
 }
 
 /** Lines wrapped in **…** render bold (prayer topic titles); bullets / numbering and highlight as the slide sets. */
-function Lines({ text, list, highlight }: { text: string; list?: ListStyle; highlight?: string }) {
+function Lines({ text, list, highlight, runs }: { text: string; list?: ListStyle; highlight?: string; runs?: (TextRun[] | null)[] }) {
   const lines = stripChords(text).split('\n');
   const markers = listMarkers(lines, list);
   return (
@@ -196,7 +196,9 @@ function Lines({ text, list, highlight }: { text: string; list?: ListStyle; high
       {lines.map((line, i) => {
         const bold = /^\*\*(.+)\*\*$/.exec(line);
         const content = bold ? bold[1] : line;
-        const body = TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
+        // Runs only stand for a line they still spell once chords are taken out.
+        const own = runs?.[i] && runs[i]!.map((r) => r.text).join('') === line ? runs[i] : null;
+        const body = own ? own.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
         return <div key={i}><ListLine marker={markers[i]} highlight={line.trim() ? highlight : undefined}>{bold ? <strong style={{ fontWeight: 800 }}>{body}</strong> : body}</ListLine></div>;
       })}
     </>
@@ -408,7 +410,7 @@ function SlideBody({ slide, theme: base, build }: { slide: Slide; theme: Theme; 
       >
         <div ref={inner} data-slide-text-box data-fitted-font-size={resolved.fontSize} data-preferred-font-size={originalTheme.fontSize} style={{ ...textStyle(t), width: frame.w, flexShrink: 0, whiteSpace: noWrap ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere', paddingLeft: theme.indent ? theme.indent * INDENT_PX : undefined }}>
           {slide.title && <div className="slide-title" style={{ fontSize: t.fontSize * 0.72, marginBottom: t.fontSize * 0.35 }}>{slide.title}</div>}
-          {slide.text && <Lines text={slide.text} list={theme.list} highlight={theme.highlight} />}
+          {slide.text && <Lines text={slide.text} list={theme.list} highlight={theme.highlight} runs={slide.textRuns ? slideLineRuns(slide) : undefined} />}
           {slide.subtext && (
             <div style={{ fontSize: t.fontSize * (theme.subScale ?? 0.62), color: theme.subColor ?? theme.color, marginTop: t.fontSize * 0.35, fontWeight: Math.min(theme.fontWeight, 500) }}>
               <Lines text={slide.subtext} />

@@ -15,6 +15,7 @@ import { smartArtCatalog, thesaurus } from '../../engine';
 import { SlideCanvas } from '../SlideCanvas';
 import { activeTextEditor } from '../RichTextEditor';
 import { Check, Dialog, Field, Num } from './dialogs';
+import { SMARTART_CATEGORIES, SMARTART_LAYOUT, SMARTART_STYLE, smartArtColorLabel } from './ko';
 import type { DialogKind, Ed } from './editor';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
@@ -195,7 +196,17 @@ function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   return (
     <Dialog title={owner ? 'SmartArt 편집' : 'SmartArt 그래픽 선택'} onClose={onClose} onOk={ok} okLabel={owner ? '적용' : '삽입'} okDisabled={!preview?.length || !ed.canEdit} wide>
       <div className="smartart-dlg">
-        <div className="dlg-list smartart-layouts">{cat.layouts.map((l) => <button key={l.id} type="button" className={kind === l.id ? 'on' : ''} onClick={() => setKind(l.id)}>{l.label}</button>)}</div>
+        <div className="dlg-list smartart-layouts">
+          {SMARTART_CATEGORIES.map((c) => {
+            const items = cat.layouts.filter((l) => (SMARTART_LAYOUT[l.id]?.[1] ?? '목록형') === c);
+            return items.length ? (
+              <div key={c} className="smartart-cat">
+                <div className="smartart-cat-head">{c}</div>
+                {items.map((l) => <button key={l.id} type="button" className={kind === l.id ? 'on' : ''} title={l.label} onClick={() => setKind(l.id)}>{SMARTART_LAYOUT[l.id]?.[0] ?? l.label}</button>)}
+              </div>
+            ) : null;
+          })}
+        </div>
         <div className="smartart-side">
           <div className="smartart-preview">{preview && ed.theme && <SlideCanvas slide={{ id: '__sa', group: '', text: '', elements: preview }} theme={ed.theme} background={ed.slide && ed.p ? resolveBackground(ed.slide, ed.p) : null} />}</div>
           <Field label="텍스트 창 (Tab 키 = 한 수준 아래)">
@@ -209,8 +220,8 @@ function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             }} />
           </Field>
           <div className="dlg-cols">
-            <Field label="SmartArt 스타일"><select value={style} onChange={(e) => setStyle(e.target.value)}>{cat.styles.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></Field>
-            <Field label="색 변경"><select value={colors} onChange={(e) => setColors(e.target.value)}>{cat.colors.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}</select></Field>
+            <Field label="SmartArt 스타일"><select value={style} onChange={(e) => setStyle(e.target.value)}>{cat.styles.map((s) => <option key={s.id} value={s.id}>{SMARTART_STYLE[s.id] ?? s.label}</option>)}</select></Field>
+            <Field label="색 변경"><select value={colors} onChange={(e) => setColors(e.target.value)}>{cat.colors.map((s) => <option key={s.id} value={s.id}>{smartArtColorLabel(s.id, s.label)}</option>)}</select></Field>
           </div>
         </div>
       </div>

@@ -32,3 +32,28 @@ describe('Slide show clicks', () => {
     expect(liveActionFor(state, { kind: 'url', url: 'https://x' })).toBeNull();
   });
 });
+
+describe('SmartArt in Korean', async () => {
+  const { smartArtCatalog } = await import('../src/engine');
+  const { SMARTART_LAYOUT, SMARTART_STYLE, SMARTART_CATEGORIES } = await import('../src/ui/ppt/ko');
+  it('names every layout and style, in a known category', () => {
+    const cat = smartArtCatalog()!;
+    for (const l of cat.layouts) {
+      expect(SMARTART_LAYOUT[l.id], l.id).toBeTruthy();
+      expect(SMARTART_CATEGORIES).toContain(SMARTART_LAYOUT[l.id][1]);
+    }
+    for (const st of cat.styles) expect(SMARTART_STYLE[st.id], st.id).toBeTruthy();
+  });
+});
+
+describe('Character formatting in the slide text', async () => {
+  const { slideLineRuns, slideTextPatch } = await import('../src/domain/richText');
+  it('keeps runs only where formatted and still spelling the line', () => {
+    const p = slideTextPatch([[{ text: 'H' }, { text: '2', baseline: 'sub' }, { text: 'O' }], [{ text: 'plain' }]]);
+    expect(p.text).toBe('H2O\nplain');
+    expect(slideLineRuns(p)[0]?.[1]).toEqual({ text: '2', baseline: 'sub' });
+    expect(slideLineRuns(p)[1]).toBeNull();
+    expect(slideTextPatch([[{ text: 'x' }]]).textRuns).toBeUndefined();
+    expect(slideLineRuns({ text: 'H3O\nplain', textRuns: p.textRuns })[0]).toBeNull();
+  });
+});
