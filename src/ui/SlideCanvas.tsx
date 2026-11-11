@@ -312,7 +312,34 @@ export function ElementView({ el }: { el: SlideElement }) {
 export { runStyle } from './runStyle';
 import { runStyle } from './runStyle';
 
+/** The path a warped (Transform) text follows, in its box. */
+export function warpPath(kind: NonNullable<SlideElement['warp']>, w: number, h: number): string {
+  switch (kind) {
+    case 'archUp': return `M 0 ${h * 0.85} Q ${w / 2} ${-h * 0.55} ${w} ${h * 0.85}`;
+    case 'archDown': return `M 0 ${h * 0.25} Q ${w / 2} ${h * 1.6} ${w} ${h * 0.25}`;
+    case 'wave': return `M 0 ${h * 0.6} C ${w / 4} ${h * 0.05} ${w / 4} ${h * 1.1} ${w / 2} ${h * 0.6} S ${w * 0.75} ${h * 0.05} ${w} ${h * 0.6}`;
+    case 'slantUp': return `M 0 ${h * 0.9} L ${w} ${h * 0.3}`;
+    default: return `M 0 ${h * 0.3} L ${w} ${h * 0.9}`;
+  }
+}
+
+function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
+  const id = `warp-${el.id}`;
+  const text = (el.text ?? '').replace(/\n/g, ' ');
+  return (
+    <svg style={{ ...box, left: el.x, top: el.y, width: el.w, height: el.h, overflow: 'visible', ...elementTextStyle(el) }} viewBox={`0 0 ${el.w} ${el.h}`}>
+      <path id={id} d={warpPath(el.warp!, el.w, el.h)} fill="none" />
+      <text fill={el.color ?? '#fff'} fontSize={el.fontSize ?? 64} fontFamily={el.fontFamily} fontWeight={el.bold ? 800 : 500} fontStyle={el.italic ? 'italic' : undefined} textAnchor="middle"
+        stroke={el.textOutline?.color} strokeWidth={el.textOutline?.width} paintOrder="stroke" opacity={el.textTransparency ? 1 - el.textTransparency : undefined}
+        style={{ filter: el.shadow ? 'drop-shadow(0 3px 6px rgba(0,0,0,.8))' : undefined }}>
+        <textPath href={`#${id}`} startOffset="50%">{text}</textPath>
+      </text>
+    </svg>
+  );
+}
+
 function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
+  if (el.warp && el.text) return <WarpText el={el} box={box} />;
   const base = el.fontSize ?? 64;
   const lines = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
   const markers = listMarkers(lines, el.list);

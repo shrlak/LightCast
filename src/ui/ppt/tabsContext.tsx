@@ -118,6 +118,22 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
       {smartArtOwner(ed.elements, ed.selEls) && (
         <Group label="SmartArt">
           <Big icon="⧉" label="텍스트 창 · 레이아웃" title="SmartArt의 텍스트, 레이아웃, 스타일, 색 바꾸기" onClick={() => ed.setDialog('smartArt')} />
+          <DropButton big icon="⇄" label="변환" render={(close) => {
+            const owner = smartArtOwner(ed.elements, ed.selEls);
+            return (
+              <>
+                <MenuItem label="도형으로 변환" onClick={() => { if (owner) ed.setElements((els) => els.map((e) => (e.id === owner.id ? { ...e, smartArt: undefined } : e))); close(); }} />
+                <MenuItem label="텍스트로 변환" onClick={() => {
+                  if (!owner?.smartArt) return close();
+                  const g = owner.groupId, sa = owner.smartArt;
+                  const box: SlideElement = { id: uid('el'), kind: 'text', text: sa.nodes.map((n) => n.text).join('\n'), x: sa.box.x, y: sa.box.y, w: sa.box.w, h: sa.box.h, fontSize: 48, color: '#ffffff', align: 'left', list: 'bullet' };
+                  ed.setElements((els) => [...els.filter((e) => (g ? e.groupId !== g : e.id !== owner.id)), box]);
+                  ed.setSel([box.id]);
+                  close();
+                }} />
+              </>
+            );
+          }} />
         </Group>
       )}
       <Group label="도형 스타일"><ShapeStyleButtons ed={ed} big /></Group>
@@ -139,6 +155,12 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
               <MenuItem label="작은 대문자" on={text[0]?.caps === 'small'} onClick={() => { setText({ caps: text[0]?.caps === 'small' ? undefined : 'small' }); close(); }} />
               <MenuHead>텍스트 투명도</MenuHead>
               <div className="rb-chip-row">{[0, 0.25, 0.5, 0.75].map((v) => <button key={v} type="button" className={`mini-btn ${(text[0]?.textTransparency ?? 0) === v ? 'on' : ''}`} onClick={() => { setText({ textTransparency: v || undefined }); close(); }}>{v * 100}%</button>)}</div>
+              <MenuHead>변환</MenuHead>
+              <div className="rb-chip-row">
+                {([[undefined, '없음'], ['archUp', '⌒ 위쪽 원호'], ['archDown', '⌣ 아래쪽 원호'], ['wave', '∿ 물결'], ['slantUp', '⟋ 위로'], ['slantDown', '⟍ 아래로']] as const).map(([w, l]) => (
+                  <button key={l} type="button" className={`mini-btn ${text[0]?.warp === w ? 'on' : ''}`} disabled={!text.some((t) => t.kind === 'text')} onClick={() => { setText({ warp: w }); close(); }}>{l}</button>
+                ))}
+              </div>
               <MenuSep />
               <MenuItem label="텍스트 옵션…" onClick={() => { ed.setDialog('paragraph'); close(); }} />
             </>

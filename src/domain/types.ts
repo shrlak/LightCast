@@ -292,6 +292,8 @@ export interface SlideElement {
   smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number } };
   /** Text effects. */
   caps?: 'all' | 'small';
+  /** WordArt › Text Effects › Transform: the text follows this path. */
+  warp?: 'archUp' | 'archDown' | 'wave' | 'slantUp' | 'slantDown';
   textOutline?: { color: string; width: number };
   /** 0–1 transparency of the text. */
   textTransparency?: number;

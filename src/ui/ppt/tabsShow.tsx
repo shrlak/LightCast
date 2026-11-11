@@ -11,6 +11,7 @@ import { slideTimeline } from '../../domain/animations';
 import type { Ed } from './editor';
 import { useRef } from 'react';
 import { withMaster } from '../../domain/master';
+import { FONT_OPTIONS } from '../../domain/fonts';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { Big, Col, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
@@ -42,6 +43,18 @@ export function DesignTab({ ed }: { ed: Ed }) {
         <Small icon="Aa" label="테마 편집" onClick={() => ed.cmd.open('themes')} />
       </Group>
       <Group label="적용">
+        <DropButton big icon={<span style={{ fontFamily: 'serif', fontSize: 20 }}>가A</span>} label="글꼴" title="모든 슬라이드와 텍스트 상자의 테마 글꼴" disabled={!p || !ed.canEdit} render={(close) => (
+          <>
+            <MenuHead>테마 글꼴</MenuHead>
+            {FONT_OPTIONS.map((f) => (
+              <MenuItem key={f.label} label={<span style={{ fontFamily: f.family, fontSize: 15 }}>{f.label} — 가나다 Aa</span>} onClick={() => {
+                if (!p) return;
+                ed.updatePres({ slides: p.slides.map((x) => ({ ...x, style: { ...x.style, fontFamily: f.family }, elements: x.elements?.map((e) => (e.kind === 'text' || e.kind === 'shape' || e.kind === 'table' ? { ...e, fontFamily: f.family } : e)) })) });
+                close();
+              }} />
+            ))}
+          </>
+        )} />
         <DropButton big icon={<span className="scheme-chip">{(schemes.find((s) => s.name === p?.colorScheme) ?? schemes[0])?.colors.slice(4, 8).map((c) => <i key={c} style={{ background: c }} />)}</span>} label="색" title="표 · 차트 · 도형 스타일 · 색 선택에 쓰는 테마 색" disabled={!p || !ed.canEdit} render={(close) => (
           <>
             {schemes.map((s) => (
