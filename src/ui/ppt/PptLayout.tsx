@@ -26,7 +26,7 @@ import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, 
 import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AccessibilityPane, AnimationPane, CommentsPane, SelectionPane, accessibilityIssues } from './panes';
 import { Dialogs } from './dialogs';
-import { SpellingPane } from './reviewPanes';
+import { RevisionsPane, SpellingPane } from './reviewPanes';
 import { uid as newId } from '../../domain/lyrics';
 
 /** A picture chosen from this computer, stored as media: its id (null when none was chosen). */
@@ -456,6 +456,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
             {pane === 'animation' && <AnimationPane ed={ed} onPlay={() => setPreview('animation')} />}
             {pane === 'selection' && <SelectionPane ed={ed} />}
             {pane === 'spelling' && <SpellingPane ed={ed} />}
+            {pane === 'revisions' && <RevisionsPane ed={ed} />}
             {pane === 'comments' && <CommentsPane ed={ed} draftOpen={commentDraft} onDraftDone={() => setCommentDraft(false)} />}
             {pane === 'accessibility' && <AccessibilityPane ed={ed} onGo={(seq, elementId) => { const s = sequence(p)[seq]?.slide; if (s) cmd.setSlideId(s.id, seq); if (elementId) setTimeout(() => setSel([elementId]), 0); }} />}
           </aside>

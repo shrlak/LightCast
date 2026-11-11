@@ -258,3 +258,21 @@ describe('Spelling', async () => {
     expect([all[0].elements![0].text, all[0].notes, all[0].title]).toEqual(['the box', 'the notes', 'Teh title']);
   });
 });
+
+describe('Review › Compare', async () => {
+  const cmp = await import('../src/domain/compare');
+  it('lists revisions and accepts them into this presentation', () => {
+    const box: SlideElement = { id: 'b', kind: 'text', text: 'hi', x: 0, y: 0, w: 100, h: 50 };
+    const mine = pres([s('a', { title: 'A', elements: [box, { id: 'gone', kind: 'shape', x: 0, y: 0, w: 1, h: 1 }] }), s('b'), s('c')]);
+    const other = pres([s('a', { title: 'A2', elements: [{ ...box, x: 40, text: 'hello' }, { id: 'new', kind: 'shape', x: 5, y: 5, w: 5, h: 5 }] }), s('n'), s('b')]);
+    const revs = cmp.compare(mine, other);
+    expect(revs.map((r) => r.kind)).toEqual(['field', 'element', 'elementInsert', 'elementDelete', 'slideInsert', 'slideDelete']);
+    expect(revs[1].label).toContain('텍스트, 이동');
+    let slides = mine.slides;
+    for (const r of revs) slides = cmp.accept(slides, r);
+    expect(slides.map((x) => x.id)).toEqual(['a', 'n', 'b']);
+    expect(slides[0].title).toBe('A2');
+    expect(slides[0].elements!.map((e) => e.id)).toEqual(['b', 'new']);
+    expect(slides[0].elements![0].text).toBe('hello');
+  });
+});

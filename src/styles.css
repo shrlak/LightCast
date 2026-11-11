@@ -1878,3 +1878,8 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .spell-syn small { width: 100%; color: #605e5c; }
 .spell-syn span { border: 1px solid #e1dfdd; padding: 1px 6px; border-radius: 3px; }
 .spell-done { color: #107c10; font-weight: 600; }
+.rev-list { display: flex; flex-direction: column; gap: 4px; }
+.rev-row { display: flex; gap: 4px; align-items: center; padding: 5px 6px; border: 1px solid #edebe9; border-radius: 3px; font-size: 12.5px; cursor: pointer; }
+.rev-row:hover { background: #f3f2f1; }
+.rev-row .grow { flex: 1; }
+.rev-row button { padding: 1px 6px; }

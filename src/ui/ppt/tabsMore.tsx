@@ -63,6 +63,10 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
         </Col>
         <Big icon="📖" label="동의어 사전" title="선택한 단어와 뜻이 같은 단어" onClick={() => ed.setDialog('thesaurus')} />
       </Group>
+      <Group label="비교">
+        <Big icon="⇆" label="비교" title="다른 버전과 비교해 바뀐 내용을 하나씩 적용하거나 거부합니다" disabled={!ed.p} onClick={() => ed.setDialog('compare')} />
+        <Big icon="☑" label="수정 내용" active={ed.pane === 'revisions'} onClick={() => ed.setPane(ed.pane === 'revisions' ? null : 'revisions')} />
+      </Group>
       <Group label="접근성">
         <Big icon={RI.access} label="접근성 검사" title="대체 텍스트 · 글자와 배경 대비 · 빈 슬라이드를 확인합니다" active={ed.pane === 'accessibility'} onClick={() => ed.setPane(ed.pane === 'accessibility' ? null : 'accessibility')} />
       </Group>

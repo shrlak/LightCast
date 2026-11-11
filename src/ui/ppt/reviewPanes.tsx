@@ -1,6 +1,9 @@
 // Review › Proofing › Spelling pane and Review › Language (DeckCraft review.spellingChange,
 // review.replaceWord, format.language / languageAll).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { Presentation, Slide } from '../../domain/types';
+import { accept, compare, type Revision } from '../../domain/compare';
+import { importPptx } from '../../domain/io/pptxImport';
 import { desktop } from '../../domain/desktop';
 import { addToDictionary, changeWord, misspellings, userDictionary, type SpellWord } from '../../domain/spelling';
 import { thesaurus } from '../../engine';
@@ -84,5 +87,63 @@ export function LanguageDialog({ ed, onClose }: { ed: Ed; onClose: () => void })
       <Check label="맞춤법 또는 문법 검사 안 함" checked={noProof} onChange={setNoProof} />
       <Check label="모든 텍스트에 적용 (프레젠테이션 전체)" checked={all} onChange={setAll} />
     </Dialog>
+  );
+}
+
+// ── Review › Compare ────────────────────────────────────────────────────────────────────────────
+let compareTarget: Presentation | null = null;
+
+/** Review › Compare: choose the other version (a presentation in the library, or a .pptx file). */
+export function CompareDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
+  const others = ed.state.library.presentations.filter((x) => x.id !== ed.p?.id);
+  const [pick, setPick] = useState(others[0]?.id ?? '');
+  const file = useRef<HTMLInputElement>(null);
+  const start = (other: Presentation) => { compareTarget = other; ed.setPane('revisions'); onClose(); };
+  const fromFile = async (f: File | undefined) => {
+    if (!f || !ed.p) return;
+    const imported = await importPptx(f).catch(() => []);
+    if (!imported.length) return ed.cmd.notify('이 파일에서 슬라이드를 읽지 못했습니다');
+    // A file brings text only: compared slide by slide by position (title, body, notes).
+    start({ ...ed.p, id: '__file', title: f.name, slides: imported.map((s, i) => ({ ...(ed.p!.slides[i] ?? { id: `file-${i}`, group: 'Slide' }), id: ed.p!.slides[i]?.id ?? `file-${i}`, title: s.title, text: s.text, notes: s.notes })) as Slide[] });
+  };
+  return (
+    <Dialog title="비교 — 이 프레젠테이션과 비교할 파일" onClose={onClose} onOk={() => { const o = others.find((x) => x.id === pick); if (o) start(o); }} okLabel="비교" okDisabled={!pick}>
+      <Field label="라이브러리의 프레젠테이션"><select value={pick} onChange={(e) => setPick(e.target.value)}>{others.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select></Field>
+      <div className="dlg-row"><button type="button" onClick={() => file.current?.click()}>PowerPoint 파일(.pptx)에서…</button><span className="dlg-note">파일은 텍스트(제목 · 본문 · 노트)를 비교합니다.</span></div>
+      <input ref={file} type="file" accept=".pptx" hidden onChange={(e) => { void fromFile(e.target.files?.[0]); e.target.value = ''; }} />
+    </Dialog>
+  );
+}
+
+/** The Revisions pane: each change in the other version, to accept or reject. */
+export function RevisionsPane({ ed }: { ed: Ed }) {
+  const p = ed.p;
+  const [rejected, setRejected] = useState<Set<string>>(new Set());
+  const other = compareTarget;
+  const revs = useMemo(() => (p && other ? compare(p, other).filter((r) => !rejected.has(r.id)) : []), [p, other, rejected]);
+  const go = (r: Revision) => { const id = 'slideId' in r ? r.slideId : r.after; if (id) ed.cmd.setSlideId(id); };
+  const end = () => { compareTarget = null; ed.setPane(null); };
+  return (
+    <div className="spell-pane">
+      <div className="task-head"><span>수정 내용{other ? ` — ${other.title}` : ''}</span><button type="button" className="task-x" onClick={end}>✕</button></div>
+      {!other ? <p className="dlg-note">검토 › 비교로 비교할 파일을 고르세요.</p> : !revs.length ? <p className="spell-done">✔ 남은 수정 내용이 없습니다.</p> : (
+        <>
+          <div className="spell-row">
+            <button type="button" className="primary" disabled={!ed.canEdit} onClick={() => { if (p) ed.updatePres({ slides: revs.reduce((sl, r) => accept(sl, r), p.slides) }); }}>모두 적용</button>
+            <button type="button" onClick={() => setRejected(new Set([...rejected, ...revs.map((r) => r.id)]))}>모두 거부</button>
+            <button type="button" onClick={end}>비교 끝내기</button>
+          </div>
+          <div className="rev-list">
+            {revs.map((r) => (
+              <div key={r.id} className="rev-row" onClick={() => go(r)}>
+                <span className="grow">{r.label}</span>
+                <button type="button" title="적용" disabled={!ed.canEdit} onClick={(e) => { e.stopPropagation(); if (p) ed.updatePres({ slides: accept(p.slides, r) }); }}>✓</button>
+                <button type="button" title="거부" onClick={(e) => { e.stopPropagation(); setRejected(new Set([...rejected, r.id])); }}>✕</button>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
