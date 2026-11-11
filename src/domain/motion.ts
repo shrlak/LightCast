@@ -73,10 +73,6 @@ export function motionBackground(style: MotionStyle, colors?: string[], speed = 
   return { kind: 'motion', style, colors: safeColors(style, colors), speed: clampSpeed(speed) };
 }
 
-/** A ready-made look for each style, offered wherever backgrounds are chosen. */
-export const MOTION_PRESETS: { name: string; background: MotionBackground }[] =
-  MOTION_STYLES.map((s) => ({ name: `움직이는 · ${s.label}`, background: motionBackground(s.id) }));
-
 export function defaultRetreatLook(theme = ''): RetreatLook {
   const style = styleForTheme(theme);
   return { theme, enabled: true, auto: true, style, colors: [...MOTION_PALETTES[style]], speed: 1, dim: 0.25 };

@@ -182,9 +182,6 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
           )} />
         </Col>
       </Group>
-      <Group label="접근성">
-        <Big icon="🗨" label="대체 텍스트" title="화면 낭독용 설명 — 서식 창에서 입력" disabled={!ed.selEls.length} onClick={() => ed.setPane('format')} />
-      </Group>
       <ArrangeGroup ed={ed} />
       <SizeGroup ed={ed} />
     </>
@@ -317,9 +314,6 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
           <DropButton icon={RI.effects} label="그림 효과" disabled={!p} wide render={(close) => <EffectsMenu first={p} set={set} close={close} />} />
           <DropButton icon="▣" label="맞춤" render={(close) => <>{([['fill', '늘려서 채우기'], ['contain', '비율 유지 (전체)'], ['cover', '비율 유지 (꽉 차게)']] as const).map(([v, l]) => <MenuItem key={v} label={l} on={(p?.fit ?? 'contain') === v} onClick={() => { set({ fit: v }); close(); }} />)}</>} />
         </Col>
-      </Group>
-      <Group label="접근성">
-        <Big icon="🗨" label="대체 텍스트" disabled={!p} onClick={() => ed.setPane('format')} />
       </Group>
       <ArrangeGroup ed={ed} />
       <Group label="크기">

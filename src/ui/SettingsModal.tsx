@@ -1,6 +1,6 @@
 import { useState, type Dispatch, type ReactNode } from 'react';
 import type { Action, AppState } from '../domain/reducer';
-import type { Screen, ScreenLayers, StageLayout } from '../domain/types';
+import type { Screen, ScreenLayers } from '../domain/types';
 import { uid } from '../domain/lyrics';
 import { openOutput } from './outputWindows';
 import { DesktopAi, DesktopDisplays, DesktopRemote, DesktopUpdate, useDesktopInfo } from './DesktopSettings';
@@ -10,7 +10,7 @@ import { FEATURES, loadFeatures, setFeature, type FeatureId } from '../domain/fe
 import { X32SettingsCard } from './X32SettingsCard';
 import type { X32Settings } from '../domain/x32';
 
-export type SettingsPage = 'general' | 'outputs' | 'stage' | 'remote' | 'ai' | 'devices';
+export type SettingsPage = 'general' | 'outputs' | 'remote' | 'ai' | 'devices';
 
 interface Props {
   state: AppState;
@@ -27,7 +27,6 @@ interface Props {
 const PAGES: { id: SettingsPage; icon: string; label: string; intro: string; desktopOnly?: boolean }[] = [
   { id: 'general', icon: '⚙', label: '일반', intro: '업데이트, 단축키, 실험 기능' },
   { id: 'outputs', icon: '🖵', label: '출력 화면', intro: '프로젝터 · TV로 보내는 화면' },
-  { id: 'stage', icon: '🎤', label: '무대 화면', intro: '찬양팀 · 설교자가 보는 화면' },
   { id: 'remote', icon: '📱', label: '리모컨 · 휴대폰', intro: '휴대폰 · 태블릿으로 조작하기' },
   { id: 'ai', icon: '✨', label: 'AI', intro: '콘티 인식 · 가사 찾기에 쓰는 AI', desktopOnly: true },
   { id: 'devices', icon: '🎛', label: '장비 · 연결', intro: 'X32 믹서, 조명(DMX), 찬양 서버' },
@@ -35,11 +34,6 @@ const PAGES: { id: SettingsPage; icon: string; label: string; intro: string; des
 
 const LAYERS: { id: keyof ScreenLayers; label: string }[] = [
   { id: 'background', label: '배경' }, { id: 'slide', label: '슬라이드' },
-];
-
-const STAGE_FLAGS: { id: keyof StageLayout; label: string }[] = [
-  { id: 'clock', label: '시계' }, { id: 'timers', label: '타이머' }, { id: 'current', label: '지금 슬라이드' }, { id: 'next', label: '다음 슬라이드' },
-  { id: 'notes', label: '노트' }, { id: 'preview', label: '화면 미리보기' }, { id: 'chords', label: '코드' }, { id: 'videoCountdown', label: '영상 남은 시간' },
 ];
 
 const SHORTCUTS: [string, string][] = [
@@ -78,7 +72,6 @@ export function SettingsModal({ state, dispatch, relayConnected, mixer, onMixer,
             </div>
             {current.id === 'general' && <GeneralPage desk={desk} onFeatures={onFeatures} />}
             {current.id === 'outputs' && <OutputsPage state={state} dispatch={dispatch} desk={desk} />}
-            {current.id === 'stage' && <StagePage state={state} dispatch={dispatch} />}
             {current.id === 'remote' && (desk ? <DesktopRemote {...desk} /> : <WebRemote relayConnected={relayConnected} />)}
             {current.id === 'ai' && (desk ? <DesktopAi {...desk} /> : <Loading />)}
             {current.id === 'devices' && <DevicesPage mixer={mixer} onMixer={onMixer} />}
@@ -192,38 +185,6 @@ function OutputsPage({ state, dispatch, desk }: { state: AppState; dispatch: Dis
   );
 }
 
-function StagePage({ state, dispatch }: { state: AppState; dispatch: Dispatch<Action> }) {
-  return (
-    <Card title="무대 화면 구성" hint="찬양팀 · 설교자 모니터에 무엇을 보여 줄지 정합니다. 구성마다 따로 열 수 있습니다.">
-      {state.library.stageLayouts.map((l) => {
-        const up = (patch: Partial<StageLayout>) => dispatch({ type: 'stageLayout/upsert', layout: { ...l, ...patch } });
-        return (
-          <div key={l.id} className="settings-item">
-            <div className="settings-item-head">
-              <input className="plain grow strong" value={l.name} aria-label="구성 이름" onChange={(e) => up({ name: e.target.value })} />
-              <button onClick={() => openOutput('stage', `&layout=${l.id}`)}>열기 ↗</button>
-              <button className="mini-btn" title="이 구성 삭제" onClick={() => dispatch({ type: 'stageLayout/delete', id: l.id })}>✕</button>
-            </div>
-            <div className="settings-item-body">
-              <div className="settings-chips" role="group" aria-label="보일 항목">
-                {STAGE_FLAGS.map(({ id, label }) => (
-                  <label key={id} className={`settings-chip ${l[id] ? 'on' : ''}`}>
-                    <input type="checkbox" checked={!!l[id]} onChange={(e) => up({ [id]: e.target.checked } as Partial<StageLayout>)} /> {label}
-                  </label>
-                ))}
-              </div>
-              <label className="settings-range">글자 크기 <input type="range" min={0.6} max={2} step={0.1} value={l.scale} onChange={(e) => up({ scale: Number(e.target.value) })} /> <span className="muted">{Math.round(l.scale * 100)}%</span></label>
-            </div>
-          </div>
-        );
-      })}
-      <div>
-        <button onClick={() => dispatch({ type: 'stageLayout/upsert', layout: { id: uid('stage'), name: '새 무대 화면', clock: true, timers: true, current: true, next: true, notes: false, preview: false, chords: true, videoCountdown: true, scale: 1 } })}>＋ 무대 화면 구성 추가</button>
-      </div>
-    </Card>
-  );
-}
-
 function WebRemote({ relayConnected }: { relayConnected: boolean }) {
   const base = `${location.origin}${location.pathname}`;
   return (
@@ -231,8 +192,7 @@ function WebRemote({ relayConnected }: { relayConnected: boolean }) {
       <Card title={<><span className={`dot ${relayConnected ? 'ok' : ''}`} /> {relayConnected ? '리모컨 서버 연결됨' : '리모컨 서버 꺼짐'}</>}
         hint={relayConnected ? '같은 Wi-Fi의 휴대폰 · 태블릿에서 아래 주소를 여세요.' : 'npm run dev 또는 npm start로 FreeCast를 시작하면 켜집니다.'}>
         <label className="stack small">리모컨<code className="selectable">{base}?view=remote</code></label>
-        <label className="stack small">🎤 목사님 태블릿 (무대 화면 + 조작)<code className="selectable">{base}?view=remote&amp;mode=stage</code></label>
-        <label className="stack small">무대 화면 · 출력 화면<code className="selectable">{base}?view=stage</code><code className="selectable">{base}?view=output</code></label>
+        <label className="stack small">출력 화면<code className="selectable">{base}?view=output</code></label>
         <p className="hint">PIN이 필요하면 <code>FREECAST_REMOTE_PIN</code>을 설정하세요.</p>
       </Card>
     </>

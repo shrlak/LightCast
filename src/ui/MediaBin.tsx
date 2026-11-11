@@ -2,7 +2,6 @@ import { useRef, useState, type Dispatch } from 'react';
 import type { Action, AppState } from '../domain/reducer';
 import type { Background, MediaMeta } from '../domain/types';
 import { BACKGROUND_PRESETS } from '../domain/defaults';
-import { MOTION_PRESETS } from '../domain/motion';
 import { swatchStyle } from './backgroundSwatch';
 import { deleteMedia, forgetMediaUrl, putMedia } from '../domain/media';
 import { uid } from '../domain/lyrics';
@@ -70,7 +69,6 @@ export function MediaBin({ state, dispatch }: Props) {
 
   const items: { key: string; name: string; background: Background; media?: MediaMeta }[] = [
     ...BACKGROUND_PRESETS.map((p) => ({ key: p.name, name: p.name, background: p.background })),
-    ...MOTION_PRESETS.map((p) => ({ key: p.name, name: p.name, background: p.background as Background })),
     ...cameras.map((c) => ({ key: c.deviceId, name: c.label, background: { kind: 'camera', deviceId: c.deviceId, label: c.label } as Background })),
     ...state.library.media.filter((m) => m.type !== 'audio' && !m.backgroundHidden).map((m) => ({
       key: m.id, name: m.name, media: m,

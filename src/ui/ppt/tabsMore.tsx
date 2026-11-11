@@ -39,7 +39,6 @@ export function SlideShowTab({ ed }: { ed: Ed }) {
         <Big icon={RI.presenter} label="발표자 보기" active={cmd.view === 'presenter'} onClick={() => cmd.setView(cmd.view === 'presenter' ? 'normal' : 'presenter')} />
         <Col>
           <Small icon={RI.monitor} label="청중 화면 열기" onClick={() => openOutput('output')} />
-          <Small icon={RI.monitor} label="무대 화면 열기" onClick={() => openOutput('stage')} />
           <Small icon={RI.black} label="검은 화면 (B)" active={state.live.black} onClick={() => dispatch({ type: 'live/toggleBlack' })} />
         </Col>
       </Group>
@@ -66,9 +65,6 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
       <Group label="비교">
         <Big icon="⇆" label="비교" title="다른 버전과 비교해 바뀐 내용을 하나씩 적용하거나 거부합니다" disabled={!ed.p} onClick={() => ed.setDialog('compare')} />
         <Big icon="☑" label="수정 내용" active={ed.pane === 'revisions'} onClick={() => ed.setPane(ed.pane === 'revisions' ? null : 'revisions')} />
-      </Group>
-      <Group label="접근성">
-        <Big icon={RI.access} label="접근성 검사" title="대체 텍스트 · 글자와 배경 대비 · 빈 슬라이드를 확인합니다" active={ed.pane === 'accessibility'} onClick={() => ed.setPane(ed.pane === 'accessibility' ? null : 'accessibility')} />
       </Group>
       <Group label="메모">
         <Big icon={RI.comment} label="새 메모" disabled={!ed.slide} onClick={onComment} />
@@ -178,11 +174,6 @@ export function WorshipTab({ ed }: { ed: Ed }) {
             <Big icon="🎵" label="새 찬양" title="찬양 등록 — 제목·진행·파트별 가사 (주일예배 생성기와 같은 방식)" onClick={() => cmd.open('songNew')} />
             <Big icon="☁" label={cmd.online.status === 'ok' ? `찬양 ${cmd.online.count}곡` : '찬양 라이브러리'} title="찬양 라이브러리 보기 · 편집 · 삭제" onClick={() => cmd.open('songLibrary')} />
             <Big icon="🎼" label="코드 · 키 악보" title="곡마다 키·BPM·코드를 보고, 키를 옮기고, 밴드용으로 인쇄합니다" onClick={() => cmd.open('chords')} />
-          </Group>
-          <Group label="예배 전">
-            <Big icon="☑" label="준비 · 점검" title="준비 체크리스트와 예배 시작 전 자동 점검 (누락 파일 · 빈 슬라이드 · 발표 화면)" onClick={() => cmd.open('preparation')} />
-            <Big icon="🛡" label={cmd.safeModeOn ? '안전 모드 켜짐' : '안전 모드'} active={cmd.safeModeOn} title="예배 자료를 이 컴퓨터에 모두 받아 두고 위험한 변경을 막습니다" onClick={() => cmd.open('safeMode')} />
-            <Big icon="💻" label={cmd.standbyOn ? '대기 컴퓨터 켜짐' : '대기 컴퓨터'} active={cmd.standbyOn} title="메인 컴퓨터를 따라가다 멈추면 이어받습니다" onClick={() => cmd.open('standby')} />
           </Group>
       <Group label="재생목록">
         <Big icon="📋" label="재생목록에 넣기" title="이 프레젠테이션을 아무 재생목록에나 넣습니다" disabled={!p}

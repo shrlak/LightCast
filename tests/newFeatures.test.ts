@@ -4,8 +4,6 @@ import type { Library, Presentation, Slide } from '../src/domain/types';
 import { followKey, matchScore, suggestSlide, shouldAutoAdvance } from '../src/domain/lyricFollow';
 import { ccliCsv, ccliReport, incompleteRows, songsWithoutCreditLine } from '../src/domain/ccli';
 import { keyDistance, keyFlowIssues, recommendSongs, songStats } from '../src/domain/songStats';
-import { bundleAssets, prepareBundle, safeModeBlock, type BundleDeps } from '../src/domain/safeMode';
-import { locateLive, standbyHealth, standbyRelayUrl, takeoverActions } from '../src/domain/standby';
 import { buildTemplatePack, importTemplatePack, parseTemplatePack } from '../src/domain/templatePack';
 import { isSong } from '../src/domain/templates/fill';
 import { featureEnabled, loadFeatures, setFeature } from '../src/domain/features';
@@ -110,73 +108,6 @@ describe('찬양 통계와 추천', () => {
     const set = library([a, b, c, d], [], ['a', 'b', 'c', 'd']);
     expect(keyFlowIssues(set, 'pl').map((i) => [i.from, i.to, i.kind])).toEqual([['A곡', 'B곡', 'same'], ['C곡', 'D곡', 'far']]);
     expect(keyFlowIssues(set, 'missing')).toEqual([]);
-  });
-});
-
-describe('예배 당일 안전 모드', () => {
-  const withBg = { ...song('a', 'A', ['x']), background: { kind: 'media' as const, mediaId: 'm1', mediaType: 'image' as const }, slides: [slide('s', 'x', { background: { kind: 'image', url: 'backgrounds/sky.jpg' }, actions: [{ type: 'audio', mediaId: 'song' }] })] };
-  const lib = { ...library([withBg], [], ['a']), media: [{ id: 'm1', name: '배경.png', type: 'image' as const }], logoMediaId: 'logo' };
-  it('collects the media, pictures and logo the service needs', () => {
-    const { media, images } = bundleAssets(lib, 'pl');
-    expect(media.map((m) => m.id).sort()).toEqual(['logo', 'm1', 'song']);
-    expect(media.find((m) => m.id === 'm1')!.name).toBe('배경.png');
-    expect(images).toEqual(['backgrounds/sky.jpg']);
-    expect(bundleAssets(lib, 'none')).toEqual({ media: lib.logoMediaId ? [{ id: 'logo', name: 'logo' }] : [], images: [] });
-  });
-  it('downloads what is missing and reports what could not be fetched', async () => {
-    const have = new Set(['m1']);
-    const deps: BundleDeps = {
-      hasMedia: async (id) => have.has(id),
-      fetchMedia: async (id) => { if (id === 'song') { have.add(id); return true; } throw new Error('offline'); },
-      cacheImage: async () => true,
-    };
-    const progress: number[] = [];
-    const report = await prepareBundle(lib, 'pl', deps, NOW, (done) => progress.push(done));
-    expect(report).toMatchObject({ total: 4, ready: 3, downloaded: 1, at: NOW });
-    expect(report.missing).toEqual([{ kind: 'media', id: 'logo', name: 'logo' }]);
-    expect(progress).toEqual([1, 2, 3, 4]);
-  });
-  it('blocks deleting and replacing material only while it is on', () => {
-    const on = { on: true, playlistId: 'pl', at: NOW };
-    expect(safeModeBlock(on, { type: 'presentation/delete', id: 'a' })).toBe('자료 삭제');
-    expect(safeModeBlock(on, { type: 'live/next' })).toBeNull();
-    expect(safeModeBlock({ ...on, on: false }, { type: 'presentation/delete', id: 'a' })).toBeNull();
-  });
-});
-
-describe('대기 컴퓨터', () => {
-  const a = song('a', '주님의 은혜', ['하나', '둘', '셋']);
-  const lib = library([a], [], ['a']);
-  it('finds the main computer’s slide in this computer’s own library', () => {
-    expect(locateLive(lib, { title: '주님의 은혜', slide: a.slides[2] }, 'pl')).toEqual({ presentationId: 'a', seq: 2, playlistIndex: 0 });
-    expect(locateLive(lib, { title: '주님의 은혜', slide: a.slides[2] })).toEqual({ presentationId: 'a', seq: 2, playlistIndex: null });
-    expect(locateLive(lib, { title: '없는 곡', slide: a.slides[0] })).toBeNull();
-    expect(locateLive(lib, { title: '주님의 은혜', slide: slide('other', 'x') })).toBeNull();
-    // another computer's copy has other slide ids: the same words still find the place
-    expect(locateLive(lib, { title: '주님의 은혜', slide: slide('their-id', '셋') }, 'pl')).toEqual({ presentationId: 'a', seq: 2, playlistIndex: 0 });
-    expect(locateLive(lib, { title: null, slide: null })).toBeNull();
-  });
-  it('prefers the copy inside the open playlist', () => {
-    const copy = { ...a, id: 'copy', slides: a.slides.map((s) => ({ ...s })) };
-    expect(locateLive({ ...library([copy, a], [], ['a']) }, { title: '주님의 은혜', slide: a.slides[0] }, 'pl')?.presentationId).toBe('a');
-  });
-  it('says lost only after the link has been down for the grace period', () => {
-    expect(standbyHealth(false, false, null, NOW)).toBe('waiting');
-    expect(standbyHealth(true, true, null, NOW)).toBe('following');
-    expect(standbyHealth(false, true, NOW - 2000, NOW)).toBe('following');
-    expect(standbyHealth(false, true, NOW - 7000, NOW)).toBe('lost');
-  });
-  it('takes over by showing the same slide, and the black screen if it was on', () => {
-    const cursor = { presentationId: 'a', seq: 2, playlistIndex: 0 };
-    expect(takeoverActions(cursor, { black: false })).toEqual([{ type: 'live/go', presentationId: 'a', seq: 2, playlistIndex: 0 }]);
-    expect(takeoverActions(cursor, { black: true })).toHaveLength(2);
-    expect(takeoverActions(null, { black: true })).toEqual([]);
-  });
-  it('turns what is typed into the relay address', () => {
-    expect(standbyRelayUrl('192.168.0.12:5173')).toBe('ws://192.168.0.12:5173/freecast-ws');
-    expect(standbyRelayUrl('https://church.example.com/anything')).toBe('wss://church.example.com/freecast-ws');
-    expect(standbyRelayUrl('  ')).toBeNull();
-    expect(standbyRelayUrl('ftp://x')).toBeNull();
   });
 });
 

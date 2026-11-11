@@ -120,15 +120,6 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
             <button className={mode === 'next' ? 'on' : ''} onClick={() => setMode('next')}>다음 슬라이드</button>
             <button className={mode === 'all' ? 'on' : ''} onClick={() => setMode('all')}>모든 슬라이드</button>
           </div>
-          <span className="chord-ctl" title="무대 화면 코드: 키 올림/내림, 카포 (코드가 있는 가사에만 보입니다)">
-            <button onClick={() => dispatch({ type: 'live/chords', shift: (live.chordShift ?? 0) - 1 })}>♭</button>
-            <span>키 {live.chordShift ? `${live.chordShift > 0 ? '+' : ''}${live.chordShift}` : '±0'}</span>
-            <button onClick={() => dispatch({ type: 'live/chords', shift: (live.chordShift ?? 0) + 1 })}>♯</button>
-            <button onClick={() => dispatch({ type: 'live/chords', capo: (live.capo ?? 0) - 1 })} disabled={!live.capo}>−</button>
-            <span>카포 {live.capo ?? 0}</span>
-            <button onClick={() => dispatch({ type: 'live/chords', capo: (live.capo ?? 0) + 1 })}>＋</button>
-            {(!!live.chordShift || !!live.capo) && <button onClick={() => dispatch({ type: 'live/chords', shift: 0, capo: 0 })}>↺</button>}
-          </span>
           <button className="danger" onClick={cmd.endShow}>쇼 마침 (Esc)</button>
         </div>
         {mode === 'next' ? (
