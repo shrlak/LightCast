@@ -294,7 +294,6 @@ function buildMenu() {
       label: 'File',
       submenu: [
         { label: 'Open Audience Output', accelerator: 'CmdOrCtrl+1', click: () => openView(`${origin()}/?view=output`) },
-        { label: 'Open Stage Display', accelerator: 'CmdOrCtrl+2', click: () => openView(`${origin()}/?view=stage`) },
         { label: 'Open X32 Mixer', accelerator: 'CmdOrCtrl+3', click: () => openMixer() },
         { label: 'Close All Outputs', accelerator: 'CmdOrCtrl+Shift+W', click: () => viewWindows.forEach((w) => w.close()) },
         { type: 'separator' },

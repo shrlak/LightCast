@@ -24,7 +24,7 @@ import { isPdfSlide } from '../../domain/importedSlides';
 import { animationBadges } from '../../domain/animations';
 import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, ungroupSelection } from '../../domain/editOps';
 import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
-import { AccessibilityPane, AnimationPane, CommentsPane, SelectionPane, accessibilityIssues } from './panes';
+import { AnimationPane, CommentsPane, SelectionPane } from './panes';
 import { Dialogs } from './dialogs';
 import { RevisionsPane, SpellingPane } from './reviewPanes';
 import { uid as newId } from '../../domain/lyrics';
@@ -47,6 +47,20 @@ function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
 import { withMaster } from '../../domain/master';
 import { Backstage, FindReplaceDialog, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
+
+/** Status bar lock: a closed padlock when locked; the shackle swung open outward when unlocked. */
+function LockIcon({ locked }: { locked: boolean }) {
+  return (
+    <svg className="ppt-lock-icon" viewBox="0 0 28 24" width="21" height="18" aria-hidden="true">
+      {locked
+        ? <path d="M7.5 11V7.5a4.5 4.5 0 0 1 9 0V11" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+        // Unlocked: the shackle stays on its right leg and is turned outward, open beside the body.
+        : <path d="M16.5 11V7.5a4.5 4.5 0 0 1 9 0V9.5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />}
+      <rect x="4.5" y="11" width="15" height="10.5" rx="2.2" fill="currentColor" />
+      <circle cx="12" cy="15.6" r="1.6" fill={locked ? '#14673b' : '#fff'} />
+    </svg>
+  );
+}
 
 const LOCK_MSG = '🔒 화면에 표시 중이라 삭제·추가가 잠겨 있습니다 — 상태 표시줄의 🔒를 눌러 해제하세요';
 /** PowerPoint's 100% is the slide at its real size: a 10-inch (4:3) slide at 96 dpi. */
@@ -304,9 +318,6 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     setMenu(null);
   };
 
-  const issues = useMemo(() => (p ? accessibilityIssues(ed).length : 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [p, theme]);
   const shownZoom = zoom ?? (stageW ? stageW / ACTUAL_W : 1);
   const badges = useMemo(() => (slide?.animations?.length ? animationBadges(slide) : undefined), [slide]);
   const actions = {
@@ -325,11 +336,12 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     <footer className="ppt-status pp-status">
       <span>{p && index >= 0 ? `슬라이드 ${index + 1}/${p.slides.length}` : '프레젠테이션 없음'}</span>
       <span className="pp-status-item">한국어</span>
-      <button type="button" className="pp-status-item" onClick={() => setPane(pane === 'accessibility' ? null : 'accessibility')}>{issues ? `♿ 접근성: 검토 필요 (${issues})` : '♿ 접근성: 문제 없음'}</button>
       <span className="ppt-team" title="KCCP 빛주사랑 대학청년부 미디어팀"><img src="/media-team-logo.png" alt="" />KCCP 미디어팀</span>
       <span className="grow" />
-      <button type="button" className={`ppt-lock ${cmd.locked ? 'on' : ''}`} onClick={() => cmd.setLocked(!cmd.locked)}
-        title={cmd.locked ? '잠금 켜짐: 화면에 표시 중에는 Enter·Delete로 슬라이드를 추가/삭제하지 않습니다 (클릭하면 해제)' : '잠금 꺼짐 (클릭하면 켜기)'}>{cmd.locked ? '🔒' : '🔓'}</button>
+      <button type="button" className={`ppt-lock ${cmd.locked ? 'on' : 'off'}`} onClick={() => cmd.setLocked(!cmd.locked)} aria-pressed={cmd.locked}
+        title={cmd.locked ? '잠금 켜짐: 화면에 표시 중에는 Enter·Delete로 슬라이드를 추가/삭제하지 않습니다 (클릭하면 해제)' : '잠금 해제됨 (클릭하면 잠금)'}>
+        <LockIcon locked={cmd.locked} /><span>{cmd.locked ? '잠금' : '잠금 해제'}</span>
+      </button>
       <button type="button" className={`pp-status-btn ${notesOpen ? 'on' : ''}`} title="슬라이드 노트" onClick={() => setNotesOpen(!notesOpen)}>≡ 슬라이드 노트</button>
       <button type="button" className={`pp-status-btn ${pane === 'comments' ? 'on' : ''}`} title="메모" onClick={() => setPane(pane === 'comments' ? null : 'comments')}>💬 메모</button>
       <span className="pp-views" role="group" aria-label="보기">
@@ -438,7 +450,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
               )}
             </div>
             {p && slide && notesOpen && (
-              <AutoTextarea disabled={p.protected} className="ppt-notes" placeholder="슬라이드 노트를 추가하려면 클릭하세요 (무대 화면에 표시)"
+              <AutoTextarea disabled={p.protected} className="ppt-notes" placeholder="슬라이드 노트를 추가하려면 클릭하세요"
                 value={slide.notes ?? ''} onChange={(e) => dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch: { notes: e.target.value || undefined } })} />
             )}
           </main>
@@ -458,7 +470,6 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
             {pane === 'spelling' && <SpellingPane ed={ed} />}
             {pane === 'revisions' && <RevisionsPane ed={ed} />}
             {pane === 'comments' && <CommentsPane ed={ed} draftOpen={commentDraft} onDraftDone={() => setCommentDraft(false)} />}
-            {pane === 'accessibility' && <AccessibilityPane ed={ed} onGo={(seq, elementId) => { const s = sequence(p)[seq]?.slide; if (s) cmd.setSlideId(s.id, seq); if (elementId) setTimeout(() => setSel([elementId]), 0); }} />}
           </aside>
         )}
       </div>

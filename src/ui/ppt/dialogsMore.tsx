@@ -105,7 +105,7 @@ function SetupShowDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
       </fieldset>
       <fieldset className="dlg-set">
         <legend>여러 모니터</legend>
-        <button type="button" onClick={() => { ed.cmd.open('settings'); onClose(); }}>청중 화면 · 무대 화면 설정…</button>
+        <button type="button" onClick={() => { ed.cmd.open('settings'); onClose(); }}>출력 화면 설정…</button>
       </fieldset>
     </Dialog>
   );

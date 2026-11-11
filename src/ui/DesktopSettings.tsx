@@ -43,7 +43,7 @@ export function DesktopUpdate({ info }: { info: DesktopInfo }) {
 /** Which display each output opens on. */
 export function DesktopDisplays({ info, refresh, screens }: DesktopSettingsState & { screens: Screen[] }) {
   const displayFor = (id: string) => info.outputDisplays[id] ?? '';
-  const targets = [...screens.map((s) => ({ id: s.id, name: s.name, view: 'output' as const, extra: `&screen=${s.id}` })), { id: 'stage', name: '무대 화면', view: 'stage' as const, extra: '' }];
+  const targets = [...screens.map((s) => ({ id: s.id, name: s.name, view: 'output' as const, extra: `&screen=${s.id}` }))];
   return (
     <section className="settings-card">
       <h4>어느 모니터에 띄울까요?</h4>
@@ -103,7 +103,6 @@ export function DesktopAi({ info, refresh }: DesktopSettingsState) {
 export function DesktopRemote({ info, refresh }: DesktopSettingsState) {
   const [busy, setBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState('');
-  const [teamCopyStatus, setTeamCopyStatus] = useState('');
   useEffect(() => { setCopyStatus(''); }, [info.internet.connectionCode]);
   const toggle = async (fn: () => Promise<unknown>) => {
     setBusy(true);
@@ -118,7 +117,7 @@ export function DesktopRemote({ info, refresh }: DesktopSettingsState) {
         <label className="settings-switch">
           <span>
             <b>같은 Wi-Fi의 휴대폰 · 태블릿</b>
-            <small className="muted">이 네트워크의 다른 기기에서 리모컨과 무대 화면을 열 수 있습니다. 끄면 이 컴퓨터에서만 접속됩니다.</small>
+            <small className="muted">이 네트워크의 다른 기기에서 리모컨을 열 수 있습니다. 끄면 이 컴퓨터에서만 접속됩니다.</small>
           </span>
           <input type="checkbox" checked={info.networkRemote} disabled={busy} onChange={(e) => toggle(() => desktop!.setNetworkRemote(e.target.checked))} />
         </label>
@@ -174,24 +173,6 @@ export function DesktopRemote({ info, refresh }: DesktopSettingsState) {
         <p className="hint">🔐 연결 QR 코드는 컴퓨터를 조작할 수 있는 개인 연결 정보입니다. 미디어팀에만 공유하세요.</p>
       </section>
 
-      {info.internet.team && <section className="settings-card team-link-settings">
-        <h4>무대팀 전용 웹앱</h4>
-        <code className="small selectable">{info.internet.team.webAppUrl}</code>
-        <p className="hint">무대팀은 현재 송출을 보고 운영자에게 비공개 요청을 보낼 수 있습니다. 슬라이드 조작권은 주어지지 않습니다. 일반 리모컨과 다른 연결 코드이며, 재시작·인터넷 재연결·일반 리모컨 키 재발급으로 바뀌지 않습니다.</p>
-        {info.internet.team.pairingUrl && (
-          <div className="settings-pair">
-            {info.internet.team.status === 'ok' && <img src={qrDataUrl(info.internet.team.pairingUrl)} alt="무대팀 전용 연결 QR 코드" width={150} height={150} />}
-            <div className="stack grow">
-              <label className="stack small">이 컴퓨터의 무대팀 연결 링크<input readOnly className="selectable" value={info.internet.team.pairingUrl} onFocus={(e) => e.currentTarget.select()} /></label>
-              <div><button disabled={info.internet.team.status !== 'ok'} onClick={async () => { try { setTeamCopyStatus(await desktop!.copyTeamLink() ? '무대팀 연결 링크를 복사했습니다.' : '위 링크를 선택해 직접 복사해 주세요.'); } catch { setTeamCopyStatus('위 링크를 선택해 직접 복사해 주세요.'); } }}>무대팀 연결 링크 복사</button></div>
-              <label className="stack small">무대팀 연결 코드<input readOnly className="selectable" value={info.internet.team.connectionCode ?? ''} onFocus={(e) => e.currentTarget.select()} /></label>
-            </div>
-          </div>
-        )}
-        <p role="status" className="hint">{teamCopyStatus}</p>
-        {info.internet.on && info.internet.team.status !== 'ok' && <p className="hint">{info.internet.team.error || '무대팀 고정 링크를 등록하고 있습니다…'}</p>}
-        <p className="hint">같은 인터넷 리모컨 스위치를 사용합니다. 무대팀 기기에서는 위 링크를 열고 Safari의 공유 → 홈 화면에 추가를 선택하세요.</p>
-      </section>}
     </>
   );
 }

@@ -48,14 +48,13 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
         <button type="button" className="pp-search" title="검색 — 가사 · 성경 · 광고 (Ctrl+K)" onClick={() => cmd.open('find')}>🔍 검색</button>
         <span className="pp-spacer" />
         {busy && <span className="rb-busy" role="status">{busy}</span>}
-        <button type="button" className={`pp-pill ${cmd.teamRequestCount ? 'team-request-alert' : ''}`} onClick={() => cmd.open('teamRequests')} title="무대팀이 보낸 요청">✉ 무대팀{cmd.teamRequestCount ? ` ${cmd.teamRequestCount}` : ''}</button>
         <button type="button" className="pp-pill" onClick={() => cmd.open('remoteControl')} title="휴대폰 리모컨 · 조작권 관리">
           <span className={`dot ${cmd.relayConnected ? 'ok' : ''}`} /> {cmd.relayConnected ? `휴대폰 ${cmd.remoteCount}` : '재연결 중…'}{cmd.remoteRequests > 0 && <strong className="remote-request-badge"> · 요청 {cmd.remoteRequests}</strong>}
         </button>
         <button type="button" className="pp-pill" onClick={() => cmd.open(cmd.cloud.session ? 'sync' : 'account')} title={cmd.cloud.session ? `동기화 상태 · 계정${cmd.cloud.message ? ` — ${cmd.cloud.message}` : ''}` : '로그인하면 다른 컴퓨터에서도 같은 슬라이드를 엽니다'}>
           {cmd.cloud.session ? `☁ ${cmd.cloud.session.username}${cmd.cloud.state === 'syncing' ? ' ⟳' : cmd.cloud.state === 'error' ? ' ⚠' : cmd.cloud.state === 'offline' ? ' ⏸' : ' ✓'}` : '☁ 로그인'}{cmd.cloud.session && cmd.cloud.storageUsage?.server ? ` · ${formatStoragePercent(cmd.cloud.storageUsage.server.usedPercent)}%` : ''}
         </button>
-        <button type="button" className="pp-pill pp-gear" onClick={() => cmd.open('settings')} title="옵션 — 업데이트 · 출력 화면 · 무대 화면 · 리모컨 · AI · 장비" aria-label="옵션">⚙</button>
+        <button type="button" className="pp-pill pp-gear" onClick={() => cmd.open('settings')} title="옵션 — 업데이트 · 출력 화면 · 리모컨 · AI · 장비" aria-label="옵션">⚙</button>
       </div>
       <div className="pp-tabs" role="tablist">
         <button type="button" className="pp-tab file" onClick={actions.onBackstage}>파일</button>

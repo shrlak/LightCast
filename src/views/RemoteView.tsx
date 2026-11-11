@@ -11,7 +11,6 @@ import type { LiveState } from '../domain/types';
 import { SlideCanvas } from '../ui/SlideCanvas';
 import { liveCanvasProps } from '../ui/liveProps';
 import { useRelay } from '../ui/hooks';
-import { PastorStage } from '../ui/PastorStage';
 
 import { RemoteInfoReader, remoteSlideKey, type RemoteInfo } from '../domain/remoteSlides';
 export type { RemoteInfo } from '../domain/remoteSlides';
@@ -47,15 +46,6 @@ export function RemoteView() {
     }
     return localStorage.getItem('freecast.pin') ?? '';
   });
-  // 목사님 무대 화면: the same remote link in tablet stage mode (?mode=stage opens it, and it is remembered).
-  const [mode, setModeState] = useState<'remote' | 'stage'>(() => {
-    const asked = new URLSearchParams(location.search).get('mode');
-    try {
-      if (asked === 'stage' || asked === 'remote') localStorage.setItem('freecast.remote.mode', asked);
-      return localStorage.getItem('freecast.remote.mode') === 'stage' ? 'stage' : 'remote';
-    } catch { return asked === 'stage' ? 'stage' : 'remote'; }
-  });
-  const setMode = (m: 'remote' | 'stage') => { try { localStorage.setItem('freecast.remote.mode', m); } catch { /* this session only */ } setModeState(m); };
   const [deviceName, setDeviceName] = useState(() => localStorage.getItem('freecast.remote.deviceName') || (/iPhone|iPad/i.test(navigator.userAgent) ? 'iPhone 리모컨' : '내 리모컨'));
   const initialName = useRef(deviceName);
   const [clientToken] = useState(() => phoneIdentity('remote'));
@@ -127,15 +117,6 @@ export function RemoteView() {
     );
   }
 
-  if (mode === 'stage') {
-    const self = control?.clients.find((c) => c.id === control.selfId);
-    return (
-      <PastorStage live={live} info={info} current={current} canControl={control?.canControl === true} ready={ready} connectionLabel={connectionLabel}
-        controllerName={control?.clients.find((c) => c.id === control.controllerId)?.name} requested={!!self?.requested} rehearsal={!!rehearsal?.active}
-        cmd={cmd} requestControl={() => send({ type: 'remote-control', action: 'request' })} onExit={() => setMode('remote')} />
-    );
-  }
-
   return (
     <div className={`remote-root remote-console${embedded ? ' remote-embedded' : ''}`}>
       <header className="remote-head">
@@ -146,7 +127,6 @@ export function RemoteView() {
           setAppearance(next);
           try { localStorage.setItem('freecast.remote.appearance', next); } catch { /* usable for this session */ }
         }}>{appearance === 'dark' ? '☀ 밝게' : '☾ 어둡게'}</button>}
-        <button className="remote-appearance-toggle" title="목사님 태블릿용 무대 화면 (가사·코드·노트 + 조작)" onClick={() => setMode('stage')}>🎤 무대 화면</button>
         <ConnectionQualityBadge quality={quality} connected={ready} compact />
         <span className={`remote-connection ${ready ? 'connected' : 'disconnected'}`} role="status" aria-live="polite" aria-label={connectionLabel} title={connectionLabel}>
           <span className="remote-connection-dot" aria-hidden="true" />

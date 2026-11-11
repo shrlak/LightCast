@@ -14,7 +14,7 @@ import { changeCase, type CaseKind } from '../../domain/textFormat';
 import { sizeOf, textValue, CLEAR_TEXT_FORMAT } from './ElementFormat';
 import type { TextFormatValue } from './TextFormatPanel';
 
-export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'accessibility' | 'designer' | 'spelling' | 'revisions' | null;
+export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'designer' | 'spelling' | 'revisions' | null;
 
 /** The dialog boxes (Font, Paragraph, Replace Fonts, Header & Footer, Set Up Show, …). */
 export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect' | 'language' | 'compare' | 'albumEdit' | 'tabs';

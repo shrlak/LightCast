@@ -1,4 +1,4 @@
-// Task panes on the right of the window: 애니메이션 창, 선택 창, 메모, 접근성 검사.
+// Task panes on the right of the window: 애니메이션 창, 선택 창, 메모.
 import { useState } from 'react';
 import type { SlideAnimation, SlideElement } from '../../domain/types';
 import { uid } from '../../domain/lyrics';
@@ -6,10 +6,6 @@ import { getDevice } from '../../domain/device';
 import { loadSession } from '../../domain/cloud';
 import { orderSelection, moveAnimation } from '../../domain/editOps';
 import { animationClicks, slideTimeline, textParagraphs } from '../../domain/animations';
-import { contrastRatio } from '../../engine';
-import { resolveBackground } from '../../domain/autoBackground';
-import { slideTheme } from '../SlideCanvas';
-import { sequence } from '../../domain/arrangement';
 import type { Ed } from './editor';
 import { ANIMATION, ANIMATION_START } from './ko';
 
@@ -154,49 +150,3 @@ export function CommentsPane({ ed, draftOpen, onDraftDone }: { ed: Ed; draftOpen
   );
 }
 
-interface Issue { level: 'error' | 'warning' | 'tip'; text: string; seq: number; elementId?: string }
-
-/** Review › Check Accessibility: missing alt text, text that is hard to read on its background (contrast from the engine), empty slides. */
-export function accessibilityIssues(ed: Ed): Issue[] {
-  const p = ed.p;
-  const theme = ed.theme;
-  if (!p || !theme) return [];
-  const out: Issue[] = [];
-  sequence(p).forEach(({ slide }, seq) => {
-    const t = slideTheme(theme, slide);
-    const bg = resolveBackground(slide, p);
-    const bgColor = bg?.kind === 'color' ? bg.value : bg?.kind === 'gradient' ? null : bg ? null : '#000000';
-    (slide.elements ?? []).forEach((el, i) => {
-      if ((el.kind === 'image' || el.kind === 'chart' || el.kind === 'icon') && !el.alt) out.push({ level: 'error', text: `${elementName(el, i)} — 대체 텍스트 없음`, seq, elementId: el.id });
-      if (el.kind === 'text' && el.text?.trim() && bgColor && el.color && /^#[0-9a-f]{6}$/i.test(el.color) && /^#[0-9a-f]{6}$/i.test(bgColor)) {
-        const c = contrastRatio(el.color, bgColor);
-        if (c && !c.aaLarge) out.push({ level: 'warning', text: `${elementName(el, i)} — 글자와 배경의 대비 ${c.ratio}:1 (읽기 어려움)`, seq, elementId: el.id });
-      }
-    });
-    if (slide.text.trim() && bgColor && /^#[0-9a-f]{6}$/i.test(t.color) && /^#[0-9a-f]{6}$/i.test(bgColor)) {
-      const c = contrastRatio(t.color, bgColor);
-      if (c && !c.aaLarge) out.push({ level: 'warning', text: `슬라이드 텍스트 — 배경과의 대비 ${c.ratio}:1`, seq });
-    }
-    if (!slide.text.trim() && !slide.title && !(slide.elements ?? []).length && !slide.background) out.push({ level: 'tip', text: '빈 슬라이드', seq });
-  });
-  return out;
-}
-
-export function AccessibilityPane({ ed, onGo }: { ed: Ed; onGo: (seq: number, elementId?: string) => void }) {
-  const issues = accessibilityIssues(ed);
-  const label = { error: '오류', warning: '경고', tip: '팁' } as const;
-  return (
-    <div className="task-pane">
-      <PaneHead title="접근성" onClose={() => ed.setPane(null)} />
-      {!issues.length ? <p className="task-empty">✓ 접근성 문제가 없습니다.</p> : (
-        <ul className="a11y-list">
-          {issues.map((it, i) => (
-            <li key={i} className={it.level} onClick={() => onGo(it.seq, it.elementId)}>
-              <span className="a11y-level">{label[it.level]}</span><span>슬라이드 {it.seq + 1} · {it.text}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}

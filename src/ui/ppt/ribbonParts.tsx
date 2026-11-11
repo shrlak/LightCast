@@ -62,7 +62,6 @@ export const RI = {
   monitor: <S><rect x="3" y="5" width="26" height="17" rx="1" {...st()} fill="#fff" /><path d="M12 27h8M16 22v5" {...st()} /></S>,
   black: <S><rect x="3" y="6" width="26" height="20" rx="1" fill="#111" /></S>,
   spell: <S><path d="M4 18L9 5h2l5 13M6 13h8" {...st(G, 1.6)} /><path d="M14 22l4 4 10-10" {...st(GR, 2.4)} /></S>,
-  access: <S><circle cx="16" cy="6" r="3" fill={B} /><path d="M6 11l10 2 10-2M16 13v6l-5 9M16 19l5 9" {...st(B, 2)} /></S>,
   normalView: <S><rect x="3" y="5" width="26" height="22" rx="1" {...st()} /><path d="M9 5v22" {...st()} /><rect x="12" y="8" width="14" height="11" fill="#bcd3ee" /></S>,
   outlineView: <S><path d="M5 7h3M5 13h3M5 19h3M5 25h3" {...st(R, 2)} /><path d="M11 7h16M13 13h12M13 19h14M11 25h16" {...st(G, 1.4)} /></S>,
   sorterView: <S><rect x="3" y="5" width="11" height="9" {...st()} /><rect x="18" y="5" width="11" height="9" {...st()} /><rect x="3" y="18" width="11" height="9" {...st()} /><rect x="18" y="18" width="11" height="9" {...st()} /></S>,
