@@ -4,8 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Presentation, Slide } from '../../domain/types';
 import { accept, compare, type Revision } from '../../domain/compare';
 import { importPptx } from '../../domain/io/pptxImport';
-import { desktop } from '../../domain/desktop';
-import { addToDictionary, changeWord, misspellings, userDictionary, type SpellWord } from '../../domain/spelling';
+import { addToDictionary, changeWord, dictionaryReady, ensureDictionary, isMisspelled, misspellings, suggestionsFor, userDictionary, type SpellWord } from '../../domain/spelling';
 import { thesaurus } from '../../engine';
 import { Check, Dialog, Field } from './dialogs';
 import type { Ed } from './editor';
@@ -17,10 +16,17 @@ export function SpellingPane({ ed }: { ed: Ed }) {
   const [ignoreAll, setIgnoreAll] = useState<Set<string>>(() => userDictionary());
   const [ignoreOnce, setIgnoreOnce] = useState<Set<string>>(new Set());
   const [pick, setPick] = useState(0);
-  const check = desktop?.isMisspelled;
-  const hits = useMemo(() => (p && check ? misspellings(p, (w) => check(w), ignoreAll).filter((h) => !ignoreOnce.has(keyOf(h))) : []), [p, check, ignoreAll, ignoreOnce]);
+  // The English dictionary loads once (fetched from public/dict into the engine); Korean rules need none.
+  const [dict, setDict] = useState<'loading' | 'ok' | 'failed'>(() => (dictionaryReady() ? 'ok' : 'loading'));
+  useEffect(() => {
+    let live = true;
+    if (dict === 'loading') void ensureDictionary().then((ok) => { if (live) setDict(ok ? 'ok' : 'failed'); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const hits = useMemo(() => (p && dict !== 'loading' ? misspellings(p, (w, lang) => isMisspelled(w, lang), ignoreAll).filter((h) => !ignoreOnce.has(keyOf(h))) : []), [p, dict, ignoreAll, ignoreOnce]);
   const cur = hits[0];
-  const suggestions = useMemo(() => (cur && desktop?.spellSuggestions ? desktop.spellSuggestions(cur.word).slice(0, 8) : []), [cur?.word]);
+  const suggestions = useMemo(() => (cur ? suggestionsFor(cur).slice(0, 8) : []), [cur?.word, cur?.lang, cur?.kind]);
   useEffect(() => { setPick(0); }, [cur?.word, cur?.start, cur?.slideId]);
   // Show where the word is: its slide, and its text box selected.
   useEffect(() => {
@@ -35,13 +41,13 @@ export function SpellingPane({ ed }: { ed: Ed }) {
   return (
     <div className="spell-pane">
       <div className="task-head"><span>맞춤법 검사</span><button type="button" className="task-x" onClick={() => ed.setPane(null)}>✕</button></div>
-      {!check ? (
-        <p className="dlg-note">맞춤법 사전은 데스크톱 앱에서 씁니다. 이 브라우저에서는 검토 › 맞춤법 검사를 켜면 입력할 때 틀린 단어에 밑줄이 그어집니다.</p>
+      {dict === 'loading' ? (
+        <p className="dlg-note spell-loading">맞춤법 사전을 불러오는 중…</p>
       ) : !cur ? (
         <p className="spell-done">✔ 맞춤법 검사를 마쳤습니다. 틀린 단어가 없습니다.</p>
       ) : (
         <>
-          <div className="spell-word"><small>사전에 없는 단어</small><b>{cur.word}</b><small>{({ title: '제목', text: '본문', subtext: '둘째 줄', notes: '슬라이드 노트', el: '텍스트 상자', cell: '표' } as const)[cur.field]} · 슬라이드 {(p?.slides.findIndex((x) => x.id === cur.slideId) ?? 0) + 1}</small></div>
+          <div className="spell-word"><small>{cur.kind === 'ko' ? '맞춤법이 틀린 말' : '사전에 없는 단어'}</small><b>{cur.word}</b><small>{({ title: '제목', text: '본문', subtext: '둘째 줄', notes: '슬라이드 노트', el: '텍스트 상자', cell: '표' } as const)[cur.field]} · 슬라이드 {(p?.slides.findIndex((x) => x.id === cur.slideId) ?? 0) + 1}</small></div>
           <div className="spell-row">
             <button type="button" onClick={() => setIgnoreOnce(new Set([...ignoreOnce, keyOf(cur)]))}>건너뛰기</button>
             <button type="button" onClick={() => setIgnoreAll(new Set([...ignoreAll, cur.word.toLowerCase()]))}>모두 건너뛰기</button>
@@ -58,6 +64,7 @@ export function SpellingPane({ ed }: { ed: Ed }) {
           <p className="dlg-note">남은 단어 {hits.length}개</p>
         </>
       )}
+      {dict === 'failed' && <p className="dlg-note">영어 사전을 불러오지 못해 한국어만 검사했습니다.</p>}
     </div>
   );
 }
