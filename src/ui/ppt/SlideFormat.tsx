@@ -8,9 +8,8 @@ import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { assetUrl, slideTheme } from '../SlideCanvas';
 import { useMediaUrl } from '../hooks';
-import { SlideInspector } from '../SlideInspector';
 import { patchElement } from '../../domain/templates/convert';
-import { CLEAR_TEXT_FORMAT, ElementFormat, elementPatch, sizeOf, textValue } from './ElementFormat';
+import { CLEAR_TEXT_FORMAT, ElementFormat, elementPatch, sizeOf, textValue, type TableRange } from './ElementFormat';
 import { TextFormatPanel } from './TextFormatPanel';
 import { SlideContentEditor } from '../SlideContentEditor';
 import { changeCase } from '../../domain/textFormat';
@@ -29,6 +28,8 @@ interface Props {
   /** The object selected on the slide (CanvasEditor); its settings show first. */
   selectedId?: string | null;
   onSelect?: (id: string | null) => void;
+  cell?: TableRange;
+  onCell?: (r: TableRange) => void;
 }
 
 function Section({ title, children, open = true }: { title: string; children: ReactNode; open?: boolean }) {
@@ -52,7 +53,7 @@ function MediaThumb({ id, video }: { id: string; video: boolean }) {
  * size, colour, bold/italic/underline, alignment, spacing and background — for this slide
  * only, with "apply to all slides".
  */
-export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign, selectedId, onSelect, showContent = true }: Props) {
+export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign: _onDesign, selectedId, onSelect, cell, onCell, showContent = true }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [applied, setApplied] = useState<string | null>(null);
   const base: Theme = state.library.themes.find((t) => t.id === p.themeId) ?? state.library.themes[0];
@@ -113,6 +114,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign,
             upd({ elements: where === 'front' ? [...rest, selected] : [selected, ...rest] });
           }}
           addMedia={(m) => dispatch({ type: 'media/add', media: m })}
+          cell={cell} onCell={onCell}
         />
       ) : null}
       <Section title="글꼴 · 단락">
@@ -126,7 +128,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign,
           onChange={boxMode ? (patch) => patchBoxes((e) => elementPatch(e, patch)) : ({ bold, ...rest }) => setStyle({ ...rest, ...(bold === undefined ? {} : { fontWeight: bold ? 700 : 400 }) })}
           onChangeCase={boxMode ? (kind) => patchBoxes((e) => ({ text: changeCase(e.text ?? '', kind) })) : (kind) => upd({ text: changeCase(slide.text, kind), ...(slide.title ? { title: changeCase(slide.title, kind) } : {}), ...(slide.subtext ? { subtext: changeCase(slide.subtext, kind) } : {}) })}
           onClear={boxMode ? () => patchBoxes(() => CLEAR_TEXT_FORMAT) : () => upd({ style: undefined, preferredFontSize: undefined })}
-          shortcuts={!selected}
+          shortcuts={false}
         />
       </Section>
 
@@ -182,10 +184,6 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign,
         <button disabled={!bg} onClick={() => applyToAll('background')}>이 배경을 모든 슬라이드에 적용</button>
       </Section>
 
-      <Section title="기타 (전환 · 동작 · 노트)" open={false}>
-        <SlideInspector slide={slide} library={state.library} compact
-          onChange={(patch) => upd(patch)} onDesign={onDesign} onClose={() => undefined} />
-      </Section>
     </div>
   );
 }
