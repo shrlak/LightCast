@@ -23,6 +23,15 @@ export interface RichTextApi {
 }
 
 let active: RichTextApi | null = null;
+let spell = false;
+try { spell = localStorage.getItem('fc.spellCheck') === '1'; } catch { /* storage unavailable */ }
+/** Review › Spelling: underline misspelled words while typing (the browser's own checker). */
+export const spellCheckOn = () => spell;
+export function setSpellCheck(on: boolean) {
+  spell = on;
+  try { localStorage.setItem('fc.spellCheck', on ? '1' : '0'); } catch { /* storage unavailable */ }
+  document.querySelectorAll<HTMLElement>('.ce-rich').forEach((el) => { el.spellcheck = on; });
+}
 const listeners = new Set<() => void>();
 /** The text box being typed in, if any. */
 export const activeTextEditor = () => active;
@@ -311,7 +320,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
       className="ce-rich"
       contentEditable
       suppressContentEditableWarning
-      spellCheck={false}
+      spellCheck={spell}
       style={style}
       onInput={() => onChange(readLines(ref.current!))}
       onKeyDown={onKeyDown}

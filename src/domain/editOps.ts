@@ -193,7 +193,13 @@ export function makeShape(name: string, box?: { x: number; y: number; w: number;
   if (name === 'textBox') {
     return { id: uid('el'), kind: 'text', text: '텍스트', ...(box ?? centred(800, 200)), fontSize: 64, color: '#ffffff', align: 'center', bold: false, autoFit: !box };
   }
+  // Insert › Shapes › Action Buttons do what they show when clicked in the slide show.
+  const ACTION_BUTTONS: Record<string, NonNullable<SlideElement['action']>['kind']> = {
+    actionButtonForwardNext: 'next', actionButtonBackPrevious: 'prev', actionButtonBeginning: 'first', actionButtonHome: 'first', actionButtonEnd: 'last', actionButtonReturn: 'prev',
+  };
+  const act = ACTION_BUTTONS[name];
   return {
+    ...(act ? { action: { kind: act } } : {}),
     id: uid('el'), kind: 'shape', shape: name, ...b, h: line && b.h < 1 ? 0 : b.h,
     ...(line ? { stroke: '#ffffff', strokeWidth: 6, ...(name === 'straightConnector1' ? { arrowEnd: true } : {}) } : { fill: '#2E6FD8', stroke: '#1B4FA8', strokeWidth: 3 }),
   };

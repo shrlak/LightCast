@@ -17,12 +17,14 @@ import type { TextFormatValue } from './TextFormatPanel';
 export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'accessibility' | 'designer' | null;
 
 /** The dialog boxes (Font, Paragraph, Replace Fonts, Header & Footer, Set Up Show, …). */
-export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio';
+export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master';
 
 export interface Ed {
   state: AppState;
   dialog: DialogKind | null;
   setDialog: (d: DialogKind | null) => void;
+  /** Play the slides in a window (Reading view): a custom show's slides, or Rehearse Timings. */
+  play: (opts?: { ids?: string[]; rehearse?: boolean }) => void;
   dispatch: Dispatch<Action>;
   cmd: Commands;
   p: Presentation | null;

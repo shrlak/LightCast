@@ -15,6 +15,7 @@ import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
 import { shapeToPath } from '../../engine';
+import { smartArtOwner } from '../../domain/smartArt';
 import { layoutTable } from '../../engine';
 
 export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart';
@@ -114,6 +115,11 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
         )} />
         <Small icon="★" label="기본 도형으로 설정" title="새로 그리는 도형이 이 서식을 따릅니다" disabled={shapes.length !== 1} onClick={() => { const e = shapes[0]; ed.updatePres({ defaultShape: { fill: e.fill, stroke: e.stroke, strokeWidth: e.strokeWidth, gradient: e.gradient, gradientAngle: e.gradientAngle, dropShadow: e.dropShadow, glow: e.glow, color: e.color, fontSize: e.fontSize } }); ed.cmd.notify('새 도형이 이 서식으로 그려집니다'); }} />
       </Group>
+      {smartArtOwner(ed.elements, ed.selEls) && (
+        <Group label="SmartArt">
+          <Big icon="⧉" label="텍스트 창 · 레이아웃" title="SmartArt의 텍스트, 레이아웃, 스타일, 색 바꾸기" onClick={() => ed.setDialog('smartArt')} />
+        </Group>
+      )}
       <Group label="도형 스타일"><ShapeStyleButtons ed={ed} big /></Group>
       <Group label="WordArt 스타일" launcher={text.length ? () => ed.setDialog('font') : undefined}>
         <Col>

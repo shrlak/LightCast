@@ -18,6 +18,8 @@ import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
+import { withMaster } from '../../domain/master';
+import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
 
 const blocked = (ed: Ed) => {
@@ -34,7 +36,7 @@ export function NewSlideButton({ ed, big = true }: { ed: Ed; big?: boolean }) {
     if (!p) return;
     if (p.protected) return ed.cmd.notify(PROTECTED_MESSAGE);
     const i = slide ? p.slides.findIndex((s) => s.id === slide.id) : p.slides.length - 1;
-    const n = make();
+    const n = p.master?.elements.length ? withMaster(make(), p.master.elements) : make();
     const slides = [...p.slides];
     slides.splice(i + 1, 0, n);
     ed.updatePres({ slides });
@@ -50,6 +52,8 @@ export function NewSlideButton({ ed, big = true }: { ed: Ed; big?: boolean }) {
         </div>
         <MenuSep />
         <MenuItem icon="⧉" label="선택한 슬라이드 복제" hint="Ctrl+D" disabled={!slide} onClick={() => { if (slide) insert(() => ({ ...slide, id: uid('s') })); close(); }} />
+        <MenuItem icon="☰" label="개요에서 슬라이드…" disabled={!p} onClick={() => { ed.setDialog('outline'); close(); }} />
+        <MenuItem icon="♻" label="슬라이드 다시 사용…" disabled={!p} onClick={() => { ed.setDialog('reuse'); close(); }} />
       </>
     )} />
   );
@@ -216,7 +220,22 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
         <NewSlideButton ed={ed} />
         <Col>
           <Small icon={RI.reset} label="다시 설정" title="이 슬라이드의 글꼴 · 전환 · 배경 설정을 테마대로" disabled={!ed.slide || !ed.canEdit} onClick={() => ed.updateSlide({ style: undefined, transition: undefined, preferredFontSize: undefined })} />
-          <Small icon={RI.section} label="구역" title="구역(섹션) 추가" disabled={!ed.slide || !ed.canEdit} onClick={() => ed.makeSection()} />
+          <DropButton icon={RI.section} label="구역" disabled={!ed.slide || !ed.canEdit} render={(close) => {
+            const p = ed.p, id = ed.slide?.id;
+            const run = (fn: (slides: import('../../domain/types').Slide[], id: string) => import('../../domain/types').Slide[]) => { if (p && id) ed.updatePres({ slides: fn(p.slides, id), ...(p.arrangementId ? { arrangementId: null } : {}) }); close(); };
+            return (
+              <>
+                <MenuItem label="구역 추가" onClick={() => { ed.makeSection(); close(); }} />
+                <MenuItem label="구역 이름 바꾸기" onClick={() => { const name = window.prompt('구역 이름', ed.slide?.group ?? ''); if (name) run((s, i) => renameSection(s, i, name)); else close(); }} />
+                <MenuItem label="구역 제거" onClick={() => run(removeSection)} />
+                <MenuItem label="구역 및 슬라이드 제거" onClick={() => { if (window.confirm('이 구역과 그 안의 슬라이드를 모두 지울까요?')) run(removeSectionAndSlides); else close(); }} />
+                <MenuItem label="모든 구역 제거" onClick={() => run((s) => removeAllSections(s))} />
+                <MenuSep />
+                <MenuItem label="구역을 위로 이동" onClick={() => run((s, i) => moveSection(s, i, -1))} />
+                <MenuItem label="구역을 아래로 이동" onClick={() => run((s, i) => moveSection(s, i, 1))} />
+              </>
+            );
+          }} />
         </Col>
       </Group>
       <Group label="글꼴" className="rb-font" launcher={t ? () => ed.setDialog('font') : undefined}>
@@ -304,7 +323,7 @@ const CHARTS: [ChartKind, string][] = [['column', '세로 막대형'], ['columnS
 
 export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const kind = useRef<'image' | 'video'>('image');
+  const kind = useRef<'image' | 'video' | 'audio'>('image');
   const [hover, setHover] = useState<[number, number]>([0, 0]);
   const add = (el: SlideElement | null) => { if (el && !blocked(ed)) ed.addElement(el); };
   const insertMedia = async (file: File | undefined) => {
@@ -312,7 +331,8 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
     const id = uid('m');
     await putMedia(id, file);
     ed.dispatch({ type: 'media/add', media: { id, name: file.name, type: kind.current } });
-    ed.addElement({ id: uid('el'), kind: kind.current, mediaId: id, fit: kind.current === 'video' ? 'cover' : 'contain', x: 220, y: 240, w: 1000, h: 600, name: file.name });
+    if (kind.current === 'audio') ed.addElement({ id: uid('el'), kind: 'audio', mediaId: id, x: 660, y: 480, w: 120, h: 120, name: file.name, playback: { autoplay: true } });
+    else ed.addElement({ id: uid('el'), kind: kind.current, mediaId: id, fit: kind.current === 'video' ? 'cover' : 'contain', x: 220, y: 240, w: 1000, h: 600, name: file.name });
   };
   const insertSymbol = (c: string) => {
     if (document.activeElement?.classList.contains('ce-rich')) document.execCommand('insertText', false, c);
@@ -335,14 +355,18 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
       </Group>
       <Group label="이미지">
         <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*'; fileRef.current.click(); } }} />
+        <Big icon="🖼" label="사진 앨범" title="그림 여러 장으로 슬라이드를 만듭니다" disabled={!ed.p} onClick={() => ed.setDialog('photoAlbum')} />
       </Group>
       <Group label="일러스트레이션">
         <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} />
         <DropButton big icon={RI.icons} label="아이콘" wide render={(close) => <IconGallery onPick={(n) => { add(makeIcon(n)); close(); }} />} />
+        <Big icon="⧉" label="SmartArt" title="SmartArt 그래픽 삽입" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('smartArt')} />
         <DropButton big icon={RI.chart} label="차트" render={(close) => <>{CHARTS.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { add(makeChart(k)); close(); }} />)}</>} />
       </Group>
       <Group label="링크">
+        <Big icon="⊕" label="확대/축소" title="요약 · 구역 · 슬라이드 확대/축소" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('zoom')} />
         <Big icon={RI.link} label="링크" title="선택한 개체에 링크 연결 (슬라이드 쇼에서 클릭하면 열림)" disabled={!ed.selEls.length} onClick={onLink} />
+        <Big icon="☛" label="실행" title="개체를 클릭했을 때 할 일 (실행 설정)" disabled={!ed.selEls.length} onClick={() => ed.setDialog('action')} />
       </Group>
       <Group label="메모">
         <Big icon={RI.comment} label="메모" title="새 메모" disabled={!ed.slide} onClick={onComment} />
@@ -353,6 +377,8 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
           <MenuItem key={w.label} label={<span style={{ color: w.patch.color, fontWeight: 800, textShadow: 'shadow' in w.patch ? '0 2px 3px rgba(0,0,0,.5)' : undefined, fontSize: 18, background: w.patch.color === '#ffffff' ? '#555' : undefined, padding: '0 4px' }}>가나다 Abc</span>} onClick={() => { add({ id: uid('el'), kind: 'text', text: '여기에 텍스트 입력', x: 220, y: 420, w: 1000, h: 240, fontSize: 110, align: 'center', ...w.patch }); close(); }} />
         ))}</>} />
         <Col>
+          <Small icon="▭" label="머리글/바닥글" disabled={!ed.slide} onClick={() => ed.setDialog('headerFooter')} />
+          <Small icon="#" label="슬라이드 번호" disabled={!ed.slide} onClick={() => ed.setDialog('headerFooter')} />
           <Small icon={RI.date} label="날짜 및 시간" disabled={!ed.slide} onClick={() => add({ id: uid('el'), kind: 'text', text: '{date}', x: 940, y: 980, w: 460, h: 70, fontSize: 36, color: '#ffffff', align: 'right' })} />
           <Small icon="🕒" label="현재 시각" disabled={!ed.slide} onClick={() => add({ id: uid('el'), kind: 'text', text: '{time}', x: 940, y: 900, w: 460, h: 70, fontSize: 36, color: '#ffffff', align: 'right' })} />
         </Col>
@@ -362,7 +388,9 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
       </Group>
       <Group label="미디어">
         <Big icon={RI.video} label="비디오" onClick={() => { kind.current = 'video'; if (fileRef.current) { fileRef.current.accept = 'video/*'; fileRef.current.click(); } }} />
+        <Big icon="🔊" label="오디오" title="이 장치의 오디오 삽입 (슬라이드가 나올 때 재생)" onClick={() => { kind.current = 'audio'; if (fileRef.current) { fileRef.current.accept = 'audio/*'; fileRef.current.click(); } }} />
         <Col>
+          <Small icon="⏯" label="재생 옵션" title="선택한 오디오 · 비디오의 재생 (자동 실행, 반복, 볼륨, 맞추기, 페이드)" disabled={!ed.selEls.some((e) => e.kind === 'audio' || e.kind === 'video')} onClick={() => ed.setDialog('audio')} />
           <Small icon={RI.camera} label="카메라" onClick={() => add({ id: uid('el'), kind: 'camera', deviceId: '', x: 320, y: 315, w: 800, h: 450 })} />
           <Small icon={RI.qr} label="QR 코드" onClick={() => { const { id: _id, ...qr } = qrElement('', (ed.slide?.elements ?? []).filter((e) => e.kind === 'qr').length); add({ ...qr, id: uid('el') }); ed.setPane('format'); }} />
         </Col>

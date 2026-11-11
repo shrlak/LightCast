@@ -7,6 +7,7 @@ import { AddToPlaylistMenu } from '../AddToPlaylist';
 import { DEFAULT_CONFESSION_SONG } from '../../domain/defaults';
 import { SUNDAY_STEPS } from '../../domain/sunday/wizardSteps';
 import { ACCEPT } from './commands';
+import { setSpellCheck, spellCheckOn } from '../RichTextEditor';
 import type { Ed } from './editor';
 import { Big, Col, DropButton, Group, MenuItem, RI, Small } from './ribbonParts';
 
@@ -17,11 +18,22 @@ export function SlideShowTab({ ed }: { ed: Ed }) {
       <Group label="슬라이드 쇼 시작">
         <Big icon={RI.fromStart} label="처음부터" title="처음부터 (F5)" disabled={!p} onClick={() => cmd.startShow(false)} />
         <Big icon={RI.fromCurrent} label="현재 슬라이드부터" title="현재 슬라이드부터 (Shift+F5)" disabled={!p} onClick={() => cmd.startShow(true)} />
+        <DropButton big icon="☰" label="재구성한 쇼" disabled={!p} render={(close) => (
+          <>
+            {(p?.customShows ?? []).map((s) => <MenuItem key={s.id} label={s.name} hint={`${s.slideIds.length}장`} onClick={() => { ed.play({ ids: s.slideIds }); close(); }} />)}
+            <MenuItem label="재구성한 쇼…" onClick={() => { ed.setDialog('customShows'); close(); }} />
+          </>
+        )} />
       </Group>
       <Group label="설정">
         <Big icon={RI.hideSlide} label="슬라이드 숨기기" active={!!slide?.disabled} disabled={!slide || !ed.canEdit} onClick={() => ed.updateSlide({ disabled: slide?.disabled ? undefined : true })} />
-        <Big icon={RI.rehearse} label="예행 연습" title="송출하지 않고 미리 넘겨 보기" disabled={!p} onClick={() => cmd.open('rehearsal')} />
-        <Big icon="⚙" label="슬라이드 쇼 설정" title="출력 화면 · 무대 화면" onClick={() => cmd.open('settings')} />
+        <Big icon="⚙" label="쇼 설정" title="반복 · 애니메이션 · 화면 전환 · 타이밍 · 모니터" disabled={!p} onClick={() => ed.setDialog('setupShow')} />
+        <Big icon={RI.rehearse} label="예행 연습" title="슬라이드마다 시간을 재고 자동으로 넘어가게 저장합니다" disabled={!p} onClick={() => ed.play({ rehearse: true })} />
+        <Col>
+          <label className="rb-check"><input type="checkbox" disabled={!p || !!p.protected} checked={!p?.showSetup?.manual} onChange={(e) => ed.updatePres({ showSetup: { ...p?.showSetup, manual: e.target.checked ? undefined : true } })} /> 타이밍 사용</label>
+          <Small icon="▶" label="송출 없이 넘겨 보기" disabled={!p} onClick={() => cmd.open('rehearsal')} />
+          <Small icon="✕" label="타이밍 지우기" disabled={!p?.slides.some((s) => s.autoAdvance) || !ed.canEdit} onClick={() => p && ed.updatePres({ slides: p.slides.map((s) => ({ ...s, autoAdvance: undefined })) })} />
+        </Col>
       </Group>
       <Group label="모니터">
         <Big icon={RI.presenter} label="발표자 보기" active={cmd.view === 'presenter'} onClick={() => cmd.setView(cmd.view === 'presenter' ? 'normal' : 'presenter')} />
@@ -40,8 +52,13 @@ export function SlideShowTab({ ed }: { ed: Ed }) {
 
 export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) {
   const comments = ed.slide?.comments?.length ?? 0;
+  const [spell, setSpell] = useState(spellCheckOn());
   return (
     <>
+      <Group label="언어 교정">
+        <Big icon="abc✓" label="맞춤법 검사" title="텍스트를 입력할 때 맞춤법이 틀린 단어에 밑줄을 긋습니다" active={spell} onClick={() => { setSpellCheck(!spell); setSpell(!spell); }} />
+        <Big icon="📖" label="동의어 사전" title="선택한 단어와 뜻이 같은 단어" onClick={() => ed.setDialog('thesaurus')} />
+      </Group>
       <Group label="접근성">
         <Big icon={RI.access} label="접근성 검사" title="대체 텍스트 · 글자와 배경 대비 · 빈 슬라이드를 확인합니다" active={ed.pane === 'accessibility'} onClick={() => ed.setPane(ed.pane === 'accessibility' ? null : 'accessibility')} />
       </Group>
@@ -72,12 +89,16 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
         <Big icon={RI.sorterView} label="여러 슬라이드" active={cmd.view === 'sorter'} onClick={() => cmd.setView('sorter')} />
         <Big icon={RI.readingView} label="읽기용 보기" onClick={onReading} />
       </Group>
+      <Group label="마스터 보기">
+        <Big icon="▤" label="슬라이드 마스터" title="모든 슬라이드에 나오는 개체와 배경" disabled={!ed.p} onClick={() => ed.setDialog('master')} />
+      </Group>
       <Group label="표시">
         <Col>
           <label className="rb-check"><input type="checkbox" checked={!!ed.view.grid} onChange={(e) => ed.setView({ ...ed.view, grid: e.target.checked })} /> 눈금선</label>
           <label className="rb-check"><input type="checkbox" checked={!!ed.view.guides} onChange={(e) => ed.setView({ ...ed.view, guides: e.target.checked })} /> 안내선</label>
           <label className="rb-check"><input type="checkbox" checked={ed.notesOpen} onChange={(e) => ed.setNotesOpen(e.target.checked)} /> 슬라이드 노트</label>
         </Col>
+        <Small icon="⌗" label="눈금 및 안내선…" onClick={() => ed.setDialog('guides')} />
       </Group>
       <Group label="확대/축소">
         <DropButton big icon={RI.zoom} label="확대/축소" render={(close) => <>{ZOOMS.map((z) => <MenuItem key={z} label={`${z}%`} on={ed.zoom === z / 100} onClick={() => { ed.setZoom(z / 100); close(); }} />)}<MenuItem label="창에 맞춤" on={ed.zoom === null} onClick={() => { ed.setZoom(null); close(); }} /></>} />

@@ -1,7 +1,8 @@
 // Views and dialogs of the PowerPoint window: 찾기 / 바꾸기, 개요 보기, 여러 슬라이드, 읽기용 보기,
 // transition and animation previews, and the 파일 (backstage) view.
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react';
-import type { Presentation, Slide } from '../../domain/types';
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
+import type { Presentation, Slide, SlideElement } from '../../domain/types';
+import { CANVAS_W } from '../../domain/canvas';
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
 import { findText, replaceText, type TextItem } from '../../engine';
@@ -157,39 +158,110 @@ export function SlideSorter({ ed }: { ed: Ed }) {
 
 // ── Reading view and previews ─────────────────────────────────────────────────────────────────
 /** 읽기용 보기: the slide show inside the window, with transitions and animations, without sending anything to the screens. */
-export function ReadingView({ ed, onClose }: { ed: Ed; onClose: () => void }) {
+/** The object with a click action (Action Settings, a link or a slide zoom) under a canvas point. */
+export function actionAt(slide: Slide | null, x: number, y: number): SlideElement | null {
+  const els = [...(slide?.elements ?? [])].reverse();
+  return els.find((e) => !e.hidden && (e.action || e.href || (e.kind === 'zoom' && e.targetSlideId)) && x >= e.x && x <= e.x + e.w && y >= e.y && y <= e.y + Math.max(e.h, 1)) ?? null;
+}
+
+/**
+ * Reading view: the slide show in a window — click or the arrow keys to advance, objects with an
+ * action (Action Settings, links, slide zooms) do what they say. With `ids` it plays a custom show;
+ * with `rehearse` it times each slide (Rehearse Timings) and offers to keep the timings.
+ */
+export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: () => void; ids?: string[]; rehearse?: boolean }) {
   const p = ed.p;
-  const pages = useMemo(() => (p ? sequence(p).filter((x) => !x.slide.disabled) : []), [p]);
-  const start = Math.max(0, pages.findIndex((x) => x.slide.id === ed.slide?.id));
+  const pages = useMemo(() => {
+    if (!p) return [];
+    const all = sequence(p).filter((x) => !x.slide.disabled);
+    return ids ? ids.map((id) => all.find((x) => x.slide.id === id)).filter((x): x is (typeof all)[number] => !!x) : all;
+  }, [p, ids]);
+  const start = ids || rehearse ? 0 : Math.max(0, pages.findIndex((x) => x.slide.id === ed.slide?.id));
   const [i, setI] = useState(start);
   const [build, setBuild] = useState<LiveBuild | null>(null);
+  const [ended, setEnded] = useState(false);
+  const times = useRef<Record<string, number>>({});
+  const shownAt = useRef(Date.now());
+  const [now, setNow] = useState(Date.now());
   const slide = pages[i]?.slide ?? null;
   const ref = useRef<HTMLDivElement>(null);
+  const stage = useRef<HTMLDivElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
   useEffect(() => {
+    if (!rehearse) return;
+    const t = setInterval(() => setNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [rehearse]);
+  useEffect(() => {
     if (!slide) return;
-    void import('../../domain/animations').then(({ initialBuild }) => setBuild(initialBuild(slide, Date.now()) ?? null));
-  }, [slide]);
+    shownAt.current = Date.now();
+    void import('../../domain/animations').then(({ initialBuild }) => setBuild(ed.p?.showSetup?.noAnimation ? null : initialBuild(slide, Date.now()) ?? null));
+  }, [slide, ed.p?.showSetup?.noAnimation]);
+  const record = () => { if (rehearse && slide) times.current[slide.id] = (times.current[slide.id] ?? 0) + (Date.now() - shownAt.current) / 1000; };
+  const finish = () => { record(); if (rehearse) setEnded(true); else onClose(); };
+  const goTo = (n: number) => { if (n === i) return; record(); if (n >= pages.length) return finish(); setI(Math.max(0, n)); };
   const next = async () => {
     const { advanceBuild } = await import('../../domain/animations');
-    const b = slide ? advanceBuild(slide, build ?? undefined, Date.now()) : null;
-    if (b) setBuild(b); else if (i < pages.length - 1) setI(i + 1); else onClose();
+    const b = slide && !ed.p?.showSetup?.noAnimation ? advanceBuild(slide, build ?? undefined, Date.now()) : null;
+    if (b) setBuild(b); else goTo(i + 1);
   };
-  const prev = () => setI(Math.max(0, i - 1));
+  const prev = () => goTo(i - 1);
+  const act = (el: SlideElement) => {
+    if (el.kind === 'zoom' && el.targetSlideId) { const n = pages.findIndex((x) => x.slide.id === el.targetSlideId); if (n >= 0) goTo(n); return; }
+    const a = el.action ?? (el.href ? { kind: 'url' as const, url: el.href } : null);
+    if (!a) return;
+    if (a.kind === 'next') goTo(i + 1);
+    else if (a.kind === 'prev') goTo(i - 1);
+    else if (a.kind === 'first') goTo(0);
+    else if (a.kind === 'last') goTo(pages.length - 1);
+    else if (a.kind === 'end') finish();
+    else if (a.kind === 'slide') { const n = pages.findIndex((x) => x.slide.id === a.slideId); if (n >= 0) goTo(n); }
+    else if (a.kind === 'url' && a.url) window.open(a.url, '_blank', 'noopener');
+  };
+  const onStageClick = (e: MouseEvent<HTMLDivElement>) => {
+    const r = stage.current?.querySelector('.slide-canvas, .canvas, div')?.getBoundingClientRect() ?? stage.current?.getBoundingClientRect();
+    if (r && r.width) {
+      const k = CANVAS_W / r.width;
+      const hit = actionAt(slide, (e.clientX - r.left) * k, (e.clientY - r.top) * k);
+      if (hit) return act(hit);
+    }
+    void next();
+  };
   if (!p || !ed.theme) return null;
-  const transition = slide?.transition ?? p.transition;
+  if (ended) {
+    const total = Object.values(times.current).reduce((a, b) => a + b, 0);
+    const keep = () => {
+      ed.updatePres({ slides: p.slides.map((s) => (times.current[s.id] ? { ...s, autoAdvance: Math.max(1, Math.round(times.current[s.id])) } : s)), showSetup: { ...p.showSetup, manual: undefined } });
+      ed.cmd.notify('슬라이드 시간을 저장했습니다 — 슬라이드 쇼에서 자동으로 넘어갑니다');
+      onClose();
+    };
+    return (
+      <div className="reading-view rehearse-end">
+        <div className="ppt-dialog center" role="dialog" aria-label="예행 연습">
+          <b>슬라이드 쇼에 걸린 총 시간은 {Math.floor(total / 60)}:{String(Math.round(total % 60)).padStart(2, '0')}입니다.</b>
+          <p>새 슬라이드 시간을 저장하시겠습니까?</p>
+          <div className="ppt-dialog-buttons"><button type="button" className="primary" disabled={!ed.canEdit} onClick={keep}>예</button><button type="button" onClick={onClose}>아니요</button></div>
+        </div>
+      </div>
+    );
+  }
+  const transition = ed.p?.showSetup?.noTransitions ? undefined : slide?.transition ?? p.transition;
+  const onSlide = (now - shownAt.current) / 1000;
   return (
     <div className="reading-view" ref={ref} tabIndex={0} onKeyDown={(e) => {
       e.stopPropagation();
-      if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter'].includes(e.key)) { e.preventDefault(); void next(); }
-      if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); prev(); }
-      if (e.key === 'Escape') onClose();
-    }} onClick={() => void next()}>
-      <div className="reading-stage"><SlideCanvas slide={slide} theme={ed.theme} background={slide ? resolveBackground(slide, p) : null} bgEffect={p.bgEffect} transition={transition} build={build} animate /></div>
+      if (['ArrowRight', 'ArrowDown', 'PageDown', ' ', 'Enter', 'n'].includes(e.key)) { e.preventDefault(); void next(); }
+      if (['ArrowLeft', 'ArrowUp', 'PageUp', 'Backspace', 'p'].includes(e.key)) { e.preventDefault(); prev(); }
+      if (e.key === 'Home') goTo(0);
+      if (e.key === 'End') goTo(pages.length - 1);
+      if (e.key === 'Escape') finish();
+    }} onClick={onStageClick}>
+      <div className="reading-stage" ref={stage}><SlideCanvas slide={slide} theme={ed.theme} background={slide ? resolveBackground(slide, p) : null} bgEffect={p.bgEffect} transition={transition} build={build} animate number={i + 1} /></div>
       <div className="reading-bar" onClick={(e) => e.stopPropagation()}>
-        <span>{p.title}</span><span className="grow" />
+        <span>{p.title}{ids ? ' · 재구성한 쇼' : ''}</span><span className="grow" />
+        {rehearse && <span className="rehearse-clock">⏱ {Math.floor(onSlide / 60)}:{String(Math.floor(onSlide % 60)).padStart(2, '0')}</span>}
         <button type="button" onClick={prev}>◀</button><span>슬라이드 {i + 1} / {pages.length}</span><button type="button" onClick={() => void next()}>▶</button>
-        <button type="button" onClick={onClose}>읽기용 보기 닫기 (Esc)</button>
+        <button type="button" onClick={finish}>{rehearse ? '예행 연습 마침 (Esc)' : '읽기용 보기 닫기 (Esc)'}</button>
       </div>
     </div>
   );

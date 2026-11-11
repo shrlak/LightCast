@@ -1781,3 +1781,22 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .dlg-list > button.on { background: #e1dfdd; }
 .dlg-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 @media (max-width: 600px) { .ppt-dialog.center, .ppt-dialog.center.wide { width: calc(100vw - 32px); } .dlg-grid3, .dlg-grid4 { grid-template-columns: 1fr 1fr; } }
+.dlg-indent { display: flex; flex-direction: column; gap: 4px; padding-left: 22px; }
+.smartart-dlg { display: grid; grid-template-columns: 170px 1fr; gap: 10px; }
+.smartart-layouts { max-height: 420px; }
+.smartart-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.smartart-preview { border: 1px solid #e1dfdd; aspect-ratio: 4 / 3; background: #000; overflow: hidden; }
+.reuse-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; max-height: 340px; overflow: auto; }
+.reuse-cell { position: relative; padding: 2px; border: 2px solid transparent; background: #f3f2f1; aspect-ratio: 4 / 3; overflow: hidden; }
+.reuse-cell.on, .reuse-cell:hover:not(:disabled) { border-color: #c43e1c; }
+.reuse-cell > span { position: absolute; left: 4px; bottom: 2px; font-size: 11px; color: #fff; text-shadow: 0 0 3px #000; }
+.thes-group { display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 6px; border-bottom: 1px solid #f3f2f1; align-items: center; }
+.thes-group b { width: 100%; font-size: 12px; }
+.thes-group button { padding: 2px 8px; border: 1px solid #e1dfdd; background: #fff; border-radius: 3px; }
+.master-view { position: fixed; inset: 0; z-index: 850; background: #e6e6e6; display: flex; flex-direction: column; }
+.master-bar { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; padding: 8px 12px; background: #fff; border-bottom: 1px solid #c8c6c4; }
+.master-bar .grow { flex: 1; }
+.master-stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 24px; min-height: 0; }
+.master-stage > * { width: min(100%, calc((100vh - 120px) * 4 / 3)); }
+.rehearse-clock { font-variant-numeric: tabular-nums; font-weight: 600; }
+@media (max-width: 600px) { .smartart-dlg { grid-template-columns: 1fr; } .smartart-layouts { max-height: 140px; } }
