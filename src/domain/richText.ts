@@ -4,7 +4,7 @@
 // unchanged; runs that no longer spell that text (it was retyped somewhere else) are ignored.
 import type { ElementParagraph, SlideElement, TextRun } from './types';
 
-const FORMAT_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'color'] as const;
+const FORMAT_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'color', 'strike', 'baseline'] as const;
 export type RunFormat = Pick<TextRun, (typeof FORMAT_KEYS)[number]>;
 
 const sameFormat = (a: TextRun, b: TextRun) => FORMAT_KEYS.every((k) => a[k] === b[k]);
@@ -66,4 +66,21 @@ export function clearRunFormat(el: SlideElement, keys: readonly (keyof RunFormat
   }
   if (el.paragraphs) next.paragraphs = el.paragraphs.map((p) => (p.runs ? { ...p, runs: strip(p.runs).some(runHasFormat) ? strip(p.runs) : undefined } : p));
   return next;
+}
+
+/** The box's lines as runs (its own runs, or one plain run per line). */
+export function elementLines(el: SlideElement): TextRun[][] {
+  const runs = lineRuns(el);
+  const texts = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
+  return texts.map((t, i) => runs[i] ?? (t ? [{ text: t }] : []));
+}
+
+/** Character formatting given to every character of a box (Font dialog with no text selected). */
+export function formatAllRuns(el: SlideElement, patch: RunFormat): Partial<SlideElement> {
+  const lines = elementLines(el).map((l) => l.map((r) => {
+    const q: TextRun = { ...r, ...patch };
+    for (const k of Object.keys(q) as (keyof TextRun)[]) if (q[k] === undefined) delete q[k];
+    return q;
+  }));
+  return withRichLines(el, lines);
 }

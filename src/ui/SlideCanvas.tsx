@@ -1,6 +1,6 @@
 import { isFrontSlide } from '../domain/frontLayout';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
+import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns } from '../domain/richText';
 import { INDENT_PX, listMarkers } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
@@ -12,7 +12,8 @@ import { mediaUrl, peekMediaUrl } from '../domain/media';
 import { MotionLayer } from './MotionLayer';
 import { AnimatedElements, FxTransition } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
-import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, elementTransform } from './EngineElements';
+import { shapeGeometry } from '../engine';
+import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform } from './EngineElements';
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
@@ -45,6 +46,8 @@ export interface CanvasProps {
   animate?: boolean;
   /** Where the slide's object animations are; without it every object is simply shown. */
   build?: LiveBuild | null;
+  /** The slide's number, for Insert › Slide Number and the footer. */
+  number?: number;
   className?: string;
 }
 
@@ -120,15 +123,17 @@ function BackgroundLayer({ background, animate, video, onTime }: { background: B
 /** Timers available to dynamic text ({timer:Name}) inside slides. */
 const TimersContext = createContext<Timer[]>([]);
 
-const TOKEN = /\{(time|date|timer:[^}]+)\}/;
+const TOKEN = /\{(time|date|slide|timer:[^}]+)\}/;
 
 /** Replace {time}, {date} and {timer:Name} with live values. */
 function DynamicText({ text }: { text: string }) {
   const timers = useContext(TimersContext);
+  const slideNumber = useContext(SlideNumberContext);
   const now = useNow(500);
   const out = text.replace(new RegExp(TOKEN.source, 'g'), (_, tok: string) => {
     if (tok === 'time') return new Date(now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     if (tok === 'date') return new Date(now).toLocaleDateString();
+    if (tok === 'slide') return String(slideNumber ?? '#');
     const name = tok.slice(6).trim().toLowerCase();
     const t = timers.find((x) => x.name.toLowerCase() === name || x.id === name);
     return t ? formatClock(timerValue(t, now)) : '--:--';
@@ -201,18 +206,94 @@ function Lines({ text, list, highlight }: { text: string; list?: ListStyle; high
 const V_ALIGN = { top: 'flex-start', middle: 'center', bottom: 'flex-end' } as const;
 const H_ALIGN = { left: 'flex-start', center: 'center', right: 'flex-end', justify: 'stretch' } as const;
 
+/** Drawn for a slide show (output, reading view) rather than in the editor: media play by their settings. */
+export const ShowContext = createContext(false);
+export const SlideNumberContext = createContext<number | undefined>(undefined);
+
+/** Insert › Header & Footer: date (left), footer text (centre), slide number (right). */
+function FooterLayer({ slide, theme }: { slide: Slide; theme: Theme }) {
+  const n = useContext(SlideNumberContext);
+  const f = slide.footer;
+  if (!f || (!f.date && !f.slideNumber && !f.text)) return null;
+  const date = f.date === true ? new Date().toLocaleDateString('ko-KR') : typeof f.date === 'string' ? f.date : '';
+  const style: CSSProperties = { position: 'absolute', bottom: 28, fontSize: 30, color: theme.color, opacity: 0.85, fontFamily: theme.fontFamily, whiteSpace: 'nowrap' };
+  return (
+    <div className="footer-layer">
+      {date && <div style={{ ...style, left: 48 }}>{date}</div>}
+      {f.text && <div style={{ ...style, left: '50%', transform: 'translateX(-50%)' }}>{f.text}</div>}
+      {f.slideNumber && <div style={{ ...style, right: 48 }}>{n ?? '#'}</div>}
+    </div>
+  );
+}
+
+const PICTURE_STYLES: Record<string, CSSProperties> = {
+  simpleFrame: { border: '12px solid #fff', boxSizing: 'border-box', boxShadow: '0 4px 10px rgba(0,0,0,.35)' },
+  thickMatte: { border: '26px solid #1a1a1a', boxSizing: 'border-box', boxShadow: '0 6px 16px rgba(0,0,0,.45)' },
+  polaroid: { borderStyle: 'solid', borderColor: '#fff', borderWidth: '14px 14px 52px', boxSizing: 'border-box', boxShadow: '0 6px 16px rgba(0,0,0,.4)' },
+  shadowRect: { boxShadow: '10px 12px 24px rgba(0,0,0,.6)' },
+  rounded: { borderRadius: '12%' },
+  oval: { borderRadius: '50%' },
+  softEdge: { WebkitMaskImage: 'radial-gradient(ellipse at center, #000 55%, transparent 75%)' },
+  reflected: { borderRadius: 8, WebkitBoxReflect: 'below 4px linear-gradient(transparent 60%, rgba(255,255,255,.35))' },
+  tilted: { transform: 'perspective(1000px) rotateY(-14deg)', boxShadow: '12px 10px 20px rgba(0,0,0,.45)' },
+  beveled: { boxShadow: 'inset 4px 4px 8px rgba(255,255,255,.5), inset -4px -4px 8px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.4)' },
+};
+/** Picture Format › Picture Styles. */
+export const PICTURE_STYLE_IDS = Object.keys(PICTURE_STYLES);
+const pictureStyleCss = (id: string | undefined): CSSProperties => (id ? PICTURE_STYLES[id] ?? {} : {});
+
+/** A video object: in a slide show it follows its playback settings (start / end, loop, volume, sound). */
+function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; style: CSSProperties; live: boolean }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const pb = el.playback ?? {};
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    v.volume = pb.volume ?? 1;
+    if (pb.start) v.currentTime = pb.start;
+    if (!live) { v.pause(); if (pb.poster) v.currentTime = pb.poster; return; }
+    if (pb.autoplay !== false) v.play().catch(() => undefined);
+    const onTime = () => {
+      if (pb.end && v.currentTime >= pb.end) {
+        if (pb.loop !== false) v.currentTime = pb.start ?? 0;
+        else v.pause();
+      }
+    };
+    v.addEventListener('timeupdate', onTime);
+    return () => v.removeEventListener('timeupdate', onTime);
+  }, [live, url, pb.start, pb.end, pb.loop, pb.volume, pb.autoplay, pb.poster]);
+  // Output windows play without sound unless the video's sound is turned on (the room hears one copy).
+  return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover' }} muted={pb.muted !== false} loop={pb.loop !== false && !pb.end} playsInline />;
+}
+
 /** One free-positioned object from the slide editor. */
 export function ElementView({ el }: { el: SlideElement }) {
   const url = useMediaUrl(el.kind === 'image' ? el.mediaId : null);
   const videoUrl = useMediaUrl(el.kind === 'video' ? el.mediaId : null);
   const box: CSSProperties = {
     position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1,
-    transform: elementTransform(el),
+    transform: elementTransform(el), filter: effects(el), ...effectCss(el),
   };
+  const show = useContext(ShowContext);
   if (el.hidden) return null;
   // While a picture is still loading nothing is drawn (a placeholder box would flash); the slide waits for it, see useReadySlide.
-  if (el.kind === 'image') return url ? <img src={url} alt="" decoding="sync" style={{ ...box, objectFit: el.fit ?? 'contain' }} /> : null;
-  if (el.kind === 'video') return videoUrl ? <video src={videoUrl} style={{ ...box, objectFit: el.fit ?? 'cover' }} autoPlay muted loop playsInline /> : <div style={{ ...box, outline: '2px dashed #555' }} />;
+  if (el.kind === 'image') {
+    if (!url) return null;
+    const mask = el.maskShape ? shapeGeometry(el.maskShape, el.w, el.h)?.paths.map((q) => q.d).join(' ') : undefined;
+    const style = { ...box, ...pictureStyleCss(el.pictureStyle), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px solid ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}), ...(mask ? { clipPath: `path('${mask}')` } : {}) };
+    const c = el.crop;
+    if (!c || c.every((v) => !v)) return <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ ...style, objectFit: el.fit ?? 'contain' }} />;
+    // Cropped: the picture stretched so its kept part fills the box.
+    const fw = Math.max(0.01, 1 - c[0] - c[2]), fh = Math.max(0.01, 1 - c[1] - c[3]);
+    return (
+      <div style={{ ...style, overflow: 'hidden' }}>
+        <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ position: 'absolute', left: -(c[0] / fw) * el.w, top: -(c[1] / fh) * el.h, width: el.w / fw, height: el.h / fh, objectFit: 'fill', maxWidth: 'none' }} />
+      </div>
+    );
+  }
+  if (el.kind === 'video') return videoUrl ? <VideoObject el={el} url={videoUrl} style={box} live={show} /> : <div style={{ ...box, outline: '2px dashed #555' }} />;
+  if (el.kind === 'audio') return show && el.playback?.hideDuringShow ? null : <div style={box} className="audio-object" title={el.name ?? '오디오'}><svg viewBox="0 0 48 48" width="100%" height="100%"><circle cx="24" cy="24" r="22" fill="rgba(0,0,0,.45)" stroke="#fff" strokeWidth="2" /><path d="M12 19h7l9-8v26l-9-8h-7z" fill="#fff" /><path d="M32 17c3 3 3 11 0 14M35 13c5 5 5 17 0 22" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" /></svg></div>;
+  if (el.kind === 'zoom') return el.zoomOf ? <div style={{ ...box, outline: '2px solid rgba(255,255,255,.6)' }} className="zoom-object"><SlideCanvas slide={el.zoomOf.slide} theme={el.zoomOf.theme} background={el.zoomOf.background} /></div> : <div style={{ ...box, outline: '2px dashed #888' }} />;
   if (el.kind === 'camera') return <div style={box}><CameraBg deviceId={el.deviceId ?? ''} label="Camera" animate /></div>;
   if (el.kind === 'qr') return el.link ? <img className="qr-object" src={qrDataUrl(el.link)} alt={el.link} title={el.link} style={box} /> : <div className="qr-object empty" style={box}>QR</div>;
   if (el.kind === 'shape') {
@@ -228,13 +309,37 @@ export function ElementView({ el }: { el: SlideElement }) {
   return <TextElement el={el} box={box} />;
 }
 
-/** A run's own character formatting, over its text box's. */
-export const runStyle = (r: TextRun): CSSProperties => ({
-  fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? 800 : 400, fontStyle: r.italic === undefined ? undefined : r.italic ? 'italic' : 'normal',
-  textDecoration: r.underline ? 'underline' : undefined, color: r.color,
-});
+export { runStyle } from './runStyle';
+import { runStyle } from './runStyle';
+
+/** The path a warped (Transform) text follows, in its box. */
+export function warpPath(kind: NonNullable<SlideElement['warp']>, w: number, h: number): string {
+  switch (kind) {
+    case 'archUp': return `M 0 ${h * 0.85} Q ${w / 2} ${-h * 0.55} ${w} ${h * 0.85}`;
+    case 'archDown': return `M 0 ${h * 0.25} Q ${w / 2} ${h * 1.6} ${w} ${h * 0.25}`;
+    case 'wave': return `M 0 ${h * 0.6} C ${w / 4} ${h * 0.05} ${w / 4} ${h * 1.1} ${w / 2} ${h * 0.6} S ${w * 0.75} ${h * 0.05} ${w} ${h * 0.6}`;
+    case 'slantUp': return `M 0 ${h * 0.9} L ${w} ${h * 0.3}`;
+    default: return `M 0 ${h * 0.3} L ${w} ${h * 0.9}`;
+  }
+}
+
+function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
+  const id = `warp-${el.id}`;
+  const text = (el.text ?? '').replace(/\n/g, ' ');
+  return (
+    <svg style={{ ...box, left: el.x, top: el.y, width: el.w, height: el.h, overflow: 'visible', ...elementTextStyle(el) }} viewBox={`0 0 ${el.w} ${el.h}`}>
+      <path id={id} d={warpPath(el.warp!, el.w, el.h)} fill="none" />
+      <text fill={el.color ?? '#fff'} fontSize={el.fontSize ?? 64} fontFamily={el.fontFamily} fontWeight={el.bold ? 800 : 500} fontStyle={el.italic ? 'italic' : undefined} textAnchor="middle"
+        stroke={el.textOutline?.color} strokeWidth={el.textOutline?.width} paintOrder="stroke" opacity={el.textTransparency ? 1 - el.textTransparency : undefined}
+        style={{ filter: el.shadow ? 'drop-shadow(0 3px 6px rgba(0,0,0,.8))' : undefined }}>
+        <textPath href={`#${id}`} startOffset="50%">{text}</textPath>
+      </text>
+    </svg>
+  );
+}
 
 function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
+  if (el.warp && el.text) return <WarpText el={el} box={box} />;
   const base = el.fontSize ?? 64;
   const lines = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
   const markers = listMarkers(lines, el.list);
@@ -256,7 +361,10 @@ function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
       // A box that does not fit itself to its text (a font size set by hand, Front) lets the text show
       // past its edge, as PowerPoint does, instead of cutting it off.
       textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, overflow: el.autoFit === false ? 'visible' : 'hidden',
-    }}>
+      ...(el.textTransparency ? { color: `color-mix(in srgb, ${el.color ?? '#fff'} ${Math.round((1 - el.textTransparency) * 100)}%, transparent)` } : {}),
+      ...(el.margins ? { padding: `${el.margins[1]}px ${el.margins[2]}px ${el.margins[3]}px ${el.margins[0]}px` } : {}),
+      ...(el.spaceBefore || el.spaceAfter ? { ['--sp-before' as string]: `${el.spaceBefore ?? 0}px`, ['--sp-after' as string]: `${el.spaceAfter ?? 0}px` } : {}),
+    }} className={el.spaceBefore || el.spaceAfter ? 'para-spaced' : undefined}>
       {el.paragraphs
         ? el.paragraphs.map((p, i) => (
             <div key={i} style={{
@@ -318,6 +426,7 @@ function SlideBody({ slide, theme: base, build }: { slide: Slide; theme: Theme; 
           </div>
       )}
       {slide.caption && <div className="slide-caption" style={{ fontFamily: theme.fontFamily, color: theme.color }}>{slide.caption}</div>}
+      <FooterLayer slide={slide} theme={theme} />
     </>
   );
 }
@@ -497,6 +606,8 @@ export function SlideCanvas(p: CanvasProps) {
   return (
     <div ref={ref} className={`canvas-frame ${p.className ?? ''}`} style={{ background: fill }}>
       <TimersContext.Provider value={p.timers ?? []}>
+      <ShowContext.Provider value={!!p.animate}>
+      <SlideNumberContext.Provider value={p.number}>
       <div className={`canvas ${matte ? 'matte' : ''}`} style={{ transform: `scale(${width / CANVAS_W})`, width: CANVAS_W, height: CANVAS_H }}>
         {layers.background && !matte && (
           <div className="layer bg-layer" style={fx?.blur ? { filter: `blur(${fx.blur}px)`, inset: -fx.blur * 2 } : undefined}>
@@ -524,6 +635,8 @@ export function SlideCanvas(p: CanvasProps) {
         {p.black && <div className="layer" style={{ background: '#000' }} />}
         {mask && <div className="layer screen-mask" style={mask} />}
       </div>
+      </SlideNumberContext.Provider>
+      </ShowContext.Provider>
       </TimersContext.Provider>
     </div>
   );

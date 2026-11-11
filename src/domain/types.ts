@@ -106,7 +106,7 @@ export interface MediaMeta {
 }
 
 /** 'table', 'chart', 'icon' and 'ink' are drawn by the Rust engine (src/engine), as are preset shapes. */
-export type ElementKind = 'text' | 'image' | 'shape' | 'video' | 'camera' | 'qr' | 'table' | 'chart' | 'icon' | 'ink';
+export type ElementKind = 'text' | 'image' | 'shape' | 'video' | 'camera' | 'qr' | 'table' | 'chart' | 'icon' | 'ink' | 'audio' | 'zoom';
 export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot';
 
 /** A stretch of text inside a line with its own character formatting (see domain/richText). */
@@ -118,6 +118,49 @@ export interface TextRun {
   italic?: boolean;
   underline?: boolean;
   color?: string;
+  strike?: boolean;
+  /** 위 첨자 / 아래 첨자. */
+  baseline?: 'super' | 'sub';
+}
+
+/** What clicking an object does in a slide show (Insert › Action). */
+export interface ElementAction {
+  kind: 'next' | 'prev' | 'first' | 'last' | 'slide' | 'url' | 'end';
+  slideId?: string;
+  url?: string;
+}
+
+/** Playback (video / audio objects). */
+export interface MediaPlayback {
+  /** 자동 실행 when the slide appears; otherwise on click (in the slide show). */
+  autoplay?: boolean;
+  loop?: boolean;
+  /** 0–1. */
+  volume?: number;
+  muted?: boolean;
+  /** Trim, seconds. */
+  start?: number;
+  end?: number;
+  fadeIn?: number;
+  fadeOut?: number;
+  /** Audio: hide the icon during the show. */
+  hideDuringShow?: boolean;
+  /** Video poster frame, seconds. */
+  poster?: number;
+}
+
+/** Picture Format adjustments; the shown picture is made from `original` by the engine. */
+export interface PictureAdjust {
+  original: string;
+  removeBackground?: number;
+  transparentColor?: string;
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
+  temperature?: number;
+  sharpness?: number;
+  recolor?: string;
+  artistic?: string;
 }
 
 /** One line of a text element with its own formatting (kept from imported PowerPoint text boxes). */
@@ -220,6 +263,48 @@ export interface SlideElement {
   chart?: import('../engine').ChartData;
   /** Lucide icon name ('icon' objects). */
   icon?: string;
+  /** Glued connector: its ends follow these objects' connection sites. */
+  connect?: { from?: { id: string; site: number }; to?: { id: string; site: number } };
+  /** Shape effects beyond shadow / glow. */
+  shadowKind?: 'outer' | 'inner' | 'perspective';
+  glowSize?: number;
+  reflection?: boolean;
+  /** 3-D rotation in degrees (x tilts forward, y turns sideways). */
+  rotate3d?: { x: number; y: number };
+  bevel?: boolean;
+  /** Selection pane lock: cannot be selected or moved on the slide. */
+  locked?: boolean;
+  /** Placed by the slide master (kept in step with it; not selectable on the slide). */
+  master?: boolean;
+  /** Pictures: crop as fractions of the picture cut from each side (l, t, r, b). */
+  crop?: [number, number, number, number];
+  picture?: PictureAdjust;
+  /** Picture Styles preset. */
+  pictureStyle?: string;
+  /** Picture Format › Crop › Crop to Shape: the preset the picture is cut to. */
+  maskShape?: string;
+  playback?: MediaPlayback;
+  action?: ElementAction;
+  /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */
+  targetSlideId?: string;
+  zoomOf?: { slide: Slide; theme: Theme; background: Background | null };
+  /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it). */
+  smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number } };
+  /** Text effects. */
+  caps?: 'all' | 'small';
+  /** WordArt › Text Effects › Transform: the text follows this path. */
+  warp?: 'archUp' | 'archDown' | 'wave' | 'slantUp' | 'slantDown';
+  textOutline?: { color: string; width: number };
+  /** 0–1 transparency of the text. */
+  textTransparency?: number;
+  /** Text box margins in canvas pixels: left, top, right, bottom. */
+  margins?: [number, number, number, number];
+  /** false = do not wrap text in the shape. */
+  wrap?: boolean;
+  spaceBefore?: number;
+  spaceAfter?: number;
+  firstIndent?: number;
+  rtl?: boolean;
   /** 'ink' objects: SVG path drawn in a `pathW`×`pathH` box that is stretched to the object. */
   path?: string;
   pathW?: number;
@@ -294,6 +379,17 @@ export interface Slide {
   transition?: Transition;
   animations?: SlideAnimation[];
   comments?: SlideComment[];
+  /** Header & Footer on this slide. */
+  footer?: SlideFooter;
+  /** Format Background › Hide background graphics: the master's objects are not shown here. */
+  hideMaster?: boolean;
+}
+
+export interface SlideFooter {
+  /** true: today's date; a string: that fixed text. */
+  date?: boolean | string;
+  slideNumber?: boolean;
+  text?: string;
 }
 
 export interface Arrangement {
@@ -327,6 +423,8 @@ export interface Transition {
   duration: number;
   /** Effect option of an engine transition (direction and the like). */
   option?: string;
+  /** Transitions › Sound: an audio file from the media library played as the slide comes on. */
+  sound?: string;
 }
 
 export interface Presentation {
@@ -374,6 +472,16 @@ export interface Presentation {
   timeline?: Timeline;
   /** Design › Variants › Colors: the engine colour scheme tables, charts and the colour picker use. */
   colorScheme?: string;
+  /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
+  master?: { elements: SlideElement[]; background?: Background };
+  /** Slide Show › Set Up Slide Show. */
+  showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean };
+  /** Slide Show › Custom Slide Show: named lists of slides. */
+  customShows?: { id: string; name: string; slideIds: string[] }[];
+  /** View › Guides the user placed (canvas pixels). */
+  guides?: { v: number[]; h: number[] };
+  /** Home › Drawing › Set as Default Shape: the look new shapes get. */
+  defaultShape?: Partial<SlideElement>;
 }
 
 export interface BackgroundEffect {
@@ -649,6 +757,8 @@ export interface LiveState {
   songKey?: string | null;
   /** Separate looping layer (e.g. lower-third announcements during pre-service). */
   announcement: { slide: Slide; theme: Theme; title: string } | null;
+  /** The live slide's number in its presentation (Insert › Slide Number). */
+  number?: number;
   /** Where the live slide's animations are (click builds); absent when it has none. */
   build?: import('./animations').LiveBuild;
 }

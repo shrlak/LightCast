@@ -33,6 +33,11 @@ pub mod geometry;
 pub mod icons;
 pub mod ink;
 mod inkshape;
+pub mod merge;
+pub mod picture;
+pub mod smartart;
+pub mod smartart_fc;
+pub mod thesaurus;
 pub mod shapes;
 pub mod table;
 pub mod transition;
@@ -139,6 +144,16 @@ pub fn handle(req: &Value) -> Res {
         "find.replace" => find::replace(args(req)?),
         "ink.smooth" => ink::smooth(args(req)?),
         "ink.recognize" => ink::recognize(args(req)?),
+        "shape.merge" => merge::merge(args(req)?),
+        "shape.toPath" => merge::to_path(args(req)?),
+        "shape.connect" => merge::connect(args(req)?),
+        "shape.sites" => merge::sites_of(args(req)?),
+        "picture.catalog" => picture::catalog(),
+        "picture.process" => picture::process(args(req)?),
+        "smartart.catalog" => smartart_fc::catalog(),
+        "smartart.layout" => smartart_fc::layout(args(req)?),
+        "smartart.fromLines" => smartart_fc::nodes_from_lines(args(req)?),
+        "review.thesaurus" => thesaurus::op(req),
         _ => Err(format!("unknown op {op}")),
     }
 }

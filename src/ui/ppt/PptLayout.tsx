@@ -23,8 +23,10 @@ import { AddToPlaylistMenu } from '../AddToPlaylist';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { animationBadges } from '../../domain/animations';
 import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, ungroupSelection } from '../../domain/editOps';
-import { selectedEls, type Ed, type TableRange, type TaskPane } from './editor';
+import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AccessibilityPane, AnimationPane, CommentsPane, SelectionPane, accessibilityIssues } from './panes';
+import { Dialogs } from './dialogs';
+import { withMaster } from '../../domain/master';
 import { Backstage, FindReplaceDialog, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
 
@@ -47,13 +49,14 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [tool, setTool] = useState<CanvasTool | null>(null);
   const [view, setView] = useState<ViewOptions>({});
   const [pane, setPane] = useState<TaskPane>('format');
+  const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);
   const [cell, setCell] = useState<TableRange>({ r: 0, c: 0, r1: 0, c1: 0 });
   const [backstage, setBackstage] = useState(false);
   const [find, setFind] = useState<null | 'find' | 'replace'>(null);
   const [preview, setPreview] = useState<null | 'transition' | 'animation'>(null);
-  const [reading, setReading] = useState(false);
+  const [reading, setReading] = useState<false | { ids?: string[]; rehearse?: boolean }>(false);
   const [linking, setLinking] = useState(false);
   const [commentDraft, setCommentDraft] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string; seq: number } | null>(null);
@@ -152,7 +155,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const canEdit = !!p && !p.protected && !!slide && !isPdfSlide(slide);
   const elements = slide?.elements ?? [];
   const ed: Ed = {
-    state, dispatch, cmd, p, slide, theme, elements, sel, setSel,
+    state, dispatch, cmd, p, slide, theme, elements, sel, setSel, dialog, setDialog, play: (opts) => setReading(opts ?? {}),
     selEls: selectedEls(elements, sel),
     canEdit,
     updateSlide: (patch) => { if (!canEdit && !('notes' in patch && Object.keys(patch).length === 1)) { if (p?.protected) cmd.notify(PROTECTED_MESSAGE); return; } updateSlide(patch); },
@@ -168,7 +171,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     if (!p || !slide) return;
     if (p.protected) return cmd.notify(PROTECTED_MESSAGE);
     if (cmd.locked && state.live.slide) return cmd.notify(LOCK_MSG);
-    const n = blankSlide(slide.group);
+    const n = p.master?.elements.length ? withMaster(blankSlide(slide.group), p.master.elements) : blankSlide(slide.group);
     const slides = [...p.slides];
     slides.splice(p.slides.indexOf(slide) + 1, 0, n);
     updateSlides(slides);
@@ -296,7 +299,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     onComment: () => { setPane('comments'); setCommentDraft(true); },
     onPreview: (w: 'transition' | 'animation') => setPreview(w),
     onOutline: () => cmd.setView(cmd.view === 'outline' ? 'normal' : 'outline'),
-    onReading: () => setReading(true),
+    onReading: () => setReading({}),
   };
   const selIds = ed.selEls.map((e) => e.id);
 
@@ -314,7 +317,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
       <span className="pp-views" role="group" aria-label="보기">
         <button type="button" className={cmd.view === 'normal' ? 'on' : ''} title="기본" onClick={() => cmd.setView('normal')}>▭</button>
         <button type="button" className={cmd.view === 'sorter' ? 'on' : ''} title="여러 슬라이드" onClick={() => cmd.setView('sorter')}>▦</button>
-        <button type="button" title="읽기용 보기" onClick={() => setReading(true)}>📖</button>
+        <button type="button" title="읽기용 보기" onClick={() => setReading({})}>📖</button>
         <button type="button" className={cmd.view === 'presenter' ? 'on' : ''} title="슬라이드 쇼 (발표자 보기)" onClick={() => cmd.startShow(true)}>▶</button>
       </span>
       <span className="pp-zoom">
@@ -383,7 +386,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
                 <div className="ppt-canvas" style={zoom !== null ? { width: ACTUAL_W * zoom } : undefined}
                   onContextMenu={(e) => { if (!ed.selEls.length) return; e.preventDefault(); setObjMenu(new DOMRect(e.clientX, e.clientY, 0, 0)); }}>
                   <CanvasEditor key={`${p.id}:${selected?.key}`} readOnly={p.protected} slide={slide} theme={theme} background={background} bgEffect={p.bgEffect}
-                    selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)} view={view} badges={badges}
+                    selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)} view={view} badges={badges} defaultShape={p.defaultShape} customGuides={view.guides ? p.guides : undefined}
                     onLockedDelete={cmd.locked && state.live.slide?.id === slide.id ? () => cmd.notify(LOCK_MSG) : undefined}
                     onChange={(patch) => dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch })} />
                   {preview && <PlayPreview ed={ed} what={preview} onDone={() => setPreview(null)} />}
@@ -476,8 +479,9 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
         </Menu>
       )}
       {addMenu && <AddToPlaylistMenu state={state} dispatch={dispatch} presentationId={addMenu.id} x={addMenu.x} y={addMenu.y} notify={cmd.notify} onClose={() => setAddMenu(null)} />}
+      {dialog && <Dialogs ed={ed} kind={dialog} onClose={() => setDialog(null)} />}
       {find && <FindReplaceDialog ed={ed} replace={find === 'replace'} onClose={() => setFind(null)} />}
-      {reading && <ReadingView ed={ed} onClose={() => setReading(false)} />}
+      {reading && <ReadingView ed={ed} ids={reading.ids} rehearse={reading.rehearse} onClose={() => setReading(false)} />}
       {backstage && <Backstage ed={ed} onClose={() => setBackstage(false)} />}
     </div>
   );

@@ -78,7 +78,7 @@ export function SelectionPane({ ed }: { ed: Ed }) {
       </div>
       {!els.length && <p className="task-empty">이 슬라이드에는 개체가 없습니다.</p>}
       <ul className="sel-list">
-        {[...els].reverse().map((el) => {
+        {[...els].filter((el) => !el.master).reverse().map((el) => {
           const i = els.indexOf(el);
           const on = ed.selEls.some((s) => s.id === el.id);
           return (
@@ -87,6 +87,7 @@ export function SelectionPane({ ed }: { ed: Ed }) {
               {renaming === el.id
                 ? <input autoFocus defaultValue={elementName(el, i)} onBlur={(e) => { const v = e.target.value.trim(); set((l) => l.map((x) => (x.id === el.id ? { ...x, name: v || undefined } : x))); setRenaming(null); }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }} />
                 : <span className="sel-name">{el.groupId ? '▸ ' : ''}{elementName(el, i)}</span>}
+              <button type="button" className="sel-eye" title={el.locked ? '잠금 해제' : '잠금 (슬라이드에서 선택 · 이동 안 됨)'} onClick={(e) => { e.stopPropagation(); set((l) => l.map((x) => (x.id === el.id ? { ...x, locked: x.locked ? undefined : true } : x))); }}>{el.locked ? '🔒' : '🔓'}</button>
               <button type="button" className="sel-eye" title={el.hidden ? '표시' : '숨기기'} onClick={(e) => { e.stopPropagation(); set((l) => l.map((x) => (x.id === el.id ? { ...x, hidden: x.hidden ? undefined : true } : x))); }}>{el.hidden ? '⊘' : '👁'}</button>
             </li>
           );

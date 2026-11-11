@@ -9,6 +9,11 @@ import { animationCatalog, colorSchemes, transitionCatalog, type AnimEffectInfo 
 import { moveAnimation, setAnimation, addAnimation } from '../../domain/editOps';
 import { slideTimeline } from '../../domain/animations';
 import type { Ed } from './editor';
+import { useRef } from 'react';
+import { withMaster } from '../../domain/master';
+import { FONT_OPTIONS } from '../../domain/fonts';
+import { putMedia } from '../../domain/media';
+import { uid } from '../../domain/lyrics';
 import { Big, Col, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { ANIMATION, ANIMATION_CLASS, ANIMATION_START, TRANSITION, TRANSITION_CATEGORY, animOptionLabel, optionLabel } from './ko';
 
@@ -38,6 +43,18 @@ export function DesignTab({ ed }: { ed: Ed }) {
         <Small icon="Aa" label="테마 편집" onClick={() => ed.cmd.open('themes')} />
       </Group>
       <Group label="적용">
+        <DropButton big icon={<span style={{ fontFamily: 'serif', fontSize: 20 }}>가A</span>} label="글꼴" title="모든 슬라이드와 텍스트 상자의 테마 글꼴" disabled={!p || !ed.canEdit} render={(close) => (
+          <>
+            <MenuHead>테마 글꼴</MenuHead>
+            {FONT_OPTIONS.map((f) => (
+              <MenuItem key={f.label} label={<span style={{ fontFamily: f.family, fontSize: 15 }}>{f.label} — 가나다 Aa</span>} onClick={() => {
+                if (!p) return;
+                ed.updatePres({ slides: p.slides.map((x) => ({ ...x, style: { ...x.style, fontFamily: f.family }, elements: x.elements?.map((e) => (e.kind === 'text' || e.kind === 'shape' || e.kind === 'table' ? { ...e, fontFamily: f.family } : e)) })) });
+                close();
+              }} />
+            ))}
+          </>
+        )} />
         <DropButton big icon={<span className="scheme-chip">{(schemes.find((s) => s.name === p?.colorScheme) ?? schemes[0])?.colors.slice(4, 8).map((c) => <i key={c} style={{ background: c }} />)}</span>} label="색" title="표 · 차트 · 도형 스타일 · 색 선택에 쓰는 테마 색" disabled={!p || !ed.canEdit} render={(close) => (
           <>
             {schemes.map((s) => (
@@ -72,6 +89,8 @@ export function DesignTab({ ed }: { ed: Ed }) {
           </>
         )} />
         <Big icon={RI.background} label="배경 서식" title="이 슬라이드만의 배경 — 오른쪽 서식 창" disabled={!ed.slide} onClick={() => { ed.setSel([]); ed.setPane('format'); }} />
+        <label className="rb-check" title="슬라이드 마스터의 개체를 이 슬라이드에서 숨깁니다"><input type="checkbox" disabled={!ed.slide || !ed.canEdit || !ed.p?.master?.elements.length} checked={!!ed.slide?.hideMaster}
+          onChange={(e) => { if (ed.slide) ed.updateSlide({ hideMaster: e.target.checked || undefined, elements: withMaster({ ...ed.slide, hideMaster: e.target.checked }, ed.p?.master?.elements ?? []).elements }); }} /> 배경 그래픽 숨기기</label>
       </Group>
     </>
   );
@@ -91,6 +110,7 @@ export function TransitionsTab({ ed, onPreview }: { ed: Ed; onPreview: () => voi
   const t = transitionOf(ed);
   const cur = fxId(t);
   const info = cat.find((c) => c.id === cur);
+  const soundFile = useRef<HTMLInputElement>(null);
   const set = (patch: Partial<Transition>) => {
     if (!ed.slide) return;
     const base: Transition = ed.slide.transition ?? ed.p?.transition ?? { kind: 'cut', duration: 1 };
@@ -126,6 +146,12 @@ export function TransitionsTab({ ed, onPreview }: { ed: Ed; onPreview: () => voi
       </Group>
       <Group label="타이밍">
         <Col>
+          <label className="rb-field">소리: <select disabled={!ed.slide || !ed.canEdit} value={t?.sound ?? ''} onChange={(e) => { if (e.target.value === '__file') { soundFile.current?.click(); return; } set({ sound: e.target.value || undefined }); }}>
+            <option value="">[소리 없음]</option>
+            {ed.state.library.media.filter((m) => m.type === 'audio').map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            <option value="__file">기타 소리…</option>
+          </select></label>
+          <input ref={soundFile} type="file" accept="audio/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; const id = uid('m'); void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'audio' } }); set({ sound: id }); }); }} />
           <label className="rb-field">기간(초): <input type="number" min={0.01} max={60} step={0.25} disabled={!ed.slide || !ed.canEdit} value={((t?.duration ?? 1) / 1000).toFixed(2)} onChange={(e) => set({ duration: Math.max(1, Math.round(Number(e.target.value) * 1000)) })} /></label>
           <Small icon="⧉" label="모두 적용" title="이 화면 전환을 모든 슬라이드에" disabled={!ed.p || !ed.canEdit} onClick={() => { if (!ed.p) return; const tr = transitionOf(ed); ed.updatePres({ transition: tr, slides: ed.p.slides.map((s) => ({ ...s, transition: undefined })) }); ed.cmd.notify('모든 슬라이드에 같은 화면 전환을 적용했습니다'); }} />
         </Col>

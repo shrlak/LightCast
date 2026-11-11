@@ -18,6 +18,8 @@ import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
+import { withMaster } from '../../domain/master';
+import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
 
 const blocked = (ed: Ed) => {
@@ -34,7 +36,7 @@ export function NewSlideButton({ ed, big = true }: { ed: Ed; big?: boolean }) {
     if (!p) return;
     if (p.protected) return ed.cmd.notify(PROTECTED_MESSAGE);
     const i = slide ? p.slides.findIndex((s) => s.id === slide.id) : p.slides.length - 1;
-    const n = make();
+    const n = p.master?.elements.length ? withMaster(make(), p.master.elements) : make();
     const slides = [...p.slides];
     slides.splice(i + 1, 0, n);
     ed.updatePres({ slides });
@@ -50,6 +52,8 @@ export function NewSlideButton({ ed, big = true }: { ed: Ed; big?: boolean }) {
         </div>
         <MenuSep />
         <MenuItem icon="⧉" label="선택한 슬라이드 복제" hint="Ctrl+D" disabled={!slide} onClick={() => { if (slide) insert(() => ({ ...slide, id: uid('s') })); close(); }} />
+        <MenuItem icon="☰" label="개요에서 슬라이드…" disabled={!p} onClick={() => { ed.setDialog('outline'); close(); }} />
+        <MenuItem icon="♻" label="슬라이드 다시 사용…" disabled={!p} onClick={() => { ed.setDialog('reuse'); close(); }} />
       </>
     )} />
   );
@@ -142,18 +146,38 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
             <MenuItem label="양쪽 화살표 ↔" onClick={() => { set({ arrowStart: true, arrowEnd: true }); close(); }} />
           </>
         )} />
-        <DropButton icon={RI.effects} label="도형 효과" disabled={none} render={(close) => (
-          <>
-            <MenuItem label="그림자" on={!!first?.dropShadow} onClick={() => { set({ dropShadow: first?.dropShadow ? undefined : true }); close(); }} />
-            <MenuHead>네온</MenuHead>
-            <div className="rb-chip-row">{['#ffd966', '#9cc3e6', '#a9d18e', '#f4b183', '#ff7c80', '#c9b6f0'].map((c) => <button key={c} type="button" className="rb-chip" style={{ background: c }} onClick={() => { set({ glow: c }); close(); }} />)}</div>
-            <MenuItem label="네온 없음" onClick={() => { set({ glow: undefined }); close(); }} />
-            <MenuSep />
-            <MenuItem label="효과 없음" onClick={() => { set({ dropShadow: undefined, glow: undefined }); close(); }} />
-          </>
-        )} />
+        <DropButton icon={RI.effects} label="도형 효과" disabled={none} wide render={(close) => <EffectsMenu first={first} set={set} close={close} />} />
       </Col>
     </>
+  );
+}
+
+/** Shape Format › Shape Effects: shadow, reflection, glow, soft edges, bevel, 3-D rotation. */
+export function EffectsMenu({ first, set, close }: { first?: SlideElement; set: (p: Partial<SlideElement>) => void; close: () => void }) {
+  const GLOWS = ['#ffd966', '#9cc3e6', '#a9d18e', '#f4b183', '#ff7c80', '#c9b6f0'];
+  const ROT: [string, { x: number; y: number } | undefined][] = [['없음', undefined], ['평행 투시: 왼쪽', { x: 0, y: 25 }], ['평행 투시: 오른쪽', { x: 0, y: -25 }], ['원근감: 위', { x: 30, y: 0 }], ['원근감: 아래', { x: -30, y: 0 }], ['등각: 왼쪽 아래', { x: 20, y: 30 }]];
+  return (
+    <div className="effects-menu">
+      <MenuHead>그림자</MenuHead>
+      <MenuItem label="그림자 없음" on={!first?.dropShadow} onClick={() => { set({ dropShadow: undefined, shadowKind: undefined }); close(); }} />
+      <MenuItem label="바깥쪽" on={!!first?.dropShadow && (first.shadowKind ?? 'outer') === 'outer'} onClick={() => { set({ dropShadow: true, shadowKind: 'outer' }); close(); }} />
+      <MenuItem label="안쪽" on={first?.shadowKind === 'inner'} onClick={() => { set({ dropShadow: true, shadowKind: 'inner' }); close(); }} />
+      <MenuItem label="원근감" on={first?.shadowKind === 'perspective'} onClick={() => { set({ dropShadow: true, shadowKind: 'perspective' }); close(); }} />
+      <MenuHead>반사</MenuHead>
+      <MenuItem label={first?.reflection ? '반사 없음' : '근접 반사'} onClick={() => { set({ reflection: first?.reflection ? undefined : true }); close(); }} />
+      <MenuHead>네온</MenuHead>
+      <div className="rb-chip-row">{GLOWS.map((c) => <button key={c} type="button" className="rb-chip" style={{ background: c }} onClick={() => { set({ glow: c }); close(); }} />)}</div>
+      <div className="rb-chip-row">{[8, 18, 32].map((g) => <button key={g} type="button" className="mini-btn" onClick={() => { set({ glowSize: g, glow: first?.glow ?? GLOWS[0] }); close(); }}>{g / 2} pt</button>)}</div>
+      <MenuItem label="네온 없음" onClick={() => { set({ glow: undefined, glowSize: undefined }); close(); }} />
+      <MenuHead>부드러운 가장자리</MenuHead>
+      <div className="rb-chip-row">{[0, 5, 10, 25, 50].map((v) => <button key={v} type="button" className={`mini-btn ${(first?.softEdge ?? 0) === v ? 'on' : ''}`} onClick={() => { set({ softEdge: v || undefined }); close(); }}>{v ? `${v / 2} pt` : '없음'}</button>)}</div>
+      <MenuHead>입체 효과</MenuHead>
+      <MenuItem label={first?.bevel ? '입체 효과 없음' : '원형 입체'} onClick={() => { set({ bevel: first?.bevel ? undefined : true }); close(); }} />
+      <MenuHead>3차원 회전</MenuHead>
+      {ROT.map(([l, r]) => <MenuItem key={l} label={l} on={JSON.stringify(first?.rotate3d) === JSON.stringify(r)} onClick={() => { set({ rotate3d: r }); close(); }} />)}
+      <MenuSep />
+      <MenuItem label="효과 모두 없애기" onClick={() => { set({ dropShadow: undefined, shadowKind: undefined, glow: undefined, glowSize: undefined, reflection: undefined, softEdge: undefined, bevel: undefined, rotate3d: undefined }); close(); }} />
+    </div>
   );
 }
 
@@ -182,7 +206,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
   return (
     <>
       <Group label="클립보드">
-        <Big icon={RI.paste} label="붙여넣기" title="붙여넣기 (Ctrl+V)" onClick={paste} />
+        <PasteButton ed={ed} paste={paste} />
         <Col>
           <Small icon={RI.cut} label="잘라내기" title="잘라내기 (Ctrl+X)" disabled={!sel.length || !ed.canEdit} onClick={() => { copyObjects(ed.selEls); if (ed.slide) ed.updateSlide(deleteSelection(ed.slide, sel)); ed.setSel([]); }} />
           <Small icon={RI.copy} label="복사" title="복사 (Ctrl+C)" disabled={!sel.length} onClick={() => copyObjects(ed.selEls)} />
@@ -196,19 +220,34 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
         <NewSlideButton ed={ed} />
         <Col>
           <Small icon={RI.reset} label="다시 설정" title="이 슬라이드의 글꼴 · 전환 · 배경 설정을 테마대로" disabled={!ed.slide || !ed.canEdit} onClick={() => ed.updateSlide({ style: undefined, transition: undefined, preferredFontSize: undefined })} />
-          <Small icon={RI.section} label="구역" title="구역(섹션) 추가" disabled={!ed.slide || !ed.canEdit} onClick={() => ed.makeSection()} />
+          <DropButton icon={RI.section} label="구역" disabled={!ed.slide || !ed.canEdit} render={(close) => {
+            const p = ed.p, id = ed.slide?.id;
+            const run = (fn: (slides: import('../../domain/types').Slide[], id: string) => import('../../domain/types').Slide[]) => { if (p && id) ed.updatePres({ slides: fn(p.slides, id), ...(p.arrangementId ? { arrangementId: null } : {}) }); close(); };
+            return (
+              <>
+                <MenuItem label="구역 추가" onClick={() => { ed.makeSection(); close(); }} />
+                <MenuItem label="구역 이름 바꾸기" onClick={() => { const name = window.prompt('구역 이름', ed.slide?.group ?? ''); if (name) run((s, i) => renameSection(s, i, name)); else close(); }} />
+                <MenuItem label="구역 제거" onClick={() => run(removeSection)} />
+                <MenuItem label="구역 및 슬라이드 제거" onClick={() => { if (window.confirm('이 구역과 그 안의 슬라이드를 모두 지울까요?')) run(removeSectionAndSlides); else close(); }} />
+                <MenuItem label="모든 구역 제거" onClick={() => run((s) => removeAllSections(s))} />
+                <MenuSep />
+                <MenuItem label="구역을 위로 이동" onClick={() => run((s, i) => moveSection(s, i, -1))} />
+                <MenuItem label="구역을 아래로 이동" onClick={() => run((s, i) => moveSection(s, i, 1))} />
+              </>
+            );
+          }} />
         </Col>
       </Group>
-      <Group label="글꼴" className="rb-font">
+      <Group label="글꼴" className="rb-font" launcher={t ? () => ed.setDialog('font') : undefined}>
         {t ? <TextFormatPanel part="font" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} shortcuts /> : <span className="rb-disabled-note">텍스트 없음</span>}
       </Group>
-      <Group label="단락" className="rb-para">
+      <Group label="단락" className="rb-para" launcher={t ? () => ed.setDialog('paragraph') : undefined}>
         {t ? <TextFormatPanel part="paragraph" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} shortcuts={false} /> : <span className="rb-disabled-note">텍스트 없음</span>}
       </Group>
       <Group label="그리기">
         <Gallery rows={3} className="rb-shape-strip">
           {QUICK_SHAPES.map((n) => <button key={n} type="button" className="shape-cell" title={shapeLabel(n, shapeCatalog().find((p) => p.name === n)?.label ?? n)} onClick={() => !blocked(ed) && ed.setTool({ kind: 'shape', name: n })}><ShapeThumb name={n} size={16} /></button>)}
-          <DropButton icon={<span className="rb-more">▾</span>} title="모든 도형" render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} />} wide />
+          <DropButton icon={<span className="rb-more">▾</span>} title="모든 도형" render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} wide />
         </Gallery>
         <DropButton big icon={RI.arrange} label="정렬" render={(close) => <ArrangeMenu ed={ed} close={close} />} />
         <ShapeStyleButtons ed={ed} big />
@@ -216,7 +255,12 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
       <Group label="편집">
         <Col>
           <Small icon={RI.find} label="찾기" title="찾기 (Ctrl+F)" onClick={onFind} />
-          <Small icon={RI.replace} label="바꾸기" title="바꾸기 (Ctrl+H)" onClick={onReplace} />
+          <DropButton icon={RI.replace} label="바꾸기" render={(close) => (
+            <>
+              <MenuItem label="바꾸기…" hint="Ctrl+H" onClick={() => { onReplace(); close(); }} />
+              <MenuItem label="글꼴 바꾸기…" disabled={!ed.p} onClick={() => { ed.setDialog('replaceFonts'); close(); }} />
+            </>
+          )} />
           <DropButton icon={RI.select} label="선택" render={(close) => (
             <>
               <MenuItem label="모두 선택" hint="Ctrl+A" onClick={() => { ed.setSel(ed.elements.filter((e) => !e.hidden).map((e) => e.id)); close(); }} />
@@ -227,6 +271,42 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
         </Col>
       </Group>
     </>
+  );
+}
+
+/** 붙여넣기 ▾ — the objects copied on a slide, or (Paste Special) the system clipboard's text only or its picture. */
+function PasteButton({ ed, paste }: { ed: Ed; paste: () => void }) {
+  const pasteText = async () => {
+    if (blocked(ed)) return;
+    const text = await navigator.clipboard.readText().catch(() => '');
+    if (!text.trim()) return ed.cmd.notify('클립보드에 텍스트가 없습니다');
+    ed.addElement({ id: uid('el'), kind: 'text', text: text.replace(/\r\n/g, '\n').trim(), x: 220, y: 380, w: 1000, h: 320, fontSize: 56, color: '#ffffff', align: 'left' });
+  };
+  const pastePicture = async () => {
+    if (blocked(ed)) return;
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        const id = uid('m');
+        await putMedia(id, blob);
+        ed.dispatch({ type: 'media/add', media: { id, name: '붙여넣은 그림.png', type: 'image' } });
+        ed.addElement({ id: uid('el'), kind: 'image', mediaId: id, fit: 'contain', x: 320, y: 240, w: 800, h: 600, name: '그림' });
+        return;
+      }
+    } catch { /* clipboard not readable */ }
+    ed.cmd.notify('클립보드에 그림이 없습니다');
+  };
+  return (
+    <DropButton big icon={RI.paste} label="붙여넣기" title="붙여넣기 (Ctrl+V)" split onMain={paste} render={(close) => (
+      <>
+        <MenuHead>붙여넣기 옵션</MenuHead>
+        <MenuItem label="원본 서식 유지" hint="Ctrl+V" onClick={() => { paste(); close(); }} />
+        <MenuItem label="텍스트만 유지" onClick={() => { void pasteText(); close(); }} />
+        <MenuItem label="그림" onClick={() => { void pastePicture(); close(); }} />
+      </>
+    )} />
   );
 }
 
@@ -243,7 +323,7 @@ const CHARTS: [ChartKind, string][] = [['column', '세로 막대형'], ['columnS
 
 export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
-  const kind = useRef<'image' | 'video'>('image');
+  const kind = useRef<'image' | 'video' | 'audio'>('image');
   const [hover, setHover] = useState<[number, number]>([0, 0]);
   const add = (el: SlideElement | null) => { if (el && !blocked(ed)) ed.addElement(el); };
   const insertMedia = async (file: File | undefined) => {
@@ -251,7 +331,8 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
     const id = uid('m');
     await putMedia(id, file);
     ed.dispatch({ type: 'media/add', media: { id, name: file.name, type: kind.current } });
-    ed.addElement({ id: uid('el'), kind: kind.current, mediaId: id, fit: kind.current === 'video' ? 'cover' : 'contain', x: 220, y: 240, w: 1000, h: 600, name: file.name });
+    if (kind.current === 'audio') ed.addElement({ id: uid('el'), kind: 'audio', mediaId: id, x: 660, y: 480, w: 120, h: 120, name: file.name, playback: { autoplay: true } });
+    else ed.addElement({ id: uid('el'), kind: kind.current, mediaId: id, fit: kind.current === 'video' ? 'cover' : 'contain', x: 220, y: 240, w: 1000, h: 600, name: file.name });
   };
   const insertSymbol = (c: string) => {
     if (document.activeElement?.classList.contains('ce-rich')) document.execCommand('insertText', false, c);
@@ -274,14 +355,18 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
       </Group>
       <Group label="이미지">
         <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*'; fileRef.current.click(); } }} />
+        <Big icon="🖼" label="사진 앨범" title="그림 여러 장으로 슬라이드를 만듭니다" disabled={!ed.p} onClick={() => ed.setDialog('photoAlbum')} />
       </Group>
       <Group label="일러스트레이션">
-        <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} />} />
+        <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} />
         <DropButton big icon={RI.icons} label="아이콘" wide render={(close) => <IconGallery onPick={(n) => { add(makeIcon(n)); close(); }} />} />
+        <Big icon="⧉" label="SmartArt" title="SmartArt 그래픽 삽입" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('smartArt')} />
         <DropButton big icon={RI.chart} label="차트" render={(close) => <>{CHARTS.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { add(makeChart(k)); close(); }} />)}</>} />
       </Group>
       <Group label="링크">
+        <Big icon="⊕" label="확대/축소" title="요약 · 구역 · 슬라이드 확대/축소" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('zoom')} />
         <Big icon={RI.link} label="링크" title="선택한 개체에 링크 연결 (슬라이드 쇼에서 클릭하면 열림)" disabled={!ed.selEls.length} onClick={onLink} />
+        <Big icon="☛" label="실행" title="개체를 클릭했을 때 할 일 (실행 설정)" disabled={!ed.selEls.length} onClick={() => ed.setDialog('action')} />
       </Group>
       <Group label="메모">
         <Big icon={RI.comment} label="메모" title="새 메모" disabled={!ed.slide} onClick={onComment} />
@@ -292,6 +377,8 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
           <MenuItem key={w.label} label={<span style={{ color: w.patch.color, fontWeight: 800, textShadow: 'shadow' in w.patch ? '0 2px 3px rgba(0,0,0,.5)' : undefined, fontSize: 18, background: w.patch.color === '#ffffff' ? '#555' : undefined, padding: '0 4px' }}>가나다 Abc</span>} onClick={() => { add({ id: uid('el'), kind: 'text', text: '여기에 텍스트 입력', x: 220, y: 420, w: 1000, h: 240, fontSize: 110, align: 'center', ...w.patch }); close(); }} />
         ))}</>} />
         <Col>
+          <Small icon="▭" label="머리글/바닥글" disabled={!ed.slide} onClick={() => ed.setDialog('headerFooter')} />
+          <Small icon="#" label="슬라이드 번호" disabled={!ed.slide} onClick={() => ed.setDialog('headerFooter')} />
           <Small icon={RI.date} label="날짜 및 시간" disabled={!ed.slide} onClick={() => add({ id: uid('el'), kind: 'text', text: '{date}', x: 940, y: 980, w: 460, h: 70, fontSize: 36, color: '#ffffff', align: 'right' })} />
           <Small icon="🕒" label="현재 시각" disabled={!ed.slide} onClick={() => add({ id: uid('el'), kind: 'text', text: '{time}', x: 940, y: 900, w: 460, h: 70, fontSize: 36, color: '#ffffff', align: 'right' })} />
         </Col>
@@ -301,7 +388,9 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
       </Group>
       <Group label="미디어">
         <Big icon={RI.video} label="비디오" onClick={() => { kind.current = 'video'; if (fileRef.current) { fileRef.current.accept = 'video/*'; fileRef.current.click(); } }} />
+        <Big icon="🔊" label="오디오" title="이 장치의 오디오 삽입 (슬라이드가 나올 때 재생)" onClick={() => { kind.current = 'audio'; if (fileRef.current) { fileRef.current.accept = 'audio/*'; fileRef.current.click(); } }} />
         <Col>
+          <Small icon="⏯" label="재생 옵션" title="선택한 오디오 · 비디오의 재생 (자동 실행, 반복, 볼륨, 맞추기, 페이드)" disabled={!ed.selEls.some((e) => e.kind === 'audio' || e.kind === 'video')} onClick={() => ed.setDialog('audio')} />
           <Small icon={RI.camera} label="카메라" onClick={() => add({ id: uid('el'), kind: 'camera', deviceId: '', x: 320, y: 315, w: 800, h: 450 })} />
           <Small icon={RI.qr} label="QR 코드" onClick={() => { const { id: _id, ...qr } = qrElement('', (ed.slide?.elements ?? []).filter((e) => e.kind === 'qr').length); add({ ...qr, id: uid('el') }); ed.setPane('format'); }} />
         </Col>

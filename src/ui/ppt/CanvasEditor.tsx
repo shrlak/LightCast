@@ -12,9 +12,11 @@ import { uid } from '../../domain/lyrics';
 import {
   boxOf, cloneElements, deleteSelection, duplicateSelection, expandSelection, groupSelection, inkToShape, makeInk, makeShape, nudgeSelection,
   orderSelection, pasteStyle, selectionUnits, ungroupSelection, type CopiedStyle,
+  lineBox, makeFreeform, pathShapeOf, routeConnectors,
 } from '../../domain/editOps';
-import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, snapBox, type EBox, type Handle } from '../../engine';
-import { adjOf, geometryOf, presetOf } from '../EngineElements';
+import { anchors, bounds as pathBounds, moveAnchor, parsePath, shiftPath, writePath } from '../../domain/pathEdit';
+import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
+import { adjOf, geometryOf, isLinePreset, presetOf } from '../EngineElements';
 import { RichTextEditor } from '../RichTextEditor';
 
 /** The slide's own text (lyrics, scripture…) drawn by the theme, selectable like an object. */
@@ -28,7 +30,15 @@ export type CanvasTool =
   | { kind: 'pen'; color: string; width: number; highlighter?: boolean; toShape?: boolean }
   | { kind: 'eraser' }
   /** 서식 복사: the next object clicked takes this look (kept on with a double-click in the ribbon). */
-  | { kind: 'painter'; style: CopiedStyle; keep?: boolean };
+  | { kind: 'painter'; style: CopiedStyle; keep?: boolean }
+  /** Insert › Shapes › Freeform: Shape (click points, close at the start) or Freeform: Scribble (drag). */
+  | { kind: 'freeform'; scribble?: boolean }
+  /** Picture Format › Crop: the handles cut the picture instead of scaling it. */
+  | { kind: 'crop'; id: string }
+  /** Shape Format › Edit Shape › Edit Points. */
+  | { kind: 'points'; id: string }
+  /** Picture Format › Color › Set Transparent Color: the next click on the picture picks the colour. */
+  | { kind: 'eyedrop'; id: string; onPick: (fx: number, fy: number) => void };
 
 export interface ViewOptions {
   /** 눈금선: draw the grid and snap to it. */
@@ -44,7 +54,8 @@ type Drag =
   | { mode: 'adjust'; id: string; index: number; moved: boolean }
   | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; add: boolean }
   | { mode: 'draw'; x0: number; y0: number; x1: number; y1: number }
-  | { mode: 'ink'; points: [number, number][] };
+  | { mode: 'ink'; points: [number, number][] }
+  | { mode: 'point'; id: string; seg: number; startX: number; startY: number; moved: boolean };
 
 interface Props {
   slide: Slide;
@@ -64,6 +75,10 @@ interface Props {
   view?: ViewOptions;
   /** Animations tab: the click numbers shown beside animated objects. */
   badges?: Record<string, number[]>;
+  /** The look new shapes take (Set as Default Shape). */
+  defaultShape?: Partial<SlideElement>;
+  /** Guides the user placed (View › Guides), drawn and snapped to. */
+  customGuides?: { v: number[]; h: number[] };
   /** Show the objects as the slide show would at the start (hidden objects stay hidden). */
   zoom?: number;
 }
@@ -111,7 +126,7 @@ function toSlide(el: SlideElement, lx: number, ly: number): [number, number] {
  * italic, underline or colour. Every geometric answer — hits, sizes, angles, snapping — comes from
  * the Rust engine. Changes apply as you go, so a slide that is live updates on screen.
  */
-export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, readOnly, tool, onToolDone, view, badges }: Props) {
+export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const k = width / CANVAS_W || 1;
   const [session, setSession] = useState<{ slideId: string; id: string } | null>(null);
@@ -132,6 +147,10 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const theme = slideTheme(baseTheme, slide);
   const elements = useAutoTextBoxes(slide.elements ?? [], readOnly || isPdfSlide(slide) ? undefined : (elements) => onChange({ elements }), isFrontSlide(slide));
   const visible = useMemo(() => elements.filter((e) => !e.hidden), [elements]);
+  /** What a click can pick: not locked (Selection pane) and not the slide master's. */
+  const pickable = useMemo(() => visible.filter((e) => !e.locked && !e.master), [visible]);
+  const [freePts, setFreePts] = useState<[number, number][] | null>(null);
+  const [pointPreview, setPointPreview] = useState<{ id: string; path: string } | null>(null);
   const editing = session?.slideId === identity && (session.id === SLIDE_TEXT || elements.some((el) => el.id === session.id)) ? session.id : null;
   const defaultTextBox: Box = { x: theme.padding, y: theme.padding, w: CANVAS_W - theme.padding * 2, h: CANVAS_H - theme.padding * 2 };
   const [bodyBox, setBodyBox] = useState<{ identity: string; box: Box } | null>(null);
@@ -173,7 +192,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const p = preview?.get(el.id);
     return p ? { ...el, x: p.x, y: p.y, w: p.w, h: p.h, ...(p.rot !== undefined ? { rotation: p.rot } : {}), ...(p.adj ? { adj: p.adj } : {}) } : el;
   };
-  const setElements = (next: SlideElement[]) => onChange({ elements: next.length ? next : undefined });
+  const setElements = (next: SlideElement[]) => onChange({ elements: next.length ? routeConnectors(next) : undefined });
 
   // What the canvas shows: objects being dragged where they are going, the text being typed
   // hidden underneath the typing box.
@@ -183,7 +202,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     title: editing === SLIDE_TEXT ? undefined : slide.title,
     subtext: editing === SLIDE_TEXT ? undefined : slide.subtext,
     elements: elements.map((e) => {
-      const m = shownEl(e);
+      const m = pointPreview?.id === e.id ? { ...shownEl(e), path: pointPreview.path } : shownEl(e);
       return editing === e.id ? { ...m, text: '', paragraphs: undefined, runs: undefined } : m;
     }),
   };
@@ -200,6 +219,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     flushText();
     setSession(null);
   };
+  // Picking a drawing tool (text box, shape, pen…) ends typing, as in PowerPoint.
+  const toolKind = tool?.kind;
+  useEffect(() => {
+    if (toolKind && toolKind !== 'eyedrop') { flushText(); setSession(null); }
+  }, [toolKind, flushText]);
   const typed = (id: string, lines: TextRun[][]) => {
     window.clearTimeout(commitTimer.current);
     pendingText.current = () => {
@@ -229,6 +253,33 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const [x, y] = pointer(e);
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     if (tool?.kind === 'shape') { drag.current = { mode: 'draw', x0: x, y0: y, x1: x, y1: y }; return; }
+    if (tool?.kind === 'freeform') {
+      if (tool.scribble) { drag.current = { mode: 'ink', points: [[x, y]] }; setInkPath([[x, y]]); return; }
+      const pts = freePts ?? [];
+      // Clicking near the first point closes the outline.
+      if (pts.length > 2 && Math.hypot(pts[0][0] - x, pts[0][1] - y) < 14 / k) { finishFreeform(pts, true); return; }
+      setFreePts([...pts, [x, y]]);
+      drag.current = { mode: 'ink', points: [[x, y]] };
+      return;
+    }
+    if (tool?.kind === 'eyedrop') {
+      const el = elOf(tool.id);
+      if (el) {
+        const [lx, ly] = toLocal(el, x, y);
+        if (lx >= 0 && ly >= 0 && lx <= el.w && ly <= el.h) {
+          const c = el.crop ?? [0, 0, 0, 0];
+          tool.onPick(c[0] + (lx / el.w) * (1 - c[0] - c[2]), c[1] + (ly / el.h) * (1 - c[1] - c[3]));
+        }
+      }
+      onToolDone?.();
+      return;
+    }
+    if (tool?.kind === 'points') {
+      const el = elOf(tool.id);
+      const hitPt = el?.path ? anchors(parsePath(el.path)).find((a) => { const [px, py] = pathToSlide(el, a.p); return Math.hypot(px - x, py - y) < 10 / k; }) : undefined;
+      if (el && hitPt) { drag.current = { mode: 'point', id: el.id, seg: hitPt.seg, startX: x, startY: y, moved: false }; return; }
+      onToolDone?.();
+    }
     if (tool?.kind === 'pen') { drag.current = { mode: 'ink', points: [[x, y]] }; setInkPath([[x, y]]); return; }
     if (tool?.kind === 'painter') {
       const hit = hitBox(visible.map(boxOf), x, y, 3);
@@ -242,7 +293,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       return;
     }
     // Front-most object under the pointer (rotated boxes, in drawing order).
-    const hit = hitBox(visible.map((el) => boxOf(shownEl(el))), x, y, 3);
+    const hit = hitBox(pickable.map((el) => boxOf(shownEl(el))), x, y, 3);
     if (!hit) {
       if (hasSlideText && x >= textBox.x && x <= textBox.x + textBox.w && y >= textBox.y && y <= textBox.y + textBox.h) {
         // The browser would move focus to the canvas after this and end the typing straight away.
@@ -282,6 +333,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const [x, y] = pointer(e);
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
     const u = units[0];
+    cropDraft.current = null;
     drag.current = {
       mode: 'resize', ids: u.members, handle, startX: x, startY: y, unit: u.box, moved: false,
       orig: new Map(u.members.map((id) => { const o = elOf(id)!; return [id, { x: o.x, y: o.y, w: o.w, h: o.h, rot: o.rotation ?? 0 }]; })),
@@ -316,7 +368,16 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     if (d.mode === 'ink') {
       d.points.push([Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
+      if (tool?.kind === 'freeform' && !tool.scribble) { if (d.points.length > 2) setFreePts((pts) => [...(pts ?? []), [x, y]]); return; }
       setInkPath([...d.points]);
+      return;
+    }
+    if (d.mode === 'point') {
+      const el = elOf(d.id);
+      if (!el?.path) return;
+      d.moved = true;
+      const sx = (el.pathW ?? el.w) / Math.max(1, el.w), sy = (el.pathH ?? el.h) / Math.max(1, el.h);
+      setPointPreview({ id: el.id, path: writePath(moveAnchor(parsePath(el.path), d.seg, (x - d.startX) * sx, (y - d.startY) * sy)) });
       return;
     }
     if (d.mode === 'move') {
@@ -330,7 +391,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       let sx = 0, sy = 0;
       if (united && !e.altKey) {
         const others = visible.filter((el) => !d.ids.includes(el.id)).map(boxOf);
-        const s = snapBox({ id: 'm', ...united, rot: 0 }, others, { grid: view?.grid ? 30 : 0, smart: true });
+        const s = snapBox({ id: 'm', ...united, rot: 0 }, others, { grid: view?.grid ? 30 : 0, smart: true, guidesV: customGuides?.v, guidesH: customGuides?.h });
         if (s) { sx = s.x - united.x; sy = s.y - united.y; setGuides(s.guides); }
       } else setGuides({ v: [], h: [] });
       setPreview(new Map(boxes.map((b) => [b.id, { x: Math.round(b.x + sx), y: Math.round(b.y + sy), w: b.w, h: b.h }])));
@@ -348,6 +409,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       if (!r) return;
       if (one) {
         setPreview(new Map([[one.id, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) }]]));
+        if (tool?.kind === 'crop' && tool.id === one.id) cropDraft.current = cropFor(one, r);
       } else {
         // A group scales its members with it.
         const sxk = r.w / Math.max(1, d.unit.w), syk = r.h / Math.max(1, d.unit.h);
@@ -385,18 +447,56 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     if (d.mode === 'marquee') {
       const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
       if (r.w < 3 && r.h < 3) return;
-      const ids = expandSelection(elements, marqueeIds(visible.map(boxOf), r));
+      const ids = expandSelection(elements, marqueeIds(pickable.map(boxOf), r));
       onSelect(d.add ? [...new Set([...selected.filter((s) => s !== SLIDE_TEXT), ...ids])] : ids);
+      return;
+    }
+    if (d.mode === 'point') {
+      const p = pointPreview;
+      setPointPreview(null);
+      const el = elOf(d.id);
+      if (!p || !el || !d.moved) return;
+      setElements(elements.map((e) => (e.id === el.id ? refitPath(e, p.path) : e)));
+      return;
+    }
+    if (d.mode === 'ink' && tool?.kind === 'freeform') {
+      setInkPath(null);
+      if (tool.scribble) {
+        const made = makeInk(d.points, defaultShape?.stroke ?? '#ffffff', defaultShape?.strokeWidth ?? 6, false);
+        if (made) { const el: SlideElement = { ...made, kind: 'shape', fill: 'transparent', name: '자유형: 자유 곡선' }; setElements([...elements, el]); onSelect([el.id]); }
+        onToolDone?.();
+      }
+      return;
+    }
+    if (d.mode === 'draw' && tool?.kind === 'shape' && isLinePreset(tool.name) && Math.hypot(d.x1 - d.x0, d.y1 - d.y0) > 6) {
+      // Lines and connectors run from where the drag started to where it ended; an end on another
+      // shape's connection site is glued to it.
+      const near = (x: number, y: number) => {
+        for (const o of [...pickable].reverse()) {
+          if (o.kind !== 'shape' && o.kind !== 'text' && o.kind !== 'image') continue;
+          const sites = shapeSites(pathShapeOf(o));
+          const i = sites.findIndex((pt) => Math.hypot(pt[0] - x, pt[1] - y) < 24);
+          if (i >= 0) return { id: o.id, site: i };
+        }
+        return undefined;
+      };
+      const base = makeShape(tool.name);
+      const from = near(d.x0, d.y0), to = near(d.x1, d.y1);
+      const el: SlideElement = { ...base, ...lineBox(d.x0, d.y0, d.x1, d.y1), ...(from || to ? { connect: { from, to } } : {}) };
+      setElements([...elements, el]);
+      onSelect([el.id]);
+      onToolDone?.();
       return;
     }
     if (d.mode === 'draw' && tool?.kind === 'shape') {
       const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
       // A click without a drag puts a default-sized shape there.
       const el = r.w < 6 && r.h < 6 ? (() => { const m = makeShape(tool.name); return { ...m, x: Math.round(d.x0 - m.w / 2), y: Math.round(d.y0 - m.h / 2) }; })() : makeShape(tool.name, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
-      setElements([...elements, el]);
-      onSelect([el.id]);
+      const styled = el.kind === 'shape' && defaultShape ? { ...el, ...defaultShape } : el;
+      setElements([...elements, styled]);
+      onSelect([styled.id]);
       onToolDone?.();
-      if (el.kind === 'text') setSession({ slideId: identity, id: el.id });
+      if (styled.kind === 'text') setSession({ slideId: identity, id: styled.id });
       return;
     }
     if (d.mode === 'ink' && tool?.kind === 'pen') {
@@ -427,15 +527,44 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     setElements(elements.map((el) => {
       const b = p.get(el.id);
       if (!b) return el;
-      const next = { ...el, x: b.x, y: b.y, w: b.w, h: b.h, ...(b.rot !== undefined ? { rotation: b.rot || undefined } : {}), ...(b.adj ? { adj: b.adj } : {}) };
+      const cropped = tool?.kind === 'crop' && tool.id === el.id && cropDraft.current ? { crop: cropDraft.current, fit: 'fill' as const } : {};
+      const next = { ...el, x: b.x, y: b.y, w: b.w, h: b.h, ...(b.rot !== undefined ? { rotation: b.rot || undefined } : {}), ...(b.adj ? { adj: b.adj } : {}), ...cropped };
       // A text box sized by hand keeps that size, as PowerPoint's "Do not autofit".
       return d.mode === 'resize' && el.kind === 'text' ? { ...next, autoFit: false } : next;
     }));
   };
 
+  const cropDraft = useRef<[number, number, number, number] | null>(null);
+  /** The crop that keeps the picture where it is when its box becomes `r`. */
+  const cropFor = (el: SlideElement, r: Box): [number, number, number, number] => {
+    const [l, t, rr, b] = el.crop ?? [0, 0, 0, 0];
+    const W = el.w / Math.max(0.01, 1 - l - rr), H = el.h / Math.max(0.01, 1 - t - b);
+    const X0 = el.x - l * W, Y0 = el.y - t * H;
+    const c = (v: number) => Math.max(0, Math.min(0.95, v));
+    return [c((r.x - X0) / W), c((r.y - Y0) / H), c((X0 + W - r.x - r.w) / W), c((Y0 + H - r.y - r.h) / H)];
+  };
+  const finishFreeform = (pts: [number, number][], closed: boolean) => {
+    setFreePts(null);
+    const el = makeFreeform(pts, closed, defaultShape);
+    if (el) { setElements([...elements, el]); onSelect([el.id]); }
+    onToolDone?.();
+  };
+  /** A point of an outline (path units) on the slide. */
+  const pathToSlide = (el: SlideElement, p: [number, number]): [number, number] =>
+    toSlide(el, (p[0] * el.w) / Math.max(0.01, el.pathW ?? el.w), (p[1] * el.h) / Math.max(0.01, el.pathH ?? el.h));
+  /** An edited outline re-fitted to its box (points dragged past the edge grow the box). */
+  const refitPath = (el: SlideElement, path: string): SlideElement => {
+    const segs = parsePath(path);
+    const b = pathBounds(segs);
+    const sx = el.w / Math.max(0.01, el.pathW ?? el.w), sy = el.h / Math.max(0.01, el.pathH ?? el.h);
+    return { ...el, path: writePath(shiftPath(segs, -b.x, -b.y)), pathW: b.w, pathH: b.h, x: Math.round(el.x + b.x * sx), y: Math.round(el.y + b.y * sy), w: Math.max(1, Math.round(b.w * sx)), h: Math.max(1, Math.round(b.h * sy)) };
+  };
+
   // ── Keyboard and clipboard ──────────────────────────────────────────────────────────────────
   const onKeyDown = (e: RKeyboardEvent) => {
     if (editing) return;
+    if (e.key === 'Escape' && tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); e.preventDefault(); e.stopPropagation(); return; }
+    if ((e.key === 'Enter' || e.key === 'Escape') && (tool?.kind === 'crop' || tool?.kind === 'points')) { onToolDone?.(); e.preventDefault(); e.stopPropagation(); return; }
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
     const handled = () => { e.preventDefault(); e.stopPropagation(); };
@@ -562,7 +691,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     <div className={`ce-root ${tool ? `tool-${tool.kind}` : ''}`} ref={ref} tabIndex={0} onKeyDown={onKeyDown} onPointerDown={onRootDown} onPointerMove={onMove} onPointerUp={onUp}
       onCopy={(e) => onCopy(e)} onCut={(e) => onCopy(e, true)} onPaste={onPaste} onDoubleClick={(e) => {
         const [x, y] = pointer(e);
-        const hit = hitBox(visible.map(boxOf), x, y, 3);
+        if (tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); return; }
+        const hit = hitBox(pickable.map(boxOf), x, y, 3);
         if (hit) startEditing(hit);
       }}>
       <SlideCanvas slide={shown} theme={baseTheme} background={background} bgEffect={bgEffect} />
@@ -578,7 +708,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
           </div>;
         })}
         {frame && !editing && (
-          <div className={`ce-frame ${single && single.members.length > 1 ? 'group' : ''}`} style={at(frame.box, frame.rot)}>
+          <div className={`ce-frame ${single && single.members.length > 1 ? 'group' : ''} ${tool?.kind === 'crop' && singleEl?.id === tool.id ? 'crop' : ''}`} style={at(frame.box, frame.rot)}>
             {HANDLES.map((h) => (
               <span key={h} className={`ce-h ce-h-${h}`} style={{ left: `${HANDLE_POS[h][0] * 100}%`, top: `${HANDLE_POS[h][1] * 100}%`, cursor: CURSOR[h] }} onPointerDown={(e) => startHandle(e, h)} />
             ))}
@@ -592,6 +722,25 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         {guides.v.map((x) => <div key={`v${x}`} className="ce-guide ce-guide-v" style={{ left: x * k }} />)}
         {guides.h.map((y) => <div key={`h${y}`} className="ce-guide ce-guide-h" style={{ top: y * k }} />)}
         {band && <div className={`ce-band ${tool?.kind === 'shape' ? 'draw' : ''}`} style={at(band)} />}
+        {freePts && tool?.kind === 'freeform' && (
+          <svg className="ce-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
+            <polyline points={freePts.map((p) => p.join(',')).join(' ')} fill="none" stroke="#0078d4" strokeWidth={3} strokeDasharray="8 5" />
+          </svg>
+        )}
+        {inkPath && tool?.kind === 'freeform' && tool.scribble && (
+          <svg className="ce-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
+            <polyline points={inkPath.map((p) => p.join(',')).join(' ')} fill="none" stroke="#0078d4" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+        {tool?.kind === 'points' && (() => {
+          const el = elOf(tool.id);
+          if (!el?.path) return null;
+          const shownPath = pointPreview?.id === el.id ? pointPreview.path : el.path;
+          const live = { ...el, path: shownPath };
+          return anchors(parsePath(shownPath)).map((a) => { const [px, py] = pathToSlide(live, a.p); return <span key={a.seg} className="ce-point" style={{ left: px * k, top: py * k }} />; });
+        })()}
+        {customGuides?.v.map((x, i) => <div key={`cgv${i}`} className="ce-guide ce-guide-v ce-user" style={{ left: x * k }} />)}
+        {customGuides?.h.map((y, i) => <div key={`cgh${i}`} className="ce-guide ce-guide-h ce-user" style={{ top: y * k }} />)}
         {inkPath && tool?.kind === 'pen' && (
           <svg className="ce-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
             <polyline points={inkPath.map((p) => p.join(',')).join(' ')} fill="none" stroke={tool.color} strokeWidth={tool.width} strokeOpacity={tool.highlighter ? 0.45 : 1} strokeLinecap="round" strokeLinejoin="round" />

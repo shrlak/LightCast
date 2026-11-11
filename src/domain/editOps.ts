@@ -6,6 +6,7 @@ import type { Slide, SlideAnimation, SlideElement } from './types';
 import { CANVAS_H, CANVAS_W } from './canvas';
 import { uid } from './lyrics';
 import {
+  connectShapes, mergeShapes, type MergeMode, type PathShape,
   alignBoxes, boundsOf, distributeBoxes, flipBoxes, newTable, orderIds, recognizeInk, rotateBoxes, shapeCatalog, smoothInk,
   type AlignEdge, type ChartData, type ChartKind, type EBox, type OrderHow,
 } from '../engine';
@@ -192,7 +193,13 @@ export function makeShape(name: string, box?: { x: number; y: number; w: number;
   if (name === 'textBox') {
     return { id: uid('el'), kind: 'text', text: '텍스트', ...(box ?? centred(800, 200)), fontSize: 64, color: '#ffffff', align: 'center', bold: false, autoFit: !box };
   }
+  // Insert › Shapes › Action Buttons do what they show when clicked in the slide show.
+  const ACTION_BUTTONS: Record<string, NonNullable<SlideElement['action']>['kind']> = {
+    actionButtonForwardNext: 'next', actionButtonBackPrevious: 'prev', actionButtonBeginning: 'first', actionButtonHome: 'first', actionButtonEnd: 'last', actionButtonReturn: 'prev',
+  };
+  const act = ACTION_BUTTONS[name];
   return {
+    ...(act ? { action: { kind: act } } : {}),
     id: uid('el'), kind: 'shape', shape: name, ...b, h: line && b.h < 1 ? 0 : b.h,
     ...(line ? { stroke: '#ffffff', strokeWidth: 6, ...(name === 'straightConnector1' ? { arrowEnd: true } : {}) } : { fill: '#2E6FD8', stroke: '#1B4FA8', strokeWidth: 3 }),
   };
@@ -265,4 +272,69 @@ export function moveAnimation(list: SlideAnimation[], id: string, by: -1 | 1): S
   const next = [...list];
   [next[i], next[j]] = [next[j], next[i]];
   return next;
+}
+
+// ── Merge Shapes, freeform, connectors ───────────────────────────────────────────────────────
+export const pathShapeOf = (e: SlideElement): PathShape => ({
+  shape: e.shape ?? (e.kind === 'shape' ? (e.ellipse ? 'ellipse' : e.radius ? 'roundRect' : 'rect') : 'rect'), adj: e.adj, path: e.kind === 'shape' ? e.path : undefined,
+  pathW: e.pathW, pathH: e.pathH, x: e.x, y: e.y, w: e.w, h: e.h, rot: e.rotation ?? 0, flipH: !!e.flipH, flipV: !!e.flipV,
+});
+
+export const canMerge = (els: Elements, sel: string[]) => els.filter((e) => sel.includes(e.id) && (e.kind === 'shape' || e.kind === 'image')).length >= 2;
+
+/** Merge Shapes: the selected shapes (in the order picked) become new outlines with the first one's look. */
+export function mergeSelection(els: Elements, sel: string[], mode: MergeMode): { elements: Elements; ids: string[] } {
+  const picked = sel.map((id) => els.find((e) => e.id === id)).filter((e): e is SlideElement => !!e && (e.kind === 'shape' || e.kind === 'image'));
+  if (picked.length < 2) return { elements: els, ids: [] };
+  const out = mergeShapes(mode, picked.map(pathShapeOf));
+  if (!out.length) return { elements: els, ids: [] };
+  const first = picked[0];
+  const look: Partial<SlideElement> = first.kind === 'shape' ? first : { fill: '#2E6FD8', stroke: '#1B4FA8', strokeWidth: 3 };
+  const made: SlideElement[] = out.map((o, i) => ({
+    id: uid('el'), kind: 'shape', x: Math.round(o.x), y: Math.round(o.y), w: Math.round(o.w), h: Math.round(o.h), path: o.path, pathW: o.pathW, pathH: o.pathH,
+    fill: look.fill, stroke: look.stroke, strokeWidth: look.strokeWidth, gradient: look.gradient, dropShadow: look.dropShadow, glow: look.glow, opacity: first.opacity,
+    text: i === 0 ? first.text : undefined, color: first.color, fontSize: first.fontSize, name: `자유형 ${i + 1}`,
+  }));
+  const at = els.findIndex((e) => e.id === first.id);
+  const rest = els.filter((e) => !picked.includes(e));
+  const insertAt = Math.min(at, rest.length);
+  return { elements: [...rest.slice(0, insertAt), ...made, ...rest.slice(insertAt)], ids: made.map((m) => m.id) };
+}
+
+/** A freeform (clicked / dragged points, canvas pixels) as a shape: closed and filled, or an open line. */
+export function makeFreeform(points: [number, number][], closed: boolean, look: Partial<SlideElement> = {}): SlideElement | null {
+  if (points.length < 2) return null;
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const x = Math.min(...xs), y = Math.min(...ys);
+  const w = Math.max(1, Math.max(...xs) - x), h = Math.max(1, Math.max(...ys) - y);
+  const d = points.map((p, i) => `${i ? 'L' : 'M'}${Math.round((p[0] - x) * 10) / 10} ${Math.round((p[1] - y) * 10) / 10}`).join(' ') + (closed ? ' Z' : '');
+  return {
+    id: uid('el'), kind: 'shape', x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), path: d, pathW: w, pathH: h, name: closed ? '자유형: 도형' : '자유형: 자유 곡선',
+    ...(closed ? { fill: '#2E6FD8', stroke: '#1B4FA8', strokeWidth: 3 } : { fill: 'transparent', stroke: '#ffffff', strokeWidth: 6 }), ...look,
+  };
+}
+
+/** A line object from (x0, y0) to (x1, y1): its box and which way it is mirrored. */
+export function lineBox(x0: number, y0: number, x1: number, y1: number): Pick<SlideElement, 'x' | 'y' | 'w' | 'h' | 'flipH' | 'flipV'> {
+  return { x: Math.round(Math.min(x0, x1)), y: Math.round(Math.min(y0, y1)), w: Math.round(Math.abs(x1 - x0)), h: Math.round(Math.abs(y1 - y0)), flipH: x1 < x0 || undefined, flipV: y1 < y0 || undefined };
+}
+
+/** Glued connectors follow the objects they join (after a move, resize or rotation). */
+export function routeConnectors(els: Elements): Elements {
+  if (!els.some((e) => e.connect)) return els;
+  const byId = new Map(els.map((e) => [e.id, e]));
+  return els.map((e) => {
+    if (!e.connect) return e;
+    const a = e.connect.from && byId.get(e.connect.from.id), b = e.connect.to && byId.get(e.connect.to.id);
+    // An end whose object is gone stays where it is, unglued.
+    if (!a || !b) {
+      const connect = { from: a ? e.connect.from : undefined, to: b ? e.connect.to : undefined };
+      return connect.from || connect.to ? { ...e, connect } : { ...e, connect: undefined };
+    }
+    const r = connectShapes(pathShapeOf(a), pathShapeOf(b), e.connect.from?.site, e.connect.to?.site);
+    if (!r) return e;
+    const box = lineBox(r.x0, r.y0, r.x1, r.y1);
+    const same = box.x === e.x && box.y === e.y && box.w === e.w && box.h === e.h && !!box.flipH === !!e.flipH && !!box.flipV === !!e.flipV;
+    return same ? e : { ...e, ...box, rotation: undefined };
+  });
 }

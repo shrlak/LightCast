@@ -229,3 +229,72 @@ fn ink_smooths_and_turns_into_shapes() {
     let icons = ok(json!({"op": "icons.catalog"}));
     assert!(icons[0]["d"].is_array());
 }
+
+#[test]
+fn every_smartart_layout_lays_out() {
+    let cat = ok(json!({"op": "smartart.catalog"}));
+    let layouts = cat["layouts"].as_array().unwrap();
+    assert_eq!(layouts.len(), 45);
+    let nodes = json!([
+        {"text": "기도", "level": 0}, {"text": "말씀", "level": 1}, {"text": "찬양", "level": 0},
+        {"text": "교제", "level": 0}, {"text": "섬김", "level": 1}
+    ]);
+    for l in layouts {
+        let id = l["id"].as_str().unwrap();
+        for style in ["flat", "subtle", "polished"] {
+            let r = ok(json!({"op": "smartart.layout", "kind": id, "nodes": nodes, "style": style, "colors": "colorful", "x": 100, "y": 100, "w": 1200, "h": 800}));
+            let shapes = r["shapes"].as_array().unwrap();
+            assert!(!shapes.is_empty(), "{id}");
+            for s in shapes {
+                assert!(s["shape"].is_string() || s["custom"].is_object(), "{id}: {s}");
+                assert!(s["w"].as_f64().unwrap() > 0.0 || s["h"].as_f64().unwrap() > 0.0, "{id}");
+            }
+            assert!(shapes.iter().any(|s| s["text"].as_str().is_some_and(|t| t.contains("기도"))), "{id} shows its text");
+        }
+    }
+    let lines = ok(json!({"op": "smartart.fromLines", "lines": ["A", "\tB", "C"]}));
+    assert_eq!(lines[1]["level"], 1);
+}
+
+#[test]
+fn merge_shapes_like_powerpoint() {
+    let a = json!({"shape": "rect", "x": 0, "y": 0, "w": 100, "h": 100});
+    let b = json!({"shape": "ellipse", "x": 50, "y": 0, "w": 100, "h": 100});
+    let area = |r: &Value| r["w"].as_f64().unwrap() * r["h"].as_f64().unwrap();
+    let union = ok(json!({"op": "shape.merge", "mode": "union", "shapes": [a, b]}));
+    assert_eq!(union.as_array().unwrap().len(), 1);
+    assert!((union[0]["w"].as_f64().unwrap() - 150.0).abs() < 1.0);
+    let inter = ok(json!({"op": "shape.merge", "mode": "intersect", "shapes": [a, b]}));
+    assert!((inter[0]["w"].as_f64().unwrap() - 50.0).abs() < 1.0, "{inter}");
+    let sub = ok(json!({"op": "shape.merge", "mode": "subtract", "shapes": [a, b]}));
+    assert!(area(&sub[0]) <= 100.0 * 100.0 + 1.0);
+    let frag = ok(json!({"op": "shape.merge", "mode": "fragment", "shapes": [a, b]}));
+    assert_eq!(frag.as_array().unwrap().len(), 3);
+    let comb = ok(json!({"op": "shape.merge", "mode": "combine", "shapes": [a, b]}));
+    assert!(comb[0]["path"].as_str().unwrap().matches('M').count() >= 2, "the overlap is cut out");
+    // A rotated star still merges.
+    let star = json!({"shape": "star5", "x": 20, "y": 20, "w": 60, "h": 60, "rot": 30});
+    assert_eq!(ok(json!({"op": "shape.merge", "mode": "union", "shapes": [a, star]})).as_array().unwrap().len(), 1);
+    let path = ok(json!({"op": "shape.toPath", "shape": {"shape": "heart", "x": 0, "y": 0, "w": 100, "h": 80}}));
+    assert!(path["path"].as_str().unwrap().contains('C'), "curves are kept for Edit Points");
+}
+
+#[test]
+fn connectors_glue_to_sites() {
+    let a = json!({"shape": "rect", "x": 0, "y": 0, "w": 100, "h": 100});
+    let b = json!({"shape": "rect", "x": 300, "y": 0, "w": 100, "h": 100});
+    let c = ok(json!({"op": "shape.connect", "from": a, "to": b}));
+    assert_eq!(c["x0"], 100.0);
+    assert_eq!(c["y0"], 50.0);
+    assert_eq!(c["x1"], 300.0);
+    assert_eq!(ok(json!({"op": "shape.sites", "shape": a})).as_array().unwrap().len(), 4);
+}
+
+#[test]
+fn thesaurus_and_picture_catalogs() {
+    let t = ok(json!({"op": "review.thesaurus", "word": "Goals"}));
+    assert!(!t.as_array().unwrap().is_empty());
+    let p = ok(json!({"op": "picture.catalog"}));
+    assert_eq!(p["artistic"].as_array().unwrap().len(), 7);
+    assert!(p["recolor"].as_array().unwrap().len() >= 19);
+}

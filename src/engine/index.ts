@@ -8,6 +8,9 @@ interface Exports {
   fc_reserve(len: number): number;
   fc_call(len: number): number;
   fc_ptr(): number;
+  fc_img_reserve(len: number): number;
+  fc_img_ptr(): number;
+  fc_img_len(): number;
 }
 
 let module: WebAssembly.Module | null = null;
@@ -228,3 +231,56 @@ export const replaceText = (items: TextItem[], query: string, replacement: strin
 export const smoothInk = (points: [number, number][], tolerance = 1.5) => engineCall<{ d: string; x: number; y: number; w: number; h: number } | null>('ink.smooth', { points, tolerance });
 export type InkShape = { kind: 'line'; x0: number; y0: number; x1: number; y1: number } | { kind: 'rect' | 'ellipse'; x: number; y: number; w: number; h: number } | { kind: 'triangle'; x: number; y: number; w: number; h: number; flipV: boolean };
 export const recognizeInk = (points: [number, number][]) => engineCall<InkShape | null>('ink.recognize', { points });
+
+// ── Merge Shapes, Edit Points, connectors ────────────────────────────────────────────────────
+export interface PathShape { shape?: string; adj?: number[]; path?: string; pathW?: number; pathH?: number; x: number; y: number; w: number; h: number; rot?: number; flipH?: boolean; flipV?: boolean }
+export type MergeMode = 'union' | 'combine' | 'fragment' | 'intersect' | 'subtract';
+export interface PathBox { x: number; y: number; w: number; h: number; path: string; pathW: number; pathH: number }
+export const mergeShapes = (mode: MergeMode, shapes: PathShape[]) => engineCall<PathBox[]>('shape.merge', { mode, shapes }) ?? [];
+export const shapeToPath = (shape: PathShape) => engineCall<{ path: string; pathW: number; pathH: number }>('shape.toPath', { shape });
+export const connectShapes = (from: PathShape, to: PathShape, fromSite?: number, toSite?: number) =>
+  engineCall<{ x0: number; y0: number; x1: number; y1: number; fromSite: number; toSite: number }>('shape.connect', { from, to, fromSite, toSite });
+export const shapeSites = (shape: PathShape) => engineCall<[number, number][]>('shape.sites', { shape }) ?? [];
+
+// ── SmartArt ──────────────────────────────────────────────────────────────────────────────────
+export interface SmartArtCatalog { layouts: { id: string; label: string }[]; styles: { id: string; label: string }[]; colors: { id: string; label: string }[] }
+export const smartArtCatalog = () => once('smartart', () => engineCall<SmartArtCatalog>('smartart.catalog')) as SmartArtCatalog | null;
+export interface SmartArtNode { text: string; level: number }
+export interface SmartArtShape {
+  shape: string | null; adj: number[]; custom: { d: string; w: number; h: number } | null;
+  x: number; y: number; w: number; h: number; rot: number; flipH: boolean; flipV: boolean;
+  fill: string | null; gradient: [string, string] | null; stroke: string | null; strokeWidth: number;
+  text: string; color: string | null; fontSize: number | null; bold: boolean | null; align: string | null; shadow: boolean; nodes: number[];
+}
+export const layoutSmartArt = (kind: string, nodes: SmartArtNode[], box: { x: number; y: number; w: number; h: number }, style = 'flat', colors = 'colorful', scheme?: string) =>
+  engineCall<{ shapes: SmartArtShape[] }>('smartart.layout', { kind, nodes, style, colors, ...box, scheme })?.shapes ?? null;
+export const smartArtNodesFromLines = (lines: string[]) => engineCall<SmartArtNode[]>('smartart.fromLines', { lines }) ?? [];
+
+// ── Picture Format (pixels through the image buffer) ──────────────────────────────────────────
+export interface PictureSteps {
+  removeBackground?: number; transparentColor?: string; transparentTolerance?: number;
+  brightness?: number; contrast?: number; saturation?: number; temperature?: number; sharpness?: number;
+  recolor?: string; artistic?: string; maxSide?: number;
+}
+export const pictureCatalog = () => once('picture', () => engineCall<{ artistic: string[]; recolor: string[] }>('picture.catalog')) as { artistic: string[]; recolor: string[] } | null;
+/** Run the Picture Format pipeline on RGBA pixels: the processed pixels and their size, or null. */
+export function processPicture(rgba: Uint8ClampedArray, w: number, h: number, steps: PictureSteps, scheme?: string): { data: Uint8ClampedArray; w: number; h: number; removed: number } | null {
+  const ex = exports;
+  if (!ex) return null;
+  try {
+    const at = ex.fc_img_reserve(rgba.length);
+    new Uint8Array(ex.memory.buffer, at, rgba.length).set(rgba);
+    const r = engineCall<{ w: number; h: number; removed: number }>('picture.process', { w, h, steps, scheme });
+    if (!r || !exports) return null;
+    const len = exports.fc_img_len();
+    const out = new Uint8ClampedArray(len);
+    out.set(new Uint8Array(exports.memory.buffer, exports.fc_img_ptr(), len));
+    return { data: out, w: r.w, h: r.h, removed: r.removed };
+  } catch (e) {
+    console.error('engine picture.process failed', e);
+    return null;
+  }
+}
+
+// ── Review ────────────────────────────────────────────────────────────────────────────────────
+export const thesaurus = (word: string) => engineCall<{ word: string; synonyms: string[] }[]>('review.thesaurus', { word }) ?? [];

@@ -16,8 +16,15 @@ import type { TextFormatValue } from './TextFormatPanel';
 
 export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'accessibility' | 'designer' | null;
 
+/** The dialog boxes (Font, Paragraph, Replace Fonts, Header & Footer, Set Up Show, …). */
+export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master';
+
 export interface Ed {
   state: AppState;
+  dialog: DialogKind | null;
+  setDialog: (d: DialogKind | null) => void;
+  /** Play the slides in a window (Reading view): a custom show's slides, or Rehearse Timings. */
+  play: (opts?: { ids?: string[]; rehearse?: boolean }) => void;
   dispatch: Dispatch<Action>;
   cmd: Commands;
   p: Presentation | null;
@@ -60,7 +67,7 @@ export const selectedEls = (els: SlideElement[], sel: string[]) => {
   return els.filter((e) => ids.includes(e.id));
 };
 
-const RUN_KEYS = new Set(['fontSize', 'bold', 'italic', 'underline', 'color']);
+const RUN_KEYS = new Set(['fontSize', 'bold', 'italic', 'underline', 'color', 'strike']);
 
 let tick = 0;
 onTextSelection(() => { tick++; });
@@ -72,7 +79,19 @@ export const useTextSelectionTick = () => useSyncExternalStore(onTextSelection, 
  * typed (size, bold, italic, underline, colour), else on the selected text boxes and shapes, else
  * on the slide's own text.
  */
-export function textTarget(ed: Ed): { value: TextFormatValue; onChange: (p: Partial<TextFormatValue>) => void; onChangeCase: (k: CaseKind) => void; onClear: () => void; label: string } | null {
+export interface TextTarget {
+  value: TextFormatValue;
+  onChange: (p: Partial<TextFormatValue>) => void;
+  onChangeCase: (k: CaseKind) => void;
+  onClear: () => void;
+  label: string;
+  /** The text boxes being formatted (none: the slide's own text). */
+  els: SlideElement[];
+  /** Patch each of those boxes. */
+  patchEach: (fn: (e: SlideElement) => Partial<SlideElement>) => void;
+}
+
+export function textTarget(ed: Ed): TextTarget | null {
   const { slide, p, theme } = ed;
   if (!slide || !p || !theme || !ed.canEdit) return null;
   const editor = activeTextEditor();
@@ -86,7 +105,7 @@ export function textTarget(ed: Ed): { value: TextFormatValue; onChange: (p: Part
     let value = base;
     if (editor && editor.hasSelection()) {
       const c = editor.current();
-      value = { ...base, fontSize: c.fontSize ?? base.fontSize, bold: !!c.bold, italic: !!c.italic, underline: !!c.underline, color: (c.color ?? base.color).slice(0, 7) };
+      value = { ...base, fontSize: c.fontSize ?? base.fontSize, bold: !!c.bold, italic: !!c.italic, underline: !!c.underline, strike: !!c.strike, color: (c.color ?? base.color).slice(0, 7) };
     }
     return {
       value,
@@ -95,13 +114,15 @@ export function textTarget(ed: Ed): { value: TextFormatValue; onChange: (p: Part
         const keys = Object.keys(patch);
         // Part of the text selected: the size, weight, slant, underline or colour go to those characters only.
         if (editor && editor.hasSelection() && keys.every((k) => RUN_KEYS.has(k))) {
-          editor.apply({ ...(patch.fontSize !== undefined ? { fontSize: patch.fontSize } : {}), ...(patch.bold !== undefined ? { bold: patch.bold } : {}), ...(patch.italic !== undefined ? { italic: patch.italic } : {}), ...(patch.underline !== undefined ? { underline: patch.underline || undefined } : {}), ...(patch.color !== undefined ? { color: patch.color } : {}) });
+          editor.apply({ ...(patch.fontSize !== undefined ? { fontSize: patch.fontSize } : {}), ...(patch.bold !== undefined ? { bold: patch.bold } : {}), ...(patch.italic !== undefined ? { italic: patch.italic } : {}), ...(patch.underline !== undefined ? { underline: patch.underline || undefined } : {}), ...(patch.color !== undefined ? { color: patch.color } : {}), ...(patch.strike !== undefined ? { strike: patch.strike || undefined } : {}) });
           return;
         }
         patchEls(() => toEl(patch));
       },
       onChangeCase: (k) => patchEls((e) => ({ text: changeCase(e.text ?? '', k) })),
       onClear: () => patchEls(() => CLEAR_TEXT_FORMAT),
+      els: texty,
+      patchEach: patchEls,
     };
   }
   const t = slideTheme(theme, slide);
@@ -120,6 +141,8 @@ export function textTarget(ed: Ed): { value: TextFormatValue; onChange: (p: Part
       onChange: (patch) => patchAll(() => toEl(patch)),
       onChangeCase: (k) => patchAll((e) => ({ text: changeCase(e.text ?? '', k) })),
       onClear: () => patchAll(() => CLEAR_TEXT_FORMAT),
+      els: boxes,
+      patchEach: patchAll,
     };
   }
   return {
@@ -133,6 +156,8 @@ export function textTarget(ed: Ed): { value: TextFormatValue; onChange: (p: Part
     onChange: ({ bold, ...rest }) => setStyle({ ...rest, ...(bold === undefined ? {} : { fontWeight: bold ? 700 : 400 }) }),
     onChangeCase: (k) => ed.updateSlide({ text: changeCase(slide.text, k), ...(slide.title ? { title: changeCase(slide.title, k) } : {}), ...(slide.subtext ? { subtext: changeCase(slide.subtext, k) } : {}) }),
     onClear: () => ed.updateSlide({ style: undefined, preferredFontSize: undefined }),
+    els: [],
+    patchEach: () => {},
   };
 }
 
