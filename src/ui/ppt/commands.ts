@@ -3,7 +3,7 @@ import type { ServiceUploads } from './useServiceUploads';
 
 export type Modal = 'teamRequests' | 'trash' | 'rehearsal' | 'remoteControl' | 'edit' | 'source' | 'new' | 'themes' | 'bible' | 'ai' | 'screens' | 'sunday' | 'retreat' | 'retreatBg' | 'chords' | 'sync' | 'account' | 'confession' | 'aiUsage' | 'prayer' | 'song' | 'songNew' | 'songLibrary' | 'find' | 'restore' | 'preparation' | 'preflight' | 'activity' | 'follow' | 'songStats' | 'ccli' | 'safeMode' | 'standby' | 'settings' | 'templateMarket' | null;
 export type ImportKind = 'library' | 'slides' | 'lyrics' | 'backup';
-export type PptViewMode = 'normal' | 'sorter' | 'presenter';
+export type PptViewMode = 'normal' | 'sorter' | 'presenter' | 'outline' | 'reading';
 
 export interface OnlineStatus {
   status: 'loading' | 'ok' | 'error';

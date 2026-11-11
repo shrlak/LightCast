@@ -324,7 +324,7 @@ function createMainWindow() {
     } catch {
       return { action: 'deny' };
     }
-    if (u.origin === origin() && ['output', 'stage', 'remote', 'multiview', 'mixer'].includes(u.searchParams.get('view') ?? '')) openView(url);
+    if (u.origin === origin() && ['output', 'stage', 'remote', 'mixer'].includes(u.searchParams.get('view') ?? '')) openView(url);
     else if (u.protocol === 'https:' || u.protocol === 'http:') shell.openExternal(url);
     return { action: 'deny' };
   });

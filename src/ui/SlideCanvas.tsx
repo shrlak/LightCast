@@ -1,6 +1,7 @@
 import { isFrontSlide } from '../domain/frontLayout';
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, Theme, Timer, Transition } from '../domain/types';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
+import { lineRuns } from '../domain/richText';
 import { INDENT_PX, listMarkers } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
@@ -9,6 +10,9 @@ import { formatClock, timerValue } from '../domain/timers';
 import { isDecoded, preloadImage, useMediaUrl, useNow, useReadyImage, useWidth } from './hooks';
 import { mediaUrl, peekMediaUrl } from '../domain/media';
 import { MotionLayer } from './MotionLayer';
+import { AnimatedElements, FxTransition } from './ShowEffects';
+import type { LiveBuild } from '../domain/animations';
+import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, elementTransform } from './EngineElements';
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
@@ -39,6 +43,8 @@ export interface CanvasProps {
   onVideoTime?: (t: number, duration: number) => void;
   /** Live rendering: play video/camera and run transitions. Off for thumbnails. */
   animate?: boolean;
+  /** Where the slide's object animations are; without it every object is simply shown. */
+  build?: LiveBuild | null;
   className?: string;
 }
 
@@ -201,26 +207,43 @@ export function ElementView({ el }: { el: SlideElement }) {
   const videoUrl = useMediaUrl(el.kind === 'video' ? el.mediaId : null);
   const box: CSSProperties = {
     position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1,
-    transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
+    transform: elementTransform(el),
   };
+  if (el.hidden) return null;
   // While a picture is still loading nothing is drawn (a placeholder box would flash); the slide waits for it, see useReadySlide.
   if (el.kind === 'image') return url ? <img src={url} alt="" decoding="sync" style={{ ...box, objectFit: el.fit ?? 'contain' }} /> : null;
   if (el.kind === 'video') return videoUrl ? <video src={videoUrl} style={{ ...box, objectFit: el.fit ?? 'cover' }} autoPlay muted loop playsInline /> : <div style={{ ...box, outline: '2px dashed #555' }} />;
   if (el.kind === 'camera') return <div style={box}><CameraBg deviceId={el.deviceId ?? ''} label="Camera" animate /></div>;
   if (el.kind === 'qr') return el.link ? <img className="qr-object" src={qrDataUrl(el.link)} alt={el.link} title={el.link} style={box} /> : <div className="qr-object empty" style={box}>QR</div>;
   if (el.kind === 'shape') {
+    // Preset shapes (and anything rotated, flipped, dashed, gradient-filled or carrying text) are drawn
+    // by the engine; a plain box or circle from an older slide stays the div it always was.
+    if (el.shape || el.text || el.gradient || el.dash || el.flipH || el.flipV || el.dropShadow || el.glow || el.strokeWidth) return <ShapeElement el={el} />;
     return <div style={{ ...box, background: el.fill ?? '#ffffff', borderRadius: el.ellipse ? '50%' : el.radius ?? 0, border: el.stroke ? `4px solid ${el.stroke}` : undefined }} />;
   }
+  if (el.kind === 'table') return <TableElement el={el} />;
+  if (el.kind === 'chart') return <ChartElement el={el} />;
+  if (el.kind === 'icon') return <IconElement el={el} />;
+  if (el.kind === 'ink') return <InkElement el={el} />;
   return <TextElement el={el} box={box} />;
 }
+
+/** A run's own character formatting, over its text box's. */
+export const runStyle = (r: TextRun): CSSProperties => ({
+  fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? 800 : 400, fontStyle: r.italic === undefined ? undefined : r.italic ? 'italic' : 'normal',
+  textDecoration: r.underline ? 'underline' : undefined, color: r.color,
+});
 
 function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
   const base = el.fontSize ?? 64;
   const lines = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
   const markers = listMarkers(lines, el.list);
-  const styled = !!(el.list || el.highlight);
+  const runs = lineRuns(el);
+  const styled = !!(el.list || el.highlight || runs.some(Boolean));
   const lineBody = (text: string, i: number) => (
-    <ListLine marker={markers[i]} highlight={text.trim() ? el.highlight : undefined}>{TOKEN.test(text) ? <DynamicText text={text} /> : text}</ListLine>
+    <ListLine marker={markers[i]} highlight={text.trim() ? el.highlight : undefined}>
+      {runs[i] ? runs[i]!.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(text) ? <DynamicText text={text} /> : text}
+    </ListLine>
   );
   return (
     <div data-text-element={el.id} style={{
@@ -252,7 +275,7 @@ function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
 /** The theme with this slide's own formatting applied on top. */
 export const slideTheme = (theme: Theme, slide: Slide): Theme => (slide.style ? { ...theme, ...slide.style } : theme);
 
-function SlideBody({ slide, theme: base }: { slide: Slide; theme: Theme }) {
+function SlideBody({ slide, theme: base, build }: { slide: Slide; theme: Theme; build?: LiveBuild | null }) {
   const originalTheme = { ...slideTheme(base, slide), ...(!isFrontSlide(slide) && slide.preferredFontSize !== undefined ? { fontSize: slide.preferredFontSize } : {}), ...(isFrontSlide(slide) ? { autoFit: false } : {}) };
   const fontEpoch = useFontEpoch();
   const { box: baseBox, bounds, noWrap: lyricLines } = slideTextFrame(slide, originalTheme);
@@ -285,7 +308,9 @@ function SlideBody({ slide, theme: base }: { slide: Slide; theme: Theme }) {
           )}
         </div>
       </div>
-      {elements.map((el) => <ElementView key={el.id} el={el} />)}
+      {build && slide.animations?.length
+        ? <AnimatedElements slide={slide} elements={elements} build={build} render={(el) => <ElementView el={el} />} />
+        : elements.map((el) => <ElementView key={el.id} el={el} />)}
       {/* QR codes float over the text boxes in the corner; the boxes keep their own place. */}
       {hasQr && (
           <div className="qr-stack">
@@ -340,10 +365,11 @@ function useReadyFrame(slide: Slide | null, background: Background | null, theme
 const sameSlide = (a: Slide, b: Slide) => a === b || (a.id === b.id && JSON.stringify(a) === JSON.stringify(b));
 
 /** Keeps the outgoing slide on screen while the new one transitions in. */
-function TransitionLayer({ slide, theme, transition, animate }: { slide: Slide | null; theme: Theme; transition?: Transition; animate: boolean }) {
+function TransitionLayer({ slide, theme, transition, animate, build }: { slide: Slide | null; theme: Theme; transition?: Transition; animate: boolean; build?: LiveBuild | null }) {
   const [prev, setPrev] = useState<{ slide: Slide; theme: Theme } | null>(null);
   const last = useRef<{ slide: Slide | null; theme: Theme }>({ slide, theme });
   const kind = animate ? transition?.kind ?? 'cut' : 'cut';
+  const fx = kind.startsWith('fx:') ? kind.slice(3) : null;
   const duration = transition?.duration ?? 1;
   useEffect(() => {
     const old = last.current;
@@ -351,18 +377,26 @@ function TransitionLayer({ slide, theme, transition, animate }: { slide: Slide |
     // The same slide delivered twice (computer and network) must not fade into itself.
     if (kind === 'cut' || !old.slide || (slide && sameSlide(old.slide, slide))) return;
     setPrev({ slide: old.slide, theme: old.theme });
-    const t = setTimeout(() => setPrev(null), duration);
+    // An engine transition ends itself (FxTransition); the timer is its safety net.
+    const t = setTimeout(() => setPrev(null), fx ? duration + 400 : duration);
     return () => clearTimeout(t);
   }, [slide, theme, kind, duration]);
   const style = { ['--tr' as string]: `${duration}ms` } as CSSProperties;
+  // One element each for the outgoing and incoming slide, so the frames of an engine transition
+  // re-place them without drawing them again.
+  const oldBody = useMemo(() => (prev ? <SlideBody slide={prev.slide} theme={prev.theme} /> : null), [prev]);
+  const newBody = useMemo(() => (slide ? <SlideBody slide={slide} theme={theme} build={build} /> : null), [slide, theme, build]);
+  if (fx && prev && slide) {
+    return <FxTransition key={`fx-${prev.slide.id}-${slide.id}`} kind={fx} option={transition?.option ?? ''} duration={duration} oldBody={oldBody} newBody={newBody} onDone={() => setPrev(null)} />;
+  }
   return (
     <>
-      {prev && kind !== 'cut' && (
-        <div className={`layer tr-out tr-${kind}`} style={style} key={`out-${prev.slide.id}`}><SlideBody slide={prev.slide} theme={prev.theme} /></div>
+      {prev && kind !== 'cut' && !fx && (
+        <div className={`layer tr-out tr-${kind}`} style={style} key={`out-${prev.slide.id}`}>{oldBody}</div>
       )}
       {slide && (
-        <div className={`layer ${kind !== 'cut' ? `tr-in tr-${kind}` : ''}`} style={style} key={`in-${slide.id}-${slide.text.length}`}>
-          <SlideBody slide={slide} theme={theme} />
+        <div className={`layer ${kind !== 'cut' && !fx ? `tr-in tr-${kind}` : ''}`} style={style} key={`in-${slide.id}-${slide.text.length}`}>
+          {newBody}
         </div>
       )}
     </>
@@ -470,7 +504,7 @@ export function SlideCanvas(p: CanvasProps) {
           </div>
         )}
         {layers.background && !matte && fx?.dim ? <div className="layer" style={{ background: `rgba(0,0,0,${fx.dim})` }} /> : null}
-        {layers.slide && <TransitionLayer slide={frame.slide} theme={frame.theme} transition={p.transition} animate={!!p.animate} />}
+        {layers.slide && <TransitionLayer slide={frame.slide} theme={frame.theme} transition={p.transition} animate={!!p.animate} build={p.build} />}
         {ghost && (
           <>
             {layers.background && !matte && <div className="layer bg-layer"><BackgroundLayer background={ghost.background} animate={false} /></div>}

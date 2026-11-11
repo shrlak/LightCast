@@ -70,6 +70,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The installers carry the PowerPoint engine built from this commit's Rust source (engine/).
+      - name: Build the Rust engine (WebAssembly)
+        shell: bash
+        run: |
+          rustup update stable --no-self-update && rustup default stable
+          rustup target add wasm32-unknown-unknown
+          npm run engine
       - run: npm test
       - run: npm run build
       # electron-builder only builds here: its own GitHub publisher races itself (several uploads each try to

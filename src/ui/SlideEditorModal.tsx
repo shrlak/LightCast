@@ -101,7 +101,7 @@ export function SlideEditorModal({ state, dispatch, presentation: p, slideId, sl
                 <button className="danger" disabled={p.protected} onClick={remove}>이 슬라이드만 삭제</button>
               </div>
               <CanvasEditor key={`${p.id}:${index}`} readOnly={p.protected} slide={slide} theme={theme} background={resolveBackground(slide, p)} bgEffect={p.bgEffect}
-                selectedId={selectedElement} onSelect={setSelectedElement} onChange={update} />
+                selected={selectedElement ? [selectedElement] : []} onSelect={(ids) => setSelectedElement(ids[ids.length - 1] ?? null)} onChange={update} />
               {!isPdfSlide(slide) && !slide.text && !slide.elements?.length && slide.background && <p className="hint">이미지 안의 글자는 직접 수정할 수 없습니다. 이전에 가져온 PPT라면 아래 ‘PPT 원본 다시 가져오기’로 편집 가능한 슬라이드로 교체해 주세요.</p>}
               {!p.protected && <SlideContentEditor slide={slide} onChange={update} />}
               <label className="stack">슬라이드 노트<AutoTextarea disabled={p.protected} aria-label="슬라이드 노트" rows={2} value={slide.notes ?? ''} onChange={(e) => update({ notes: e.target.value || undefined })} /></label>

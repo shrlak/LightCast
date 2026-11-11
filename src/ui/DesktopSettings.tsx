@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Screen } from '../domain/types';
 import { desktop, type DesktopInfo } from '../domain/desktop';
-import { openOutput } from './LivePanel';
+import { openOutput } from './outputWindows';
 import { UpdateCheck } from './UpdateBanner';
 import { qrDataUrl } from '../domain/io/qr';
 

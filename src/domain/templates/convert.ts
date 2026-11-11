@@ -7,6 +7,7 @@
 // FreeCast slides are 4:3 like the church decks, so those fill the canvas exactly; a deck of
 // another shape (16:9 sermon slides) is centred with black bars.
 import type { ElementParagraph, HAlign, Slide, SlideElement, VAlign } from '../types';
+import { clearRunFormat } from '../richText';
 import type { RenderedPictureShape, RenderedSlide, RenderedTextShape } from '../io/pptxRender';
 import { uid } from '../lyrics';
 import { CANVAS_H, CANVAS_W } from '../canvas';
@@ -160,8 +161,11 @@ export function patchElement(el: SlideElement, patch: Partial<SlideElement>): Sl
   // with the font nor grows to fit it afterwards. Text bigger than the box shows past its edge.
   const was = el.fontSize ?? el.paragraphs?.find((p) => p.text.trim())?.fontSize;
   if (el.kind === 'text' && patch.fontSize !== undefined && patch.fontSize !== was && patch.autoFit === undefined) next.autoFit = false;
+  // Formatting chosen for the whole box replaces the same formatting on parts of its text.
+  const runKeys = (['fontSize', 'bold', 'italic', 'underline', 'color'] as const).filter((k) => k in patch);
+  if (runKeys.length) next = clearRunFormat(next, runKeys);
   if (!el.paragraphs) return next;
-  if (patch.text !== undefined) next = withElementText(next, patch.text);
+  if (patch.text !== undefined && patch.paragraphs === undefined) next = withElementText(next, patch.text);
   const whole = (['color', 'bold', 'italic', 'align'] as const).filter((k) => k in patch);
   if (patch.fontSize !== undefined || whole.length) {
     next.paragraphs = next.paragraphs!.map((p) => {
