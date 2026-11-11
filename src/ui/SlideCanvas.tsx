@@ -331,7 +331,7 @@ import { runStyle } from './runStyle';
 /** Home › Paragraph › Tabs: a line whose tabs go to the box's tab stops (domain/tabStops). */
 function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; size: number }) {
   const segs = splitRunsAtTabs(runs);
-  const font = (r?: TextRun) => `${(r?.italic ?? el.italic) ? 'italic ' : ''}${(r?.bold ?? el.bold) ? 800 : 500} ${r?.fontSize ?? size}px ${el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif'}`;
+  const font = (r?: TextRun) => `${(r?.italic ?? el.italic) ? 'italic ' : ''}${(r?.bold ?? el.bold) ? 800 : 500} ${r?.fontSize ?? size}px ${r?.fontFamily ?? el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif'}`;
   const measured = segs.map((seg) => {
     const ws = seg.map((r) => glyphWidths([...r.text], font(r)).reduce((a, b) => a + b, 0));
     const text = seg.map((r) => r.text).join('');

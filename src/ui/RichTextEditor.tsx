@@ -5,9 +5,10 @@
 // While a box is being typed in, the ribbon's and Format pane's font buttons act on the selected
 // characters through `activeTextEditor` (the selection is remembered when focus moves to a ribbon
 // control, such as the font size box).
-import { useEffect, useLayoutEffect, useRef, type CSSProperties, type KeyboardEvent as RKeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ClipboardEvent as RClipboardEvent, type KeyboardEvent as RKeyboardEvent } from 'react';
 import type { TextRun } from '../domain/types';
-import { normalizeRuns, type RunFormat } from '../domain/richText';
+import { insertLines, normalizeRuns, sliceLines, withBoxFormat, type RunFormat } from '../domain/richText';
+import { CLIP_TYPE, pastedLines, runsHtml } from '../domain/clipboard';
 import { stepFontSize } from '../domain/textFormat';
 import { runStyle } from './runStyle';
 
@@ -203,7 +204,7 @@ function runAt(lines: TextRun[][], at: number): TextRun | null {
 interface Props {
   lines: TextRun[][];
   /** The box's own formatting, which runs without their own take (canvas pixels). */
-  base: { fontSize: number; bold: boolean; italic: boolean; color: string };
+  base: { fontSize: number; bold: boolean; italic: boolean; color: string; fontFamily?: string; underline?: boolean; strike?: boolean; highlight?: string };
   style: CSSProperties;
   onChange: (lines: TextRun[][]) => void;
   onDone: () => void;
@@ -296,6 +297,24 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
     };
   }, [plain]);
 
+  /** Copy / cut the selected characters with their formatting (and the box's, where they have none). */
+  const copyOut = (e: RClipboardEvent, cut: boolean) => {
+    e.stopPropagation();
+    const root = ref.current!;
+    const s = window.getSelection();
+    if (!s?.rangeCount || !root.contains(s.anchorNode)) return;
+    const r = s.getRangeAt(0);
+    const x = offsetOf(root, r.startContainer, r.startOffset), y = offsetOf(root, r.endContainer, r.endOffset);
+    const [a, b] = [Math.min(x, y), Math.max(x, y)];
+    if (a === b) return;
+    const { fontSize, bold, italic, color, fontFamily, underline, strike, highlight } = latest.current.base;
+    const part = withBoxFormat(sliceLines(readLines(root), a, b), { fontSize, bold: bold || undefined, italic: italic || undefined, color, fontFamily, underline, strike, highlight });
+    e.preventDefault();
+    e.clipboardData.setData('text/plain', part.map((l) => l.map((q) => q.text).join('')).join('\n'));
+    e.clipboardData.setData('text/html', runsHtml(part, (getComputedStyle(root).textAlign as 'left') || undefined));
+    if (cut) document.execCommand('delete');
+  };
+
   const onKeyDown = (e: RKeyboardEvent) => {
     e.stopPropagation();
     if (e.key === 'Escape') { e.preventDefault(); latest.current.onDone(); return; }
@@ -330,10 +349,37 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
       style={style}
       onInput={() => onChange(readLines(ref.current!))}
       onKeyDown={onKeyDown}
+      onCopy={(e) => copyOut(e, false)}
+      onCut={(e) => copyOut(e, true)}
       onPaste={(e) => {
-        // Plain text only: formatting pasted from elsewhere would not fit the slide's look.
         e.preventDefault();
-        document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
+        e.stopPropagation();
+        const data = e.clipboardData;
+        const text = data.getData('text/plain').replace(/\r\n?/g, '\n');
+        // The slide's own text keeps one style per line: plain text only. Elsewhere the formatting comes
+        // along (FreeCast's own runs exactly, PowerPoint / Word / web text as it was); Ctrl+Shift+V
+        // gives the browser's plain text.
+        const lines = plain ? null : pastedLines(data.getData('text/html'), data.getData(CLIP_TYPE));
+        if (!lines) { document.execCommand('insertText', false, text); return; }
+        const root = ref.current!;
+        const s = window.getSelection();
+        let [a, b] = sel.current;
+        if (s?.rangeCount && root.contains(s.anchorNode)) {
+          const r = s.getRangeAt(0);
+          const x = offsetOf(root, r.startContainer, r.startOffset), y = offsetOf(root, r.endContainer, r.endOffset);
+          [a, b] = [Math.min(x, y), Math.max(x, y)];
+        }
+        const next = insertLines(readLines(root), a, b, lines.map((l) => l.filter((r) => r.text)));
+        render(root, next.lines);
+        sel.current = [next.caret, next.caret];
+        const [n, o] = pointAt(root, next.caret);
+        const range = document.createRange();
+        range.setStart(n, o);
+        range.collapse(true);
+        s?.removeAllRanges();
+        s?.addRange(range);
+        latest.current.onChange(next.lines);
+        notify();
       }}
       onPointerDown={(e) => e.stopPropagation()}
       onBlur={() => {

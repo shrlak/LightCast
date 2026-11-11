@@ -8,13 +8,14 @@ import { isPdfSlide } from '../../domain/importedSlides';
 import { SLIDE_TEMPLATES } from '../../domain/slideTemplates';
 import { qrElement } from '../../domain/qrElements';
 import {
-  alignSelection, canGroup, canUngroup, cloneElements, copyStyle, deleteSelection, distributeSelection, flipSelection, groupSelection, makeChart, makeIcon,
+  alignSelection, canGroup, canUngroup, copyStyle, deleteSelection, distributeSelection, flipSelection, groupSelection, makeChart, makeIcon,
   makeTable, orderSelection, rotateSelection, ungroupSelection, regroupSelection, canRegroup,
 } from '../../domain/editOps';
 import { shapeQuickStyles, type ChartKind } from '../../engine';
 import { TextFormatPanel } from './TextFormatPanel';
 import { textTarget, useTextSelectionTick, type Ed } from './editor';
 import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
+import { clipboardToElements, readSystemClipboard, type PasteMode } from './pasteObjects';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
@@ -252,14 +253,17 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
   useTextSelectionTick();
   const t = textTarget(ed);
   const sel = ed.selEls.map((e) => e.id);
-  const paste = () => {
+  const paste = (mode: PasteMode = 'source') => void (async () => {
     if (blocked(ed)) return;
-    const clip = objectClipboard();
-    if (!clip.length) return ed.cmd.notify('붙여넣을 개체가 없습니다 — 슬라이드의 개체를 복사(Ctrl+C)하거나 Ctrl+V로 붙여넣으세요');
-    const copies = cloneElements(clip, ed.elements.some((e) => clip.some((c) => c.id === e.id)) ? 30 : 0);
-    ed.setElements((els) => [...els, ...copies]);
-    ed.setSel(copies.map((c) => c.id));
-  };
+    // The system clipboard (FreeCast, PowerPoint, other programs); this window's last copy if it cannot be read.
+    const src = await readSystemClipboard();
+    const last = objectClipboard();
+    const r = src ? await clipboardToElements(src, ed.elements, mode) : last.length ? await clipboardToElements({ custom: JSON.stringify(last), images: [] }, ed.elements, mode) : null;
+    if (!r) return ed.cmd.notify('클립보드에 붙여넣을 내용이 없습니다');
+    r.media.forEach((m) => ed.dispatch({ type: 'media/add', media: m }));
+    ed.setElements((els) => [...els, ...r.elements]);
+    ed.setSel(r.elements.map((c) => c.id));
+  })();
   const one = ed.selEls[0];
   return (
     <>
@@ -334,13 +338,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
 }
 
 /** 붙여넣기 ▾ — the objects copied on a slide, or (Paste Special) the system clipboard's text only or its picture. */
-function PasteButton({ ed, paste }: { ed: Ed; paste: () => void }) {
-  const pasteText = async () => {
-    if (blocked(ed)) return;
-    const text = await navigator.clipboard.readText().catch(() => '');
-    if (!text.trim()) return ed.cmd.notify('클립보드에 텍스트가 없습니다');
-    ed.addElement({ id: uid('el'), kind: 'text', text: text.replace(/\r\n/g, '\n').trim(), x: 220, y: 380, w: 1000, h: 320, fontSize: 56, color: '#ffffff', align: 'left' });
-  };
+function PasteButton({ ed, paste }: { ed: Ed; paste: (mode?: PasteMode) => void }) {
   const pastePicture = async () => {
     if (blocked(ed)) return;
     try {
@@ -358,12 +356,13 @@ function PasteButton({ ed, paste }: { ed: Ed; paste: () => void }) {
     ed.cmd.notify('클립보드에 그림이 없습니다');
   };
   return (
-    <DropButton big icon={RI.paste} label="붙여넣기" title="붙여넣기 (Ctrl+V)" split onMain={paste} render={(close) => (
+    <DropButton big icon={RI.paste} label="붙여넣기" title="붙여넣기 (Ctrl+V) — 복사한 서식과 위치 그대로" split onMain={() => paste('source')} render={(close) => (
       <>
         <MenuHead>붙여넣기 옵션</MenuHead>
-        <MenuItem label="원본 서식 유지" hint="Ctrl+V" onClick={() => { paste(); close(); }} />
-        <MenuItem label="텍스트만 유지" onClick={() => { void pasteText(); close(); }} />
+        <MenuItem label="원본 서식 유지" hint="Ctrl+V" onClick={() => { paste('source'); close(); }} />
+        <MenuItem label="대상 테마 사용" onClick={() => { paste('dest'); close(); }} />
         <MenuItem label="그림" onClick={() => { void pastePicture(); close(); }} />
+        <MenuItem label="텍스트만 유지" hint="Ctrl+Shift+V" onClick={() => { paste('text'); close(); }} />
       </>
     )} />
   );

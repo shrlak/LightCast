@@ -3,7 +3,7 @@
 //! FreeCast draws slides in the browser (React), but what PowerPoint *does* — the geometry of its
 //! preset shapes and their yellow adjust handles, Arrange (align, distribute, order, rotate, flip),
 //! the slide-show timing of animations and the frames of slide transitions, table styles, charts,
-//! the theme colour picker, find and replace — runs here, in Rust, compiled to WebAssembly.
+//! the theme colour picker, find and replace, the spelling dictionary — runs here, in Rust, compiled to WebAssembly.
 //!
 //! The heavy lifting comes from DeckCraft (https://github.com/storytold/deckcraft, MIT OR
 //! Apache-2.0): its `geom` (183 preset shapes), `color`, `model` (tables, animation and transition
@@ -37,6 +37,7 @@ pub mod merge;
 pub mod picture;
 pub mod smartart;
 pub mod smartart_fc;
+pub mod spell;
 pub mod thesaurus;
 pub mod shapes;
 pub mod table;
@@ -155,6 +156,11 @@ pub fn handle(req: &Value) -> Res {
         "smartart.layout" => smartart_fc::layout(args(req)?),
         "smartart.fromLines" => smartart_fc::nodes_from_lines(args(req)?),
         "review.thesaurus" => thesaurus::op(req),
+        "spell.load" => spell::load(args(req)?),
+        "spell.loaded" => spell::loaded(),
+        "spell.check" => spell::check(args(req)?),
+        "spell.suggest" => spell::suggest(args(req)?),
+        "spell.addWord" => spell::add_word(args(req)?),
         "text.warpCatalog" => warp::catalog(),
         "text.warpGuides" => warp::guides(args(req)?),
         "shape.smoothCorners" => warp::smooth_corners(args(req)?),

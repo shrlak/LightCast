@@ -121,6 +121,10 @@ export interface TextRun {
   strike?: boolean;
   /** 위 첨자 / 아래 첨자. */
   baseline?: 'super' | 'sub';
+  /** The run's own typeface (kept from pasted PowerPoint / web text). */
+  fontFamily?: string;
+  /** Highlighter colour behind the run. */
+  highlight?: string;
 }
 
 /** What clicking an object does in a slide show (Insert › Action). */

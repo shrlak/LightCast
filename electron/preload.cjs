@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   // Review › Spelling: the system / Chromium spell checker the text boxes already use.
   isMisspelled: (word) => webFrame.isWordMisspelled(String(word)),
   spellSuggestions: (word) => webFrame.getWordSuggestions(String(word)),
+  // Paste: PowerPoint's own copy of shapes (exact places, fonts and colours), read by the main process.
+  readOfficeClipboard: () => ipcRenderer.invoke('desktop:readOfficeClipboard'),
   openView: (url, displayId) => ipcRenderer.invoke('desktop:openView', url, displayId),
   present: (url) => ipcRenderer.invoke('desktop:present', url),
   endShow: () => ipcRenderer.invoke('desktop:endShow'),
