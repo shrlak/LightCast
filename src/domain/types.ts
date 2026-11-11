@@ -338,6 +338,8 @@ export interface SlideAnimation {
   durationMs: number;
   delayMs: number;
   repeat?: number;
+  /** Motion Paths › Custom Path: `M 0 0 L dx dy …` in slide fractions from where the object sits. */
+  path?: string;
 }
 
 /** A review comment on a slide (Review › New Comment). */

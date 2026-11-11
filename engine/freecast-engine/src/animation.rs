@@ -64,6 +64,10 @@ pub struct AnimIn {
     pub repeat: u32,
     #[serde(default)]
     pub rewind: bool,
+    /// Custom motion path (Animations › Motion Paths › Custom Path): `M 0 0 L dx dy …` in slide
+    /// fractions, as offsets from where the object sits.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -127,7 +131,11 @@ fn build(r: &PrepareReq) -> Prepared {
                 repeat: a.repeat.clamp(1, 1000),
                 rewind: a.rewind,
                 text_build: TextBuild::AsOne,
-                path: if class == AnimClass::Path { deckcraft_model::anim::preset_path(&a.effect) } else { None },
+                path: match &a.path {
+                    Some(p) if class == AnimClass::Path && !p.trim().is_empty() => Some(p.clone()),
+                    _ if class == AnimClass::Path => deckcraft_model::anim::preset_path(&a.effect),
+                    _ => None,
+                },
                 ..Default::default()
             })
         })

@@ -152,7 +152,7 @@ export type AnimClass = 'entrance' | 'emphasis' | 'exit' | 'path';
 export interface AnimEffectInfo { id: string; label: string; class: AnimClass; durationMs: number; options: string[] }
 export const animationCatalog = () => (once('anims', () => engineCall<AnimEffectInfo[]>('anim.catalog')) as AnimEffectInfo[] | null) ?? [];
 export interface AnimSpec {
-  anims: { elementId: string; effect: string; class: AnimClass; option?: string; start: 'click' | 'with' | 'after'; durationMs: number; delayMs: number; repeat?: number }[];
+  anims: { elementId: string; effect: string; class: AnimClass; option?: string; start: 'click' | 'with' | 'after'; durationMs: number; delayMs: number; repeat?: number; path?: string }[];
   boxes: EBox[];
 }
 export interface PreparedTimeline {

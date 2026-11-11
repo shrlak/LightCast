@@ -321,3 +321,20 @@ describe('Morph', async () => {
     expect(mo.morphFrame(a, b, 1).moving.find((e) => e.id === 'b2')!.x).toBe(400);
   });
 });
+
+describe('Custom motion paths', async () => {
+  const an = await import('../src/domain/animations');
+  const { prepareTimeline, sampleTimeline } = await import('../src/engine');
+  it('turns drawn points into a path the engine moves the object along', () => {
+    const path = an.customMotionPath([[100, 100], [400, 100], [400, 500]])!;
+    expect(path).toBe('M 0 0 L 0.2083 0 L 0.2083 0.3704 E');
+    expect(an.motionPathPoints(path, 100, 100)[2][1]).toBeCloseTo(500, 0);
+    const spec = { anims: [{ elementId: 'a', effect: 'customPath', class: 'path' as const, start: 'click' as const, durationMs: 1000, delayMs: 0, path }], boxes: [{ id: 'a', x: 50, y: 50, w: 100, h: 100, rot: 0 }] };
+    expect(prepareTimeline(spec)).toBeTruthy();
+    const end = sampleTimeline(spec, 1, 1)?.a;
+    const mid = sampleTimeline(spec, 1, 0.3)?.a;
+    expect(Math.abs((end?.dx ?? 0) - 300)).toBeLessThan(2);
+    expect(Math.abs((end?.dy ?? 0) - 400)).toBeLessThan(2);
+    expect(mid?.dx ?? 0).toBeGreaterThan(0);
+  });
+});
