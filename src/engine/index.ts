@@ -284,3 +284,11 @@ export function processPicture(rgba: Uint8ClampedArray, w: number, h: number, st
 
 // ── Review ────────────────────────────────────────────────────────────────────────────────────
 export const thesaurus = (word: string) => engineCall<{ word: string; synonyms: string[] }[]>('review.thesaurus', { word }) ?? [];
+
+// ── WordArt Transform (text warps) and Smooth Corners ─────────────────────────────────────────
+export type WarpBand =
+  | { kind: 'fill'; top: [number, number][]; bottom: [number, number][] }
+  | { kind: 'follow'; path: [number, number][]; closed: boolean; anchor: 'first' | 'last' | 'middle' };
+export const warpCatalog = () => (once('warpcat', () => engineCall<{ id: string; label: string; follow: boolean }[]>('text.warpCatalog')) ?? []) as { id: string; label: string; follow: boolean }[];
+export const warpGuides = (preset: string, w: number, h: number, adj?: number[]) => engineCall<{ bands: WarpBand[] }>('text.warpGuides', { preset, w, h, adj: adj ?? [] })?.bands ?? null;
+export const smoothCorners = (w: number, h: number, smoothing: number, radius?: number) => engineCall<{ path: string; pathW: number; pathH: number }>('shape.smoothCorners', { w, h, smoothing, radius });

@@ -141,3 +141,24 @@ describe('Pattern fills', async () => {
     expect(patternPath('horz', 2)).toBe(Array.from({ length: 8 }, (_, x) => `M${x * 2} 0h2v2h-2z`).join(''));
   });
 });
+
+describe('WordArt Transform', async () => {
+  const { warpCatalog, warpGuides, smoothCorners } = await import('../src/engine');
+  const tw = await import('../src/domain/textWarp');
+  it("lays glyphs on DeckCraft's guides and names every preset in Korean", () => {
+    const cat = warpCatalog();
+    expect(cat).toHaveLength(40);
+    expect(cat.filter((c) => !tw.WARP_LABEL[c.id])).toEqual([]);
+    expect(tw.warpPreset('archUp')).toBe('textArchUp');
+    const band = warpGuides('textInflate', 400, 200)![0];
+    expect(band.kind).toBe('fill');
+    if (band.kind !== 'fill') return;
+    const g = tw.fillGlyphs(band, [{ chars: ['A', 'B', 'C'], widths: [10, 10, 10] }], 10);
+    expect(g).toHaveLength(3);
+    // The middle glyph is taller than the outer ones (the box bulges in the middle).
+    expect(g[1].matrix[3]).toBeGreaterThan(g[0].matrix[3]);
+    expect(tw.bandOfLine(3, 4, 2)).toBe(1);
+    expect(tw.at([[0, 0], [10, 0]], 0.5)).toEqual([5, 0]);
+    expect(smoothCorners(200, 100, 0.6)?.path).toContain('C');
+  });
+});

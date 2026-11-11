@@ -14,7 +14,8 @@ import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canRegroup, regroupSelection, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
-import { shapeToPath } from '../../engine';
+import { shapeToPath, smoothCorners, warpCatalog, warpGuides } from '../../engine';
+import { WARP_LABEL, polyD, warpPreset } from '../../domain/textWarp';
 import { smartArtOwner } from '../../domain/smartArt';
 import { layoutTable } from '../../engine';
 
@@ -103,6 +104,19 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
               ed.setTool({ kind: 'points', id: el.id });
               close();
             }} />
+            <MenuHead>부드러운 모서리</MenuHead>
+            <div className="rb-chip-row">{[0, 25, 50, 75, 100].map((v) => (
+              <button key={v} type="button" className="mini-btn" title={`모서리를 ${v}% 부드럽게 (사각형 → 둥근 정도)`} disabled={!shapes.length} onClick={() => {
+                ed.setElements((els) => els.map((e) => {
+                  if (!shapes.some((x) => x.id === e.id)) return e;
+                  const short = Math.min(e.w, e.h);
+                  const radius = e.shape === 'roundRect' ? ((e.adj?.[0] ?? 16667) / 100000) * short : short * 0.1666;
+                  const r = smoothCorners(e.w, e.h, v / 100, radius);
+                  return r ? { ...e, shape: undefined, adj: undefined, ellipse: undefined, radius: undefined, path: r.path, pathW: r.pathW, pathH: r.pathH, name: e.name ?? '부드러운 모서리 사각형' } : e;
+                }));
+                close();
+              }}>{v}%</button>
+            ))}</div>
             <MenuHead>도형 모양 변경</MenuHead>
             <ShapeGallery compact onPick={(n) => { ed.setElements((els) => els.map((e) => (shapes.some((s) => s.id === e.id) ? { ...e, shape: n, adj: undefined, ellipse: undefined, radius: undefined, path: undefined, pathW: undefined, pathH: undefined } : e))); close(); }} />
           </>
@@ -159,11 +173,7 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
               <MenuHead>텍스트 투명도</MenuHead>
               <div className="rb-chip-row">{[0, 0.25, 0.5, 0.75].map((v) => <button key={v} type="button" className={`mini-btn ${(text[0]?.textTransparency ?? 0) === v ? 'on' : ''}`} onClick={() => { setText({ textTransparency: v || undefined }); close(); }}>{v * 100}%</button>)}</div>
               <MenuHead>변환</MenuHead>
-              <div className="rb-chip-row">
-                {([[undefined, '없음'], ['archUp', '⌒ 위쪽 원호'], ['archDown', '⌣ 아래쪽 원호'], ['wave', '∿ 물결'], ['slantUp', '⟋ 위로'], ['slantDown', '⟍ 아래로']] as const).map(([w, l]) => (
-                  <button key={l} type="button" className={`mini-btn ${text[0]?.warp === w ? 'on' : ''}`} disabled={!text.some((t) => t.kind === 'text')} onClick={() => { setText({ warp: w }); close(); }}>{l}</button>
-                ))}
-              </div>
+              <WarpGallery value={text[0]?.warp} disabled={!text.some((t) => t.kind === 'text')} onPick={(w) => { setText({ warp: w }); close(); }} />
               <MenuSep />
               <MenuItem label="텍스트 옵션…" onClick={() => { ed.setDialog('paragraph'); close(); }} />
             </>
@@ -176,6 +186,33 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
       <ArrangeGroup ed={ed} />
       <SizeGroup ed={ed} />
     </>
+  );
+}
+
+/** WordArt › Text Effects › Transform: DeckCraft's 40 presets, Follow Path then Warp, each drawn on its own guides. */
+function WarpGallery({ value, onPick, disabled }: { value?: string; onPick: (w: string | undefined) => void; disabled?: boolean }) {
+  const cat = warpCatalog();
+  const cur = value ? warpPreset(value) : undefined;
+  const cell = (id: string) => {
+    const bands = warpGuides(id, 60, 30) ?? [];
+    return (
+      <button key={id} type="button" className={`warp-cell ${cur === id ? 'on' : ''}`} title={WARP_LABEL[id] ?? id} disabled={disabled} onClick={() => onPick(id === 'textPlain' ? undefined : id)}>
+        <svg viewBox="-4 -8 68 46" width="44" height="30">
+          {bands.map((b, i) => b.kind === 'fill'
+            ? <g key={i}><path d={polyD(b.top)} fill="none" stroke="#c43e1c" strokeWidth="1.6" /><path d={polyD(b.bottom)} fill="none" stroke="#c43e1c" strokeWidth="1.6" /></g>
+            : <path key={i} d={polyD(b.path, b.closed)} fill="none" stroke="#c43e1c" strokeWidth="2.4" />)}
+        </svg>
+      </button>
+    );
+  };
+  return (
+    <div className="warp-gallery">
+      <button type="button" className={`mini-btn ${!value ? 'on' : ''}`} disabled={disabled} onClick={() => onPick(undefined)}>변환 없음</button>
+      <div className="warp-head">경로 따라</div>
+      <div className="warp-grid">{cat.filter((c) => c.follow).map((c) => cell(c.id))}</div>
+      <div className="warp-head">휘기</div>
+      <div className="warp-grid">{cat.filter((c) => !c.follow).map((c) => cell(c.id))}</div>
+    </div>
   );
 }
 

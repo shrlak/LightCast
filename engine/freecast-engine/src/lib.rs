@@ -41,6 +41,7 @@ pub mod thesaurus;
 pub mod shapes;
 pub mod table;
 pub mod transition;
+pub mod warp;
 
 /// Engine version reported by `version`; bump when the request/response contract changes.
 pub const VERSION: &str = "1.0.0";
@@ -154,6 +155,9 @@ pub fn handle(req: &Value) -> Res {
         "smartart.layout" => smartart_fc::layout(args(req)?),
         "smartart.fromLines" => smartart_fc::nodes_from_lines(args(req)?),
         "review.thesaurus" => thesaurus::op(req),
+        "text.warpCatalog" => warp::catalog(),
+        "text.warpGuides" => warp::guides(args(req)?),
+        "shape.smoothCorners" => warp::smooth_corners(args(req)?),
         _ => Err(format!("unknown op {op}")),
     }
 }

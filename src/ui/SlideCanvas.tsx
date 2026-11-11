@@ -2,6 +2,8 @@ import { isFrontSlide } from '../domain/frontLayout';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
+import { warpGuides } from '../engine';
+import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
 import { INDENT_PX, listMarkers } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
@@ -13,7 +15,7 @@ import { MotionLayer } from './MotionLayer';
 import { AnimatedElements, FxTransition } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
 import { shapeGeometry } from '../engine';
-import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform } from './EngineElements';
+import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform, useEngineEpoch } from './EngineElements';
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
@@ -314,28 +316,57 @@ export function ElementView({ el }: { el: SlideElement }) {
 export { runStyle } from './runStyle';
 import { runStyle } from './runStyle';
 
-/** The path a warped (Transform) text follows, in its box. */
-export function warpPath(kind: NonNullable<SlideElement['warp']>, w: number, h: number): string {
-  switch (kind) {
-    case 'archUp': return `M 0 ${h * 0.85} Q ${w / 2} ${-h * 0.55} ${w} ${h * 0.85}`;
-    case 'archDown': return `M 0 ${h * 0.25} Q ${w / 2} ${h * 1.6} ${w} ${h * 0.25}`;
-    case 'wave': return `M 0 ${h * 0.6} C ${w / 4} ${h * 0.05} ${w / 4} ${h * 1.1} ${w / 2} ${h * 0.6} S ${w * 0.75} ${h * 0.05} ${w} ${h * 0.6}`;
-    case 'slantUp': return `M 0 ${h * 0.9} L ${w} ${h * 0.3}`;
-    default: return `M 0 ${h * 0.3} L ${w} ${h * 0.9}`;
-  }
+let measureCtx: CanvasRenderingContext2D | null = null;
+/** Advance widths of a line's characters in a font (canvas text metrics). */
+function glyphWidths(chars: string[], font: string): number[] {
+  measureCtx ??= typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+  if (!measureCtx) return chars.map(() => 1);
+  measureCtx.font = font;
+  return chars.map((c) => measureCtx!.measureText(c).width);
 }
 
+/** WordArt › Transform: the text laid on DeckCraft's warp guides (see domain/textWarp). */
 function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
+  useEngineEpoch();
   const id = `warp-${el.id}`;
-  const text = (el.text ?? '').replace(/\n/g, ' ');
+  const bands = warpGuides(warpPreset(el.warp!), el.w, el.h);
+  const size = el.fontSize ?? 64;
+  const family = el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif';
+  const weight = el.bold ? 800 : 500;
+  const font = `${el.italic ? 'italic ' : ''}${weight} ${size}px ${family}`;
+  const lines = (el.text ?? '').split('\n').filter((l, _i, all) => l.length || all.length === 1);
+  const paint = {
+    fill: el.color ?? '#fff', stroke: el.textOutline?.color, strokeWidth: el.textOutline?.width, paintOrder: 'stroke' as const,
+    opacity: el.textTransparency ? 1 - el.textTransparency : undefined, fontFamily: family, fontWeight: weight, fontStyle: el.italic ? 'italic' : undefined,
+  };
+  const content: ReactNode[] = [];
+  (bands ?? []).forEach((band, bi) => {
+    const mine = lines.map((l, i) => ({ l, i })).filter(({ i }) => bandOfLine(i, lines.length, (bands ?? []).length) === bi);
+    if (!mine.length) return;
+    if (band.kind === 'fill') {
+      const glyphs = fillGlyphs(band, mine.map(({ l }) => { const chars = [...l]; return { chars, widths: glyphWidths(chars, font) }; }), size);
+      glyphs.forEach((g, k) => content.push(<text key={`${bi}-${k}`} transform={`matrix(${g.matrix.join(' ')})`} y={size * 0.8} fontSize={size} {...paint}>{g.ch}</text>));
+    } else {
+      const pid = `${id}-${bi}`;
+      const len = band.path.reduce((acc, p, i, all) => acc + (i ? Math.hypot(p[0] - all[i - 1][0], p[1] - all[i - 1][1]) : 0), 0);
+      content.push(<path key={pid} id={pid} d={polyD(band.path, band.closed)} fill="none" />);
+      mine.forEach(({ l }, j) => {
+        const w = glyphWidths([...l], font).reduce((a, b) => a + b, 0);
+        const k = w > len && w > 0 ? len / w : 1;
+        // Lines stack away from the guide: earlier lines outwards for arch up and circle, later ones for arch down.
+        const off = band.anchor === 'first' ? j : band.anchor === 'last' ? j - (mine.length - 1) : j - (mine.length - 1) / 2;
+        content.push(
+          <text key={`${pid}-${j}`} fontSize={size * k} dy={off * size * 1.1 * k} textAnchor="middle" {...paint}>
+            <textPath href={`#${pid}`} startOffset="50%">{l}</textPath>
+          </text>,
+        );
+      });
+    }
+  });
   return (
-    <svg style={{ ...box, left: el.x, top: el.y, width: el.w, height: el.h, overflow: 'visible', ...elementTextStyle(el) }} viewBox={`0 0 ${el.w} ${el.h}`}>
-      <path id={id} d={warpPath(el.warp!, el.w, el.h)} fill="none" />
-      <text fill={el.color ?? '#fff'} fontSize={el.fontSize ?? 64} fontFamily={el.fontFamily} fontWeight={el.bold ? 800 : 500} fontStyle={el.italic ? 'italic' : undefined} textAnchor="middle"
-        stroke={el.textOutline?.color} strokeWidth={el.textOutline?.width} paintOrder="stroke" opacity={el.textTransparency ? 1 - el.textTransparency : undefined}
-        style={{ filter: el.shadow ? 'drop-shadow(0 3px 6px rgba(0,0,0,.8))' : undefined }}>
-        <textPath href={`#${id}`} startOffset="50%">{text}</textPath>
-      </text>
+    <svg style={{ ...box, left: el.x, top: el.y, width: el.w, height: el.h, overflow: 'visible', ...elementTextStyle(el) }} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`}
+      aria-label={el.text} filter={el.shadow ? undefined : undefined}>
+      <g style={{ filter: el.shadow ? 'drop-shadow(0 3px 6px rgba(0,0,0,.8))' : undefined }}>{content}</g>
     </svg>
   );
 }

@@ -301,7 +301,7 @@ export interface SlideElement {
   /** Text effects. */
   caps?: 'all' | 'small';
   /** WordArt › Text Effects › Transform: the text follows this path. */
-  warp?: 'archUp' | 'archDown' | 'wave' | 'slantUp' | 'slantDown';
+  warp?: string;
   textOutline?: { color: string; width: number };
   /** 0–1 transparency of the text. */
   textTransparency?: number;

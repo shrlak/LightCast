@@ -1816,3 +1816,8 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .pattern-grid { display: grid; grid-template-columns: repeat(8, 26px); gap: 3px; padding: 4px 8px 8px; }
 .pattern-cell { width: 26px; height: 26px; padding: 1px; border: 1px solid #c8c6c4; background: #fff; display: flex; align-items: center; justify-content: center; }
 .pattern-cell.on, .pattern-cell:hover { border-color: #c43e1c; }
+.warp-gallery { padding: 2px 8px 6px; }
+.warp-head { font-size: 11px; color: #605e5c; margin: 6px 0 2px; }
+.warp-grid { display: grid; grid-template-columns: repeat(6, 48px); gap: 3px; }
+.warp-cell { width: 48px; height: 34px; padding: 1px; border: 1px solid transparent; background: #fff; }
+.warp-cell:hover, .warp-cell.on { border-color: #c43e1c; background: #fdf3f0; }

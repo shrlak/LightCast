@@ -298,3 +298,19 @@ fn thesaurus_and_picture_catalogs() {
     assert_eq!(p["artistic"].as_array().unwrap().len(), 7);
     assert!(p["recolor"].as_array().unwrap().len() >= 19);
 }
+
+#[test]
+fn text_warp_guides_and_smooth_corners() {
+    let cat = ok(json!({"op": "text.warpCatalog"}));
+    assert_eq!(cat.as_array().unwrap().len(), 40);
+    let arch = ok(json!({"op": "text.warpGuides", "preset": "textArchUp", "w": 400.0, "h": 200.0}));
+    assert_eq!(arch["bands"][0]["kind"], "follow");
+    let inflate = ok(json!({"op": "text.warpGuides", "preset": "textInflate", "w": 400.0, "h": 200.0}));
+    let top = inflate["bands"][0]["top"].as_array().unwrap();
+    // Inflate: the top guide bulges up in the middle.
+    let mid = top[top.len() / 2][1].as_f64().unwrap();
+    let end = top[0][1].as_f64().unwrap();
+    assert!(mid < end, "{mid} {end}");
+    let sq = ok(json!({"op": "shape.smoothCorners", "w": 200.0, "h": 100.0, "smoothing": 0.6}));
+    assert!(sq["path"].as_str().unwrap().contains('C'));
+}
