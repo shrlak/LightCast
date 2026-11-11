@@ -18,6 +18,7 @@ import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
+import { seedSmartArt } from './dialogsMore';
 import { PATTERNS, patternPath } from '../../domain/patterns';
 import { slideFromLayout, withMaster } from '../../domain/master';
 import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
@@ -300,6 +301,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
       </Group>
       <Group label="단락" className="rb-para" launcher={t ? () => ed.setDialog('paragraph') : undefined}>
         {t ? <TextFormatPanel part="paragraph" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} shortcuts={false} /> : <span className="rb-disabled-note">텍스트 없음</span>}
+        <ConvertToSmartArt ed={ed} />
       </Group>
       <Group label="그리기">
         <Gallery rows={3} className="rb-shape-strip">
@@ -367,6 +369,28 @@ function PasteButton({ ed, paste }: { ed: Ed; paste: () => void }) {
   );
 }
 
+/** Home › Paragraph › Convert to SmartArt: the selected text box's lines (tab or list level = SmartArt level) as a graphic. */
+function ConvertToSmartArt({ ed }: { ed: Ed }) {
+  const box = ed.selEls.length === 1 && ed.selEls[0].kind === 'text' && ed.selEls[0].text?.trim() ? ed.selEls[0] : null;
+  const convert = (kind?: string) => {
+    if (!box) return;
+    // A line's level is its leading tabs (or pairs of spaces).
+    seedSmartArt({ text: box.text ?? '', box: { x: box.x, y: box.y, w: box.w, h: Math.max(box.h, 300) }, replaceId: box.id, kind });
+    ed.setDialog('smartArt');
+  };
+  const QUICK: [string, string][] = [['list', '세로 글머리 기호 목록'], ['blockList', '기본 블록 목록'], ['process', '기본 프로세스'], ['cycle', '기본 주기형'], ['hierarchy', '계층 구조'], ['venn', '기본 벤형'], ['pyramid', '기본 피라미드형'], ['matrix', '기본 행렬형']];
+  return (
+    <DropButton icon="⧉" title="SmartArt로 변환 — 선택한 텍스트 상자의 줄을 SmartArt 그래픽으로" disabled={!box || !ed.canEdit} render={(close) => (
+      <>
+        <MenuHead>SmartArt로 변환</MenuHead>
+        {QUICK.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { convert(k); close(); }} />)}
+        <MenuSep />
+        <MenuItem label="기타 SmartArt 그래픽…" onClick={() => { convert(); close(); }} />
+      </>
+    )} />
+  );
+}
+
 const SYMBOLS = '©®™°±×÷≠≤≥∞→←↑↓↔⇒★☆♥♡♪♫✓✔✝☩✞☀☁☂☺♠♣♦•·…—–「」『』《》〈〉※§¶€£¥₩'.split('');
 const WORDART = [
   { label: '채우기: 흰색, 그림자', patch: { color: '#ffffff', shadow: true, bold: true } },
@@ -412,7 +436,12 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
       </Group>
       <Group label="이미지">
         <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*'; fileRef.current.click(); } }} />
-        <Big icon="🖼" label="사진 앨범" title="그림 여러 장으로 슬라이드를 만듭니다" disabled={!ed.p} onClick={() => ed.setDialog('photoAlbum')} />
+        <DropButton big icon="🖼" label="사진 앨범" disabled={!ed.p} split onMain={() => ed.setDialog('photoAlbum')} render={(close) => (
+          <>
+            <MenuItem label="새 사진 앨범…" onClick={() => { ed.setDialog('photoAlbum'); close(); }} />
+            <MenuItem label="사진 앨범 편집…" disabled={!ed.p?.slides.some((x) => x.album)} onClick={() => { ed.setDialog('albumEdit'); close(); }} />
+          </>
+        )} />
       </Group>
       <Group label="일러스트레이션">
         <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} />

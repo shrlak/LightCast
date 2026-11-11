@@ -276,3 +276,19 @@ describe('Review › Compare', async () => {
     expect(slides[0].elements![0].text).toBe('hello');
   });
 });
+
+describe('Photo Album', async () => {
+  const pa = await import('../src/domain/photoAlbum');
+  it('lays pictures out and rebuilds the album in place', () => {
+    const pics = ['a.jpg', 'b.jpg', 'c.jpg'].map((n) => ({ mediaId: `m-${n}`, name: n }));
+    const album = pa.albumSlides(pics, { per: 2, frame: '', titles: false, captions: true }, 'G', 'al1');
+    expect(album).toHaveLength(2);
+    expect(album[0].elements!.filter((e) => e.kind === 'text').map((e) => e.text)).toEqual(['a', 'b']);
+    const deck = [s('x'), ...album, s('y')];
+    const read = pa.readAlbum(deck, 'al1')!;
+    expect(read.pictures.map((p) => p.name)).toEqual(['a.jpg', 'b.jpg', 'c.jpg']);
+    expect(read.options.per).toBe(2);
+    const rebuilt = pa.replaceAlbum(deck, 'al1', [pics[2], pics[0]], { ...read.options, per: 1 });
+    expect(rebuilt.map((x) => (x.album ? `album:${x.elements!.find((e) => e.kind === 'image')!.name}` : x.id))).toEqual(['x', 'album:c.jpg', 'album:a.jpg', 'y']);
+  });
+});

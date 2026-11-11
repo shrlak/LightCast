@@ -395,6 +395,8 @@ export interface Slide {
   /** Review › Language for the slide's own text. */
   lang?: string;
   noProof?: boolean;
+  /** Insert › Photo Album: the album this slide belongs to (Edit Photo Album rebuilds it). */
+  album?: { id: string; per: 1 | 2 | 4; frame: string; titles: boolean; captions: boolean };
   /** The Slide Master layout this slide was made from. */
   layoutId?: string;
   /** Character formatting of the slide's own text, one list of runs per line (ignored for a line they no longer spell). */
