@@ -12,6 +12,7 @@ import type { Ed } from './editor';
 import { useRef } from 'react';
 import { withMaster } from '../../domain/master';
 import { FONT_OPTIONS } from '../../domain/fonts';
+import { customSchemeName, readThemeFile } from '../../domain/io/themeFile';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { Big, Col, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
@@ -28,7 +29,29 @@ export function DesignTab({ ed }: { ed: Ed }) {
   const lib = state.library;
   const sample = { id: 'sample', group: '', text: '가나다\nAaBb' };
   const applyBackground = (bg: Background | undefined) => p && ed.updatePres({ background: bg });
-  const schemes = colorSchemes();
+  // A scheme brought in by Browse for Themes is listed first (the engine reads its colours from its name).
+  const schemes = [...colorSchemes()];
+  const custom = p?.colorScheme?.startsWith('custom:') ? p.colorScheme : null;
+  if (custom) schemes.unshift({ name: custom, colors: custom.split('|')[1]?.split(',') ?? [] });
+  const schemeLabel = (n: string) => (n.startsWith('custom:') ? n.slice(7).split('|')[0] : n);
+  const themeFile = useRef<HTMLInputElement>(null);
+  const browseTheme = async (f: File | undefined) => {
+    if (!f || !p) return;
+    const t = await readThemeFile(f).catch(() => null);
+    if (!t) return ed.cmd.notify('이 파일에서 테마를 찾지 못했습니다');
+    const font = t.majorEa || t.major;
+    ed.updatePres({ colorScheme: customSchemeName(t), ...(font ? { slides: p.slides.map((x) => ({ ...x, style: { ...x.style, fontFamily: `"${font}", ${t.minorEa ? `"${t.minorEa}", ` : ''}sans-serif` } })) } : {}) });
+    ed.cmd.notify(`“${t.name}” 테마의 색${font ? `과 글꼴(${font})` : ''}을 적용했습니다`);
+  };
+  // Design › Variants: the theme with other colours and backgrounds.
+  const cur = p?.colorScheme ?? schemes[0]?.name ?? '';
+  const others = schemes.filter((s) => s.name !== cur);
+  const variants: { scheme: string; background: Background; label: string }[] = [
+    { scheme: cur, background: presetBackground('Black'), label: '현재 색 · 검정 배경' },
+    { scheme: cur, background: { kind: 'color', value: '#ffffff' } as Background, label: '현재 색 · 흰색 배경' },
+    { scheme: others[0]?.name ?? cur, background: { kind: 'color', value: '#1f2a44' } as Background, label: `${schemeLabel(others[0]?.name ?? '')} · 남색 배경` },
+    { scheme: others[1]?.name ?? cur, background: { kind: 'color', value: '#f2f2f2' } as Background, label: `${schemeLabel(others[1]?.name ?? '')} · 밝은 회색 배경` },
+  ];
   return (
     <>
       <Group label="테마">
@@ -40,7 +63,28 @@ export function DesignTab({ ed }: { ed: Ed }) {
             </button>
           ))}
         </Gallery>
-        <Small icon="Aa" label="테마 편집" onClick={() => ed.cmd.open('themes')} />
+        <Col>
+          <Small icon="Aa" label="테마 편집" onClick={() => ed.cmd.open('themes')} />
+          <Small icon="📂" label="테마 찾아보기…" title="PowerPoint 테마 · 서식 파일(.thmx, .potx, .pptx)의 색과 글꼴을 가져옵니다" disabled={!p || !ed.canEdit} onClick={() => themeFile.current?.click()} />
+        </Col>
+        <input ref={themeFile} type="file" accept=".thmx,.potx,.pptx,.ppsx" hidden onChange={(e) => { void browseTheme(e.target.files?.[0]); e.target.value = ''; }} />
+      </Group>
+      <Group label="변형">
+        <Gallery className="rb-variants">
+          {variants.map((v, i) => (
+            <button key={i} type="button" className="rb-theme" title={v.label} disabled={!p || !ed.canEdit} onClick={() => ed.updatePres({ colorScheme: v.scheme, background: v.background })}>
+              <SlideCanvas slide={sample} theme={lib.themes.find((t) => t.id === p?.themeId) ?? lib.themes[0]} background={v.background} />
+              <span className="variant-chip">{(schemes.find((s) => s.name === v.scheme)?.colors ?? []).slice(4, 8).map((c, k) => <i key={k} style={{ background: c }} />)}</span>
+            </button>
+          ))}
+        </Gallery>
+        <DropButton icon="✦" label="효과" title="도형 스타일의 그림자 · 입체 효과 정도" disabled={!p || !ed.canEdit} render={(close) => (
+          <>
+            {([['subtle', '미묘한 효과'], ['moderate', '보통 효과'], ['intense', '강한 효과']] as const).map(([k, l]) => (
+              <MenuItem key={k} label={l} on={(p?.themeEffects ?? 'moderate') === k} onClick={() => { ed.updatePres({ themeEffects: k === 'moderate' ? undefined : k }); close(); }} />
+            ))}
+          </>
+        )} />
       </Group>
       <Group label="적용">
         <DropButton big icon={<span style={{ fontFamily: 'serif', fontSize: 20 }}>가A</span>} label="글꼴" title="모든 슬라이드와 텍스트 상자의 테마 글꼴" disabled={!p || !ed.canEdit} render={(close) => (
@@ -58,7 +102,7 @@ export function DesignTab({ ed }: { ed: Ed }) {
         <DropButton big icon={<span className="scheme-chip">{(schemes.find((s) => s.name === p?.colorScheme) ?? schemes[0])?.colors.slice(4, 8).map((c) => <i key={c} style={{ background: c }} />)}</span>} label="색" title="표 · 차트 · 도형 스타일 · 색 선택에 쓰는 테마 색" disabled={!p || !ed.canEdit} render={(close) => (
           <>
             {schemes.map((s) => (
-              <MenuItem key={s.name} on={(p?.colorScheme ?? schemes[0]?.name) === s.name} label={<span className="scheme-row"><span className="scheme-chip">{s.colors.slice(4, 10).map((c, i) => <i key={i} style={{ background: c }} />)}</span>{s.name}</span>} onClick={() => { ed.updatePres({ colorScheme: s.name }); close(); }} />
+              <MenuItem key={s.name} on={(p?.colorScheme ?? schemes[0]?.name) === s.name} label={<span className="scheme-row"><span className="scheme-chip">{s.colors.slice(4, 10).map((c, i) => <i key={i} style={{ background: c }} />)}</span>{schemeLabel(s.name)}</span>} onClick={() => { ed.updatePres({ colorScheme: s.name }); close(); }} />
             ))}
           </>
         )} />

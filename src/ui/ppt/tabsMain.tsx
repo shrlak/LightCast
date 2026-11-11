@@ -136,7 +136,13 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
           <div className="quick-style-grid">
             {styles.map((s) => (
               <button key={`${s.row}-${s.col}`} type="button" className="quick-style" title={s.label} style={{ background: s.gradient ? `linear-gradient(${s.gradient[0]}, ${s.gradient[1]})` : s.fill, border: s.stroke ? `2px solid ${s.stroke}` : '2px solid transparent', color: s.text, boxShadow: s.shadow ? '0 3px 6px rgba(0,0,0,.35)' : undefined }}
-                onClick={() => { set({ fill: s.fill, stroke: s.stroke ?? undefined, strokeWidth: s.stroke ? 3 : undefined, gradient: s.gradient, gradientAngle: s.gradient ? 90 : undefined, dropShadow: s.shadow || undefined, color: s.text }); close(); }}>Abc</button>
+                onClick={() => {
+                  // Design › Effects: subtle drops the styles' shadows, intense adds a bevel and a deeper shadow.
+                  const fx = ed.p?.themeEffects ?? 'moderate';
+                  const shadow = fx === 'subtle' ? false : fx === 'intense' ? s.shadow || s.row >= 3 : s.shadow;
+                  set({ fill: s.fill, stroke: s.stroke ?? undefined, strokeWidth: s.stroke ? 3 : undefined, gradient: s.gradient, gradientAngle: s.gradient ? 90 : undefined, dropShadow: shadow || undefined, shadowKind: shadow && fx === 'intense' ? 'perspective' : undefined, bevel: fx === 'intense' && s.row >= 3 ? true : undefined, color: s.text });
+                  close();
+                }}>Abc</button>
             ))}
           </div>
         </>

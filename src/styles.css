@@ -1866,3 +1866,6 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .master-thumb.on { border-color: #c43e1c; }
 .master-sep { width: 1px; height: 22px; background: #c8c6c4; }
 .master-stage { flex-direction: column; gap: 6px; }
+.rb-variants .rb-theme { position: relative; }
+.variant-chip { position: absolute; left: 4px; right: 4px; bottom: 3px; display: flex; height: 5px; }
+.variant-chip i { flex: 1; }

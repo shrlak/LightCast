@@ -314,3 +314,10 @@ fn text_warp_guides_and_smooth_corners() {
     let sq = ok(json!({"op": "shape.smoothCorners", "w": 200.0, "h": 100.0, "smoothing": 0.6}));
     assert!(sq["path"].as_str().unwrap().contains('C'));
 }
+
+#[test]
+fn a_custom_scheme_from_a_theme_file_is_used() {
+    let s = crate::color::scheme_named(Some("custom:Church|#000000,#ffffff,#1f2a44,#e7e6e6,#c00000,#ed7d31,#a5a5a5,#ffc000,#5b9bd5,#70ad47,#0563c1,#954f72"));
+    assert_eq!(s.name, "Church");
+    assert_eq!(crate::color::hex(s.colors[4]).to_lowercase(), "#c00000");
+}

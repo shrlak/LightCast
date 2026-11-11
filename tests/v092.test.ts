@@ -225,3 +225,19 @@ describe('Slide Master layouts', async () => {
     expect(m.makePlaceholder('picture').kind).toBe('shape');
   });
 });
+
+describe('Browse for Themes', async () => {
+  const tf = await import('../src/domain/io/themeFile');
+  const { colorPalette } = await import('../src/engine');
+  it("reads a theme's colours and fonts and the engine uses them", () => {
+    const slot = (n: string, v: string) => `<a:${n}><a:srgbClr val="${v}"/></a:${n}>`;
+    const xml = `<a:theme name="Church"><a:themeElements><a:clrScheme name="Church"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1><a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1>${slot('dk2', '1F2A44')}${slot('lt2', 'E7E6E6')}${slot('accent1', 'C00000')}${slot('accent2', 'ED7D31')}${slot('accent3', 'A5A5A5')}${slot('accent4', 'FFC000')}${slot('accent5', '5B9BD5')}${slot('accent6', '70AD47')}${slot('hlink', '0563C1')}${slot('folHlink', '954F72')}</a:clrScheme><a:fontScheme name="F"><a:majorFont><a:latin typeface="Georgia"/><a:ea typeface="바탕"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/></a:minorFont></a:fontScheme></a:themeElements></a:theme>`;
+    const t = tf.parseThemeXml(xml)!;
+    expect(t.name).toBe('Church');
+    expect(t.colors[0]).toBe('#000000');
+    expect(t.colors[4]).toBe('#c00000');
+    expect([t.major, t.majorEa, t.minor, t.minorEa]).toEqual(['Georgia', '바탕', 'Calibri', undefined]);
+    const pal = colorPalette(tf.customSchemeName(t));
+    expect(JSON.stringify(pal).toLowerCase()).toContain('#c00000');
+  });
+});

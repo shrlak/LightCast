@@ -494,6 +494,8 @@ export interface Presentation {
   customShows?: { id: string; name: string; slideIds: string[] }[];
   /** View › Guides the user placed (canvas pixels). */
   guides?: { v: number[]; h: number[] };
+  /** Design › Variants › Effects: how strong the shape styles' shadows and bevels are. */
+  themeEffects?: 'subtle' | 'moderate' | 'intense';
   /** View › Handout Master: how handouts print. */
   handoutMaster?: HandoutMaster;
   /** View › Notes Master: what notes pages show. */
