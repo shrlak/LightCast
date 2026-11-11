@@ -10,7 +10,7 @@ import { formatClock, timerValue } from '../domain/timers';
 import { isDecoded, preloadImage, useMediaUrl, useNow, useReadyImage, useWidth } from './hooks';
 import { mediaUrl, peekMediaUrl } from '../domain/media';
 import { MotionLayer } from './MotionLayer';
-import { AnimatedElements, FxTransition } from './ShowEffects';
+import { AnimatedElements, FxTransition, ParagraphBuild } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
 import { shapeGeometry } from '../engine';
 import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform } from './EngineElements';
@@ -339,12 +339,14 @@ function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
 }
 
 function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
+  // Built by paragraph (Effect Options › 단락별로): every line its own element, so it can animate alone.
+  const byPara = useContext(ParagraphBuild);
   if (el.warp && el.text) return <WarpText el={el} box={box} />;
   const base = el.fontSize ?? 64;
   const lines = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
   const markers = listMarkers(lines, el.list);
   const runs = lineRuns(el);
-  const styled = !!(el.list || el.highlight || runs.some(Boolean));
+  const styled = !!(el.list || el.highlight || runs.some(Boolean)) || byPara;
   const lineBody = (text: string, i: number) => (
     <ListLine marker={markers[i]} highlight={text.trim() ? el.highlight : undefined}>
       {runs[i] ? runs[i]!.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(text) ? <DynamicText text={text} /> : text}
@@ -367,14 +369,14 @@ function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
     }} className={el.spaceBefore || el.spaceAfter ? 'para-spaced' : undefined}>
       {el.paragraphs
         ? el.paragraphs.map((p, i) => (
-            <div key={i} style={{
+            <div key={i} data-para={i} style={{
               fontSize: (p.fontSize ?? base), fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
               color: p.color, textAlign: p.align, minHeight: '1.2em', flexShrink: 0,
             }}>
               {lineBody(p.text, i)}
             </div>
           ))
-        : styled ? lines.map((l, i) => <div key={i}>{l ? lineBody(l, i) : '\u00a0'}</div>)
+        : styled ? lines.map((l, i) => <div key={i} data-para={i}>{l ? lineBody(l, i) : '\u00a0'}</div>)
           : el.text && TOKEN.test(el.text) ? <DynamicText text={el.text} /> : el.text}
     </div>
   );

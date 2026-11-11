@@ -3,8 +3,8 @@
 // when no step is left the click goes on to the next slide. The timeline itself — which effect is in
 // which step, how long each step runs, what every object looks like at a moment — comes from the
 // engine (DeckCraft's timeline).
-import type { Slide, SlideElement } from './types';
-import { prepareTimeline, sampleTimeline, type AnimSpec, type AnimState, type PreparedTimeline } from '../engine';
+import type { Slide, SlideAnimation, SlideElement } from './types';
+import { prepareTimeline, sampleTimeline, type AnimPara, type AnimSpec, type AnimState, type PreparedTimeline } from '../engine';
 
 /** Where a slide's builds are while it is on screen. */
 export interface LiveBuild {
@@ -16,12 +16,34 @@ export interface LiveBuild {
   all?: boolean;
 }
 
+/** The paragraphs (lines) of an object's text, as its text box or shape draws them. */
+export const textParagraphs = (el: SlideElement): string[] => (el.paragraphs ? el.paragraphs.map((p) => p.text) : el.text ? el.text.split('\n') : []);
+
+/** Can the object be built paragraph by paragraph (Effect Options › 순서)? A text box or a shape with text. */
+export const canBuildByParagraph = (el: SlideElement | undefined): boolean =>
+  !!el && (el.kind === 'text' || el.kind === 'shape') && !el.warp && textParagraphs(el).some((l) => l.trim());
+
+/** Outline level and text of each paragraph: leading tabs are the level, as in PowerPoint's outline. */
+export const paragraphLevels = (el: SlideElement): AnimPara[] =>
+  textParagraphs(el).map((l) => ({ level: Math.min(8, /^\t*/.exec(l)![0].length), filled: !!l.trim() }));
+
+/** Does this effect build its object paragraph by paragraph? (Motion paths move the whole object.) */
+export const byParagraph = (a: SlideAnimation, el: SlideElement | undefined) => a.sequence === 'paragraph' && a.class !== 'path' && canBuildByParagraph(el);
+
+/** The animations the timeline plays: those whose object is on the slide and shown. */
+const playedAnimations = (slide: Slide, elements: SlideElement[]) => (slide.animations ?? []).filter((a) => elements.some((e) => e.id === a.elementId && !e.hidden));
+
 export function animSpec(slide: Slide, elements: SlideElement[] = slide.elements ?? []): AnimSpec | null {
-  const anims = (slide.animations ?? []).filter((a) => elements.some((e) => e.id === a.elementId && !e.hidden));
+  const anims = playedAnimations(slide, elements);
   if (!anims.length) return null;
+  const byId = new Map(elements.map((e) => [e.id, e]));
+  const paraIds = new Set(anims.filter((a) => byParagraph(a, byId.get(a.elementId))).map((a) => a.elementId));
   return {
-    anims: anims.map((a) => ({ elementId: a.elementId, effect: a.effect, class: a.class, option: a.option ?? '', start: a.start, durationMs: a.durationMs, delayMs: a.delayMs, repeat: a.repeat ?? 1 })),
-    boxes: elements.map((e) => ({ id: e.id, x: e.x, y: e.y, w: e.w, h: e.h, rot: e.rotation ?? 0 })),
+    anims: anims.map((a) => ({
+      elementId: a.elementId, effect: a.effect, class: a.class, option: a.option ?? '', start: a.start, durationMs: a.durationMs, delayMs: a.delayMs, repeat: a.repeat ?? 1,
+      ...(byParagraph(a, byId.get(a.elementId)) ? { sequence: 'paragraph' as const } : {}),
+    })),
+    boxes: elements.map((e) => ({ id: e.id, x: e.x, y: e.y, w: e.w, h: e.h, rot: e.rotation ?? 0, ...(paraIds.has(e.id) ? { paras: paragraphLevels(e) } : {}) })),
   };
 }
 
@@ -85,6 +107,25 @@ export function animationBadges(slide: Slide): Record<string, number[]> {
   for (const e of tl.effects) {
     const n = tl.auto[0] ? e.step : e.step + 1;
     (out[e.elementId] ??= []).includes(n) || out[e.elementId].push(n);
+  }
+  return out;
+}
+
+/**
+ * The click numbers of each animation (by id), one per paragraph step of a by-paragraph build, for
+ * the Animation Pane (0 = starts with the slide). `paragraphs` lists which paragraph each one builds.
+ */
+export function animationClicks(slide: Slide): Record<string, { clicks: number[]; paragraphs: (number | null)[] }> {
+  const tl = slideTimeline(slide);
+  const out: Record<string, { clicks: number[]; paragraphs: (number | null)[] }> = {};
+  if (!tl) return out;
+  const anims = playedAnimations(slide, slide.elements ?? []);
+  for (const e of tl.effects) {
+    const a = anims[e.index];
+    if (!a) continue;
+    const r = (out[a.id] ??= { clicks: [], paragraphs: [] });
+    r.clicks.push(tl.auto[0] ? e.step : e.step + 1);
+    r.paragraphs.push(e.paragraph);
   }
   return out;
 }

@@ -152,9 +152,12 @@ export type AnimClass = 'entrance' | 'emphasis' | 'exit' | 'path';
 export interface AnimEffectInfo { id: string; label: string; class: AnimClass; durationMs: number; options: string[] }
 export const animationCatalog = () => (once('anims', () => engineCall<AnimEffectInfo[]>('anim.catalog')) as AnimEffectInfo[] | null) ?? [];
 export interface AnimSpec {
-  anims: { elementId: string; effect: string; class: AnimClass; option?: string; start: 'click' | 'with' | 'after'; durationMs: number; delayMs: number; repeat?: number }[];
-  boxes: EBox[];
+  /** `sequence: 'paragraph'`: a by-paragraph build (DeckCraft's TextBuild::ByParagraph). */
+  anims: { elementId: string; effect: string; class: AnimClass; option?: string; start: 'click' | 'with' | 'after'; durationMs: number; delayMs: number; repeat?: number; sequence?: 'one' | 'paragraph' }[];
+  /** `paras`: the paragraphs (outline level, shows text) of an object built by paragraph. */
+  boxes: (EBox & { paras?: AnimPara[] })[];
 }
+export interface AnimPara { level: number; filled: boolean }
 export interface PreparedTimeline {
   key: string;
   /** Click steps. */
@@ -164,10 +167,12 @@ export interface PreparedTimeline {
   /** Seconds each step plays. */
   durations: number[];
   total: number;
-  effects: { index: number; elementId: string; step: number; start: number; duration: number; span: number; class: AnimClass }[];
+  /** Every (sub-)effect; `paragraph` is set for each paragraph of a by-paragraph build. */
+  effects: { index: number; elementId: string; paragraph: number | null; step: number; start: number; duration: number; span: number; class: AnimClass }[];
 }
 export interface AnimState { visible: boolean; opacity: number; dx: number; dy: number; sx: number; sy: number; rotate: number; clip: [number, number, number, number] | null; tint: string | null }
 export const prepareTimeline = (spec: AnimSpec) => engineCall<PreparedTimeline>('anim.prepare', { ...spec, ...SLIDE });
+/** States by element id, and by `elementId#paragraph` for the paragraphs of a by-paragraph build. */
 export const sampleTimeline = (spec: AnimSpec, step: number, t: number) => engineCall<Record<string, AnimState>>('anim.sample', { spec: { ...spec, ...SLIDE }, step, t });
 
 // ── Transitions ───────────────────────────────────────────────────────────────────────────────

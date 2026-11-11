@@ -325,6 +325,11 @@ export interface SlideAnimation {
   durationMs: number;
   delayMs: number;
   repeat?: number;
+  /**
+   * Effect Options › 순서, for objects with text: 하나의 개체로 (default) or 단락별로 — each
+   * first-level paragraph its own step, deeper paragraphs going with the one above them.
+   */
+  sequence?: 'one' | 'paragraph';
 }
 
 /** A review comment on a slide (Review › New Comment). */
