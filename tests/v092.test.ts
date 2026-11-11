@@ -111,3 +111,22 @@ describe('Edit Points operations', async () => {
     expect(nearest?.seg).toBe(1);
   });
 });
+
+describe('Korean shape names', async () => {
+  const { shapeCatalog } = await import('../src/engine');
+  const { shapeLabel } = await import('../src/ui/ppt/ko');
+  it('names every preset shape in Korean', () => {
+    expect(shapeCatalog().filter((s) => shapeLabel(s.name, '') === '').map((s) => s.name)).toEqual([]);
+  });
+});
+
+describe('Korean animation and transition names', async () => {
+  const { animationCatalog, transitionCatalog } = await import('../src/engine');
+  const { ANIMATION, TRANSITION, optionLabel, animOptionLabel } = await import('../src/ui/ppt/ko');
+  it('names every effect and option in Korean', () => {
+    expect(animationCatalog().filter((e) => !ANIMATION[e.id]).map((e) => e.id)).toEqual([]);
+    expect(transitionCatalog().filter((e) => !TRANSITION[e.id]).map((e) => e.id)).toEqual([]);
+    expect([...new Set(animationCatalog().flatMap((e) => e.options).filter((o) => animOptionLabel(o) === o))]).toEqual([]);
+    expect([...new Set(transitionCatalog().flatMap((e) => e.options.map((o) => o.label)).filter((l) => /[A-Za-z]/.test(optionLabel(l))))]).toEqual([]);
+  });
+});
