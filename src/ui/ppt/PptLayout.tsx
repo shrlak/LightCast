@@ -66,7 +66,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [sel, setSel] = useState<string[]>([]);
   const [tool, setTool] = useState<CanvasTool | null>(null);
   const [view, setView] = useState<ViewOptions>({});
-  const [pane, setPane] = useState<TaskPane>('format');
+  const [pane, setPane] = useState<TaskPane>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);

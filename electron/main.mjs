@@ -134,7 +134,7 @@ function showSplash() {
   const height = Math.round(Math.min(sh * 0.82, width * 0.6));
   splashWindow = new BrowserWindow({
     width, height, frame: false, resizable: false, center: true, show: false,
-    backgroundColor: '#ffffff', alwaysOnTop: true, skipTaskbar: true, roundedCorners: true,
+    backgroundColor: '#030805', alwaysOnTop: true, skipTaskbar: true, roundedCorners: true,
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   splashWindow.loadFile(path.join(here, 'splash.html'));
