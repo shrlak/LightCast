@@ -4,7 +4,9 @@ export type LiveMessage =
   | { type: 'state'; state: LiveState }
   | { type: 'hello' }
   /** A key pressed on a fullscreen output window — the console handles it as if pressed there. */
-  | { type: 'key'; key: string; shiftKey: boolean };
+  | { type: 'key'; key: string; shiftKey: boolean }
+  /** An object with an action (Action Settings, slide zoom) was clicked on an output window. */
+  | { type: 'show'; action: import('./showActions').ShowAction };
 
 const CHANNEL = 'freecast-live';
 

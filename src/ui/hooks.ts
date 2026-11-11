@@ -1,3 +1,4 @@
+import type { ShowAction } from '../domain/showActions';
 import { connectionQuality } from '../domain/connectionQuality';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { LiveState } from '../domain/types';
@@ -189,14 +190,17 @@ export function useRelay(hello: Record<string, unknown> | null, onMessage: (m: R
 }
 
 /** Operator side: publish live state to output/stage windows (same computer) and the relay (other devices). */
-export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => void) {
+export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => void, onShowAction?: (a: ShowAction) => void) {
   const latest = useRef(live);
+  const onShow = useRef(onShowAction);
+  onShow.current = onShowAction;
   const channel = useRef<ReturnType<typeof openLiveChannel> | null>(null);
   useEffect(() => {
     channel.current = openLiveChannel((m) => {
       if (m.type === 'hello') channel.current?.post({ type: 'state', state: latest.current });
       // A slide show covering this very screen still answers to the arrow keys, Space and Esc.
       if (m.type === 'key') window.dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: m.shiftKey, cancelable: true }));
+      if (m.type === 'show') onShow.current?.(m.action);
     });
     return () => channel.current?.close();
   }, []);

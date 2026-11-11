@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import type { Presentation, Slide, SlideElement } from '../../domain/types';
 import { CANVAS_W } from '../../domain/canvas';
+import { actionAt } from '../../domain/showActions';
+export { actionAt };
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
 import { findText, replaceText, type TextItem } from '../../engine';
@@ -158,12 +160,6 @@ export function SlideSorter({ ed }: { ed: Ed }) {
 
 // ── Reading view and previews ─────────────────────────────────────────────────────────────────
 /** 읽기용 보기: the slide show inside the window, with transitions and animations, without sending anything to the screens. */
-/** The object with a click action (Action Settings, a link or a slide zoom) under a canvas point. */
-export function actionAt(slide: Slide | null, x: number, y: number): SlideElement | null {
-  const els = [...(slide?.elements ?? [])].reverse();
-  return els.find((e) => !e.hidden && (e.action || e.href || (e.kind === 'zoom' && e.targetSlideId)) && x >= e.x && x <= e.x + e.w && y >= e.y && y <= e.y + Math.max(e.h, 1)) ?? null;
-}
-
 /**
  * Reading view: the slide show in a window — click or the arrow keys to advance, objects with an
  * action (Action Settings, links, slide zooms) do what they say. With `ids` it plays a custom show;

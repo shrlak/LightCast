@@ -12,6 +12,7 @@ import { sequence } from './arrangement';
 import { deleteSlides, deleteSlidesAt, editSlide, editSlideAt } from './slideEditing';
 import { centerAddedLyricSlides, centerSongLyrics } from './songCentering';
 import { preservePdfPages } from './importedSlides';
+import { refreshZooms } from './zoomRefresh';
 import { prepareAnnouncementSizing } from './announcementSizing';
 import { blockedProtectedAction, isProtected, keepProtectedMaterials, protectionWinners, mergeProtectionChanges } from './materialProtection';
 import { uid } from './lyrics';
@@ -296,7 +297,7 @@ function core(s: AppState, a: Action): AppState {
       // Editing an online song makes it this computer's own copy (saved locally from then on).
       return refreshLive(mapPres(s, a.id, (p) => {
         const next = { ...p, ...a.patch, protected: p.protected, protectionChangedAt: p.protectionChangedAt, ...(a.patch.slides ? { slides: preservePdfPages(p.slides, a.patch.slides) } : {}), online: undefined };
-        return a.patch.slides ? centerAddedLyricSlides(p, next) : next;
+        return refreshZooms(a.patch.slides ? centerAddedLyricSlides(p, next) : next);
       }), a.id);
     case 'presentation/protect': {
       const p = findPres(lib, a.id);
@@ -349,7 +350,7 @@ function core(s: AppState, a: Action): AppState {
         // A delayed canvas save must not overwrite the page that moved into a deleted row.
         if (!target || (a.sequenceLength != null && a.sequenceLength !== pages.length) || (target.id !== a.slideId && target.sourceSlideId !== a.slideId)) return s;
       }
-      return refreshLive(mapPres(s, a.presentationId, (p) => a.seq == null ? editSlide(p, a.slideId, a.patch, a.occurredAt ?? Date.now()) : editSlideAt(p, a.seq, a.patch, a.occurredAt ?? Date.now())), a.presentationId);
+      return refreshLive(mapPres(s, a.presentationId, (p) => refreshZooms(a.seq == null ? editSlide(p, a.slideId, a.patch, a.occurredAt ?? Date.now()) : editSlideAt(p, a.seq, a.patch, a.occurredAt ?? Date.now()))), a.presentationId);
     }
     case 'slide/delete': {
       let next = mapPres(s, a.presentationId, (p) => a.seqs ? deleteSlidesAt(p, a.seqs, a.occurredAt ?? Date.now()) : deleteSlides(p, a.slideIds, a.occurredAt ?? Date.now()));
