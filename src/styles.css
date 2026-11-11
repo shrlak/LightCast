@@ -1742,3 +1742,9 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .ce-frame.crop { border: 2px solid #000; }
 .ce-frame.crop .ce-h { border-radius: 0; background: #000; border-color: #fff; width: 12px; height: 12px; margin: -6px 0 0 -6px; }
 .ce-root.tool-freeform, .ce-root.tool-crop { cursor: crosshair; }
+.ce-root.tool-eyedrop { cursor: crosshair; }
+.pic-style-grid { display: grid; grid-template-columns: repeat(5, 64px); gap: 6px; padding: 6px 10px; }
+.pic-style { width: 64px; height: 48px; padding: 0 !important; border: 1px solid transparent !important; background: #f3f2f1 !important; display: grid; place-items: center; }
+.pic-style:hover, .pic-style.on { border-color: var(--pp) !important; }
+.pic-style span { width: 40px; height: 30px; background: linear-gradient(135deg, #8fb7e8, #2e6fd8); display: block; }
+.adj-grid { display: grid; grid-template-columns: repeat(5, auto); gap: 4px; padding: 6px 10px; }

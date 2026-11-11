@@ -12,6 +12,7 @@ import { mediaUrl, peekMediaUrl } from '../domain/media';
 import { MotionLayer } from './MotionLayer';
 import { AnimatedElements, FxTransition } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
+import { shapeGeometry } from '../engine';
 import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform } from './EngineElements';
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
@@ -278,7 +279,8 @@ export function ElementView({ el }: { el: SlideElement }) {
   // While a picture is still loading nothing is drawn (a placeholder box would flash); the slide waits for it, see useReadySlide.
   if (el.kind === 'image') {
     if (!url) return null;
-    const style = { ...box, ...pictureStyleCss(el.pictureStyle), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px solid ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}) };
+    const mask = el.maskShape ? shapeGeometry(el.maskShape, el.w, el.h)?.paths.map((q) => q.d).join(' ') : undefined;
+    const style = { ...box, ...pictureStyleCss(el.pictureStyle), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px solid ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}), ...(mask ? { clipPath: `path('${mask}')` } : {}) };
     const c = el.crop;
     if (!c || c.every((v) => !v)) return <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ ...style, objectFit: el.fit ?? 'contain' }} />;
     // Cropped: the picture stretched so its kept part fills the box.

@@ -281,6 +281,8 @@ export interface SlideElement {
   picture?: PictureAdjust;
   /** Picture Styles preset. */
   pictureStyle?: string;
+  /** Picture Format › Crop › Crop to Shape: the preset the picture is cut to. */
+  maskShape?: string;
   playback?: MediaPlayback;
   action?: ElementAction;
   /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */

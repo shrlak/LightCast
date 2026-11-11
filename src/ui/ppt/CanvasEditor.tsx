@@ -36,7 +36,9 @@ export type CanvasTool =
   /** Picture Format › Crop: the handles cut the picture instead of scaling it. */
   | { kind: 'crop'; id: string }
   /** Shape Format › Edit Shape › Edit Points. */
-  | { kind: 'points'; id: string };
+  | { kind: 'points'; id: string }
+  /** Picture Format › Color › Set Transparent Color: the next click on the picture picks the colour. */
+  | { kind: 'eyedrop'; id: string; onPick: (fx: number, fy: number) => void };
 
 export interface ViewOptions {
   /** 눈금선: draw the grid and snap to it. */
@@ -253,6 +255,18 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       if (pts.length > 2 && Math.hypot(pts[0][0] - x, pts[0][1] - y) < 14 / k) { finishFreeform(pts, true); return; }
       setFreePts([...pts, [x, y]]);
       drag.current = { mode: 'ink', points: [[x, y]] };
+      return;
+    }
+    if (tool?.kind === 'eyedrop') {
+      const el = elOf(tool.id);
+      if (el) {
+        const [lx, ly] = toLocal(el, x, y);
+        if (lx >= 0 && ly >= 0 && lx <= el.w && ly <= el.h) {
+          const c = el.crop ?? [0, 0, 0, 0];
+          tool.onPick(c[0] + (lx / el.w) * (1 - c[0] - c[2]), c[1] + (ly / el.h) * (1 - c[1] - c[3]));
+        }
+      }
+      onToolDone?.();
       return;
     }
     if (tool?.kind === 'points') {
