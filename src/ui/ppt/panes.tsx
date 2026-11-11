@@ -5,7 +5,7 @@ import { uid } from '../../domain/lyrics';
 import { getDevice } from '../../domain/device';
 import { loadSession } from '../../domain/cloud';
 import { orderSelection, moveAnimation } from '../../domain/editOps';
-import { slideTimeline } from '../../domain/animations';
+import { animationClicks, slideTimeline, textParagraphs } from '../../domain/animations';
 import { contrastRatio } from '../../engine';
 import { resolveBackground } from '../../domain/autoBackground';
 import { slideTheme } from '../SlideCanvas';
@@ -28,7 +28,8 @@ export function AnimationPane({ ed, onPlay }: { ed: Ed; onPlay: () => void }) {
   const els = ed.elements;
   const set = (animations: SlideAnimation[]) => ed.updateSlide({ animations: animations.length ? animations : undefined });
   const [picked, setPicked] = useState<string | null>(null);
-  let click = tl?.auto[0] ? -1 : 0;
+  // Click numbers from the timeline, so each paragraph of a 단락별로 build counts as its own click.
+  const clicks = slide ? animationClicks(slide) : {};
   return (
     <div className="task-pane">
       <PaneHead title="애니메이션 창" onClose={() => ed.setPane(null)} />
@@ -43,18 +44,27 @@ export function AnimationPane({ ed, onPlay }: { ed: Ed; onPlay: () => void }) {
         {list.map((a) => {
           const el = els.find((e) => e.id === a.elementId);
           const i = els.findIndex((e) => e.id === a.elementId);
-          if (a.start === 'click') click++;
-          return (
+          const c = clicks[a.id];
+          const paras = c && c.paragraphs.some((p) => p !== null) && el ? textParagraphs(el) : null;
+          return [
             <li key={a.id} className={picked === a.id ? 'on' : ''} onClick={() => { setPicked(a.id); if (el) ed.setSel([el.id]); }}>
-              <span className="anim-num">{a.start === 'click' ? Math.max(0, click) : ''}</span>
+              <span className="anim-num">{a.start === 'click' && c ? c.clicks[0] : ''}</span>
               <span className="anim-ico" style={{ color: COLORS[a.class] }}>{a.start === 'click' ? '🖱' : a.start === 'with' ? '' : '⏱'}★</span>
               <span className="anim-name">{el ? elementName(el, i) : '(지운 개체)'}<small>{ANIMATION[a.effect] ?? a.effect} · {ANIMATION_START[a.start]} · {(a.durationMs / 1000).toFixed(2)}초</small></span>
               <select value={a.start} onClick={(e) => e.stopPropagation()} onChange={(e) => set(list.map((x) => (x.id === a.id ? { ...x, start: e.target.value as SlideAnimation['start'] } : x)))}>
                 {(['click', 'with', 'after'] as const).map((s) => <option key={s} value={s}>{ANIMATION_START[s]}</option>)}
               </select>
               <button type="button" className="task-x" title="제거" onClick={(e) => { e.stopPropagation(); set(list.filter((x) => x.id !== a.id)); }}>✕</button>
-            </li>
-          );
+            </li>,
+            // 단락별로: a line per paragraph step under the effect, with its own click number.
+            ...(paras && c ? c.paragraphs.map((p, k) => (
+              <li key={`${a.id}#${k}`} className={`anim-sub ${picked === a.id ? 'on' : ''}`} onClick={() => { setPicked(a.id); if (el) ed.setSel([el.id]); }}>
+                <span className="anim-num">{a.start === 'click' ? c.clicks[k] : ''}</span>
+                <span className="anim-ico" style={{ color: COLORS[a.class] }}>{a.start === 'click' ? '🖱' : ''}</span>
+                <span className="anim-name">{(paras[p ?? 0] ?? '').trim().slice(0, 30) || '\u00a0'}</span>
+              </li>
+            )) : []),
+          ];
         })}
       </ol>
       {tl && <p className="task-foot">클릭 {tl.auto[0] ? tl.steps - 1 : tl.steps}번 · 총 {tl.total.toFixed(1)}초</p>}

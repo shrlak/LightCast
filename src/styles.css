@@ -1800,3 +1800,7 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .master-stage > * { width: min(100%, calc((100vh - 120px) * 4 / 3)); }
 .rehearse-clock { font-variant-numeric: tabular-nums; font-weight: 600; }
 @media (max-width: 600px) { .smartart-dlg { grid-template-columns: 1fr; } .smartart-layouts { max-height: 140px; } }
+
+/* Animation Pane: the paragraph steps of a 단락별로 build, under their effect. */
+.anim-list li.anim-sub { padding-top: 2px; padding-bottom: 2px; font-size: 11.5px; }
+.anim-list li.anim-sub .anim-name { padding-left: 14px; color: #605e5c; white-space: nowrap; text-overflow: ellipsis; }
