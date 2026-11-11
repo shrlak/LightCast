@@ -20,5 +20,13 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The PowerPoint engine is Rust (engine/): test it, then rebuild the WebAssembly module the app
+      # loads, so the JavaScript tests below run against the engine built from this commit's source.
+      - name: Rust engine tests
+        run: |
+          rustup update stable --no-self-update && rustup default stable
+          rustup target add wasm32-unknown-unknown
+          cargo test --manifest-path engine/Cargo.toml -p freecast-engine
+      - run: npm run engine
       - run: npm test
       - run: npm run build
