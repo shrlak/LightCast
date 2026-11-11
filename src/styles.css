@@ -1132,11 +1132,6 @@ body[data-view='remote'] .pastor-root { position: fixed; inset: 0; z-index: 5; }
 .follow-dock header { display: flex; align-items: center; justify-content: space-between; }
 .follow-dock .follow-heard { margin: 0; min-height: 2.6em; font-size: 13px; color: var(--muted); word-break: break-all; }
 .app-ppt .follow-dock { background: #fff; color: #222; }
-.standby-bar { position: fixed; top: 0; left: 0; right: 0; z-index: 60; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 4px 10px; background: #1f6f4a; color: #fff; font-size: 13px; }
-.standby-bar.lost { background: #b3261e; animation: standby-blink 1s steps(2, start) infinite; }
-.standby-bar .link { background: none; border: 0; color: inherit; cursor: pointer; font: inherit; }
-@keyframes standby-blink { 50% { filter: brightness(1.35); } }
-.safe-badge { position: fixed; left: 12px; bottom: 44px; z-index: 40; padding: 4px 10px; border-radius: 999px; border: 1px solid #1f6f4a; background: #e6f4ec; color: #14532d; font-size: 12px; cursor: pointer; }
 
 /* ================= Design refresh: calmer surfaces, rounder controls, clearer hierarchy ================= */
 .app-ppt {

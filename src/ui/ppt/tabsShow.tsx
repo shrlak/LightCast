@@ -1,7 +1,6 @@
 // 디자인 · 전환 · 애니메이션 tabs.
 import type { Background, SlideAnimation, Transition } from '../../domain/types';
 import { BACKGROUND_PRESETS, presetBackground } from '../../domain/defaults';
-import { MOTION_PRESETS } from '../../domain/motion';
 import { swatchStyle } from '../backgroundSwatch';
 import { SlideCanvas, assetUrl } from '../SlideCanvas';
 import { useMediaUrl } from '../hooks';
@@ -114,7 +113,6 @@ export function DesignTab({ ed }: { ed: Ed }) {
               {b.background.kind === 'image' ? <img className="rb-swatch-fill" src={assetUrl(b.background.url)} alt="" /> : <span className="rb-swatch-fill" style={swatchStyle(b.background)} />}
             </button>
           ))}
-          {MOTION_PRESETS.map((b) => <button key={b.name} type="button" className="rb-swatch" title={b.name} disabled={!p || !ed.canEdit} onClick={() => applyBackground(b.background)}><span className="rb-swatch-fill" style={swatchStyle(b.background)} /></button>)}
           {lib.media.filter((m) => m.type !== 'audio' && !m.backgroundHidden).map((m) => (
             <button key={m.id} type="button" className="rb-swatch" title={m.name} disabled={!p || !ed.canEdit} onClick={() => applyBackground({ kind: 'media', mediaId: m.id, mediaType: m.type === 'video' ? 'video' : 'image' })}><MediaSwatch id={m.id} video={m.type === 'video'} /></button>
           ))}

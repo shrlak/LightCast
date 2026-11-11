@@ -44,8 +44,6 @@ export interface Commands {
   /** This week's 주일예배: uploads go straight into it. */
   service: ServiceUploads;
   /** 🛡 안전 모드, 💻 대기 컴퓨터, 🎙 가사 따라가기 are on. */
-  safeModeOn: boolean;
-  standbyOn: boolean;
   followOn: boolean;
   /** 실험 기능 turned on in 설정 → 일반. */
   templateMarket: boolean;

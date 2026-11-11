@@ -175,11 +175,6 @@ export function WorshipTab({ ed }: { ed: Ed }) {
             <Big icon="☁" label={cmd.online.status === 'ok' ? `찬양 ${cmd.online.count}곡` : '찬양 라이브러리'} title="찬양 라이브러리 보기 · 편집 · 삭제" onClick={() => cmd.open('songLibrary')} />
             <Big icon="🎼" label="코드 · 키 악보" title="곡마다 키·BPM·코드를 보고, 키를 옮기고, 밴드용으로 인쇄합니다" onClick={() => cmd.open('chords')} />
           </Group>
-          <Group label="예배 전">
-            <Big icon="☑" label="준비 · 점검" title="준비 체크리스트와 예배 시작 전 자동 점검 (누락 파일 · 빈 슬라이드 · 발표 화면)" onClick={() => cmd.open('preparation')} />
-            <Big icon="🛡" label={cmd.safeModeOn ? '안전 모드 켜짐' : '안전 모드'} active={cmd.safeModeOn} title="예배 자료를 이 컴퓨터에 모두 받아 두고 위험한 변경을 막습니다" onClick={() => cmd.open('safeMode')} />
-            <Big icon="💻" label={cmd.standbyOn ? '대기 컴퓨터 켜짐' : '대기 컴퓨터'} active={cmd.standbyOn} title="메인 컴퓨터를 따라가다 멈추면 이어받습니다" onClick={() => cmd.open('standby')} />
-          </Group>
       <Group label="재생목록">
         <Big icon="📋" label="재생목록에 넣기" title="이 프레젠테이션을 아무 재생목록에나 넣습니다" disabled={!p}
           onClick={(e: MouseEvent<HTMLButtonElement>) => { const r = e.currentTarget.getBoundingClientRect(); setAddMenu({ x: r.left, y: r.bottom + 4 }); }} />
