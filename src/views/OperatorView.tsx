@@ -364,11 +364,13 @@ export function OperatorView() {
 
   // Slide auto-advance ("go to next" timers) — restarts whenever a different slide goes live.
   const liveSlide = state.live.slide;
+  // Set Up Slide Show › Advance slides manually: timings are kept but not used.
+  const manual = !!state.library.presentations.find((p) => p.id === state.cursor?.presentationId)?.showSetup?.manual;
   useEffect(() => {
-    if (!liveSlide?.autoAdvance) return;
+    if (!liveSlide?.autoAdvance || manual) return;
     const t = setTimeout(() => dispatch({ type: 'live/next' }), liveSlide.autoAdvance * 1000);
     return () => clearTimeout(t);
-  }, [liveSlide, dispatch]);
+  }, [liveSlide, dispatch, manual]);
 
   // Announcements layer loops on its own: each slide's auto-advance, or 8 seconds.
   const ann = state.live.announcement;

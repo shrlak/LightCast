@@ -1,10 +1,10 @@
 // Slide objects whose drawing comes from the Rust engine: PowerPoint preset shapes (with text inside
 // them), tables, charts, icons and ink.
 import { useId, useSyncExternalStore, type CSSProperties } from 'react';
-import type { DashStyle, SlideElement, TextRun } from '../domain/types';
+import type { DashStyle, SlideElement } from '../domain/types';
 import { lineRuns } from '../domain/richText';
 
-const runCss = (r: TextRun): CSSProperties => ({ fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? 800 : 400, fontStyle: r.italic === undefined ? undefined : r.italic ? 'italic' : 'normal', textDecoration: r.underline ? 'underline' : undefined, color: r.color });
+import { runStyle as runCss } from './runStyle';
 import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry } from '../engine';
 
 let epoch = 0;
@@ -35,20 +35,46 @@ export function geometryOf(el: SlideElement): ShapeGeometry | null {
   return shapeGeometry(presetOf(el), el.w, el.h, adjOf(el));
 }
 
-function effects(el: SlideElement): string | undefined {
-  const f = [el.dropShadow && 'drop-shadow(0 8px 14px rgba(0,0,0,.45))', el.glow && `drop-shadow(0 0 18px ${el.glow})`].filter(Boolean);
+export function effects(el: SlideElement): string | undefined {
+  const shadow = !el.dropShadow ? null
+    : el.shadowKind === 'perspective' ? 'drop-shadow(18px 22px 10px rgba(0,0,0,.35))'
+      : el.shadowKind === 'inner' ? 'drop-shadow(0 0 2px rgba(0,0,0,.6))'
+        : 'drop-shadow(0 8px 14px rgba(0,0,0,.45))';
+  const g = el.glowSize ?? 18;
+  const f = [shadow, el.glow && `drop-shadow(0 0 ${g}px ${el.glow}) drop-shadow(0 0 ${g / 2}px ${el.glow})`].filter(Boolean);
   return f.length ? f.join(' ') : undefined;
 }
 
+/**
+ * Shape Effects beyond shadow and glow, as CSS: reflection (below the object), soft edges (a
+ * feathered mask), 3-D rotation (perspective) and bevel (a lit inner edge).
+ */
+export function effectCss(el: SlideElement): CSSProperties {
+  const css: CSSProperties = {};
+  if (el.reflection) css.WebkitBoxReflect = 'below 4px linear-gradient(transparent 55%, rgba(255,255,255,.4))';
+  if (el.softEdge) {
+    const e = `${el.softEdge}px`;
+    css.WebkitMaskImage = `linear-gradient(to right, transparent, #000 ${e}, #000 calc(100% - ${e}), transparent), linear-gradient(to bottom, transparent, #000 ${e}, #000 calc(100% - ${e}), transparent)`;
+    css.WebkitMaskComposite = 'source-in';
+    css.maskComposite = 'intersect';
+  }
+  if (el.bevel) css.boxShadow = 'inset 3px 3px 6px rgba(255,255,255,.45), inset -3px -3px 6px rgba(0,0,0,.35)';
+  return css;
+}
+
 export const elementTransform = (el: SlideElement) =>
-  [el.rotation ? `rotate(${el.rotation}deg)` : '', el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].filter(Boolean).join(' ') || undefined;
+  [el.rotate3d ? `perspective(1200px) rotateX(${el.rotate3d.x}deg) rotateY(${el.rotate3d.y}deg)` : '', el.rotation ? `rotate(${el.rotation}deg)` : '', el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].filter(Boolean).join(' ') || undefined;
+
 
 /** A preset shape as SVG, with its text laid in the shape's text area. */
 export function ShapeElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
   const gid = useId().replace(/:/g, '');
-  const g = geometryOf(el);
-  const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), filter: effects(el) };
+  const g = el.path
+    ? { paths: [{ d: el.path, fill: 'norm' as const, stroke: true, evenOdd: false }], textRect: [0, 0, el.w, el.h] as [number, number, number, number], handles: [], open: false, sites: [] }
+    : geometryOf(el);
+  const custom = el.path ? `scale(${el.w / Math.max(0.01, el.pathW ?? el.w)}, ${el.h / Math.max(0.01, el.pathH ?? el.h)})` : undefined;
+  const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), filter: effects(el), ...effectCss(el) };
   const line = isLineShape(el);
   const sw = el.strokeWidth ?? (el.stroke || line ? DEFAULT_STROKE_WIDTH : 0);
   const stroke = el.stroke ?? (line ? el.fill ?? '#ffffff' : undefined);
@@ -74,9 +100,11 @@ export function ShapeElement({ el }: { el: SlideElement }) {
             </marker>
           )}
         </defs>
+        <g transform={custom}>
         {g.paths.map((p, i) => {
           const shade = SHADE[p.fill];
           const common = {
+            vectorEffect: custom ? 'non-scaling-stroke' as const : undefined,
             d: p.d, fillRule: p.evenOdd ? 'evenodd' as const : undefined,
             stroke: p.stroke && sw > 0 ? stroke : undefined, strokeWidth: p.stroke && sw > 0 ? sw : undefined,
             strokeDasharray: DASH[el.dash ?? 'solid'](sw || 1), strokeLinejoin: 'round' as const, strokeLinecap: line ? 'round' as const : undefined,
@@ -89,6 +117,7 @@ export function ShapeElement({ el }: { el: SlideElement }) {
             </g>
           );
         })}
+        </g>
       </svg>
       {el.text ? (
         <div style={{
@@ -113,7 +142,7 @@ export function TableElement({ el }: { el: SlideElement }) {
   const cells = layoutTable(t, el.w, el.h, undefined);
   const fs = el.fontSize ?? 32;
   return (
-    <div data-table style={{ position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), fontFamily: el.fontFamily, fontSize: fs, filter: effects(el) }}>
+    <div data-table style={{ position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), fontFamily: el.fontFamily, fontSize: fs, filter: effects(el), ...effectCss(el) }}>
       {!engineReady() && <div style={{ position: 'absolute', inset: 0, outline: '2px solid #888' }} />}
       {cells.map((c) => (
         <div key={`${c.r}:${c.c}`} style={{
@@ -131,7 +160,7 @@ export function ChartElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
   if (!el.chart) return null;
   const svg = chartSvg({ ...el.chart, textColor: el.chart.textColor ?? el.color ?? '#ffffff' }, Math.round(el.w), Math.round(el.h), undefined, el.fontFamily);
-  const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), background: el.fill, filter: effects(el) };
+  const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), background: el.fill, filter: effects(el), ...effectCss(el) };
   // The SVG is built by the engine, which escapes every label.
   return svg ? <div data-chart style={box} dangerouslySetInnerHTML={{ __html: svg }} /> : <div style={{ ...box, outline: '2px dashed #888' }} />;
 }
@@ -139,7 +168,7 @@ export function ChartElement({ el }: { el: SlideElement }) {
 export function IconElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
   const icon = iconCatalog().find((i) => i.name === el.icon);
-  const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), filter: effects(el) };
+  const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), filter: effects(el), ...effectCss(el) };
   if (!icon) return <div style={box} />;
   return (
     <svg data-icon={icon.name} style={box} viewBox="0 0 24 24" fill="none" stroke={el.stroke ?? el.color ?? '#ffffff'} strokeWidth={el.strokeWidth ?? icon.stroke} strokeLinecap="round" strokeLinejoin="round" aria-label={el.alt ?? icon.label}>

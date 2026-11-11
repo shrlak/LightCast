@@ -173,6 +173,10 @@ function live(s: AppState, c: Cursor, now?: number): AppState {
   let next = goLive(s, c, now ?? Date.now());
   if (next === s) return s;
   if (next.playlistIndex !== s.playlistIndex && next.cursor) next = { ...next, selectedId: next.cursor.presentationId };
+  // Transitions › Sound, or an audio object set to play by itself: the operator's player starts it.
+  const shown = next.live.slide;
+  const sound = shown?.transition?.sound ?? shown?.elements?.find((e) => e.kind === 'audio' && e.mediaId && e.playback?.autoplay && !e.hidden)?.mediaId;
+  if (sound) next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1 } };
   const actions = next.live.slide?.actions;
   if (actions?.length) next = runActions(next, actions, now ?? 0);
   if (now != null && next.cursor && next.cursor.presentationId !== prevPres) {

@@ -18,6 +18,13 @@ export function elementTextStyle(el: SlideElement): CSSProperties {
     letterSpacing: el.letterSpacing || undefined, paddingLeft: el.indent ? el.indent * INDENT_PX : undefined,
     ...(el.columns && el.columns > 1 ? { columnCount: el.columns, columnGap: '1.2em', display: 'block' } : {}),
     ...(el.vertical ? { writingMode: 'vertical-rl' } : {}),
+    // Font dialog / WordArt / Format Shape › Text Box.
+    ...(el.caps === 'all' ? { textTransform: 'uppercase' } : el.caps === 'small' ? { fontVariant: 'small-caps' } : {}),
+    ...(el.textOutline ? { WebkitTextStroke: `${el.textOutline.width}px ${el.textOutline.color}`, paintOrder: 'stroke fill' } : {}),
+    ...(el.margins ? { padding: `${el.margins[1]}px ${el.margins[2]}px ${el.margins[3]}px ${el.margins[0]}px` } : {}),
+    ...(el.wrap === false ? { whiteSpace: 'pre' } : {}),
+    ...(el.firstIndent ? { textIndent: el.firstIndent } : {}),
+    ...(el.rtl ? { direction: 'rtl' } : {}),
   };
 }
 const px = new Set(['fontSize', 'letterSpacing', 'paddingLeft']);

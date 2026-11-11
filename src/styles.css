@@ -1732,3 +1732,7 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 
 .ce-root .ce-box.slide-text { position: absolute; pointer-events: none !important; border: 1px dashed transparent; box-sizing: border-box; }
 .ce-root .ce-box.slide-text.on { border: 1px solid #7a7a7a; box-shadow: none; }
+
+.para-spaced > div { margin-top: var(--sp-before); margin-bottom: var(--sp-after); }
+.audio-object { cursor: pointer; }
+.zoom-object { overflow: hidden; }
