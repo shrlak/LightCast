@@ -26,6 +26,23 @@ import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, 
 import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AccessibilityPane, AnimationPane, CommentsPane, SelectionPane, accessibilityIssues } from './panes';
 import { Dialogs } from './dialogs';
+import { uid as newId } from '../../domain/lyrics';
+
+/** A picture chosen from this computer, stored as media: its id (null when none was chosen). */
+function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
+  return new Promise((resolve) => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/*';
+    inp.onchange = () => {
+      const f = inp.files?.[0];
+      if (!f) return resolve(null);
+      const id = newId('m');
+      void putMedia(id, f).then(() => { dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image' } }); resolve(id); });
+    };
+    inp.click();
+  });
+}
 import { withMaster } from '../../domain/master';
 import { Backstage, FindReplaceDialog, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
@@ -387,6 +404,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
                   onContextMenu={(e) => { if (!ed.selEls.length) return; e.preventDefault(); setObjMenu(new DOMRect(e.clientX, e.clientY, 0, 0)); }}>
                   <CanvasEditor key={`${p.id}:${selected?.key}`} readOnly={p.protected} slide={slide} theme={theme} background={background} bgEffect={p.bgEffect}
                     selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)} view={view} badges={badges} defaultShape={p.defaultShape} customGuides={view.guides ? p.guides : undefined}
+                    pickPicture={() => pickPictureFile(dispatch)}
                     onLockedDelete={cmd.locked && state.live.slide?.id === slide.id ? () => cmd.notify(LOCK_MSG) : undefined}
                     onChange={(patch) => dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch })} />
                   {preview && <PlayPreview ed={ed} what={preview} onDone={() => setPreview(null)} />}

@@ -85,6 +85,8 @@ interface Props {
   defaultShape?: Partial<SlideElement>;
   /** Guides the user placed (View › Guides), drawn and snapped to. */
   customGuides?: { v: number[]; h: number[] };
+  /** A picture placeholder was double-clicked: pick a picture (its media id, or null). */
+  pickPicture?: () => Promise<string | null>;
   /** Show the objects as the slide show would at the start (hidden objects stay hidden). */
   zoom?: number;
 }
@@ -132,7 +134,7 @@ function toSlide(el: SlideElement, lx: number, ly: number): [number, number] {
  * italic, underline or colour. Every geometric answer — hits, sizes, angles, snapping — comes from
  * the Rust engine. Changes apply as you go, so a slide that is live updates on screen.
  */
-export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides }: Props) {
+export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, pickPicture }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const k = width / CANVAS_W || 1;
   const [session, setSession] = useState<{ slideId: string; id: string } | null>(null);
@@ -793,6 +795,15 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         const [x, y] = pointer(e);
         if (tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); return; }
         const hit = hitBox(pickable.map(boxOf), x, y, 3);
+        const ph = hit ? elOf(hit) : undefined;
+        if (ph?.placeholder === 'picture' && pickPicture) {
+          // A layout's picture placeholder becomes the chosen picture, in its place.
+          void pickPicture().then((mediaId) => {
+            if (!mediaId) return;
+            setElements(latestEls.current.map((x2) => (x2.id === ph.id ? { id: x2.id, kind: 'image', mediaId, fit: 'cover', x: x2.x, y: x2.y, w: x2.w, h: x2.h, name: '그림' } : x2)));
+          });
+          return;
+        }
         if (hit) startEditing(hit);
       }}>
       <SlideCanvas slide={shown} theme={baseTheme} background={background} bgEffect={bgEffect} />

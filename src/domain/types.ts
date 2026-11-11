@@ -259,6 +259,8 @@ export interface SlideElement {
   groupId?: string;
   /** The group this object was in before Ungroup (Arrange › Regroup puts it back). */
   prevGroupId?: string;
+  /** A layout placeholder: shows a prompt in the editor while empty (Slide Master › Insert Placeholder). */
+  placeholder?: 'title' | 'body' | 'text' | 'picture';
   /** Name shown in the Selection pane. */
   name?: string;
   /** Hidden in the Selection pane: kept on the slide, not drawn. */
@@ -387,6 +389,8 @@ export interface Slide {
   transition?: Transition;
   animations?: SlideAnimation[];
   comments?: SlideComment[];
+  /** The Slide Master layout this slide was made from. */
+  layoutId?: string;
   /** Character formatting of the slide's own text, one list of runs per line (ignored for a line they no longer spell). */
   textRuns?: TextRun[][];
   /** Header & Footer on this slide. */
@@ -483,7 +487,7 @@ export interface Presentation {
   /** Design › Variants › Colors: the engine colour scheme tables, charts and the colour picker use. */
   colorScheme?: string;
   /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
-  master?: { elements: SlideElement[]; background?: Background };
+  master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[] };
   /** Slide Show › Set Up Slide Show. */
   showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean };
   /** Slide Show › Custom Slide Show: named lists of slides. */
@@ -784,3 +788,6 @@ export interface PagePlaceholders { header?: string; footer?: string; date?: boo
 export interface HandoutMaster extends PagePlaceholders { perPage: 1 | 2 | 3 | 4 | 6 | 9; landscape?: boolean }
 export interface NotesMaster extends PagePlaceholders { landscape?: boolean }
 export interface DocProperties { title?: string; subject?: string; author?: string; manager?: string; company?: string; category?: string; keywords?: string; comments?: string }
+
+/** View › Slide Master › Insert Layout: a named set of placeholders new slides can start from. */
+export interface MasterLayout { id: string; name: string; elements: SlideElement[]; preserve?: boolean }

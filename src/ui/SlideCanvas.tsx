@@ -2,6 +2,7 @@ import { isFrontSlide } from '../domain/frontLayout';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
+import { PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
 import { INDENT_PX, listMarkers } from '../domain/textFormat';
@@ -280,6 +281,15 @@ export function ElementView({ el }: { el: SlideElement }) {
   };
   const show = useContext(ShowContext);
   if (el.hidden) return null;
+  // An empty layout placeholder: its prompt while editing, nothing in the slide show.
+  if (el.placeholder && (el.placeholder === 'picture' || !el.text)) {
+    if (show) return null;
+    return (
+      <div className={`placeholder-prompt ${el.placeholder}`} style={{ ...box, fontSize: el.placeholder === 'title' ? Math.min(el.fontSize ?? 64, 64) : Math.min(el.fontSize ?? 48, 44), textAlign: el.align ?? 'left', justifyContent: el.placeholder === 'picture' || el.align === 'center' ? 'center' : 'flex-start', alignItems: el.vAlign === 'top' ? 'flex-start' : 'center' }}>
+        <span>{el.placeholder === 'picture' ? '🖼 ' : ''}{PLACEHOLDER_PROMPT[el.placeholder]}</span>
+      </div>
+    );
+  }
   // While a picture is still loading nothing is drawn (a placeholder box would flash); the slide waits for it, see useReadySlide.
   if (el.kind === 'image') {
     if (!url) return null;

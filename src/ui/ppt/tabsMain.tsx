@@ -19,7 +19,7 @@ import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, 
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
 import { PATTERNS, patternPath } from '../../domain/patterns';
-import { withMaster } from '../../domain/master';
+import { slideFromLayout, withMaster } from '../../domain/master';
 import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
 
@@ -51,6 +51,14 @@ export function NewSlideButton({ ed, big = true }: { ed: Ed; big?: boolean }) {
           <button type="button" className="layout-cell" onClick={() => { insert(() => ({ id: uid('s'), group: slide?.group ?? 'Slide', text: '' })); close(); }}><span className="layout-thumb blank" />빈 화면</button>
           {SLIDE_TEMPLATES.map((t) => <button key={t.id} type="button" className="layout-cell" onClick={() => { insert(() => t.make(slide?.group ?? 'Slide')); close(); }}><span className="layout-thumb">{t.icon}</span>{t.name}</button>)}
         </div>
+        {!!p?.master?.layouts?.length && (
+          <>
+            <MenuHead>슬라이드 마스터 레이아웃</MenuHead>
+            <div className="layout-grid">
+              {p.master.layouts.map((l) => <button key={l.id} type="button" className="layout-cell" onClick={() => { insert(() => slideFromLayout(l, slide?.group ?? 'Slide')); close(); }}><span className="layout-thumb">▤</span>{l.name}</button>)}
+            </div>
+          </>
+        )}
         <MenuSep />
         <MenuItem icon="⧉" label="선택한 슬라이드 복제" hint="Ctrl+D" disabled={!slide} onClick={() => { if (slide) insert(() => ({ ...slide, id: uid('s') })); close(); }} />
         <MenuItem icon="☰" label="개요에서 슬라이드…" disabled={!p} onClick={() => { ed.setDialog('outline'); close(); }} />

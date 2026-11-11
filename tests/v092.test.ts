@@ -211,3 +211,17 @@ describe('Handouts, notes pages and Inspect Document', async () => {
     expect(off.slides![0].elements!.map((e) => e.id)).toEqual(['h']);
   });
 });
+
+describe('Slide Master layouts', async () => {
+  const m = await import('../src/domain/master');
+  it('makes slides from a layout with fresh placeholder objects, plus the master', () => {
+    const [title] = m.defaultLayouts();
+    const logo: SlideElement = { id: 'logo', kind: 'shape', x: 0, y: 0, w: 5, h: 5 };
+    const sl = m.slideFromLayout(title, 'G', [logo]);
+    expect(sl.layoutId).toBe(title.id);
+    expect(sl.elements!.map((e) => e.placeholder ?? e.id)).toEqual([m.masterCopyId('logo'), 'title', 'text']);
+    expect(sl.elements![1].id).not.toBe(title.elements[0].id);
+    expect(m.PLACEHOLDER_PROMPT.title).toContain('제목');
+    expect(m.makePlaceholder('picture').kind).toBe('shape');
+  });
+});
