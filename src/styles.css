@@ -1810,3 +1810,9 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .ce-point-menu { pointer-events: auto; position: absolute; z-index: 20; display: flex; flex-direction: column; min-width: 140px; background: #fff; border: 1px solid #c8c6c4; box-shadow: 0 6px 16px rgba(0,0,0,.2); padding: 3px 0; transform: translate(6px, 6px); }
 .ce-point-menu button { text-align: left; border: 0; background: transparent; padding: 5px 12px; font-size: 12.5px; }
 .ce-point-menu button:hover { background: #f3f2f1; }
+.fill-extras { border-top: 1px solid #edebe9; margin-top: 4px; padding-top: 2px; }
+.grad-grid { display: grid; grid-template-columns: repeat(6, 24px); gap: 4px; padding: 4px 8px; }
+.grad-cell { width: 24px; height: 24px; border: 1px solid #c8c6c4; padding: 0; }
+.pattern-grid { display: grid; grid-template-columns: repeat(8, 26px); gap: 3px; padding: 4px 8px 8px; }
+.pattern-cell { width: 26px; height: 26px; padding: 1px; border: 1px solid #c8c6c4; background: #fff; display: flex; align-items: center; justify-content: center; }
+.pattern-cell.on, .pattern-cell:hover { border-color: #c43e1c; }

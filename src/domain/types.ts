@@ -240,6 +240,12 @@ export interface SlideElement {
   /** Two-colour gradient fill, drawn at `gradientAngle` degrees (0 = left to right, 90 = top to bottom). */
   gradient?: [string, string];
   gradientAngle?: number;
+  /** Shape Fill › Gradient: linear (default, along gradientAngle) or radial (from the centre). */
+  gradientType?: 'linear' | 'radial';
+  /** Shape Fill › Picture: a media id; the picture fills the outline (cropped to fit). */
+  fillImage?: string;
+  /** Shape Fill › Pattern: one of PATTERNS, foreground over background colour. */
+  pattern?: { kind: string; fg: string; bg: string };
   /** Shape effects. */
   dropShadow?: boolean;
   glow?: string;

@@ -119,6 +119,8 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
       {smartArtOwner(ed.elements, ed.selEls) && (
         <Group label="SmartArt">
           <Big icon="⧉" label="텍스트 창 · 레이아웃" title="SmartArt의 텍스트, 레이아웃, 스타일, 색 바꾸기" onClick={() => ed.setDialog('smartArt')} />
+          <Big icon="🖼" label="그림 삽입" title="선택한 SmartArt 도형을 그림으로 채웁니다 (그림 레이아웃의 그림 자리)" disabled={ed.sel.length !== 1}
+            onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.onchange = () => { const f = inp.files?.[0]; if (!f) return; const id = uid('m'); void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image', backgroundHidden: true } }); ed.setElements((els) => els.map((e) => (e.id === ed.sel[0] ? { ...e, fillImage: id, pattern: undefined, gradient: undefined } : e))); }); }; inp.click(); }} />
           <DropButton big icon="⇄" label="변환" render={(close) => {
             const owner = smartArtOwner(ed.elements, ed.selEls);
             return (

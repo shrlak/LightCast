@@ -198,10 +198,10 @@ export function ColorGrid({ value, onPick, onNone, noneLabel = '없음', scheme 
 }
 
 /** A colour button with a bar under its icon showing the colour, and the picker on its arrow. */
-export function ColorButton({ icon, label, value, onPick, onNone, noneLabel, disabled, title }: { icon: ReactNode; label?: string; value?: string; onPick: (c: string) => void; onNone?: () => void; noneLabel?: string; disabled?: boolean; title: string }) {
+export function ColorButton({ icon, label, value, onPick, onNone, noneLabel, disabled, title, extra }: { icon: ReactNode; label?: string; value?: string; onPick: (c: string) => void; onNone?: () => void; noneLabel?: string; disabled?: boolean; title: string; extra?: (close: () => void) => ReactNode }) {
   return (
     <DropButton icon={<span className="rb-colored">{icon}<span className="rb-colorbar" style={{ background: value ?? 'transparent' }} /></span>} label={label} title={title} disabled={disabled}
-      render={(close) => <ColorGrid value={value} onPick={(c) => { onPick(c); close(); }} onNone={onNone && (() => { onNone(); close(); })} noneLabel={noneLabel} />} />
+      render={(close) => <><ColorGrid value={value} onPick={(c) => { onPick(c); close(); }} onNone={onNone && (() => { onNone(); close(); })} noneLabel={noneLabel} />{extra?.(close)}</>} />
   );
 }
 

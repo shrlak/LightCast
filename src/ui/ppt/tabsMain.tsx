@@ -18,6 +18,7 @@ import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
+import { PATTERNS, patternPath } from '../../domain/patterns';
 import { withMaster } from '../../domain/master';
 import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
@@ -133,7 +134,8 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
         </>
       )} />
       <Col>
-        <ColorButton icon={RI.fill} label={big ? undefined : '도형 채우기'} title="도형 채우기" disabled={none} value={first?.fill} onPick={(c) => set({ fill: c, gradient: undefined })} onNone={() => set({ fill: 'transparent', gradient: undefined })} noneLabel="채우기 없음" />
+        <ColorButton icon={RI.fill} label={big ? undefined : '도형 채우기'} title="도형 채우기" disabled={none} value={first?.fill} onPick={(c) => set({ fill: c, ...NO_FILL_EXTRAS })} onNone={() => set({ fill: 'transparent', ...NO_FILL_EXTRAS })} noneLabel="채우기 없음"
+          extra={(close) => <FillExtras ed={ed} first={first} set={set} close={close} />} />
         <DropButton icon={RI.outline} label="도형 윤곽선" disabled={none} render={(close) => (
           <>
             <ColorButtonInline value={first?.stroke} onPick={(c) => { set({ stroke: c, strokeWidth: first?.strokeWidth ?? 4 }); close(); }} onNone={() => { set({ stroke: undefined, strokeWidth: undefined }); close(); }} />
@@ -150,6 +152,46 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
         <DropButton icon={RI.effects} label="도형 효과" disabled={none} wide render={(close) => <EffectsMenu first={first} set={set} close={close} />} />
       </Col>
     </>
+  );
+}
+
+const NO_FILL_EXTRAS: Partial<SlideElement> = { gradient: undefined, gradientType: undefined, fillImage: undefined, pattern: undefined };
+const GRADIENTS: [string, string, string][] = [['#ffffff', '#7f7f7f', '회색'], ['#9cc3e6', '#1f4e79', '파랑'], ['#ffe699', '#c55a11', '주황'], ['#c5e0b4', '#375623', '녹색'], ['#f4b183', '#843c0c', '갈색'], ['#d9b3ff', '#4b0082', '보라']];
+
+/** Shape Fill ▾ › 그림… / 그라데이션 / 패턴 (DeckCraft's picture, gradient and pattern fills). */
+function FillExtras({ ed, first, set, close }: { ed: Ed; first?: SlideElement; set: (p: Partial<SlideElement>) => void; close: () => void }) {
+  const file = useRef<HTMLInputElement>(null);
+  const [fg, setFg] = useState(first?.pattern?.fg ?? '#000000');
+  const [bg, setBg] = useState(first?.pattern?.bg ?? '#ffffff');
+  const picture = async (f: File | undefined) => {
+    if (!f) return;
+    const id = uid('m');
+    await putMedia(id, f);
+    ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image', backgroundHidden: true } });
+    set({ ...NO_FILL_EXTRAS, fillImage: id });
+    close();
+  };
+  return (
+    <div className="fill-extras">
+      <MenuItem icon="🖼" label="그림…" onClick={() => file.current?.click()} />
+      <input ref={file} type="file" accept="image/*" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
+      <MenuHead>그라데이션</MenuHead>
+      <div className="grad-grid">
+        {GRADIENTS.map(([a, b, l]) => (['linear', 'radial'] as const).map((t) => (
+          <button key={l + t} type="button" className="grad-cell" title={`${l} — ${t === 'radial' ? '방사형' : '선형'}`} style={{ background: t === 'radial' ? `radial-gradient(${a}, ${b})` : `linear-gradient(${a}, ${b})` }}
+            onClick={() => { set({ ...NO_FILL_EXTRAS, gradient: [a, b], gradientAngle: 90, gradientType: t === 'radial' ? 'radial' : undefined }); close(); }} />
+        )))}
+      </div>
+      <MenuHead>패턴</MenuHead>
+      <div className="dlg-row"><label className="rb-check">전경 <input type="color" value={fg} onChange={(e) => setFg(e.target.value)} /></label><label className="rb-check">배경 <input type="color" value={bg} onChange={(e) => setBg(e.target.value)} /></label></div>
+      <div className="pattern-grid">
+        {PATTERNS.map((p) => (
+          <button key={p.id} type="button" className={`pattern-cell ${first?.pattern?.kind === p.id ? 'on' : ''}`} title={p.label} onClick={() => { set({ ...NO_FILL_EXTRAS, pattern: { kind: p.id, fg, bg } }); close(); }}>
+            <svg viewBox="0 0 16 16" width="22" height="22"><defs><pattern id={`pp-${p.id}`} patternUnits="userSpaceOnUse" width="8" height="8"><rect width="8" height="8" fill={bg} /><path d={patternPath(p.id)} fill={fg} /></pattern></defs><rect width="16" height="16" fill={`url(#pp-${p.id})`} /></svg>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

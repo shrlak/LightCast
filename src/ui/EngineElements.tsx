@@ -5,6 +5,8 @@ import type { DashStyle, SlideElement } from '../domain/types';
 import { lineRuns } from '../domain/richText';
 
 import { runStyle as runCss } from './runStyle';
+import { useMediaUrl } from './hooks';
+import { patternPath } from '../domain/patterns';
 import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry } from '../engine';
 
 let epoch = 0;
@@ -79,7 +81,8 @@ export function ShapeElement({ el }: { el: SlideElement }) {
   const line = isLineShape(el);
   const sw = el.strokeWidth ?? (el.stroke || line ? DEFAULT_STROKE_WIDTH : 0);
   const stroke = el.stroke ?? (line ? el.fill ?? '#ffffff' : undefined);
-  const fill = el.gradient ? `url(#g${gid})` : el.fill ?? '#ffffff';
+  const imageUrl = useMediaUrl(el.fillImage);
+  const fill = el.fillImage && imageUrl ? `url(#i${gid})` : el.pattern ? `url(#p${gid})` : el.gradient ? `url(#g${gid})` : el.fill ?? '#ffffff';
   if (!g) {
     // Engine not loaded: the plain box or circle FreeCast always drew.
     return <div style={{ ...box, background: el.gradient ? `linear-gradient(${(el.gradientAngle ?? 90) + 90}deg, ${el.gradient[0]}, ${el.gradient[1]})` : el.fill ?? '#ffffff', borderRadius: el.ellipse || el.shape === 'ellipse' ? '50%' : el.radius ?? 0, border: el.stroke ? `${sw}px solid ${el.stroke}` : undefined }} />;
@@ -90,7 +93,23 @@ export function ShapeElement({ el }: { el: SlideElement }) {
     <div style={box} data-shape={presetOf(el)}>
       <svg width={el.w} height={el.h} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} style={{ position: 'absolute', inset: 0, overflow: 'visible' }} aria-label={el.alt}>
         <defs>
-          {el.gradient && (
+          {el.fillImage && imageUrl && (
+            <pattern id={`i${gid}`} patternUnits="objectBoundingBox" patternContentUnits="objectBoundingBox" width="1" height="1">
+              <image href={imageUrl} width="1" height="1" preserveAspectRatio="xMidYMid slice" />
+            </pattern>
+          )}
+          {el.pattern && (
+            <pattern id={`p${gid}`} patternUnits="userSpaceOnUse" width="16" height="16">
+              <rect width="16" height="16" fill={el.pattern.bg} />
+              <path d={patternPath(el.pattern.kind, 2)} fill={el.pattern.fg} />
+            </pattern>
+          )}
+          {el.gradient && el.gradientType === 'radial' && (
+            <radialGradient id={`g${gid}`} cx="0.5" cy="0.5" r="0.7">
+              <stop offset="0" stopColor={el.gradient[0]} /><stop offset="1" stopColor={el.gradient[1]} />
+            </radialGradient>
+          )}
+          {el.gradient && el.gradientType !== 'radial' && (
             <linearGradient id={`g${gid}`} x1={0.5 - Math.cos(a) / 2} y1={0.5 - Math.sin(a) / 2} x2={0.5 + Math.cos(a) / 2} y2={0.5 + Math.sin(a) / 2}>
               <stop offset="0" stopColor={el.gradient[0]} /><stop offset="1" stopColor={el.gradient[1]} />
             </linearGradient>

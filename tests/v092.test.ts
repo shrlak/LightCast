@@ -130,3 +130,14 @@ describe('Korean animation and transition names', async () => {
     expect([...new Set(transitionCatalog().flatMap((e) => e.options.map((o) => o.label)).filter((l) => /[A-Za-z]/.test(optionLabel(l))))]).toEqual([]);
   });
 });
+
+describe('Pattern fills', async () => {
+  const { PATTERNS, patternPath } = await import('../src/domain/patterns');
+  it("has PowerPoint's presets as 8x8 bitmaps", () => {
+    expect(PATTERNS.length).toBeGreaterThanOrEqual(48);
+    expect(PATTERNS.every((p) => p.rows.length === 8 && !/[A-Za-z]{3}/.test(p.label))).toBe(true);
+    // 50%: every other pixel, 32 of 64.
+    expect(patternPath('pct50').match(/M/g)).toHaveLength(32);
+    expect(patternPath('horz', 2)).toBe(Array.from({ length: 8 }, (_, x) => `M${x * 2} 0h2v2h-2z`).join(''));
+  });
+});
