@@ -423,16 +423,6 @@ export function OperatorView() {
         return;
       }
       if (viewRef.current !== 'presenter' && ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'PageDown', 'PageUp', ' '].includes(e.key)) return;
-      // Slide hotkeys of the selected presentation win over global keys.
-      const sel = state.library.presentations.find((p) => p.id === state.selectedId);
-      if (sel && e.key.length === 1) {
-        const seq = sequence(sel).findIndex(({ slide }) => slide.hotkey === e.key.toLowerCase());
-        if (seq >= 0) {
-          e.preventDefault();
-          dispatch({ type: 'live/go', presentationId: sel.id, seq });
-          return;
-        }
-      }
       const action = KEYS[e.key];
       if (!action) return;
       e.preventDefault();

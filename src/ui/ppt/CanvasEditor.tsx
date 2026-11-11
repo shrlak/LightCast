@@ -245,6 +245,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const hit = hitBox(visible.map((el) => boxOf(shownEl(el))), x, y, 3);
     if (!hit) {
       if (hasSlideText && x >= textBox.x && x <= textBox.x + textBox.w && y >= textBox.y && y <= textBox.y + textBox.h) {
+        // The browser would move focus to the canvas after this and end the typing straight away.
+        e.preventDefault();
         startEditing(SLIDE_TEXT);
         return;
       }

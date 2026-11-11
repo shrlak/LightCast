@@ -1,5 +1,7 @@
 import PptxGenJS from 'pptxgenjs';
-import type { Background, Library, ListStyle, Playlist, Presentation, Theme } from '../types';
+import type { Background, Library, ListStyle, Playlist, Presentation, SlideElement, Theme } from '../types';
+import { iconCatalog, layoutTable } from '../../engine';
+import { lineRuns } from '../richText';
 import { sequence } from '../arrangement';
 import { getMedia } from '../media';
 import { qrDataUrl } from './qr';
@@ -17,6 +19,62 @@ import { motionFlatColor } from '../motion';
 const W = 10;
 const H = 7.5;
 const PX = W / CANVAS_W; // inches per canvas pixel (4:3 slides, 10 × 7.5 in)
+
+const hex = (c: string | undefined, d = 'FFFFFF') => /#?([0-9a-f]{6})/i.exec(c ?? '')?.[1] ?? d;
+type Box = { x: number; y: number; w: number; h: number; rotate?: number };
+
+/** A preset shape as PowerPoint's own (same OOXML preset name and adjust values), with its text. */
+function addShapeElement(s: PptxGenJS.Slide, el: SlideElement, box: Box) {
+  const name = (el.shape ?? (el.ellipse ? 'ellipse' : el.radius ? 'roundRect' : 'rect')) as PptxGenJS.SHAPE_NAME;
+  const transparent = !el.fill || el.fill === 'transparent' || /rgba\([^)]*,\s*0\)/.test(el.fill);
+  const alpha = /rgba\([^)]*,\s*([\d.]+)\)/.exec(el.fill ?? '')?.[1];
+  const opts: PptxGenJS.ShapeProps = {
+    ...box,
+    fill: transparent ? { type: 'none' } : { color: hex(el.gradient?.[0] ?? el.fill), transparency: alpha ? Math.round((1 - Number(alpha)) * 100) : undefined },
+    line: el.stroke ? { color: hex(el.stroke), width: (el.strokeWidth ?? 4) * 0.5, dashType: el.dash === 'dash' ? 'dash' : el.dash === 'dot' ? 'sysDot' : el.dash === 'dashDot' ? 'dashDot' : 'solid', beginArrowType: el.arrowStart ? 'triangle' : undefined, endArrowType: el.arrowEnd ? 'triangle' : undefined } : undefined,
+    flipH: el.flipH, flipV: el.flipV,
+    rectRadius: !el.shape && el.radius ? Math.min(0.5, (el.radius * PX) / Math.min(box.w, box.h)) : undefined,
+    shadow: el.dropShadow ? { type: 'outer', blur: 6, offset: 3, angle: 90, color: '000000', opacity: 0.45 } : undefined,
+  };
+  if (el.text) s.addText(el.text, { ...opts, shape: name, fontSize: (el.fontSize ?? 40) * 0.5, color: hex(el.color), bold: el.bold, italic: el.italic, align: el.align ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fontFace: el.fontFamily ? pptxFont(el.fontFamily) : undefined });
+  else s.addShape(name, opts);
+}
+
+function addTableElement(s: PptxGenJS.Slide, el: SlideElement, box: Box) {
+  const t = el.table!;
+  const cells = layoutTable(t, el.w, el.h);
+  const look = new Map(cells.map((c) => [`${c.r}:${c.c}`, c]));
+  const rows: PptxGenJS.TableRow[] = t.rows.map((row, r) => row.flatMap((cell, c) => {
+    if (cell.hMerge || cell.vMerge) return [];
+    const l = look.get(`${r}:${c}`);
+    return [{ text: cell.text, options: { colspan: cell.span && cell.span > 1 ? cell.span : undefined, rowspan: cell.rowSpan && cell.rowSpan > 1 ? cell.rowSpan : undefined, fill: l?.fill ? { color: hex(l.fill) } : undefined, color: hex(l?.color ?? el.color), bold: l?.bold, align: (cell.align as 'left') ?? 'left', valign: 'middle' as const, border: l?.border ? { type: 'solid' as const, pt: l.borderWidth * 0.5, color: hex(l.border) } : undefined } }];
+  }));
+  const sum = (v: number[]) => v.reduce((a, b) => a + b, 0) || 1;
+  s.addTable(rows, { x: box.x, y: box.y, w: box.w, colW: t.cols.map((c) => (c / sum(t.cols)) * box.w), rowH: t.heights.map((h) => (h / sum(t.heights)) * box.h), fontSize: (el.fontSize ?? 32) * 0.5, fontFace: el.fontFamily ? pptxFont(el.fontFamily) : undefined });
+}
+
+function addChartElement(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideElement, box: Box) {
+  const ch = el.chart!;
+  const type = ({ column: pptx.ChartType.bar, columnStacked: pptx.ChartType.bar, bar: pptx.ChartType.bar, barStacked: pptx.ChartType.bar, line: pptx.ChartType.line, area: pptx.ChartType.area, pie: pptx.ChartType.pie, doughnut: pptx.ChartType.doughnut, scatter: pptx.ChartType.scatter } as const)[ch.kind];
+  const data = ch.series.map((sr) => ({ name: sr.name, labels: ch.categories, values: sr.values }));
+  const text = hex(ch.textColor ?? el.color);
+  s.addChart(type, data, {
+    ...box, barDir: ch.kind.startsWith('bar') ? 'bar' : 'col', barGrouping: ch.kind.endsWith('Stacked') ? 'stacked' : 'clustered',
+    showLegend: ch.legend !== false, legendPos: 'b', showTitle: !!ch.title, title: ch.title || undefined, showValue: !!ch.dataLabels,
+    titleColor: text, legendColor: text, catAxisLabelColor: text, valAxisLabelColor: text, dataLabelColor: text,
+  });
+}
+
+/** Icons and ink go to PowerPoint as SVG pictures (what they are drawn with on screen). */
+function svgOf(el: SlideElement): string | null {
+  if (el.kind === 'ink' && el.path) return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${el.pathW ?? el.w} ${el.pathH ?? el.h}" preserveAspectRatio="none"><path d="${el.path}" fill="none" stroke="${el.stroke ?? '#ff3b30'}" stroke-width="${el.strokeWidth ?? 6}" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="${el.opacity ?? 1}"/></svg>`;
+  if (el.kind === 'icon') {
+    const icon = iconCatalog().find((i) => i.name === el.icon);
+    if (!icon) return null;
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="${el.stroke ?? el.color ?? '#ffffff'}" stroke-width="${el.strokeWidth ?? icon.stroke}" stroke-linecap="round" stroke-linejoin="round">${icon.d.map((d) => `<path d="${d}"/>`).join('')}</svg>`;
+  }
+  return null;
+}
 
 function firstColor(b: Background | undefined | null): string {
   if (!b) return '000000';
@@ -129,6 +187,7 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
       fit: undefined,
     });
     for (const original of slide.elements ?? []) {
+      if (original.hidden) continue;
       const el = fixed ? original : fitTextElement(original, textElementBounds(original, slide.elements));
       const box = { x: el.x * PX, y: el.y * PX, w: el.w * PX, h: el.h * PX, rotate: el.rotation };
       if (el.kind === 'text' && el.text) {
@@ -136,7 +195,14 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
         // The screen's line height for this box (as elementTextStyle draws it). A paragraph's last
         // line break shows no extra line on screen, so it adds none here either.
         const lh = el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25);
-        const content = el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: linePts(p.fontSize ?? el.fontSize ?? 64, lh), bold: p.bold ?? el.bold, italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: p.align ?? el.align, breakLine: i < el.paragraphs!.length - 1 } })) : el.text;
+        // Characters formatted on their own (size, bold, italic, underline, colour) keep it.
+        const runs = lineRuns(el);
+        const richLines = runs.some(Boolean) ? (el.paragraphs?.map((x) => x.text) ?? el.text.split('\n')) : null;
+        const rich: PptxGenJS.TextProps[] | null = richLines && richLines.flatMap((line, i) => {
+          const parts = runs[i] ?? [{ text: line || ' ' }];
+          return parts.map((r, k) => ({ text: r.text, options: { fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: r.bold ?? el.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), breakLine: k === parts.length - 1 && i < richLines.length - 1 } }));
+        });
+        const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: linePts(p.fontSize ?? el.fontSize ?? 64, lh), bold: p.bold ?? el.bold, italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: p.align ?? el.align, breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
         s.addText(content, { ...box, fontFace: pptxFont(el.fontFamily ?? baseTheme.fontFamily), lineSpacing: el.paragraphs?.length ? undefined : linePts(el.fontSize ?? 64, lh), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: el.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el), align: el.align ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: undefined });
       } else if (el.kind === 'image' && el.mediaId) {
         const data = await dataUrl(el.mediaId);
@@ -144,8 +210,13 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
       } else if (el.kind === 'qr' && el.link) {
         s.addImage({ ...box, data: qrDataUrl(el.link) });
       } else if (el.kind === 'shape') {
-        const solid = /#([0-9a-f]{6})/i.exec(el.fill ?? '')?.[1] ?? 'FFFFFF';
-        s.addShape(el.ellipse ? 'ellipse' : 'roundRect', { ...box, fill: { color: solid }, rectRadius: el.radius ? Math.min(0.5, (el.radius * PX) / Math.min(box.w, box.h)) : 0 });
+        addShapeElement(s, el, box);
+      } else if (el.kind === 'table' && el.table) {
+        addTableElement(s, el, box);
+      } else if (el.kind === 'chart' && el.chart) {
+        addChartElement(pptx, s, el, box);
+      } else if ((el.kind === 'icon' || el.kind === 'ink') && svgOf(el)) {
+        s.addImage({ ...box, data: `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgOf(el)!)))}` });
       }
     }
     // QR codes go over the text boxes, in the corner (added last, so they are on top).
