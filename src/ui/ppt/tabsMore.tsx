@@ -91,6 +91,8 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
       </Group>
       <Group label="마스터 보기">
         <Big icon="▤" label="슬라이드 마스터" title="모든 슬라이드에 나오는 개체와 배경" disabled={!ed.p} onClick={() => ed.setDialog('master')} />
+        <Big icon="▥" label="유인물 마스터" title="유인물 인쇄: 페이지당 슬라이드 수, 머리글 · 바닥글" disabled={!ed.p} onClick={() => ed.setDialog('handoutMaster')} />
+        <Big icon="▦" label="슬라이드 노트 마스터" title="슬라이드 노트 페이지 인쇄 모양" disabled={!ed.p} onClick={() => ed.setDialog('notesMaster')} />
       </Group>
       <Group label="표시">
         <Col>

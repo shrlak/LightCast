@@ -17,7 +17,7 @@ import type { TextFormatValue } from './TextFormatPanel';
 export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'accessibility' | 'designer' | null;
 
 /** The dialog boxes (Font, Paragraph, Replace Fonts, Header & Footer, Set Up Show, …). */
-export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master';
+export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect';
 
 export interface Ed {
   state: AppState;

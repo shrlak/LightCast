@@ -198,3 +198,16 @@ describe('Table borders, margins, Draw Table and Eraser', async () => {
     expect(erased.rows[0][0].span).toBe(2);
   });
 });
+
+describe('Handouts, notes pages and Inspect Document', async () => {
+  const pr = await import('../src/ui/ppt/printing');
+  it('pages handouts and finds hidden data', () => {
+    expect(pr.paginate([1, 2, 3, 4, 5, 6, 7], 3)).toEqual([[1, 2, 3], [4, 5, 6], [7]]);
+    expect(pr.handoutGrid(6)).toEqual([2, 3]);
+    const deck = pres([s('a', { comments: [{ id: 'c', text: 'x' } as never], notes: 'n', elements: [{ id: 'e', kind: 'shape', x: 2000, y: 0, w: 10, h: 10 }, { id: 'h', kind: 'shape', x: 0, y: 0, w: 10, h: 10, hidden: true }] }), s('b', { disabled: true })]);
+    const found = Object.fromEntries(pr.inspectFindings(deck).map((f) => [f.id, f.count]));
+    expect(found).toMatchObject({ comments: 1, notes: 1, hidden: 1, invisible: 1, offslide: 1, properties: 0 });
+    const off = pr.inspectFindings(deck).find((f) => f.id === 'offslide')!.remove(deck);
+    expect(off.slides![0].elements!.map((e) => e.id)).toEqual(['h']);
+  });
+});

@@ -241,6 +241,14 @@ export async function buildPptx(lib: Library, source: { playlist: Playlist } | {
   const list = 'playlist' in source
     ? source.playlist.items.flatMap((i) => (i.kind === 'header' ? [] : lib.presentations.filter((p) => p.id === i.presentationId)))
     : [source.presentation];
+  // File › Info › Properties of a single presentation go into the file's own properties.
+  const props = list.length === 1 ? list[0].properties : undefined;
+  if (props) {
+    if (props.title) pptx.title = props.title;
+    if (props.subject) pptx.subject = props.subject;
+    if (props.author) pptx.author = props.author;
+    if (props.company) pptx.company = props.company;
+  }
   for (const p of list) await addPresentation(pptx, lib, p);
   return pptx;
 }

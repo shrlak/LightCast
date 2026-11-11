@@ -490,6 +490,12 @@ export interface Presentation {
   customShows?: { id: string; name: string; slideIds: string[] }[];
   /** View › Guides the user placed (canvas pixels). */
   guides?: { v: number[]; h: number[] };
+  /** View › Handout Master: how handouts print. */
+  handoutMaster?: HandoutMaster;
+  /** View › Notes Master: what notes pages show. */
+  notesMaster?: NotesMaster;
+  /** File › Info › Properties (written to the .pptx). */
+  properties?: DocProperties;
   /** Home › Drawing › Set as Default Shape: the look new shapes get. */
   defaultShape?: Partial<SlideElement>;
 }
@@ -772,3 +778,9 @@ export interface LiveState {
   /** Where the live slide's animations are (click builds); absent when it has none. */
   build?: import('./animations').LiveBuild;
 }
+
+/** Handout and notes page placeholders (View › Handout / Notes Master). */
+export interface PagePlaceholders { header?: string; footer?: string; date?: boolean; pageNumber?: boolean }
+export interface HandoutMaster extends PagePlaceholders { perPage: 1 | 2 | 3 | 4 | 6 | 9; landscape?: boolean }
+export interface NotesMaster extends PagePlaceholders { landscape?: boolean }
+export interface DocProperties { title?: string; subject?: string; author?: string; manager?: string; company?: string; category?: string; keywords?: string; comments?: string }
