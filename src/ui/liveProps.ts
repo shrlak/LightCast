@@ -22,6 +22,7 @@ export function liveCanvasProps(live: LiveState, screen?: Screen): CanvasProps {
     announcement: live.announcement,
     messageScroll: live.messageScroll,
     bgEffect: live.bgEffect,
+    build: live.build ?? null,
     animate: true,
   };
 }

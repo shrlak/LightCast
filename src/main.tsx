@@ -17,6 +17,7 @@ import '@fontsource/arimo/400.css';
 import '@fontsource/arimo/700.css';
 import '@fontsource/arimo/400-italic.css';
 import './styles.css';
+import { loadEngine } from './engine/load';
 
 const view = new URLSearchParams(location.search).get('view');
 const Root = view === 'output' ? OutputView : view === 'stage' ? StageView : view === 'remote' ? RemoteView : view === 'team' ? TeamView : view === 'multiview' ? MultiView : view === 'mixer' ? MixerView : OperatorView;
@@ -38,8 +39,12 @@ if (splash) {
   }
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Root />
-  </StrictMode>,
-);
+// The Rust engine (shapes, animations, transitions…) loads before the first render so slides never
+// draw without it; if it is slow or fails, the app starts anyway and shapes fall back to plain boxes.
+void Promise.race([loadEngine(), new Promise((r) => setTimeout(r, 4000))]).then(() => {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <Root />
+    </StrictMode>,
+  );
+});

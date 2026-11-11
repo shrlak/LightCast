@@ -73,5 +73,5 @@ function pdfAssets(): Plugin {
 export default defineConfig({
   plugins: [react(), freecastServer(), pdfAssets()],
   server: { host: true },
-  test: { include: ['tests/**/*.test.ts'] },
+  test: { include: ['tests/**/*.test.ts'], setupFiles: ['tests/setupEngine.ts'] },
 });

@@ -105,11 +105,26 @@ export interface MediaMeta {
   markers?: PlaybackMarker[];
 }
 
-export type ElementKind = 'text' | 'image' | 'shape' | 'video' | 'camera' | 'qr';
+/** 'table', 'chart', 'icon' and 'ink' are drawn by the Rust engine (src/engine), as are preset shapes. */
+export type ElementKind = 'text' | 'image' | 'shape' | 'video' | 'camera' | 'qr' | 'table' | 'chart' | 'icon' | 'ink';
+export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot';
+
+/** A stretch of text inside a line with its own character formatting (see domain/richText). */
+export interface TextRun {
+  text: string;
+  /** Canvas pixels. */
+  fontSize?: number;
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;
+}
 
 /** One line of a text element with its own formatting (kept from imported PowerPoint text boxes). */
 export interface ElementParagraph {
   text: string;
+  /** Character formatting within the line; used only while it spells `text`. */
+  runs?: TextRun[];
   fontSize?: number;
   bold?: boolean;
   italic?: boolean;
@@ -152,6 +167,8 @@ export interface SlideElement {
   link?: string;
   /** Per-line formatting; `text` stays the plain text (lines joined by \n). */
   paragraphs?: ElementParagraph[];
+  /** Character formatting of a box without `paragraphs`: the runs of each line of `text`. */
+  runs?: TextRun[][];
   /** Grow the box to fit its text, preserving font sizes (default on). */
   autoFit?: boolean;
   /** PowerPoint text options, as on the slide text (see Theme). */
@@ -166,6 +183,73 @@ export interface SlideElement {
   vertical?: boolean;
   /** Text-box purpose, retained when editing or filling a template. */
   role?: 'prayer' | 'lyrics';
+  /**
+   * PowerPoint preset shape by its Office Open XML name (rect, roundRect, ellipse, star5, rightArrow,
+   * heart, wedgeRoundRectCallout… 183 of them); the outline comes from the engine. Without it a shape
+   * is the plain box / circle of older slides (`radius`, `ellipse`).
+   */
+  shape?: string;
+  /** The preset's adjust values (the yellow handles), in the file format's units. */
+  adj?: number[];
+  /** Outline width in canvas pixels (default 4 when `stroke` is set). */
+  strokeWidth?: number;
+  dash?: DashStyle;
+  /** Two-colour gradient fill, drawn at `gradientAngle` degrees (0 = left to right, 90 = top to bottom). */
+  gradient?: [string, string];
+  gradientAngle?: number;
+  /** Shape effects. */
+  dropShadow?: boolean;
+  glow?: string;
+  softEdge?: number;
+  /** Lines: arrowheads at the start / end. */
+  arrowStart?: boolean;
+  arrowEnd?: boolean;
+  flipH?: boolean;
+  flipV?: boolean;
+  /** Objects with the same group id are selected, moved and sized together (Arrange › Group). */
+  groupId?: string;
+  /** Name shown in the Selection pane. */
+  name?: string;
+  /** Hidden in the Selection pane: kept on the slide, not drawn. */
+  hidden?: boolean;
+  /** Alt text (accessibility). */
+  alt?: string;
+  /** A link opened when the object is clicked in a slide show. */
+  href?: string;
+  table?: import('../engine').TableData;
+  chart?: import('../engine').ChartData;
+  /** Lucide icon name ('icon' objects). */
+  icon?: string;
+  /** 'ink' objects: SVG path drawn in a `pathW`×`pathH` box that is stretched to the object. */
+  path?: string;
+  pathW?: number;
+  pathH?: number;
+}
+
+/** One effect in a slide's animation list (the Animation Pane's order); timing runs in the engine. */
+export interface SlideAnimation {
+  id: string;
+  elementId: string;
+  /** DeckCraft effect id: appear, fade, fly, wipe, zoom, spin, pulse, flyOut, lines… */
+  effect: string;
+  class: 'entrance' | 'emphasis' | 'exit' | 'path';
+  /** Effect option (direction and the like). */
+  option?: string;
+  /** 클릭할 때 / 이전 효과와 함께 / 이전 효과 다음에 */
+  start: 'click' | 'with' | 'after';
+  durationMs: number;
+  delayMs: number;
+  repeat?: number;
+}
+
+/** A review comment on a slide (Review › New Comment). */
+export interface SlideComment {
+  id: string;
+  author: string;
+  text: string;
+  at: number;
+  resolved?: boolean;
+  replies?: { author: string; text: string; at: number }[];
 }
 
 /** Things a slide does when it goes live (ProPresenter "slide actions"). */
@@ -208,6 +292,8 @@ export interface Slide {
   /** Single key that jumps to this slide while its presentation is selected. */
   hotkey?: string;
   transition?: Transition;
+  animations?: SlideAnimation[];
+  comments?: SlideComment[];
 }
 
 export interface Arrangement {
@@ -230,10 +316,17 @@ export interface SongMeta {
   order?: string[];
 }
 
-export type TransitionKind = 'cut' | 'fade' | 'slide' | 'zoom';
+/**
+ * 'cut' | 'fade' | 'slide' | 'zoom' are FreeCast's own (CSS); `fx:<id>` is one of the engine's
+ * PowerPoint transitions (fx:push, fx:wipe, fx:split, fx:blinds, fx:clock…), drawn frame by frame.
+ */
+export type TransitionKind = 'cut' | 'fade' | 'slide' | 'zoom' | `fx:${string}`;
 export interface Transition {
   kind: TransitionKind;
+  /** Milliseconds. */
   duration: number;
+  /** Effect option of an engine transition (direction and the like). */
+  option?: string;
 }
 
 export interface Presentation {
@@ -279,6 +372,8 @@ export interface Presentation {
   retreatBg?: boolean;
   /** Recorded slide timings, optionally synced to an audio track. */
   timeline?: Timeline;
+  /** Design › Variants › Colors: the engine colour scheme tables, charts and the colour picker use. */
+  colorScheme?: string;
 }
 
 export interface BackgroundEffect {
@@ -554,4 +649,6 @@ export interface LiveState {
   songKey?: string | null;
   /** Separate looping layer (e.g. lower-third announcements during pre-service). */
   announcement: { slide: Slide; theme: Theme; title: string } | null;
+  /** Where the live slide's animations are (click builds); absent when it has none. */
+  build?: import('./animations').LiveBuild;
 }

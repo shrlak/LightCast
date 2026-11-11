@@ -4,6 +4,7 @@ import { textElementBounds, type TextBounds } from './textBox';
 import { INDENT_PX, listMarkers } from './textFormat';
 import { fitTextNode } from './boundedTextLayout';
 import { uniformTextBoxFont } from './textBoxFonts';
+import { lineRuns } from './richText';
 
 const cache = new Map<string, SlideElement>();
 export const clearTextBoxLayoutCache = () => cache.clear();
@@ -30,13 +31,20 @@ function measurementNode(el: SlideElement): HTMLDivElement {
   Object.assign(node.style, { position: 'fixed', left: '-100000px', top: '0', visibility: 'hidden', pointerEvents: 'none',
     width: el.vertical ? 'max-content' : `${Math.max(1, el.w)}px`, height: el.vertical ? `${Math.max(1, el.h)}px` : 'max-content', margin: '0' });
   const lines = el.paragraphs?.map((p) => p.text) ?? (el.text ?? '').split('\n');
-  const markers = listMarkers(lines, el.list);
+  const markers = listMarkers(lines, el.list), runs = lineRuns(el);
   lines.forEach((text, i) => {
     const line = document.createElement('div'), p = el.paragraphs?.[i];
     if (p) applyStyle(line, { fontSize: p.fontSize ?? el.fontSize ?? 64, fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined, minHeight: '1.2em' });
     line.style.flexShrink = '0';
     if (markers[i]) { const marker = document.createElement('span'); marker.className = 'list-marker'; marker.textContent = markers[i]; line.append(marker); }
-    line.append(document.createTextNode(text || '\u00a0')); node.append(line);
+    // Runs with their own size or weight take the room they will be drawn in.
+    if (runs[i]) for (const r of runs[i]!) {
+      const span = document.createElement('span');
+      applyStyle(span, { fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? 800 : 400, fontStyle: r.italic ? 'italic' : undefined });
+      span.textContent = r.text; line.append(span);
+    }
+    else line.append(document.createTextNode(text || '\u00a0'));
+    node.append(line);
   });
   document.body.append(node);
   return node;

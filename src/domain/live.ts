@@ -2,6 +2,7 @@ import type { Library, LiveState, Playlist, Presentation, Slide, Theme } from '.
 import { sequence } from './arrangement';
 import { resolveBackground } from './autoBackground';
 import { songKey, stageSettingsFor } from './chordChart';
+import { initialBuild } from './animations';
 
 export interface Cursor {
   presentationId: string;
@@ -122,7 +123,7 @@ function copyrightLine(p: Presentation): string | null {
 }
 
 /** Put the slide at `c` on screen. Returns the new state, or `s` unchanged if the slide does not exist. */
-export function goLive<S extends NavState>(s: S, c: Cursor): S {
+export function goLive<S extends NavState>(s: S, c: Cursor, now: number = Date.now()): S {
   const p = findPres(s.library, c.presentationId);
   const slide = p ? sequence(p)[c.seq]?.slide : undefined;
   if (!p || !slide) return s;
@@ -145,6 +146,7 @@ export function goLive<S extends NavState>(s: S, c: Cursor): S {
       transition: slide.transition ?? p.transition ?? s.live.transition,
       background: resolveBackground(slide, p),
       bgEffect: p.bgEffect ?? null,
+      build: initialBuild(slide, now),
       black: false,
       songKey: songKey(p),
       ...(entering ? songKeyOnStage(s, p) : {}),

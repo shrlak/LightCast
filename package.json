@@ -13,6 +13,7 @@
     "dist:win": "npm run build && electron-builder --win --publish never",
     "dist": "npm run build && electron-builder --publish never",
     "icon": "node scripts/make-icon.mjs",
+    "engine": "node scripts/build-engine.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "tsc --noEmit",

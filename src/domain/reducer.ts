@@ -17,6 +17,7 @@ import { blockedProtectedAction, isProtected, keepProtectedMaterials, protection
 import { uid } from './lyrics';
 import { extraReducer, isExtra, type ExtraAction } from './reducerExtra';
 import { CHURCH_BACKGROUNDS, createEmptyLive } from './defaults';
+import { advanceBuild, rewindBuild } from './animations';
 import { activePlaylist, findPres, goLive, nextCursor, playlistIndexFor, prevCursor, themeFor, type Cursor, type NavState } from './live';
 import { dedupeSongs } from './sunday/dedupe';
 import { resetTimer, startTimer, stopTimer } from './timers';
@@ -169,7 +170,7 @@ const usesMedia = (b: Background | null | undefined, id: string) => b?.kind === 
 
 function live(s: AppState, c: Cursor, now?: number): AppState {
   const prevPres = s.cursor?.presentationId;
-  let next = goLive(s, c);
+  let next = goLive(s, c, now ?? Date.now());
   if (next === s) return s;
   if (next.playlistIndex !== s.playlistIndex && next.cursor) next = { ...next, selectedId: next.cursor.presentationId };
   const actions = next.live.slide?.actions;
@@ -211,7 +212,9 @@ function refreshLive(s: AppState, presentationId: string): AppState {
   if (s.cursor?.presentationId !== presentationId) return s;
   const next = goLive(s, s.cursor);
   if (next === s) return s;
-  return { ...next, live: { ...next.live, black: s.live.black, logo: s.live.logo, copyright: s.live.copyright } };
+  // An edit to the slide on screen must not restart animations that have already played.
+  const build = next.live.build && s.live.build && next.live.slide?.id === s.live.slide?.id ? s.live.build : next.live.build;
+  return { ...next, live: { ...next.live, build, black: s.live.black, logo: s.live.logo, copyright: s.live.copyright } };
 }
 
 /** Keep the same played occurrence when pages before it are removed or restored. */
@@ -506,10 +509,15 @@ function core(s: AppState, a: Action): AppState {
       return live(s, { presentationId: a.presentationId, seq: a.seq, playlistIndex: a.playlistIndex !== undefined ? a.playlistIndex : playlistIndexFor(s, a.presentationId) }, a.now);
     case 'live/next': {
       if (!s.cursor) return s.selectedId ? live(s, { presentationId: s.selectedId, seq: 0, playlistIndex: playlistIndexFor(s, s.selectedId) }, a.now) : s;
+      // A slide with animations left plays its next click step first, as PowerPoint does.
+      const build = s.live.slide && !s.live.black && !s.live.logo ? advanceBuild(s.live.slide, s.live.build, a.now ?? Date.now()) : null;
+      if (build) return { ...s, live: { ...s.live, build } };
       const n = nextCursor(s, s.cursor);
       return n ? live(s, n, a.now) : s;
     }
     case 'live/prev': {
+      const build = s.live.slide ? rewindBuild(s.live.slide, s.live.build, Date.now()) : null;
+      if (build) return { ...s, live: { ...s.live, build } };
       const n = s.cursor && prevCursor(s, s.cursor);
       return n ? live(s, n) : s;
     }

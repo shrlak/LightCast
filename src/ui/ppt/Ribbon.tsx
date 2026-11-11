@@ -314,7 +314,7 @@ export function Ribbon({ state, dispatch, cmd, presentation: p, slide, onDesign 
               </div>
             </Group>
             <Group label="화면 전환">
-              {(['cut', 'fade', 'slide', 'zoom'] as TransitionKind[]).map((k) => (
+              {(['cut', 'fade', 'slide', 'zoom'] as const).map((k) => (
                 <Big key={k} icon={{ cut: '▮', fade: '◐', slide: '⇥', zoom: '⤢' }[k]} label={{ cut: '없음', fade: '페이드', slide: '밀어내기', zoom: '확대' }[k]}
                   active={(transition?.kind ?? 'cut') === k} disabled={!p} onClick={() => setTransition(k)} />
               ))}
