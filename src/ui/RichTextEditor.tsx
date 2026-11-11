@@ -299,6 +299,8 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
   const onKeyDown = (e: RKeyboardEvent) => {
     e.stopPropagation();
     if (e.key === 'Escape') { e.preventDefault(); latest.current.onDone(); return; }
+    // Tab types a tab (it goes to the box's next tab stop) instead of leaving the box.
+    if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) { e.preventDefault(); document.execCommand('insertText', false, '\t'); return; }
     const mod = e.ctrlKey || e.metaKey;
     if (!mod || e.altKey || plain) return;
     const k = e.key.toLowerCase();

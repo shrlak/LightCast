@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
 import { morphFrame, smooth } from '../domain/morph';
+import { DEFAULT_TAB, decimalAt, layoutTabLine, splitRunsAtTabs } from '../domain/tabStops';
 import { PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
@@ -327,6 +328,27 @@ export function ElementView({ el }: { el: SlideElement }) {
 export { runStyle } from './runStyle';
 import { runStyle } from './runStyle';
 
+/** Home › Paragraph › Tabs: a line whose tabs go to the box's tab stops (domain/tabStops). */
+function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; size: number }) {
+  const segs = splitRunsAtTabs(runs);
+  const font = (r?: TextRun) => `${(r?.italic ?? el.italic) ? 'italic ' : ''}${(r?.bold ?? el.bold) ? 800 : 500} ${r?.fontSize ?? size}px ${el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif'}`;
+  const measured = segs.map((seg) => {
+    const ws = seg.map((r) => glyphWidths([...r.text], font(r)).reduce((a, b) => a + b, 0));
+    const text = seg.map((r) => r.text).join('');
+    const dot = decimalAt(text);
+    let dec = 0, n = 0;
+    seg.forEach((r, k) => { const take = Math.max(0, Math.min(r.text.length, dot - n)); dec += take === r.text.length ? ws[k] : glyphWidths([...r.text.slice(0, take)], font(r)).reduce((a, b) => a + b, 0); n += r.text.length; });
+    return { w: ws.reduce((a, b) => a + b, 0), dec };
+  });
+  const { gaps } = layoutTabLine(0, measured, el.tabStops ?? [], el.defaultTab ?? DEFAULT_TAB);
+  return <>{segs.map((seg, i) => (
+    <span key={i}>
+      {i > 0 && <span style={{ display: 'inline-block', width: gaps[i - 1] }} />}
+      {seg.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>)}
+    </span>
+  ))}</>;
+}
+
 let measureCtx: CanvasRenderingContext2D | null = null;
 /** Advance widths of a line's characters in a font (canvas text metrics). */
 function glyphWidths(chars: string[], font: string): number[] {
@@ -388,17 +410,19 @@ function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
   const lines = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
   const markers = listMarkers(lines, el.list);
   const runs = lineRuns(el);
-  const styled = !!(el.list || el.highlight || runs.some(Boolean));
+  const tabbed = !!el.tabStops?.length && lines.some((l) => l.includes('\t'));
+  const styled = !!(el.list || el.highlight || runs.some(Boolean) || tabbed);
   const lineBody = (text: string, i: number) => (
     <ListLine marker={markers[i]} highlight={text.trim() ? el.highlight : undefined}>
-      {runs[i] ? runs[i]!.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(text) ? <DynamicText text={text} /> : text}
+      {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
+        : runs[i] ? runs[i]!.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(text) ? <DynamicText text={text} /> : text}
     </ListLine>
   );
   return (
     <div data-text-element={el.id} style={{
       ...box, left: el.x, top: el.y, width: el.w, height: el.h, ...elementTextStyle(el), display: 'flex', flexDirection: 'column', whiteSpace: 'pre-wrap',
       justifyContent: V_ALIGN[el.vAlign ?? 'middle'], textAlign: el.align ?? 'center',
-      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff',
+      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff', tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
       fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500, fontStyle: el.italic ? 'italic' : undefined, lineHeight: el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25),
       textDecoration: decoration(el), letterSpacing: el.letterSpacing ? el.letterSpacing : undefined,
       paddingLeft: el.indent ? el.indent * INDENT_PX : undefined, ...columnsAndDirection(el),

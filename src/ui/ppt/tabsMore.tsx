@@ -105,6 +105,7 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
       <Group label="표시">
         <Col>
           <label className="rb-check"><input type="checkbox" checked={!!ed.view.grid} onChange={(e) => ed.setView({ ...ed.view, grid: e.target.checked })} /> 눈금선</label>
+          <label className="rb-check"><input type="checkbox" checked={!!ed.view.ruler} onChange={(e) => ed.setView({ ...ed.view, ruler: e.target.checked })} /> 눈금자</label>
           <label className="rb-check"><input type="checkbox" checked={!!ed.view.guides} onChange={(e) => ed.setView({ ...ed.view, guides: e.target.checked })} /> 안내선</label>
           <label className="rb-check"><input type="checkbox" checked={ed.notesOpen} onChange={(e) => ed.setNotesOpen(e.target.checked)} /> 슬라이드 노트</label>
         </Col>

@@ -318,6 +318,10 @@ export interface SlideElement {
   spaceAfter?: number;
   firstIndent?: number;
   rtl?: boolean;
+  /** Home › Paragraph › Tabs…: tab stops in canvas px from the text area's left, sorted. */
+  tabStops?: { pos: number; align: 'left' | 'center' | 'right' | 'decimal' }[];
+  /** Default tab spacing in canvas px (144 = 2.54 cm when unset). */
+  defaultTab?: number;
   /** 'ink' objects: SVG path drawn in a `pathW`×`pathH` box that is stretched to the object. */
   path?: string;
   pathW?: number;

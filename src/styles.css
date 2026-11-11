@@ -1891,3 +1891,25 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .ribbon.pp .rb-big.on, .ribbon.pp .rb-small.on { background: #fff7b0 !important; border-color: #e6cf00 !important; }
 .dlg-tabs button.on { border-bottom-color: var(--pp-yellow-ink); }
 .ppt-thumb.sel { outline-color: var(--pp) !important; }
+/* View › Ruler */
+.ce-ruler { position: absolute; background: #f3f2f1; border: 1px solid #c8c6c4; z-index: 6; pointer-events: auto; font: 9px sans-serif; color: #605e5c; overflow: visible; }
+.ce-ruler.h { left: 0; right: 0; top: -22px; cursor: copy; }
+.ce-ruler.v { top: 0; bottom: 0; left: -22px; }
+.ce-ruler-span { position: absolute; background: #fff; top: 0; bottom: 0; left: 0; right: 0; }
+.ce-ruler.h .ce-ruler-span { right: auto; }
+.ce-ruler.v .ce-ruler-span { bottom: auto; }
+.ce-tick { position: absolute; font-style: normal; }
+.ce-ruler.h .ce-tick { bottom: 0; width: 1px; background: #8a8886; transform: translateX(-.5px); }
+.ce-ruler.h .ce-tick.major { height: 6px; } .ce-ruler.h .ce-tick.half { height: 4px; } .ce-ruler.h .ce-tick.minor { height: 2px; }
+.ce-ruler.h .ce-tick.major { text-indent: 2px; line-height: 10px; top: 1px; height: auto; bottom: 0; background: linear-gradient(#0000 60%, #8a8886 60%); width: 12px; }
+.ce-ruler.v .ce-tick { right: 0; height: 1px; background: #8a8886; }
+.ce-ruler.v .ce-tick.major { width: 6px; } .ce-ruler.v .ce-tick.half { width: 4px; } .ce-ruler.v .ce-tick.minor { width: 2px; }
+.ce-indent { position: absolute; width: 10px; height: 7px; margin-left: -5px; background: #605e5c; cursor: ew-resize; }
+.ce-indent.first { top: 0; clip-path: polygon(0 0, 100% 0, 50% 100%); }
+.ce-indent.hanging { bottom: 5px; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.ce-indent.left { bottom: 0; height: 5px; }
+.ce-tab { position: absolute; bottom: 1px; width: 8px; height: 8px; margin-left: -1px; cursor: ew-resize; border-left: 2px solid #1f8a52; border-bottom: 2px solid #1f8a52; box-sizing: border-box; }
+.ce-tab.right { margin-left: -7px; border-left: 0; border-right: 2px solid #1f8a52; }
+.ce-tab.center { margin-left: -4px; border-left: 0; border-bottom: 2px solid #1f8a52; background: linear-gradient(90deg, #0000 45%, #1f8a52 45% 60%, #0000 60%); }
+.ce-tab.decimal { margin-left: -4px; border-left: 0; background: linear-gradient(90deg, #0000 45%, #1f8a52 45% 60%, #0000 60%); }
+.ce-tab.off { opacity: .35; }

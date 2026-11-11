@@ -20,6 +20,7 @@ import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, i
 import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
 import { adjOf, geometryOf, isLinePreset, presetOf } from '../EngineElements';
 import { RichTextEditor } from '../RichTextEditor';
+import { Ruler } from './Ruler';
 import { centreOf, drawnMotionPath, motionPathOverlays, pathArrow, startAtCentre, withCustomPath } from '../../domain/motionPath';
 
 /** The slide's own text (lyrics, scripture…) drawn by the theme, selectable like an object. */
@@ -52,6 +53,8 @@ export interface ViewOptions {
   grid?: boolean;
   /** 안내선: the slide's centre lines. */
   guides?: boolean;
+  /** 눈금자: centimetre rulers along the top and left, with the selected box's indents and tabs. */
+  ruler?: boolean;
 }
 
 type Drag =
@@ -822,7 +825,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
           justifyContent: editEl.vAlign === 'top' ? 'flex-start' : editEl.vAlign === 'bottom' ? 'flex-end' : 'center',
         }}>
           <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof}
-            style={{ ...rest, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+            style={{ ...rest, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>
       </div>
@@ -915,6 +918,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
               )}
             </>
           );
+        })()}
+        {view?.ruler && (() => {
+          const box = sel.length === 1 ? elOf(sel[0]) : undefined;
+          const textBox = box && (box.kind === 'text' || box.kind === 'shape') ? box : null;
+          return <Ruler k={k} el={textBox} onPatch={(patch) => textBox && setElements(elements.map((e) => (e.id === textBox.id ? { ...e, ...patch } : e)))} />;
         })()}
         {tablePreview && (
           <svg className="ce-handles-svg" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
