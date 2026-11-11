@@ -219,6 +219,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     flushText();
     setSession(null);
   };
+  // Picking a drawing tool (text box, shape, pen…) ends typing, as in PowerPoint.
+  const toolKind = tool?.kind;
+  useEffect(() => {
+    if (toolKind && toolKind !== 'eyedrop') { flushText(); setSession(null); }
+  }, [toolKind, flushText]);
   const typed = (id: string, lines: TextRun[][]) => {
     window.clearTimeout(commitTimer.current);
     pendingText.current = () => {

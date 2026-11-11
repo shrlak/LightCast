@@ -202,7 +202,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
   return (
     <>
       <Group label="클립보드">
-        <Big icon={RI.paste} label="붙여넣기" title="붙여넣기 (Ctrl+V)" onClick={paste} />
+        <PasteButton ed={ed} paste={paste} />
         <Col>
           <Small icon={RI.cut} label="잘라내기" title="잘라내기 (Ctrl+X)" disabled={!sel.length || !ed.canEdit} onClick={() => { copyObjects(ed.selEls); if (ed.slide) ed.updateSlide(deleteSelection(ed.slide, sel)); ed.setSel([]); }} />
           <Small icon={RI.copy} label="복사" title="복사 (Ctrl+C)" disabled={!sel.length} onClick={() => copyObjects(ed.selEls)} />
@@ -219,10 +219,10 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
           <Small icon={RI.section} label="구역" title="구역(섹션) 추가" disabled={!ed.slide || !ed.canEdit} onClick={() => ed.makeSection()} />
         </Col>
       </Group>
-      <Group label="글꼴" className="rb-font">
+      <Group label="글꼴" className="rb-font" launcher={t ? () => ed.setDialog('font') : undefined}>
         {t ? <TextFormatPanel part="font" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} shortcuts /> : <span className="rb-disabled-note">텍스트 없음</span>}
       </Group>
-      <Group label="단락" className="rb-para">
+      <Group label="단락" className="rb-para" launcher={t ? () => ed.setDialog('paragraph') : undefined}>
         {t ? <TextFormatPanel part="paragraph" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} shortcuts={false} /> : <span className="rb-disabled-note">텍스트 없음</span>}
       </Group>
       <Group label="그리기">
@@ -236,7 +236,12 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
       <Group label="편집">
         <Col>
           <Small icon={RI.find} label="찾기" title="찾기 (Ctrl+F)" onClick={onFind} />
-          <Small icon={RI.replace} label="바꾸기" title="바꾸기 (Ctrl+H)" onClick={onReplace} />
+          <DropButton icon={RI.replace} label="바꾸기" render={(close) => (
+            <>
+              <MenuItem label="바꾸기…" hint="Ctrl+H" onClick={() => { onReplace(); close(); }} />
+              <MenuItem label="글꼴 바꾸기…" disabled={!ed.p} onClick={() => { ed.setDialog('replaceFonts'); close(); }} />
+            </>
+          )} />
           <DropButton icon={RI.select} label="선택" render={(close) => (
             <>
               <MenuItem label="모두 선택" hint="Ctrl+A" onClick={() => { ed.setSel(ed.elements.filter((e) => !e.hidden).map((e) => e.id)); close(); }} />
@@ -247,6 +252,42 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
         </Col>
       </Group>
     </>
+  );
+}
+
+/** 붙여넣기 ▾ — the objects copied on a slide, or (Paste Special) the system clipboard's text only or its picture. */
+function PasteButton({ ed, paste }: { ed: Ed; paste: () => void }) {
+  const pasteText = async () => {
+    if (blocked(ed)) return;
+    const text = await navigator.clipboard.readText().catch(() => '');
+    if (!text.trim()) return ed.cmd.notify('클립보드에 텍스트가 없습니다');
+    ed.addElement({ id: uid('el'), kind: 'text', text: text.replace(/\r\n/g, '\n').trim(), x: 220, y: 380, w: 1000, h: 320, fontSize: 56, color: '#ffffff', align: 'left' });
+  };
+  const pastePicture = async () => {
+    if (blocked(ed)) return;
+    try {
+      for (const item of await navigator.clipboard.read()) {
+        const type = item.types.find((t) => t.startsWith('image/'));
+        if (!type) continue;
+        const blob = await item.getType(type);
+        const id = uid('m');
+        await putMedia(id, blob);
+        ed.dispatch({ type: 'media/add', media: { id, name: '붙여넣은 그림.png', type: 'image' } });
+        ed.addElement({ id: uid('el'), kind: 'image', mediaId: id, fit: 'contain', x: 320, y: 240, w: 800, h: 600, name: '그림' });
+        return;
+      }
+    } catch { /* clipboard not readable */ }
+    ed.cmd.notify('클립보드에 그림이 없습니다');
+  };
+  return (
+    <DropButton big icon={RI.paste} label="붙여넣기" title="붙여넣기 (Ctrl+V)" split onMain={paste} render={(close) => (
+      <>
+        <MenuHead>붙여넣기 옵션</MenuHead>
+        <MenuItem label="원본 서식 유지" hint="Ctrl+V" onClick={() => { paste(); close(); }} />
+        <MenuItem label="텍스트만 유지" onClick={() => { void pasteText(); close(); }} />
+        <MenuItem label="그림" onClick={() => { void pastePicture(); close(); }} />
+      </>
+    )} />
   );
 }
 

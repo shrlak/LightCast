@@ -9,6 +9,7 @@ import { useEffect, useLayoutEffect, useRef, type CSSProperties, type KeyboardEv
 import type { TextRun } from '../domain/types';
 import { normalizeRuns, type RunFormat } from '../domain/richText';
 import { stepFontSize } from '../domain/textFormat';
+import { runStyle } from './runStyle';
 
 export interface RichTextApi {
   /** Is part of the text selected (formatting then applies to it rather than the whole box)? */
@@ -41,11 +42,8 @@ function render(root: HTMLElement, lines: TextRun[][]) {
       const span = document.createElement('span');
       const { text: _t, ...fmt } = r;
       if (Object.keys(fmt).length) span.dataset.run = JSON.stringify(fmt);
-      if (r.fontSize) span.style.fontSize = `${r.fontSize}px`;
-      if (r.bold !== undefined) span.style.fontWeight = r.bold ? '800' : '400';
-      if (r.italic !== undefined) span.style.fontStyle = r.italic ? 'italic' : 'normal';
-      if (r.underline) span.style.textDecoration = 'underline';
-      if (r.color) span.style.color = r.color;
+      const css = runStyle(r);
+      for (const [k, v] of Object.entries(css)) if (v !== undefined) (span.style as unknown as Record<string, string>)[k] = typeof v === 'number' && k === 'fontSize' ? `${v}px` : String(v);
       span.textContent = r.text;
       block.append(span);
     }
@@ -68,6 +66,9 @@ export function readLines(root: HTMLElement): TextRun[][] {
       if (tag === 'B' || tag === 'STRONG') chain.push({ bold: true });
       if (tag === 'I' || tag === 'EM') chain.push({ italic: true });
       if (tag === 'U') chain.push({ underline: true });
+      if (tag === 'S' || tag === 'STRIKE' || tag === 'DEL') chain.push({ strike: true });
+      if (tag === 'SUB') chain.push({ baseline: 'sub' });
+      if (tag === 'SUP') chain.push({ baseline: 'super' });
     }
     return Object.assign({}, ...chain) as RunFormat;
   };
@@ -269,7 +270,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
         if (document.activeElement === root) remember();
         const r = runAt(readLines(root), sel.current[0]) ?? { text: '' };
         const b = latest.current.base;
-        return { fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, italic: r.italic ?? b.italic, underline: r.underline, color: r.color ?? b.color };
+        return { fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, italic: r.italic ?? b.italic, underline: r.underline, color: r.color ?? b.color, strike: r.strike, baseline: r.baseline };
       },
       apply: (patch) => reformat(() => patch),
       step: (dir) => reformat((r) => ({ fontSize: stepFontSize(r.fontSize ?? latest.current.base.fontSize, dir) })),
@@ -295,6 +296,9 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
     if (k === 'b') api.apply({ bold: !cur.bold });
     else if (k === 'i') api.apply({ italic: !cur.italic });
     else if (k === 'u') api.apply({ underline: !cur.underline || undefined });
+    // Ctrl+= subscript, Ctrl+Shift+= (Ctrl++) superscript, as in PowerPoint.
+    else if (k === '=' && !e.shiftKey) api.apply({ baseline: cur.baseline === 'sub' ? undefined : 'sub' });
+    else if (k === '+' || (k === '=' && e.shiftKey)) api.apply({ baseline: cur.baseline === 'super' ? undefined : 'super' });
     else if (k === ']' || (e.shiftKey && (k === '>' || k === '.'))) api.step(1);
     else if (k === '[' || (e.shiftKey && (k === '<' || k === ','))) api.step(-1);
     else return;
@@ -321,7 +325,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
         // Focus moving to a ribbon or Format pane control keeps the session (and selection) alive.
         setTimeout(() => {
           const f = document.activeElement as HTMLElement | null;
-          if (f && (f === ref.current || f.closest('.ribbon, .ppt-format, .ppt-menu, .rb-menu, .ce-rich'))) return;
+          if (f && (f === ref.current || f.closest('.ribbon, .ppt-format, .ppt-menu, .rb-menu, .ce-rich, .ppt-dialog'))) return;
           if (!ref.current?.isConnected) return;
           latest.current.onDone();
         }, 0);

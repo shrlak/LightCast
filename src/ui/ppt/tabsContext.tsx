@@ -12,7 +12,7 @@ import { editTable, tableStyles, type ChartKind, type TableAction, type TableDat
 import type { Ed } from './editor';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
-import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
+import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
 import { shapeToPath } from '../../engine';
 import { layoutTable } from '../../engine';
@@ -115,10 +115,28 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
         <Small icon="★" label="기본 도형으로 설정" title="새로 그리는 도형이 이 서식을 따릅니다" disabled={shapes.length !== 1} onClick={() => { const e = shapes[0]; ed.updatePres({ defaultShape: { fill: e.fill, stroke: e.stroke, strokeWidth: e.strokeWidth, gradient: e.gradient, gradientAngle: e.gradientAngle, dropShadow: e.dropShadow, glow: e.glow, color: e.color, fontSize: e.fontSize } }); ed.cmd.notify('새 도형이 이 서식으로 그려집니다'); }} />
       </Group>
       <Group label="도형 스타일"><ShapeStyleButtons ed={ed} big /></Group>
-      <Group label="WordArt 스타일">
+      <Group label="WordArt 스타일" launcher={text.length ? () => ed.setDialog('font') : undefined}>
         <Col>
           <ColorButton icon={<b style={{ fontSize: 14 }}>A</b>} label="텍스트 채우기" title="텍스트 채우기" disabled={!text.length} value={text[0]?.color} onPick={(c) => setText({ color: c })} />
-          <Small icon={<b style={{ textShadow: '1px 1px 1px #888' }}>A</b>} label="텍스트 그림자" active={!!text[0]?.shadow} disabled={!text.length} onClick={() => setText({ shadow: !text[0]?.shadow })} />
+          <DropButton icon={<b style={{ WebkitTextStroke: '1px #c43e1c', color: 'transparent', fontSize: 14 }}>A</b>} label="텍스트 윤곽선" disabled={!text.length} render={(close) => (
+            <>
+              <MenuItem label="윤곽선 없음" on={!text[0]?.textOutline} onClick={() => { setText({ textOutline: undefined }); close(); }} />
+              <ColorGrid value={text[0]?.textOutline?.color} scheme={ed.p?.colorScheme} onPick={(c) => { setText({ textOutline: { color: c, width: text[0]?.textOutline?.width ?? 3 } }); close(); }} />
+              <MenuHead>두께</MenuHead>
+              {[1, 2, 3, 4, 6, 9].map((w) => <MenuItem key={w} label={`${w / 2} pt`} on={text[0]?.textOutline?.width === w} onClick={() => { setText({ textOutline: { color: text[0]?.textOutline?.color ?? '#000000', width: w } }); close(); }} />)}
+            </>
+          )} />
+          <DropButton icon={<b style={{ textShadow: '1px 1px 1px #888' }}>A</b>} label="텍스트 효과" disabled={!text.length} render={(close) => (
+            <>
+              <MenuItem label="그림자" on={!!text[0]?.shadow} onClick={() => { setText({ shadow: !text[0]?.shadow }); close(); }} />
+              <MenuItem label="모두 대문자" on={text[0]?.caps === 'all'} onClick={() => { setText({ caps: text[0]?.caps === 'all' ? undefined : 'all' }); close(); }} />
+              <MenuItem label="작은 대문자" on={text[0]?.caps === 'small'} onClick={() => { setText({ caps: text[0]?.caps === 'small' ? undefined : 'small' }); close(); }} />
+              <MenuHead>텍스트 투명도</MenuHead>
+              <div className="rb-chip-row">{[0, 0.25, 0.5, 0.75].map((v) => <button key={v} type="button" className={`mini-btn ${(text[0]?.textTransparency ?? 0) === v ? 'on' : ''}`} onClick={() => { setText({ textTransparency: v || undefined }); close(); }}>{v * 100}%</button>)}</div>
+              <MenuSep />
+              <MenuItem label="텍스트 옵션…" onClick={() => { ed.setDialog('paragraph'); close(); }} />
+            </>
+          )} />
         </Col>
       </Group>
       <Group label="접근성">

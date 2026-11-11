@@ -23,8 +23,9 @@ import { AddToPlaylistMenu } from '../AddToPlaylist';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { animationBadges } from '../../domain/animations';
 import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, ungroupSelection } from '../../domain/editOps';
-import { selectedEls, type Ed, type TableRange, type TaskPane } from './editor';
+import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AccessibilityPane, AnimationPane, CommentsPane, SelectionPane, accessibilityIssues } from './panes';
+import { Dialogs } from './dialogs';
 import { Backstage, FindReplaceDialog, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
 
@@ -47,6 +48,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [tool, setTool] = useState<CanvasTool | null>(null);
   const [view, setView] = useState<ViewOptions>({});
   const [pane, setPane] = useState<TaskPane>('format');
+  const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);
   const [cell, setCell] = useState<TableRange>({ r: 0, c: 0, r1: 0, c1: 0 });
@@ -152,7 +154,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const canEdit = !!p && !p.protected && !!slide && !isPdfSlide(slide);
   const elements = slide?.elements ?? [];
   const ed: Ed = {
-    state, dispatch, cmd, p, slide, theme, elements, sel, setSel,
+    state, dispatch, cmd, p, slide, theme, elements, sel, setSel, dialog, setDialog,
     selEls: selectedEls(elements, sel),
     canEdit,
     updateSlide: (patch) => { if (!canEdit && !('notes' in patch && Object.keys(patch).length === 1)) { if (p?.protected) cmd.notify(PROTECTED_MESSAGE); return; } updateSlide(patch); },
@@ -476,6 +478,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
         </Menu>
       )}
       {addMenu && <AddToPlaylistMenu state={state} dispatch={dispatch} presentationId={addMenu.id} x={addMenu.x} y={addMenu.y} notify={cmd.notify} onClose={() => setAddMenu(null)} />}
+      {dialog && <Dialogs ed={ed} kind={dialog} onClose={() => setDialog(null)} />}
       {find && <FindReplaceDialog ed={ed} replace={find === 'replace'} onClose={() => setFind(null)} />}
       {reading && <ReadingView ed={ed} onClose={() => setReading(false)} />}
       {backstage && <Backstage ed={ed} onClose={() => setBackstage(false)} />}

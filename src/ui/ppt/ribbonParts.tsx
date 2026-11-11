@@ -140,10 +140,22 @@ export function Menu({ anchor, onClose, children, wide }: { anchor: DOMRect; onC
 }
 
 /** A button that opens a menu (`render` gets a close function). */
-export function DropButton({ big, icon, label, title, disabled, active, render, wide }: { big?: boolean; icon?: ReactNode; label?: string; title?: string; disabled?: boolean; active?: boolean; render: (close: () => void) => ReactNode; wide?: boolean }) {
+export function DropButton({ big, icon, label, title, disabled, active, render, wide, split, onMain }: { big?: boolean; icon?: ReactNode; label?: string; title?: string; disabled?: boolean; active?: boolean; render: (close: () => void) => ReactNode; wide?: boolean; split?: boolean; onMain?: () => void }) {
   const [at, setAt] = useState<DOMRect | null>(null);
   const open = (e: MouseEvent<HTMLButtonElement>) => setAt(at ? null : e.currentTarget.getBoundingClientRect());
   const close = () => setAt(null);
+  // A split button: the top does the command, the caret opens its options (Paste, Bullets…).
+  if (split && onMain) {
+    return (
+      <span className={`rb-split ${big ? 'big' : ''}`}>
+        <button type="button" className="rb-split-main" title={title ?? label} disabled={disabled} onClick={onMain}>
+          <span className="rb-icon">{icon}</span>{!big && label && <span className="rb-label">{label}</span>}
+        </button>
+        <button type="button" className="rb-split-caret" title={`${label ?? title ?? ''} 옵션`} disabled={disabled} onClick={open}>{big && <span className="rb-label">{label}</span>}<span className="rb-caret">▾</span></button>
+        {at && <Menu anchor={at} onClose={close} wide={wide}>{render(close)}</Menu>}
+      </span>
+    );
+  }
   return (
     <>
       {big ? <Big icon={icon} label={label ?? ''} title={title} disabled={disabled} active={active} onClick={open} menu /> : <Small icon={icon} label={label} title={title} disabled={disabled} active={active} onClick={open} menu />}
