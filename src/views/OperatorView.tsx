@@ -60,7 +60,7 @@ import { PrayerSetting } from '../ui/sunday/PrayerSetting';
 import { SongEditor } from '../ui/sunday/SongEditor';
 import { reviewNote } from '../ui/ppt/contiReview';
 import { PptLayout } from '../ui/ppt/PptLayout';
-import { presentOutput } from '../ui/LivePanel';
+import { presentOutput } from '../ui/outputWindows';
 import { desktop } from '../domain/desktop';
 import type { Commands, Modal, PptViewMode } from '../ui/ppt/commands';
 import { FollowDock } from '../ui/FollowDock';

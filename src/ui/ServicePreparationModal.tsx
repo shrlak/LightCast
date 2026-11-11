@@ -3,7 +3,7 @@ import type { Library } from '../domain/types';
 import { emptySlide, referencedAssets, serviceDecks, type ReadinessItem } from '../domain/serviceReadiness';
 import { getMedia } from '../domain/media';
 import { inspectMediaBlob } from '../domain/mediaReadiness';
-import { openOutput } from './LivePanel';
+import { openOutput } from './outputWindows';
 import { desktop } from '../domain/desktop';
 
 const TASKS = ['콘티 확인', '찬양 가사·순서 확인', '기도제목 확인', '설교 PPT 확인', '광고 확인'];

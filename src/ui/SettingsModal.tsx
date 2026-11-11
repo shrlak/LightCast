@@ -2,7 +2,7 @@ import { useState, type Dispatch, type ReactNode } from 'react';
 import type { Action, AppState } from '../domain/reducer';
 import type { Screen, ScreenLayers, StageLayout } from '../domain/types';
 import { uid } from '../domain/lyrics';
-import { openOutput } from './LivePanel';
+import { openOutput } from './outputWindows';
 import { DesktopAi, DesktopDisplays, DesktopRemote, DesktopUpdate, useDesktopInfo } from './DesktopSettings';
 import { desktop } from '../domain/desktop';
 import { contentServer, DEFAULT_SERVER, setContentServer } from '../domain/online';
