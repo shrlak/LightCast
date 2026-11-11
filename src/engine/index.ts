@@ -295,6 +295,16 @@ export function processPicture(rgba: Uint8ClampedArray, w: number, h: number, st
 // ── Review ────────────────────────────────────────────────────────────────────────────────────
 export const thesaurus = (word: string) => engineCall<{ word: string; synonyms: string[] }[]>('review.thesaurus', { word }) ?? [];
 
+// ── Review › Spelling: Hunspell dictionaries (DeckCraft's checker; see src/domain/spelling.ts) ──
+/** Install a dictionary from the texts of its .aff and .dic files; null if the engine refused it. */
+export const spellLoad = (lang: string, aff: string, dic: string) => engineCall<{ ok: boolean; words: number }>('spell.load', { lang, aff, dic });
+/** The languages with a dictionary in the engine (as keys: `en_us`). Empty after a reload. */
+export const spellLoaded = () => engineCall<string[]>('spell.loaded') ?? [];
+/** Indexes of the misspelt `words`; null when there is no dictionary for `lang`. */
+export const spellCheck = (lang: string, words: string[]) => engineCall<{ bad: number[] }>('spell.check', { lang, words })?.bad ?? null;
+export const spellSuggest = (lang: string, word: string, n = 8) => engineCall<string[]>('spell.suggest', { lang, word, n }) ?? [];
+export const spellAddWord = (lang: string, word: string) => engineCall<boolean>('spell.addWord', { lang, word }) ?? false;
+
 // ── WordArt Transform (text warps) and Smooth Corners ─────────────────────────────────────────
 export type WarpBand =
   | { kind: 'fill'; top: [number, number][]; bottom: [number, number][] }
