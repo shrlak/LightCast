@@ -209,10 +209,13 @@ interface Props {
   onDone: () => void;
   /** Selection only formats plain text (the slide's own lyrics keep one style per line). */
   plain?: boolean;
+  /** Review › Language: the proofing language, and no spelling check. */
+  lang?: string;
+  noProof?: boolean;
 }
 
 /** The editable text box. Mounted for one typing session. */
-export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: Props) {
+export function RichTextEditor({ lines, base, style, onChange, onDone, plain, lang, noProof }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const sel = useRef<[number, number]>([0, 0]);
   const latest = useRef({ onChange, onDone, base });
@@ -320,7 +323,8 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain }: 
       className="ce-rich"
       contentEditable
       suppressContentEditableWarning
-      spellCheck={spell}
+      spellCheck={spell && !noProof}
+      lang={lang}
       style={style}
       onInput={() => onChange(readLines(ref.current!))}
       onKeyDown={onKeyDown}

@@ -12,6 +12,7 @@ import { textTarget, type DialogKind, type Ed } from './editor';
 import { MoreDialogs } from './dialogsMore';
 import { MasterView } from './MasterView';
 import { InspectDialog, PageMasterDialog } from './printing';
+import { LanguageDialog } from './reviewPanes';
 
 export function Dialog({ title, onClose, onOk, okLabel = '확인', okDisabled, wide, children }: { title: string; onClose: () => void; onOk?: () => void; okLabel?: string; okDisabled?: boolean; wide?: boolean; children: ReactNode }) {
   return (
@@ -278,6 +279,7 @@ export function Dialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; onClo
   if (kind === 'master') return <MasterView ed={ed} onClose={onClose} />;
   if (kind === 'handoutMaster' || kind === 'notesMaster') return <PageMasterDialog ed={ed} kind={kind === 'handoutMaster' ? 'handout' : 'notes'} onClose={onClose} />;
   if (kind === 'inspect') return <InspectDialog ed={ed} onClose={onClose} />;
+  if (kind === 'language') return <LanguageDialog ed={ed} onClose={onClose} />;
   return <MoreDialogs ed={ed} kind={kind} onClose={onClose} />;
 }
 

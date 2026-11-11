@@ -14,10 +14,10 @@ import { changeCase, type CaseKind } from '../../domain/textFormat';
 import { sizeOf, textValue, CLEAR_TEXT_FORMAT } from './ElementFormat';
 import type { TextFormatValue } from './TextFormatPanel';
 
-export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'accessibility' | 'designer' | null;
+export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'accessibility' | 'designer' | 'spelling' | null;
 
 /** The dialog boxes (Font, Paragraph, Replace Fonts, Header & Footer, Set Up Show, …). */
-export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect';
+export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect' | 'language' | 'compare' | 'albumEdit';
 
 export interface Ed {
   state: AppState;

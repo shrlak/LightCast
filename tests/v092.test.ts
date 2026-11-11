@@ -241,3 +241,20 @@ describe('Browse for Themes', async () => {
     expect(JSON.stringify(pal).toLowerCase()).toContain('#c00000');
   });
 });
+
+describe('Spelling', async () => {
+  const sp = await import('../src/domain/spelling');
+  const bad = new Set(['teh', 'recieve']);
+  const check = (w: string) => bad.has(w.toLowerCase());
+  it('finds misspelled words in reading order and changes them', () => {
+    expect(sp.wordsIn('teh NASA https://x.co/teh it’s 3rd').map((w) => w.word)).toEqual(['teh', 'it’s', 'rd']);
+    const deck = pres([s('a', { title: 'Teh title', text: 'we recieve grace', notes: 'teh notes', elements: [{ id: 'b', kind: 'text', text: 'teh box', x: 0, y: 0, w: 1, h: 1 }, { id: 'q', kind: 'text', text: 'teh skip', noProof: true, x: 0, y: 0, w: 1, h: 1 }] })]);
+    const hits = sp.misspellings(deck, check);
+    expect(hits.map((h) => `${h.field}:${h.word}`)).toEqual(['title:Teh', 'text:recieve', 'el:teh', 'notes:teh']);
+    expect(sp.misspellings(deck, check, new Set(['teh'])).map((h) => h.word)).toEqual(['recieve']);
+    const one = sp.changeWord(deck.slides, hits[1], 'receive');
+    expect(one[0].text).toBe('we receive grace');
+    const all = sp.changeWord(deck.slides, hits[2], 'the', true);
+    expect([all[0].elements![0].text, all[0].notes, all[0].title]).toEqual(['the box', 'the notes', 'Teh title']);
+  });
+});

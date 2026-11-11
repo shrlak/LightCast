@@ -56,7 +56,11 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
   return (
     <>
       <Group label="언어 교정">
-        <Big icon="abc✓" label="맞춤법 검사" title="텍스트를 입력할 때 맞춤법이 틀린 단어에 밑줄을 긋습니다" active={spell} onClick={() => { setSpellCheck(!spell); setSpell(!spell); }} />
+        <Big icon="abc✓" label="맞춤법 검사" title="프레젠테이션의 틀린 단어를 하나씩 찾아 고칩니다" active={ed.pane === 'spelling'} onClick={() => ed.setPane(ed.pane === 'spelling' ? null : 'spelling')} />
+        <Col>
+          <label className="rb-check" title="입력할 때 틀린 단어에 빨간 밑줄"><input type="checkbox" checked={spell} onChange={() => { setSpellCheck(!spell); setSpell(!spell); }} /> 입력할 때 검사</label>
+          <Small icon="🌐" label="언어" title="교정 언어 설정 · 맞춤법 검사 안 함" onClick={() => ed.setDialog('language')} />
+        </Col>
         <Big icon="📖" label="동의어 사전" title="선택한 단어와 뜻이 같은 단어" onClick={() => ed.setDialog('thesaurus')} />
       </Group>
       <Group label="접근성">

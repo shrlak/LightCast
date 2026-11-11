@@ -1869,3 +1869,12 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .rb-variants .rb-theme { position: relative; }
 .variant-chip { position: absolute; left: 4px; right: 4px; bottom: 3px; display: flex; height: 5px; }
 .variant-chip i { flex: 1; }
+.spell-pane { display: flex; flex-direction: column; gap: 8px; padding: 0 10px 10px; }
+.spell-word { display: flex; flex-direction: column; gap: 2px; padding: 8px; background: #fde7e9; border-left: 3px solid #c50f1f; }
+.spell-word b { font-size: 18px; }
+.spell-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.spell-suggestions { max-height: 180px; }
+.spell-syn { display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; }
+.spell-syn small { width: 100%; color: #605e5c; }
+.spell-syn span { border: 1px solid #e1dfdd; padding: 1px 6px; border-radius: 3px; }
+.spell-done { color: #107c10; font-weight: 600; }

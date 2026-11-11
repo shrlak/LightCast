@@ -40,6 +40,9 @@ export interface DesktopBridge {
   pptxToPdf(bytes: Uint8Array): Promise<Uint8Array | null>;
   /** Legacy binary PPT → editable PPTX via locally installed PowerPoint or LibreOffice. */
   pptToPptx(bytes: Uint8Array): Promise<Uint8Array | null>;
+  /** Review › Spelling (desktop app versions that have it). */
+  isMisspelled?(word: string): boolean;
+  spellSuggestions?(word: string): string[];
   openView(url: string, displayId?: number | null): Promise<void>;
   /** Slide show starts: cover the projector (or this screen) right away, like PowerPoint. */
   present(url: string): Promise<void>;

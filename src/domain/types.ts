@@ -257,6 +257,9 @@ export interface SlideElement {
   flipV?: boolean;
   /** Objects with the same group id are selected, moved and sized together (Arrange › Group). */
   groupId?: string;
+  /** Review › Language: the proofing language (BCP-47), and "do not check spelling". */
+  lang?: string;
+  noProof?: boolean;
   /** The group this object was in before Ungroup (Arrange › Regroup puts it back). */
   prevGroupId?: string;
   /** A layout placeholder: shows a prompt in the editor while empty (Slide Master › Insert Placeholder). */
@@ -389,6 +392,9 @@ export interface Slide {
   transition?: Transition;
   animations?: SlideAnimation[];
   comments?: SlideComment[];
+  /** Review › Language for the slide's own text. */
+  lang?: string;
+  noProof?: boolean;
   /** The Slide Master layout this slide was made from. */
   layoutId?: string;
   /** Character formatting of the slide's own text, one list of runs per line (ignored for a line they no longer spell). */
