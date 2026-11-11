@@ -162,3 +162,39 @@ describe('WordArt Transform', async () => {
     expect(smoothCorners(200, 100, 0.6)?.path).toContain('C');
   });
 });
+
+describe('Table borders, margins, Draw Table and Eraser', async () => {
+  const { newTable, editTable } = await import('../src/engine');
+  const tb = await import('../src/domain/tableBorders');
+  const pen = { color: '#ff0000', width: 4 };
+  it('draws outside and inside borders on a range', () => {
+    const t = newTable(3, 3)!;
+    const out = tb.applyBorders(t, { r: 0, c: 0, r1: 1, c1: 1 }, 'outside', pen);
+    expect(out.rows[0][0].borders).toMatchObject({ t: pen, l: pen });
+    expect(out.rows[0][0].borders?.r).toBeUndefined();
+    expect(out.rows[1][1].borders).toMatchObject({ b: pen, r: pen });
+    expect(out.rows[2][2].borders).toBeUndefined();
+    const none = tb.applyBorders(out, { r: 0, c: 0, r1: 0, c1: 0 }, 'none', pen);
+    expect(none.rows[0][0].borders?.t).toBeNull();
+    // The neighbour's side counts for a shared line.
+    expect(tb.sideOf(out, 1, 0, 't')).toBeUndefined();
+    const inside = tb.applyBorders(t, { r: 0, c: 0, r1: 1, c1: 0 }, 'insideH', pen);
+    expect(tb.sideOf(inside, 1, 0, 't')).toEqual(pen);
+    // Borders survive an edit that goes through the engine.
+    const edited = editTable(out, 'insertRowBelow', 2, 0)!;
+    expect(edited.rows[0][0].borders).toMatchObject({ t: pen });
+  });
+  it('splits a cell with a drawn line and merges with the eraser', () => {
+    const t = newTable(2, 2)!;
+    const v = tb.drawLine(t, 0, 0, 'v', 0.5)!;
+    expect(v.cols).toHaveLength(3);
+    expect(v.cols[0] + v.cols[1]).toBeCloseTo(t.cols[0]);
+    // Row 1 keeps one cell over the two new columns.
+    expect(v.rows[1][0].span).toBe(2);
+    expect(v.rows[0][0].span ?? 1).toBe(1);
+    const h = tb.drawLine(t, 1, 1, 'h', 0.3)!;
+    expect(h.rows).toHaveLength(3);
+    const erased = tb.eraseLine(t, 0, 0, 'r')!;
+    expect(erased.rows[0][0].span).toBe(2);
+  });
+});

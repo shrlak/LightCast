@@ -188,13 +188,18 @@ export const transitionFrame = (kind: string, option: string, t: number, aspect 
   engineCall<{ layers: TransitionLayer[]; parts: boolean }>('transition.frame', { kind, option, t, aspect })?.layers ?? null;
 
 // ── Tables ────────────────────────────────────────────────────────────────────────────────────
-export interface TableCell { text: string; span?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; fill?: string; color?: string; bold?: boolean; align?: string }
+export interface CellBorder { color: string; width: number }
+/** Sides drawn by Table Design › Borders; `null` = that side has no line. */
+export interface CellBorders { t?: CellBorder | null; r?: CellBorder | null; b?: CellBorder | null; l?: CellBorder | null }
+export interface TableCell { text: string; span?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; fill?: string; color?: string; bold?: boolean; align?: string; borders?: CellBorders }
 export interface TableData {
   rows: TableCell[][];
   cols: number[];
   heights: number[];
   style: string;
   firstRow: boolean; firstCol: boolean; lastRow: boolean; lastCol: boolean; bandRow: boolean; bandCol: boolean;
+  /** Cell margins in canvas pixels: left, top, right, bottom. */
+  margins?: [number, number, number, number];
 }
 export interface TableCellBox { r: number; c: number; x: number; y: number; w: number; h: number; text: string; fill: string | null; color: string | null; bold: boolean; align: string | null; border: string | null; borderWidth: number }
 export type TableAction = 'insertRowAbove' | 'insertRowBelow' | 'insertColLeft' | 'insertColRight' | 'deleteRow' | 'deleteCol' | 'merge' | 'split' | 'distributeRows' | 'distributeCols';

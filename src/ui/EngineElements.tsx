@@ -7,7 +7,8 @@ import { lineRuns } from '../domain/richText';
 import { runStyle as runCss } from './runStyle';
 import { useMediaUrl } from './hooks';
 import { patternPath } from '../domain/patterns';
-import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry } from '../engine';
+import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry, type TableData } from '../engine';
+import { sideOf } from '../domain/tableBorders';
 
 let epoch = 0;
 onEngineReady(() => { epoch++; });
@@ -155,6 +156,18 @@ export function ShapeElement({ el }: { el: SlideElement }) {
   );
 }
 
+/** Table Design › Borders drawn on a cell, over the table style's own lines (a shared line is drawn by either cell). */
+function ownBorders(t: TableData, r: number, c: number): CSSProperties {
+  const css: CSSProperties = {};
+  const side = (k: 't' | 'r' | 'b' | 'l', prop: 'borderTop' | 'borderRight' | 'borderBottom' | 'borderLeft') => {
+    const b = sideOf(t, r, c, k);
+    if (b === null) css[prop] = 'none';
+    else if (b) css[prop] = `${b.width}px solid ${b.color}`;
+  };
+  side('t', 'borderTop'); side('r', 'borderRight'); side('b', 'borderBottom'); side('l', 'borderLeft');
+  return css;
+}
+
 export function TableElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
   const t = el.table;
@@ -167,9 +180,9 @@ export function TableElement({ el }: { el: SlideElement }) {
       {cells.map((c) => (
         <div key={`${c.r}:${c.c}`} style={{
           position: 'absolute', left: c.x, top: c.y, width: c.w, height: c.h, boxSizing: 'border-box', background: c.fill ?? undefined,
-          border: c.border ? `${c.borderWidth}px solid ${c.border}` : undefined, color: c.color ?? el.color ?? '#ffffff', fontWeight: c.bold ? 700 : 400,
+          border: c.border ? `${c.borderWidth}px solid ${c.border}` : undefined, ...ownBorders(t, c.r, c.c), color: c.color ?? el.color ?? '#ffffff', fontWeight: c.bold ? 700 : 400,
           display: 'flex', alignItems: 'center', justifyContent: c.align === 'center' ? 'center' : c.align === 'right' ? 'flex-end' : 'flex-start',
-          textAlign: (c.align as CSSProperties['textAlign']) ?? 'left', padding: `${fs * 0.15}px ${fs * 0.35}px`, overflow: 'hidden', whiteSpace: 'pre-wrap', lineHeight: 1.2,
+          textAlign: (c.align as CSSProperties['textAlign']) ?? 'left', padding: t.margins ? `${t.margins[1]}px ${t.margins[2]}px ${t.margins[3]}px ${t.margins[0]}px` : `${fs * 0.15}px ${fs * 0.35}px`, overflow: 'hidden', whiteSpace: 'pre-wrap', lineHeight: 1.2,
         }}>{c.text}</div>
       ))}
     </div>

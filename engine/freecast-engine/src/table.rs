@@ -28,6 +28,9 @@ pub struct TableIn {
     pub last_col: bool,
     pub band_row: bool,
     pub band_col: bool,
+    /// Table Layout › Cell Margins (left, top, right, bottom; kept through edits).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub margins: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -51,6 +54,9 @@ pub struct CellIn {
     pub bold: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub align: Option<String>,
+    /// Table Design › Borders drawn on this cell's sides (FreeCast draws them; kept through edits).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub borders: Option<serde_json::Value>,
 }
 
 fn is_one(v: &u32) -> bool {
@@ -150,6 +156,7 @@ fn from_dc(d: &Table, orig: &TableIn) -> TableIn {
                         color: base.color,
                         bold: base.bold,
                         align: base.align,
+                        borders: base.borders,
                     }
                 })
                 .collect()
