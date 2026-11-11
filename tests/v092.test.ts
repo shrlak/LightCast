@@ -292,3 +292,32 @@ describe('Photo Album', async () => {
     expect(rebuilt.map((x) => (x.album ? `album:${x.elements!.find((e) => e.kind === 'image')!.name}` : x.id))).toEqual(['x', 'album:c.jpg', 'album:a.jpg', 'y']);
   });
 });
+
+describe('Morph', async () => {
+  const mo = await import('../src/domain/morph');
+  it("pairs objects by DeckCraft's rules and moves them between slides", () => {
+    const a: SlideElement[] = [
+      { id: 'a1', kind: 'shape', shape: 'ellipse', x: 0, y: 0, w: 100, h: 100, fill: '#000000' },
+      { id: 'a2', kind: 'text', text: '찬양', x: 0, y: 200, w: 100, h: 50 },
+      { id: 'a3', kind: 'shape', name: '!!logo', shape: 'rect', x: 0, y: 0, w: 10, h: 10, rotation: 350 },
+      { id: 'a4', kind: 'shape', shape: 'star5', x: 0, y: 0, w: 10, h: 10 },
+    ];
+    const b: SlideElement[] = [
+      { id: 'b3', kind: 'shape', name: '!!logo', shape: 'ellipse', x: 100, y: 0, w: 10, h: 10, rotation: 10 },
+      { id: 'b2', kind: 'text', text: '찬양', x: 400, y: 200, w: 200, h: 50 },
+      { id: 'b1', kind: 'shape', shape: 'ellipse', x: 200, y: 0, w: 100, h: 100, fill: '#ffffff' },
+      { id: 'b5', kind: 'text', text: '새 글', x: 0, y: 0, w: 1, h: 1 },
+    ];
+    expect(mo.morphPairs(a, b)).toEqual([['a3', 'b3'], ['a2', 'b2'], ['a1', 'b1']]);
+    const half = mo.morphFrame(a, b, 0.5);
+    const circle = half.moving.find((e) => e.id === 'b1')!;
+    expect(circle.x).toBe(100);
+    expect(circle.fill).toBe('#808080');
+    // 350° → 10° turns 20° the short way: halfway is 360° (0).
+    expect((half.moving.find((e) => e.id === 'b3')!.rotation ?? 0) % 360).toBeCloseTo(0);
+    expect(half.oldOnly.map((e) => e.id)).toEqual(['a4']);
+    expect(half.newOnly.map((e) => e.id)).toEqual(['b5']);
+    expect(half.newOnly[0].opacity).toBeCloseTo(0.5);
+    expect(mo.morphFrame(a, b, 1).moving.find((e) => e.id === 'b2')!.x).toBe(400);
+  });
+});

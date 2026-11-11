@@ -2,6 +2,7 @@ import { isFrontSlide } from '../domain/frontLayout';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
+import { morphFrame, smooth } from '../domain/morph';
 import { PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
@@ -516,6 +517,39 @@ function useReadyFrame(slide: Slide | null, background: Background | null, theme
 
 const sameSlide = (a: Slide, b: Slide) => a === b || (a.id === b.id && JSON.stringify(a) === JSON.stringify(b));
 
+/** Transitions › Morph: paired objects travel from the old slide to the new one (domain/morph). */
+function MorphTransition({ from, to, duration, onDone }: { from: { slide: Slide; theme: Theme }; to: { slide: Slide; theme: Theme }; duration: number; onDone: () => void }) {
+  const [t, setT] = useState(0);
+  const done = useRef(onDone); done.current = onDone;
+  useEffect(() => {
+    const start = performance.now();
+    let raf = 0;
+    const tick = () => {
+      const p = Math.min(1, (performance.now() - start) / Math.max(1, duration));
+      setT(p);
+      if (p < 1) raf = requestAnimationFrame(tick);
+      else done.current();
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [duration]);
+  const f = morphFrame(from.slide.elements ?? [], to.slide.elements ?? [], t);
+  const e = smooth(t);
+  // The slides' own text cross-fades unless it stays the same.
+  const sameText = from.slide.text === to.slide.text && from.slide.title === to.slide.title && from.slide.subtext === to.slide.subtext;
+  const oldText = useMemo(() => <SlideBody slide={{ ...from.slide, elements: undefined }} theme={from.theme} />, [from]);
+  const newText = useMemo(() => <SlideBody slide={{ ...to.slide, elements: undefined }} theme={to.theme} />, [to]);
+  return (
+    <>
+      {!sameText && <div className="layer" style={{ opacity: 1 - e }}>{oldText}</div>}
+      <div className="layer" style={{ opacity: sameText ? 1 : e }}>{newText}</div>
+      <div className="layer">
+        {[...f.oldOnly, ...f.fadingOut, ...f.moving, ...f.fadingIn, ...f.newOnly].map((el) => <ElementView key={el.id} el={el} />)}
+      </div>
+    </>
+  );
+}
+
 /** Keeps the outgoing slide on screen while the new one transitions in. */
 function TransitionLayer({ slide, theme, transition, animate, build }: { slide: Slide | null; theme: Theme; transition?: Transition; animate: boolean; build?: LiveBuild | null }) {
   const [prev, setPrev] = useState<{ slide: Slide; theme: Theme } | null>(null);
@@ -538,6 +572,9 @@ function TransitionLayer({ slide, theme, transition, animate, build }: { slide: 
   // re-place them without drawing them again.
   const oldBody = useMemo(() => (prev ? <SlideBody slide={prev.slide} theme={prev.theme} /> : null), [prev]);
   const newBody = useMemo(() => (slide ? <SlideBody slide={slide} theme={theme} build={build} /> : null), [slide, theme, build]);
+  if (fx === 'morph' && prev && slide) {
+    return <MorphTransition key={`morph-${prev.slide.id}-${slide.id}`} from={prev} to={{ slide, theme }} duration={duration} onDone={() => setPrev(null)} />;
+  }
   if (fx && prev && slide) {
     return <FxTransition key={`fx-${prev.slide.id}-${slide.id}`} kind={fx} option={transition?.option ?? ''} duration={duration} oldBody={oldBody} newBody={newBody} onDone={() => setPrev(null)} />;
   }

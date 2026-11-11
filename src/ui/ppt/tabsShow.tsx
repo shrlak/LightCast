@@ -171,7 +171,7 @@ export function TransitionsTab({ ed, onPreview }: { ed: Ed; onPreview: () => voi
       <Group label="미리 보기"><Big icon={RI.preview} label="미리 보기" disabled={!ed.slide} onClick={onPreview} /></Group>
       <Group label="이 슬라이드로 화면 전환">
         <Gallery className="rb-tr-gallery">
-          {['none', 'fade', 'push', 'wipe', 'split', 'reveal', 'randomBar', 'shape', 'uncover', 'cover', 'flash'].map((id) => (
+          {['none', 'morph', 'fade', 'push', 'wipe', 'split', 'reveal', 'randomBar', 'shape', 'uncover', 'cover', 'flash'].map((id) => (
             <button key={id} type="button" className={`rb-tr ${cur === id ? 'on' : ''}`} disabled={!ed.slide || !ed.canEdit} onClick={() => pick(id)}><TransitionIcon id={id} /><span>{TRANSITION[id] ?? id}</span></button>
           ))}
           <DropButton icon={<span className="rb-more">▾</span>} title="모든 화면 전환" disabled={!ed.slide || !ed.canEdit} wide render={(close) => (
