@@ -1,0 +1,23 @@
+[package]
+name = "freecast-engine"
+description = "FreeCast's PowerPoint engine: preset shapes, arrange, animations, transitions, tables, charts, colours and find/replace, built on DeckCraft's crates and run as WebAssembly"
+version = "1.0.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The three exported functions need `#[unsafe(no_mangle)]`; everything else is safe code.
+[lints.rust]
+unsafe_code = "deny"
+
+[dependencies]
+deckcraft-geom = { workspace = true }
+deckcraft-color = { workspace = true }
+deckcraft-model = { workspace = true }
+deckcraft-anim = { workspace = true }
+kurbo = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

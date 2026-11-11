@@ -1,0 +1,49 @@
+# FreeCast's PowerPoint engine, compiled to WebAssembly (see README.md).
+#
+# `freecast-engine` is FreeCast's own crate; `deckcraft/*` are DeckCraft's geometry, colour, model and
+# slide-show timing crates (https://github.com/storytold/deckcraft, MIT OR Apache-2.0), vendored
+# unchanged so their own manifests (which read the workspace keys below) build as they are.
+[workspace]
+resolver = "3"
+members = ["freecast-engine", "deckcraft/geom", "deckcraft/color", "deckcraft/model", "deckcraft/anim"]
+
+[workspace.package]
+version = "0.15.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.95"
+repository = "https://github.com/storytold/deckcraft"
+
+[workspace.dependencies]
+deckcraft-geom = { path = "deckcraft/geom" }
+deckcraft-color = { path = "deckcraft/color" }
+deckcraft-model = { path = "deckcraft/model" }
+deckcraft-anim = { path = "deckcraft/anim" }
+kurbo = { version = "0.13", features = ["serde"] }
+thiserror = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+unicode-segmentation = "1"
+proptest = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
+dbg_macro = "warn"
+todo = "warn"
+type_complexity = "allow"
+self_named_constructors = "allow"
+large_enum_variant = "allow"
+result_large_err = "allow"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+debug = 0
+panic = "abort"
+strip = true
