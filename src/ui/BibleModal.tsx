@@ -94,28 +94,28 @@ export function BibleModal({ initialRefs = '', onClose, onCreate, service }: Pro
 
   return (
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal wide" role="dialog" aria-label="Bible">
+      <div className="modal wide" role="dialog" aria-label="성경">
         <header className="modal-head">
           <h2>📖 성경 말씀 · Bible</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button className="icon-btn" onClick={onClose} aria-label="닫기">✕</button>
         </header>
         <div className="editor-body">
           <div className="editor-col">
-            <label className="stack">References
+            <label className="stack">성경 구절
               <input className="title-input" autoFocus placeholder="행1:8-10 요3:16 롬8:28  ·  로마서 5장 1-11절  ·  John 3:16; Ps 23" value={input} onChange={(e) => setInput(e.target.value)} />
             </label>
             <div className="muted small">
               {refs.map((r) => formatRef(r)).join(' · ') || 'Type one or more references'}
               {invalid.length > 0 && <span className="warn"> · not recognised: {invalid.join(', ')}</span>}
             </div>
-            <label className="stack">Sermon title (optional — adds a title slide)
+            <label className="stack">설교 제목 (선택 — 제목 슬라이드를 넣습니다)
               <input value={sermonTitle} onChange={(e) => setSermonTitle(e.target.value)} />
             </label>
             {service && <label className="stack">설교자 (설교 첫 슬라이드)
               <input value={preacher} onChange={(e) => setPreacher(e.target.value)} />
             </label>}
             <div className="stack">
-              <span>Translations (up to 2 — the second shows underneath)</span>
+              <span>번역본 (2개까지 — 둘째 번역은 아래에 나옵니다)</span>
               <div className="row gap-xs wrap">
                 {translations.map((t) => (
                   <button key={t.id} className={chosen.includes(t.id) ? 'active' : ''} onClick={() => toggle(t.id)}>
@@ -123,9 +123,9 @@ export function BibleModal({ initialRefs = '', onClose, onCreate, service }: Pro
                   </button>
                 ))}
               </div>
-              <p className="hint">☁ Loaded from the online server when used — nothing is stored on this computer.</p>
+              <p className="hint">☁ 쓸 때 온라인 서버에서 불러옵니다 — 이 컴퓨터에는 저장하지 않습니다.</p>
             </div>
-            <label className="field-inline">Verses per slide
+            <label className="field-inline">슬라이드당 절 수
               <select value={perSlide} onChange={(e) => setPerSlide(Number(e.target.value))}>
                 {[1, 2, 3, 4, 5].map((n) => <option key={n}>{n}</option>)}
               </select>
@@ -133,8 +133,8 @@ export function BibleModal({ initialRefs = '', onClose, onCreate, service }: Pro
             {service && placed && <div className={placed.startsWith('⚠') ? 'warn' : 'hint'}>{placed}</div>}
             {error && <div className="warn">{error}</div>}
             <form className="stack" onSubmit={(e) => { e.preventDefault(); runSearch(); }}>
-              <span>🔎 Search the Bible by words (in the first selected translation)</span>
-              <div className="row gap-xs"><input className="grow" placeholder="사랑 오래 참고 · shepherd" value={query} onChange={(e) => setQuery(e.target.value)} /><button type="submit">Search</button></div>
+              <span>🔎 단어로 성경 찾기 (첫째로 고른 번역본에서)</span>
+              <div className="row gap-xs"><input className="grow" placeholder="사랑 오래 참고 · shepherd" value={query} onChange={(e) => setQuery(e.target.value)} /><button type="submit">찾기</button></div>
             </form>
             <div className="stack bible-detect">
               <span>🎙 자동 인식 — 설교 원고를 붙여 넣거나 말하면 성경 구절을 찾아 줍니다</span>
@@ -155,7 +155,7 @@ export function BibleModal({ initialRefs = '', onClose, onCreate, service }: Pro
             {hits.length > 0 && (
               <ol className="preview-list search-hits">
                 {hits.map((h) => (
-                  <li key={`${h.bookIndex}-${h.chapter}-${h.verse}`} onClick={() => addHit(h)} title="Click to add this verse">
+                  <li key={`${h.bookIndex}-${h.chapter}-${h.verse}`} onClick={() => addHit(h)} title="클릭하면 이 구절을 넣습니다">
                     <span className="muted small">{BIBLE_BOOKS[h.bookIndex].nameKo} {h.chapter}:{h.verse}</span>
                     <div>{h.text}</div>
                   </li>
@@ -164,7 +164,7 @@ export function BibleModal({ initialRefs = '', onClose, onCreate, service }: Pro
             )}
           </div>
           <div className="editor-col preview-col">
-            <strong>{slides.length} slides</strong>
+            <strong>슬라이드 {slides.length}장</strong>
             <ol className="preview-list">
               {slides.map((s) => (
                 <li key={s.id}>
@@ -177,9 +177,9 @@ export function BibleModal({ initialRefs = '', onClose, onCreate, service }: Pro
           </div>
         </div>
         <footer className="modal-foot">
-          <button onClick={onClose}>Cancel</button>
-          <button disabled={!slides.length} onClick={() => create(false)}>Add to library</button>
-          <button className="primary" disabled={!slides.length} onClick={() => create(true)}>Go live</button>
+          <button onClick={onClose}>취소</button>
+          <button disabled={!slides.length} onClick={() => create(false)}>라이브러리에 추가</button>
+          <button className="primary" disabled={!slides.length} onClick={() => create(true)}>바로 띄우기</button>
         </footer>
       </div>
     </div>

@@ -40,7 +40,7 @@ export function ConfessionSetting({ library, dispatch, onClose, notify }: { libr
       <div className="modal confession-modal" role="dialog" aria-label="공동체 고백송">
         <header className="modal-head">
           <h2>🙌 공동체 고백송</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button className="icon-btn" onClick={onClose} aria-label="닫기">✕</button>
         </header>
         <div className="wizard-body stack">
           <p className="hint">학기마다 · 해마다 바뀌는 고백송을 여기서 정합니다. 고르면 주일예배 Back 슬라이드의 고백송 부분이 이 노래로 바뀌고, 앞으로 만드는 모든 주일예배에 들어갑니다. (한 주만 다른 노래를 쓰려면 주일예배 마법사에서 바꾸세요.)</p>

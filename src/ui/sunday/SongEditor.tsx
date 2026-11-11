@@ -218,7 +218,7 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
       <div className="modal song-editor" role="dialog" aria-label="찬양 편집">
         <header className="modal-head">
           <h2>🎵 {review ? `콘티 찬양 확인 ${review.index + 1}/${review.total}` : song ? '찬양 편집' : '새 찬양 등록'}</h2>
-          <button className="icon-btn" onClick={close} aria-label="Close">✕</button>
+          <button className="icon-btn" onClick={close} aria-label="닫기">✕</button>
         </header>
         {review && <p className={review.warn ? 'warn song-review-note' : 'hint song-review-note'}>{review.note}</p>}
         <div className="song-editor-body">

@@ -185,7 +185,7 @@ export function RetreatWizard({ state, dispatch, onClose, notify }: Props) {
                 ) : (
                   <>
                     <AutoTextarea rows={4} placeholder="가사 (빈 줄 = 다음 슬라이드)" value={song.text} onChange={(e) => upd({ text: e.target.value })} />
-                    <span className="muted small">{lyricSlides(song.text, d.linesPerSlide).length} slides</span>
+                    <span className="muted small">{lyricSlides(song.text, d.linesPerSlide).length}장</span>
                   </>
                 )}
               </div>
@@ -224,7 +224,7 @@ export function RetreatWizard({ state, dispatch, onClose, notify }: Props) {
           <div className="steps-nav">
             {STEPS.map((s, i) => <button key={s} className={i === step ? 'tab active' : 'tab'} onClick={() => setStep(i)}>{i + 1}. {s}</button>)}
           </div>
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button className="icon-btn" onClick={onClose} aria-label="닫기">✕</button>
         </header>
         <div className="wizard-body">
           {busy && <div className="card busy">⏳ {busy}</div>}
@@ -244,7 +244,7 @@ export function RetreatWizard({ state, dispatch, onClose, notify }: Props) {
               <div className="card stack">
                 <h3>찬양 콘티 (PDF, several files OK)</h3>
                 <p className="hint">AI finds the song table and puts each column's songs into the matching meeting, and reads lyrics from any sheet music. Library songs are used as they are.</p>
-                <button className="primary" disabled={!!busy} onClick={() => pdfRef.current?.click()}>Upload 콘티 PDFs</button>
+                <button className="primary" disabled={!!busy} onClick={() => pdfRef.current?.click()}>콘티 PDF 올리기</button>
                 <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={(e) => readConti(e.target.files)} />
                 {readSongs.length > 0 && <span className="muted small">악보에서 읽은 곡: {readSongs.map((s) => s.title).join(', ')}</span>}
               </div>
@@ -290,16 +290,16 @@ export function RetreatWizard({ state, dispatch, onClose, notify }: Props) {
               {d.meetings.map((m) => (
                 <div key={m.id} className="card row gap-s wrap">
                   <strong className="grow">{m.name} <span className="muted small">{m.date} · {m.blocks.map((b) => BLOCK_LABELS[b.kind]).join(' → ')}</span></strong>
-                  <button disabled={!!busy} onClick={() => build(m, false)}>Create playlist</button>
+                  <button disabled={!!busy} onClick={() => build(m, false)}>재생목록 만들기</button>
                   <button className="primary" disabled={!!busy} onClick={() => build(m, true)}>+ {meetingFileName(m)}.pptx</button>
                 </div>
               ))}
-              <button disabled={!!busy} onClick={async () => { for (const m of d.meetings) await build(m, false); }}>Create all playlists</button>
+              <button disabled={!!busy} onClick={async () => { for (const m of d.meetings) await build(m, false); }}>재생목록 모두 만들기</button>
             </div>
           )}
         </div>
         <footer className="modal-foot">
-          <span className="muted small grow">Draft saved automatically</span>
+          <span className="muted small grow">작성 내용은 자동으로 저장됩니다</span>
           <button disabled={step === 0} onClick={() => setStep(step - 1)}>이전</button>
           <button className="primary" disabled={step === STEPS.length - 1} onClick={() => setStep(step + 1)}>다음</button>
         </footer>

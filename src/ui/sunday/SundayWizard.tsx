@@ -240,7 +240,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
               </div>
             </>
           )}
-          <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
+          <button className="icon-btn" onClick={onClose} aria-label="닫기">✕</button>
         </header>
         <div className="wizard-body">
           {busy && <div className="card busy">⏳ {busy}</div>}
@@ -273,7 +273,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
           {step === 2 && (
             <div className="stack narrow">
               <p>설교 PPT (.pptx, .ppt) or PDF — its slides go right after the scripture. Skip if there is none.</p>
-              <button className="primary" onClick={() => sermonRef.current?.click()}>Upload sermon file</button>
+              <button className="primary" onClick={() => sermonRef.current?.click()}>설교 파일 올리기</button>
               <input ref={sermonRef} type="file" accept=".pptx,.ppt,.pdf,image/*" multiple hidden onChange={(e) => { importInto(e.target.files, 'sermonSlides'); e.target.value = ''; }} />
               {slideList(d.sermonSlides, 'sermonSlides')}
             </div>
@@ -325,7 +325,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
                 {(['frontId', 'prayerId', 'backId'] as const).map((k) => (
                   <label key={k}>{k === 'frontId' ? 'Front slides' : k === 'prayerId' ? '기도 slide' : 'Back / End slides'}
                     <select value={sunday[k] ?? ''} onChange={(e) => dispatch({ type: 'sunday/settings', patch: { [k]: e.target.value || null } })}>
-                      <option value="">None</option>
+                      <option value="">없음</option>
                       {state.library.presentations.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
                     </select>
                   </label>
@@ -340,12 +340,12 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
                 <li>설교 후 찬양: {d.songs.filter((s) => s.postSermon).map((s) => s.title).join(', ') || '—'}</li>
                 <li>광고: {ann.length}개 ({annSlides}장)</li>
                 <li>Back / End (공동체 고백: {d.confession || sunday.confessionSong || '—'})</li>
-                <li>추가 자료: {d.extraSlides.length} slides</li>
+                <li>추가 자료: {d.extraSlides.length}장</li>
               </ol>
               <div className="row gap-s">
-                <button className="primary" disabled={!!busy} onClick={() => build(false)}>Create playlist</button>
+                <button className="primary" disabled={!!busy} onClick={() => build(false)}>재생목록 만들기</button>
                 <button disabled={!!busy} onClick={() => build(true)}>Create + download {mmdd(date)}.pptx</button>
-                <button className="danger" onClick={() => confirm('Clear this week’s draft?') && setD(emptyDraft())}>Start over</button>
+                <button className="danger" onClick={() => confirm('이번 주 작성 내용을 지울까요?') && setD(emptyDraft())}>처음부터 다시</button>
               </div>
             </div>
           )}
@@ -360,7 +360,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
           </footer>
         ) : (
           <footer className="modal-foot">
-            <span className="muted small grow">Draft saved automatically</span>
+            <span className="muted small grow">작성 내용은 자동으로 저장됩니다</span>
             <button disabled={step === 0} onClick={() => setStep(step - 1)}>이전</button>
             <button className="primary" disabled={step === STEPS.length - 1} onClick={() => setStep(step + 1)}>다음</button>
           </footer>
