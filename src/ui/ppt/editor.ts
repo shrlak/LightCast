@@ -48,7 +48,12 @@ export interface Ed {
   setNotesOpen: (on: boolean) => void;
   /** Home › Slides › Section: name a new section starting at the selected slides. */
   makeSection: () => void;
+  /** The table cells picked in the Format pane (Table Layout acts on them). */
+  cell: TableRange;
+  setCell: (r: TableRange) => void;
 }
+
+export interface TableRange { r: number; c: number; r1: number; c1: number }
 
 export const selectedEls = (els: SlideElement[], sel: string[]) => {
   const ids = expandSelection(els, sel.filter((s) => s !== SLIDE_TEXT));
