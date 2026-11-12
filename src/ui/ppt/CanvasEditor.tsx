@@ -7,7 +7,7 @@ import { useWidth } from '../hooks';
 import { useAutoTextBoxes } from '../textBoxLayout';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
-import { alignCss, lineHeightCss, writingCss } from '../../domain/textFormat';
+import { alignCss, directionId, isVerticalText, lineHeightCss, writingCss } from '../../domain/textFormat';
 import { linkColorFor } from '../runStyle';
 import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
 import {
@@ -804,15 +804,19 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: lineHeightCss(editEl, base.fontSize, 1.2), whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const, ...writingCss(editEl) };
     const { display: _d, flexDirection: _f, ...rest } = textStyle;
+    // Vertical text runs down the box: it needs the box's height as its line length, and sits where the anchor puts it across.
+    const vert = isVerticalText(editEl);
+    const ltrBlocks = directionId(editEl) === 'rotate270';
+    const across = editEl.vAlign === 'top' ? (ltrBlocks ? 'flex-start' : 'flex-end') : editEl.vAlign === 'bottom' ? (ltrBlocks ? 'flex-end' : 'flex-start') : 'center';
     return (
       <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
         <div className="ce-edit-box" style={{
-          left: area.x, top: area.y, width: area.w, minHeight: area.h,
+          left: area.x, top: area.y, width: area.w, ...(vert ? { height: area.h } : { minHeight: area.h }),
           transform: editEl.rotation ? `rotate(${editEl.rotation}deg)` : undefined, transformOrigin: `${editEl.x + editEl.w / 2 - area.x}px ${editEl.y + editEl.h / 2 - area.y}px`,
           justifyContent: editEl.vAlign === 'top' ? 'flex-start' : editEl.vAlign === 'bottom' ? 'flex-end' : 'center',
         }}>
           <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof}
-            style={{ ...rest, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, ...alignCss(editEl.align ?? 'center'), ['--link-color' as string]: linkColorFor(editEl.color), textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+            style={{ ...rest, ...(vert ? { height: '100%', width: 'max-content', maxWidth: '100%', alignSelf: across } : {}), tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, ...alignCss(editEl.align ?? 'center'), ['--link-color' as string]: linkColorFor(editEl.color), textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>
       </div>

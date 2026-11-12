@@ -149,7 +149,7 @@ export function textTarget(ed: Ed): TextTarget | null {
     fontFamily: t.fontFamily, fontSize: t.fontSize, bold: t.fontWeight >= 700, italic: !!t.italic, underline: !!t.underline,
     strike: !!t.strike, shadow: t.shadow, letterSpacing: t.letterSpacing ?? 0, color: t.color, highlight: t.highlight,
     align: t.align, vAlign: t.vAlign, lineHeight: t.lineHeight, list: t.list, indent: t.indent ?? 0, columns: t.columns ?? 1,
-    vertical: !!t.vertical, autoFit: t.autoFit !== false,
+    vertical: !!t.vertical, direction: t.direction, autoFit: t.autoFit !== false,
   };
   // Typing in the slide's own text with characters selected: size, weight, colour… go to those characters.
   const runSel = !!editor && editor.hasSelection();
