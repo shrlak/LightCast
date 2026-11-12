@@ -1992,3 +1992,44 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .sel-list li.sel-group.part { background: #eef7f1; }
 .sel-list li.member { padding-left: 28px; }
 .sel-twist { border: 0; background: transparent; cursor: pointer; padding: 0 2px; font-size: 12px; color: inherit; width: 16px; }
+/* Design tab: Design Ideas pane, Create New Theme Colors / Fonts, Slide Size, Background Styles, Format Background. */
+.rb-mi-row { display: flex; align-items: stretch; }
+.rb-mi-row .rb-mi { flex: 1; min-width: 0; }
+.rb-mi-act { border: none !important; background: transparent !important; padding: 0 7px; font-size: 12px; color: #605e5c; cursor: pointer; }
+.rb-mi-act:hover { color: var(--pp); background: #eef6f1 !important; }
+.bgstyle-grid { display: grid; grid-template-columns: repeat(4, 54px); gap: 5px; padding: 6px 10px; }
+.bgstyle { width: 54px; height: 38px; border: 2px solid #c8c6c4 !important; border-radius: 2px; padding: 0 !important; font-size: 15px; font-weight: 700; cursor: pointer; }
+.bgstyle:hover { border-color: var(--pp) !important; }
+.ppt-dialog.center.wide:has(.theme-colors-body) { width: 600px; }
+.theme-colors-body { display: grid; grid-template-columns: 1fr 190px; gap: 12px; align-items: start; }
+.theme-colors-slots { display: flex; flex-direction: column; gap: 4px; }
+.ppt-dialog label.theme-color-row { flex-direction: row; align-items: center; gap: 6px; font-size: 12px; }
+.theme-color-row span { flex: 1; min-width: 0; }
+.theme-color-row input[type=color] { width: 34px; height: 24px; padding: 1px; flex: none; }
+.theme-color-row input[type=text] { width: 78px; flex: none; font-family: monospace; }
+.theme-color-row input.bad { border-color: #c43e1c; background: #fdf1ee; }
+.scheme-preview { display: flex; flex-direction: column; gap: 8px; }
+.sp-slide { display: flex; flex-direction: column; gap: 4px; padding: 8px; border: 1px solid #c8c6c4; aspect-ratio: 4 / 3; font-size: 11px; overflow: hidden; }
+.sp-slide b { font-size: 15px; }
+.sp-chips { display: flex; gap: 2px; }
+.sp-chips i { flex: 1; height: 12px; }
+.sp-bar { margin-top: auto; padding: 2px 5px; font-size: 10px; }
+.font-preview { border: 1px solid #c8c6c4; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; background: #fafafa; }
+.slide-size-list { display: flex; flex-direction: column; gap: 1px; max-height: 300px; overflow: auto; border: 1px solid #c8c6c4; padding: 4px; }
+.ppt-dialog label.slide-size-row { flex-direction: row; align-items: center; gap: 8px; padding: 3px 6px; font-size: 12.5px; }
+.slide-size-row span { margin-left: auto; color: #605e5c; font-size: 11.5px; }
+.slide-size-row.on { background: #e6f3ec; }
+.slide-size-row.off { color: #9a9a9a; }
+.designer-list { display: flex; flex-direction: column; gap: 10px; padding: 8px 10px; }
+.designer-idea { display: flex; flex-direction: column; gap: 3px; padding: 0 !important; border: 2px solid transparent !important; background: #fff !important; text-align: left; cursor: pointer; font-size: 12px; }
+.designer-idea:hover:not(:disabled) { border-color: var(--pp) !important; }
+.designer-idea .canvas-frame { width: 100%; border: 1px solid #c8c6c4; }
+.designer-idea span { padding: 2px 4px; }
+.designer-pane .muted { padding: 0 12px 10px; }
+.bg-pic-options { display: flex; flex-direction: column; gap: 5px; }
+.fmt-num { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.fmt-num span { flex: 0 0 72px; }
+.fmt-num input[type=number] { width: 70px; }
+.fmt-num input[type=range] { flex: 1; min-width: 0; }
+.fmt-num select { flex: 1; min-width: 0; }
+.fmt-num em { font-style: normal; color: #605e5c; min-width: 28px; }

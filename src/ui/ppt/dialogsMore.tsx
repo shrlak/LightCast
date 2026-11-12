@@ -22,6 +22,7 @@ import { GridGuidesDialog, ViewZoomDialog } from './viewDialogs';
 import { selectionUnits } from '../../domain/editOps';
 import { aspectLocked, fromCm, sizeUnit, toCm, type SizeSpec } from '../../domain/shapeOps';
 import { InsertDialogs } from './dialogsInsert';
+import { SlideSizeDialog, ThemeColorsDialog, ThemeFontsDialog } from './designTab';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
@@ -536,6 +537,9 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'zoom': return <ZoomDialog ed={ed} onClose={onClose} />;
     case 'audio': return <PlaybackDialog ed={ed} onClose={onClose} />;
     case 'sizePosition': return <SizePositionDialog ed={ed} onClose={onClose} />;
+    case 'themeColors': return <ThemeColorsDialog ed={ed} onClose={onClose} />;
+    case 'themeFonts': return <ThemeFontsDialog ed={ed} onClose={onClose} />;
+    case 'slideSize': return <SlideSizeDialog onClose={onClose} />;
     default: return <InsertDialogs ed={ed} kind={kind} onClose={onClose} />;
   }
 }

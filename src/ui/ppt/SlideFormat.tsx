@@ -18,6 +18,7 @@ import { changeCase, clearTextFormat } from '../../domain/textFormat';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { PdfReadOnly } from '../PdfReadOnly';
 import { ProtectedMaterialNotice } from '../MaterialProtection';
+import { BackgroundPictureOptions, BackgroundSources } from './designTab';
 
 interface Props {
   state: AppState;
@@ -173,9 +174,9 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
         </div>
         <div className="fmt-row">
           <label className="fmt-color grow" title="단색 배경"><span style={{ background: bgColor }} />단색<input type="color" value={hexOf(bgColor)} onChange={(e) => setBg({ kind: 'color', value: withTransparency(e.target.value, transparencyOf(bgColor)) })} /></label>
-          <button onClick={() => fileRef.current?.click()}>그림 · 동영상…</button>
           <input ref={fileRef} type="file" accept="image/*,video/*" hidden onChange={(e) => uploadBg(e.target.files?.[0])} />
         </div>
+        <BackgroundSources ed={{ dispatch, cmd: { notify: flash } as never }} setBg={setBg} onFile={() => fileRef.current?.click()} />
         {bg?.kind === 'color' && (
           <label>투명도 <span className="muted">{Math.round(transparencyOf(bgColor) * 100)}%</span><input type="range" min={0} max={100} value={Math.round(transparencyOf(bgColor) * 100)} onChange={(e) => setBg({ kind: 'color', value: withTransparency(hexOf(bgColor), Number(e.target.value) / 100) })} /></label>
         )}
@@ -208,6 +209,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
             <button className={`fmt-tog ${bg.fit === 'contain' ? 'on' : ''}`} onClick={() => setBg({ ...bg, fit: 'contain' })}>맞추기</button>
           </div>
         )}
+        {bg && (bg.kind === 'media' || bg.kind === 'image') && <BackgroundPictureOptions bg={bg} setBg={setBg} />}
         <label className="check small" title="슬라이드 마스터의 개체를 이 슬라이드에서 숨깁니다"><input type="checkbox" checked={!!slide.hideMaster} disabled={!p.master?.elements.length} onChange={(e) => upd({ hideMaster: e.target.checked || undefined, elements: withMaster({ ...slide, hideMaster: e.target.checked }, p.master?.elements ?? []).elements })} /> 배경 그래픽 숨기기</label>
         <div className="fmt-row">
           <button className="grow" disabled={!bg} onClick={() => applyToAll('background')}>모두 적용</button>

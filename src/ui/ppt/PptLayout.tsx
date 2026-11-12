@@ -25,6 +25,7 @@ import { animationBadges } from '../../domain/animations';
 import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, ungroupSelection } from '../../domain/editOps';
 import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AnimationPane, CommentsPane, SelectionPane } from './panes';
+import { DesignerPane } from './designTab';
 import { Dialogs } from './dialogs';
 import { RevisionsPane, SpellingPane } from './reviewPanes';
 import { uid as newId } from '../../domain/lyrics';
@@ -473,6 +474,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
             )}
             {pane === 'animation' && <AnimationPane ed={ed} onPlay={() => setPreview('animation')} />}
             {pane === 'selection' && <SelectionPane ed={ed} />}
+            {pane === 'designer' && <DesignerPane ed={ed} />}
             {pane === 'spelling' && <SpellingPane ed={ed} />}
             {pane === 'revisions' && <RevisionsPane ed={ed} />}
             {pane === 'comments' && <CommentsPane ed={ed} draftOpen={commentDraft} onDraftDone={() => setCommentDraft(false)} />}
