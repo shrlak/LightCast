@@ -223,10 +223,10 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
               </div>
             ) : (
               <>
-                {!match && song.title.trim() && !/^새 찬양/.test(song.title) && (
+                {!match && (
                   <div className="row gap-xs wrap small">
-                    <span className="muted">라이브러리에 없는 찬양입니다 —</span>
-                    <button className="mini-btn" disabled={!!lookups[i]?.busy} onClick={() => searchOnline(i)} title="인터넷에서 제목으로 가사를 검색합니다">✨ AI로 검색</button>
+                    <span className="muted">{song.title.trim() && !/^새 찬양/.test(song.title) ? '라이브러리에 없는 찬양입니다 —' : '제목을 입력하면 AI로 검색할 수 있습니다 —'}</span>
+                    <button className="mini-btn" disabled={!!lookups[i]?.busy || !song.title.trim() || /^새 찬양/.test(song.title)} onClick={() => searchOnline(i)} title="인터넷에서 제목으로 가사를 검색합니다">✨ AI로 검색</button>
                     <button className="mini-btn" disabled={!!lookups[i]?.busy} onClick={() => { photoFor.current = i; photoRef.current?.click(); }} title="악보나 가사 사진에서 가사를 인식합니다">📷 악보 사진 업로드</button>
                     {lookups[i]?.busy && <span className="muted">⏳ {lookups[i].busy}</span>}
                     {lookups[i]?.note && <span className="warn">{lookups[i].note}</span>}
