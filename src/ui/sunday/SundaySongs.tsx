@@ -5,6 +5,7 @@ import { parseNotice, type ParsedNotice } from '../../domain/sunday/notice';
 import { readConti as readContiPdf } from '../../domain/recognition/conti';
 import { ai } from '../../domain/ai';
 import { AutoTextarea } from '../AutoTextarea';
+import { readScorePhotos, searchSongLyrics, type LyricsOption } from '../../domain/sunday/songLookup';
 
 export function sectionsToText(sections: SongSection[]): string {
   return sections.map((s) => `[${s.label}]\n${s.lines.join('\n')}`).join('\n\n');
@@ -55,6 +56,14 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
   const [busy, setBusy] = useState<string | null>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
   const mdRef = useRef<HTMLInputElement>(null);
+  const photoRef = useRef<HTMLInputElement>(null);
+  const photoFor = useRef(-1);
+  // Songs not in the library: what each one's lookup is doing / found (by position), and a counter that refreshes its lyrics box.
+  const [lookups, setLookups] = useState<Record<number, { busy?: string; options?: LyricsOption[]; note?: string }>>({});
+  const [rev, setRev] = useState<Record<number, number>>({});
+  const setLookup = (i: number, v: { busy?: string; options?: LyricsOption[]; note?: string } | null) =>
+    setLookups((l) => { const n = { ...l }; if (v) n[i] = v; else delete n[i]; return n; });
+  const refresh = (i: number) => setRev((r) => ({ ...r, [i]: (r[i] ?? 0) + 1 }));
   const update = (i: number, patch: Partial<SongDraft>) => setSongs(songs.map((s, k) => (k === i ? { ...s, ...patch } : s)));
   const move = (i: number, d: number) => {
     const j = i + d;
@@ -121,8 +130,49 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
     if (mdRef.current) mdRef.current.value = '';
   };
 
+  /** AI로 검색: lyrics for this title from the internet, listed for the operator to pick. */
+  const searchOnline = async (i: number) => {
+    const title = songs[i].title.trim();
+    setLookup(i, { busy: '인터넷에서 가사 검색 중…' });
+    try {
+      const options = await searchSongLyrics(title);
+      setLookup(i, { options, note: options.length ? undefined : '인터넷에서 가사를 찾지 못했습니다. 제목을 확인하거나 악보 사진을 올려 보세요.' });
+    } catch (e) {
+      setLookup(i, { note: (e as Error).message });
+    }
+  };
+
+  const putOption = (i: number, option: LyricsOption) => {
+    if (songs[i].sections.length && !confirm(`지금 입력된 가사를 ${option.host || '웹'}의 가사로 바꿀까요?`)) return;
+    update(i, { sections: option.sections, progression: songs[i].progression ?? (option.order.length ? option.order : undefined), presentationId: undefined });
+    refresh(i);
+    setLookup(i, null);
+    notify(`“${songs[i].title}” 가사를 ${option.host || '웹'}에서 넣었습니다 — 맞는지 확인하세요.`);
+  };
+
+  /** 악보 사진 업로드: read the lyrics (and key, 진행) off the photo(s). */
+  const readPhotos = async (files: FileList | null) => {
+    const i = photoFor.current;
+    const list = Array.from(files ?? []);
+    if (photoRef.current) photoRef.current.value = '';
+    if (!list.length || i < 0 || !songs[i]) return;
+    if (songs[i].sections.length && !confirm('지금 입력된 가사를 사진에서 읽은 가사로 바꿀까요?')) return;
+    setLookup(i, { busy: '사진 읽는 중…' });
+    try {
+      const r = await readScorePhotos(list, (m) => setLookup(i, { busy: m }));
+      const placeholder = !songs[i].title.trim() || /^새 찬양/.test(songs[i].title);
+      update(i, { sections: r.sections, key: songs[i].key ?? r.key, progression: songs[i].progression ?? r.progression, title: placeholder && r.title ? r.title : songs[i].title, presentationId: undefined });
+      refresh(i);
+      setLookup(i, null);
+      notify(`사진에서 ${r.sections.length}개 파트의 가사를 읽었습니다 — 악보와 맞는지 확인하세요.`);
+    } catch (e) {
+      setLookup(i, { note: (e as Error).message });
+    }
+  };
+
   return (
     <div className="stack">
+      <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={(e) => readPhotos(e.target.files)} />
       <div className="two-col">
         <div className="card stack">
           <h3>콘티 PDF</h3>
@@ -173,11 +223,30 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
               </div>
             ) : (
               <>
+                {!match && song.title.trim() && !/^새 찬양/.test(song.title) && (
+                  <div className="row gap-xs wrap small">
+                    <span className="muted">라이브러리에 없는 찬양입니다 —</span>
+                    <button className="mini-btn" disabled={!!lookups[i]?.busy} onClick={() => searchOnline(i)} title="인터넷에서 제목으로 가사를 검색합니다">✨ AI로 검색</button>
+                    <button className="mini-btn" disabled={!!lookups[i]?.busy} onClick={() => { photoFor.current = i; photoRef.current?.click(); }} title="악보나 가사 사진에서 가사를 인식합니다">📷 악보 사진 업로드</button>
+                    {lookups[i]?.busy && <span className="muted">⏳ {lookups[i].busy}</span>}
+                    {lookups[i]?.note && <span className="warn">{lookups[i].note}</span>}
+                  </div>
+                )}
+                {lookups[i]?.options?.map((o) => (
+                  <div key={o.id} className="song-web-option">
+                    <div className="row gap-xs">
+                      <span className="grow small"><b>{o.host || '웹'}</b>{o.title ? ` · ${o.title}` : ''}</span>
+                      {o.url && <a className="small" href={o.url} target="_blank" rel="noreferrer">열기</a>}
+                      <button className="mini-btn" onClick={() => putOption(i, o)}>넣기</button>
+                    </div>
+                    <div className="muted small">{o.sections.flatMap((x) => x.lines).filter((l) => l.trim()).slice(0, 3).join(' / ')}</div>
+                  </div>
+                ))}
                 {match && <button className="small link" onClick={() => update(i, { presentationId: match.id })}>📚 “{match.title}” is in the library — use those lyrics</button>}
                 <AutoTextarea rows={Math.min(14, Math.max(4, song.sections.reduce((n, s) => n + s.lines.length + 2, 0)))} spellCheck={false}
                   placeholder={'[V1]\n가사 첫 줄\n가사 둘째 줄\n\n[C]\n후렴…'}
                   defaultValue={sectionsToText(song.sections)}
-                  key={`${i}-${song.title}-${song.sections.length}`}
+                  key={`${i}-${song.title}-${song.sections.length}-${rev[i] ?? 0}`}
                   onBlur={(e) => update(i, { sections: textToSections(e.target.value) })} />
               </>
             )}
