@@ -12,11 +12,10 @@ KCCP 빛주사랑 대학청년부의 예배 프레젠테이션 앱입니다. 모
 
 | 컴퓨터 | 받을 파일 |
 | --- | --- |
-| Mac (Apple Silicon: M1 · M2 · M3 · M4) | `LightCast-<버전>-arm64.dmg` |
-| Mac (Intel) | `LightCast-<버전>.dmg` |
-| Windows 10 / 11 | `LightCast-Setup-<버전>.exe` |
+| Mac (Apple Silicon · Intel 모두) | `LightCast-<버전>.dmg` |
+| Windows 10 / 11 (일반 PC · ARM PC 모두) | `LightCast-Setup-<버전>.exe` |
 
-내 Mac이 어느 쪽인지 모르겠다면: 화면 왼쪽 위  메뉴 → **이 Mac에 관하여** → "칩"이 **Apple M…** 이면 Apple Silicon, "프로세서"가 **Intel** 이면 Intel입니다.
+Mac용 `.dmg` 하나가 Apple Silicon(M1 · M2 · M3 · M4)과 Intel Mac에서 모두 돌아가고, Windows용 `.exe` 하나가 일반(x64) PC와 ARM PC에 맞는 버전을 알아서 설치합니다.
 
 > `.zip`, `.blockmap`, `latest.yml`, `latest-mac.yml` 파일은 자동 업데이트용입니다. 직접 받을 필요가 없습니다.
 
@@ -24,7 +23,7 @@ KCCP 빛주사랑 대학청년부의 예배 프레젠테이션 앱입니다. 모
 
 ### Mac
 
-1. 내 Mac에 맞는 `.dmg` 파일을 받아서 엽니다.
+1. `LightCast-<버전>.dmg` 파일을 받아서 엽니다.
 2. 열린 창에서 **LightCast** 아이콘을 **Applications(응용 프로그램)** 폴더로 끌어다 놓습니다.
 3. 처음 한 번만: **응용 프로그램** 폴더에서 LightCast를 **오른쪽 클릭(또는 Control-클릭) → 열기 → 열기**를 누릅니다.
    - 앱이 아직 Apple 개발자 인증서로 서명 · 공증되지 않아서 그냥 더블클릭하면 "확인되지 않은 개발자"(또는 "Apple은 악성 코드가 없음을 확인할 수 없습니다") 경고가 뜹니다.
@@ -92,6 +91,7 @@ LightCast의 편집 화면은 Microsoft PowerPoint와 같은 모양으로 동작
 - **슬라이드**: 구역 (이름 바꾸기 · 제거 · 위/아래로 이동), 슬라이드 다시 사용, 개요에서 슬라이드 만들기, 슬라이드 마스터 (배경 그래픽 숨기기), 디자인 › 글꼴
 - **슬라이드 쇼**: 쇼 설정 (반복 · 애니메이션 없이 · 화면 전환 없이 · 수동/타이밍), 재구성한 쇼, 예행 연습 (슬라이드별 시간 저장), 화면 전환 소리
 - **검토 · 보기**: 맞춤법 검사, 동의어 사전, 눈금 및 안내선
+- **v0.9.9**: 설치 파일을 하나로 합쳤습니다 — Mac은 Apple Silicon과 Intel 모두에서 돌아가는 `LightCast-<버전>.dmg` 하나, Windows는 일반 PC와 ARM PC를 모두 지원하는 `LightCast-Setup-<버전>.exe` 하나입니다.
 - **v0.9.8**: Mac에서 업데이트로 받은 앱이 아직 `FreeCast.app`이라는 이름으로 남아 있으면, 처음 실행할 때 스스로 `LightCast.app`으로 이름을 바꾸고 다시 열립니다 (Finder · Launchpad · Spotlight에 LightCast로 보입니다).
 - **v0.9.7**: 시작 화면을 “빛을 비추다”로 바꿨습니다 — 어두운 예배당에서 프로젝터 빛이 열리고, 그 빛 속에 로고와 **LightCast** 이름이 비쳐 켜집니다.
 - **v0.9.6**: 프로그램 이름을 **LightCast**로 바꿨습니다 (앱 · 창 제목 · 설치 파일 · 설명서). 이미 설치된 컴퓨터도 그대로 자동 업데이트되고, 저장된 자료와 설정도 그대로 이어집니다.

@@ -83,7 +83,9 @@ jobs:
       # create the release; "already_exists" 422) and left v0.2.9 without latest-mac.yml. The files are
       # uploaded with `gh` instead, to the release the tag job made.
       - name: Package
-        run: npx electron-builder ${{ matrix.os == 'macos-latest' && '--mac --arm64 --x64' || '--win --x64' }} --publish never
+        # Architectures come from package.json: one universal .dmg (Apple Silicon + Intel) and one
+        # Windows installer holding x64 and ARM64; the per-architecture Mac .zip files are only for the updater.
+        run: npx electron-builder ${{ matrix.os == 'macos-latest' && '--mac' || '--win' }} --publish never
       # An app bundle without a signature (not even ad-hoc) is refused by macOS as "damaged and can't be
       # opened" once downloaded, with no way to open it from Finder. Every Mac build must be sealed.
       - name: Check the Mac apps are signed
@@ -114,15 +116,16 @@ jobs:
           done
           gh release upload "v$v" upload/* --clobber
 
-  # Every release carries all three installers (Apple Silicon Mac, Intel Mac, Windows) and the files the
-  # auto-updater reads; fail loudly if one is missing.
+  # Every release carries both installers (one universal Mac .dmg, one Windows .exe for x64 and ARM64)
+  # and the files the auto-updater reads (the per-architecture Mac .zip files and latest*.yml); fail
+  # loudly if one is missing.
   verify:
     needs: [tag, build]
     if: needs.tag.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check the release has all three installers
+      - name: Check the release has both installers and the update files
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -130,7 +133,7 @@ jobs:
           assets="$(gh release view "v$v" --json assets --jq '.assets[].name')"
           echo "$assets"
           missing=0
-          for f in "LightCast-$v-arm64.dmg" "LightCast-$v.dmg" "LightCast-Setup-$v.exe" latest.yml latest-mac.yml; do
+          for f in "LightCast-$v.dmg" "LightCast-Setup-$v.exe" "LightCast-$v-arm64-mac.zip" "LightCast-$v-mac.zip" latest.yml latest-mac.yml; do
             echo "$assets" | grep -qxF "$f" || { echo "::error::Release v$v is missing $f"; missing=1; }
           done
           exit $missing
