@@ -243,15 +243,27 @@ pub fn artistic(effect: &str, img: &RgbaImage) -> Option<RgbaImage> {
 
 // ── Corrections, Color and transparency ───────────────────────────────────────────────────────
 
+/// The colours the Dark / Light variations use, in PowerPoint's gallery order: text colour 2,
+/// then accents 1–6 (DeckCraft's `recolor::ACCENTS`).
+const RECOLOR_SLOTS: [(&str, SchemeSlot); 7] = [
+    ("tx2", SchemeSlot::Dk2),
+    ("accent1", SchemeSlot::Accent1),
+    ("accent2", SchemeSlot::Accent2),
+    ("accent3", SchemeSlot::Accent3),
+    ("accent4", SchemeSlot::Accent4),
+    ("accent5", SchemeSlot::Accent5),
+    ("accent6", SchemeSlot::Accent6),
+];
+
 /// Recolor presets, as DeckCraft lists them: none, grayscale, sepia, washout, black and white
-/// 25/50/75 %, and each accent dark / light.
+/// 25/50/75 %, then each colour's dark and light variation (text colour 2 and accents 1–6).
 pub fn recolor_presets() -> Vec<String> {
     let mut v: Vec<String> = ["none", "grayscale", "sepia", "washout", "bw25", "bw50", "bw75"].iter().map(|s| s.to_string()).collect();
-    for i in 1..=6 {
-        v.push(format!("accent{i}Dark"));
+    for (id, _) in RECOLOR_SLOTS {
+        v.push(format!("{id}Dark"));
     }
-    for i in 1..=6 {
-        v.push(format!("accent{i}Light"));
+    for (id, _) in RECOLOR_SLOTS {
+        v.push(format!("{id}Light"));
     }
     v
 }
@@ -286,12 +298,15 @@ fn recolor(img: &mut RgbaImage, preset: &str, scheme: Option<&str>) {
             }
         }
         other => {
-            let Some(rest) = other.strip_prefix("accent") else { return };
-            let n: usize = rest.chars().next().and_then(|c| c.to_digit(10)).map(|d| d as usize).unwrap_or(1);
-            let slot = [SchemeSlot::Accent1, SchemeSlot::Accent2, SchemeSlot::Accent3, SchemeSlot::Accent4, SchemeSlot::Accent5, SchemeSlot::Accent6]
-                [(n.clamp(1, 6)) - 1];
+            let Some((slot, dark)) = RECOLOR_SLOTS.iter().find_map(|(id, slot)| match other.strip_prefix(id) {
+                Some("Dark") => Some((*slot, true)),
+                Some("Light") => Some((*slot, false)),
+                _ => None,
+            }) else {
+                return;
+            };
             let c = scheme_named(scheme).get(slot);
-            if rest.ends_with("Dark") {
+            if dark {
                 duotone(img, Col::BLACK, c);
             } else {
                 duotone(img, c, Col::WHITE);
@@ -300,12 +315,13 @@ fn recolor(img: &mut RgbaImage, preset: &str, scheme: Option<&str>) {
     }
 }
 
-/// Brightness and contrast −1…1 (PowerPoint's ±100 %), saturation −1…1, temperature −1 (cool)…1 (warm).
+/// Brightness and contrast −1…1 (PowerPoint's ±100 %), saturation −1…3 (0 % to PowerPoint's
+/// 400 %, as DeckCraft's `picture.adjust` allows), temperature −1 (cool)…1 (warm).
 fn corrections(img: &mut RgbaImage, brightness: f32, contrast: f32, saturation: f32, temperature: f32) {
     let b = brightness.clamp(-1.0, 1.0);
     let c = contrast.clamp(-1.0, 1.0);
     let k = if c >= 0.0 { 1.0 / (1.0 - c * 0.99) } else { 1.0 + c };
-    let s = 1.0 + saturation.clamp(-1.0, 1.0);
+    let s = 1.0 + saturation.clamp(-1.0, 3.0);
     let t = temperature.clamp(-1.0, 1.0) * 40.0;
     for p in img.pixels_mut() {
         let l = luma(p);
@@ -464,5 +480,32 @@ mod tests {
         for e in ARTISTIC {
             assert!(artistic(e, &disc()).is_some(), "{e}");
         }
+    }
+
+    #[test]
+    fn recolor_lists_text_colour_two_and_maps_it_to_dk2() {
+        let p = recolor_presets();
+        assert_eq!(p.len(), 21);
+        assert_eq!(p[7], "tx2Dark");
+        assert_eq!(p[14], "tx2Light");
+        // A white pixel through "tx2Dark" (black → dk2) becomes the scheme's dk2.
+        let mut img = RgbaImage::from_pixel(2, 2, Rgba([255, 255, 255, 255]));
+        recolor(&mut img, "tx2Dark", None);
+        let dk2 = scheme_named(None).get(SchemeSlot::Dk2);
+        assert_eq!(img.get_pixel(0, 0).0, [dk2.r, dk2.g, dk2.b, 255]);
+        // Unknown names leave the picture alone.
+        let mut img = RgbaImage::from_pixel(1, 1, Rgba([10, 20, 30, 255]));
+        recolor(&mut img, "tx3Dark", None);
+        assert_eq!(img.get_pixel(0, 0).0, [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn saturation_goes_up_to_four_hundred_percent() {
+        let px = Rgba([150, 100, 100, 255]);
+        let mut two = RgbaImage::from_pixel(1, 1, px);
+        corrections(&mut two, 0.0, 0.0, 1.0, 0.0);
+        let mut four = RgbaImage::from_pixel(1, 1, px);
+        corrections(&mut four, 0.0, 0.0, 3.0, 0.0);
+        assert!(four.get_pixel(0, 0)[0] > two.get_pixel(0, 0)[0], "400 % is more saturated than 200 %");
     }
 }

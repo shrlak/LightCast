@@ -8,6 +8,7 @@ import type { PictureAdjust, SlideElement } from '../../domain/types';
 import { getMedia, putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { processPicture, type PictureSteps } from '../../engine';
+import { compressPlan, fitUv, realCrop } from '../../domain/pictureFormat';
 
 async function pixels(mediaId: string): Promise<{ data: ImageData; w: number; h: number } | null> {
   const blob = await getMedia(mediaId);
@@ -62,13 +63,68 @@ export async function adjustPicture(el: SlideElement, patch: Partial<PictureAdju
   return plain ? { mediaId: original, picture: undefined } : { mediaId: id, picture: adjust };
 }
 
-/** The colour of the picture at a point of the object (Set Transparent Color), `#rrggbb`. */
-export async function colorAt(el: SlideElement, fx: number, fy: number): Promise<string | null> {
+/**
+ * The colour of the picture at a point of the object (Set Transparent Color), `#rrggbb`. `fx`, `fy`
+ * are already in the picture's own coordinates when it is cropped (the canvas maps them); an
+ * uncropped picture is mapped through its fit, as DeckCraft maps the click to the picture's own
+ * pixel. 'off' when the point is beside the picture (letterbox), 'clear' on a transparent pixel.
+ */
+export async function colorAt(el: SlideElement, fx: number, fy: number): Promise<string | 'off' | 'clear' | null> {
   const px = await pixels(el.picture?.original ?? el.mediaId ?? '');
   if (!px) return null;
-  const x = Math.max(0, Math.min(px.w - 1, Math.round(fx * px.w)));
-  const y = Math.max(0, Math.min(px.h - 1, Math.round(fy * px.h)));
+  const uv = realCrop(el.crop) ? [fx, fy] : fitUv(fx, fy, el.w, el.h, px.w, px.h, el.fit ?? 'contain');
+  if (!uv) return 'off';
+  const x = Math.max(0, Math.min(px.w - 1, Math.floor(uv[0] * px.w)));
+  const y = Math.max(0, Math.min(px.h - 1, Math.floor(uv[1] * px.h)));
   const i = (y * px.w + x) * 4;
   const d = px.data.data;
+  // A transparent pixel keeps a colour nobody sees: clearing it would clear that colour where it shows.
+  if (d[i + 3] === 0) return 'clear';
   return `#${[d[i], d[i + 1], d[i + 2]].map((v) => v.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** The picture's own pixel size. */
+export async function pictureSize(mediaId: string): Promise<{ w: number; h: number } | null> {
+  const blob = await getMedia(mediaId);
+  if (!blob) return null;
+  try { const b = await createImageBitmap(blob); return { w: b.width, h: b.height }; } catch { return null; }
+}
+
+/**
+ * Compress Pictures for one picture object (DeckCraft picture.compress): its original is redrawn at
+ * the resolution `ppi` needs for the size it is shown at, its cropped part cut away when asked, and
+ * stored again (JPEG at 85 % when the source is a JPEG without transparency, else PNG). A picture
+ * with corrections is remade from the new original. Null when nothing would get smaller.
+ */
+export async function compressElement(el: SlideElement, ppi: number, deleteCropped: boolean, dispatch: Dispatch<Action>, scheme?: string): Promise<{ patch: Partial<SlideElement>; before: number; after: number } | null> {
+  if (el.kind !== 'image' || !el.mediaId) return null;
+  const original = el.picture?.original ?? el.mediaId;
+  const blob = await getMedia(original);
+  if (!blob || /svg|gif/.test(blob.type)) return null;
+  let bmp: ImageBitmap;
+  try { bmp = await createImageBitmap(blob); } catch { return null; }
+  const plan = compressPlan(bmp.width, bmp.height, el.crop, el.w, el.h, ppi, deleteCropped);
+  if (!plan) return null;
+  const c = document.createElement('canvas');
+  c.width = plan.w;
+  c.height = plan.h;
+  const g = c.getContext('2d');
+  if (!g) return null;
+  g.imageSmoothingQuality = 'high';
+  const src = plan.cut ?? { x: 0, y: 0, w: bmp.width, h: bmp.height };
+  g.drawImage(bmp, src.x, src.y, src.w, src.h, 0, 0, plan.w, plan.h);
+  let alpha = false;
+  const d = g.getImageData(0, 0, plan.w, plan.h).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] < 255) { alpha = true; break; }
+  const jpeg = blob.type === 'image/jpeg' && !alpha;
+  const out = await new Promise<Blob | null>((res) => c.toBlob(res, jpeg ? 'image/jpeg' : 'image/png', 0.85));
+  // Never make a picture bigger just to resample it; cutting away a crop is worth it regardless.
+  if (!out || (out.size >= blob.size && !plan.cut)) return null;
+  const id = uid('m');
+  await putMedia(id, out);
+  dispatch({ type: 'media/add', media: { id, name: jpeg ? '압축한 그림.jpg' : '압축한 그림.png', type: 'image', backgroundHidden: true } });
+  const base: Partial<SlideElement> = { mediaId: id, crop: plan.crop };
+  if (!el.picture) return { patch: base, before: blob.size, after: out.size };
+  const remade = await adjustPicture({ ...el, ...base, picture: { ...el.picture, original: id } }, {}, dispatch, scheme);
+  return { patch: { ...base, ...(remade ?? { picture: { ...el.picture, original: id } }) }, before: blob.size, after: out.size };
 }

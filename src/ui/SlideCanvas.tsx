@@ -22,6 +22,10 @@ import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effe
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
+import { pictureLookCss } from './pictureStyles';
+import { formatDateField } from '../domain/insertTools';
+import { patternPath } from '../domain/patterns';
+import { atEnd, fadeGain, playStart, playVolume } from '../domain/mediaPlayback';
 import { useAutoTextBoxes, useFontEpoch } from './textBoxLayout';
 import { autoFitMode, drawnText } from '../domain/textFit';
 import { elementTextStyle } from '../domain/textBoxLayout';
@@ -96,6 +100,17 @@ function CameraBg({ deviceId, label, animate }: { deviceId: string; label: strin
   return <video ref={ref} className="layer media" autoPlay muted playsInline />;
 }
 
+/** Format Background › Pattern fill: the 8×8 preset tiled over the background colour. */
+function PatternBg({ bg }: { bg: Extract<Background, { kind: 'pattern' }> }) {
+  const id = `bgp-${bg.preset}`;
+  return (
+    <svg className="layer" width="100%" height="100%" preserveAspectRatio="none">
+      <defs><pattern id={id} patternUnits="userSpaceOnUse" width="16" height="16"><rect width="16" height="16" fill={bg.bg} /><path d={patternPath(bg.preset, 2)} fill={bg.fg} /></pattern></defs>
+      <rect width="100%" height="100%" fill={`url(#${id})`} />
+    </svg>
+  );
+}
+
 function BackgroundLayer({ background, animate, video, onTime }: { background: Background | null; animate: boolean; video?: CanvasProps['video']; onTime?: CanvasProps['onVideoTime'] }) {
   const url = useMediaUrl(background?.kind === 'media' ? background.mediaId : null);
   const imageSrc = background?.kind === 'image' ? assetUrl(background.url) : background?.kind === 'media' && background.mediaType === 'image' ? url : null;
@@ -106,16 +121,17 @@ function BackgroundLayer({ background, animate, video, onTime }: { background: B
     held.current = null;
     return null;
   }
-  const fit = background.kind === 'color' || background.kind === 'gradient' || background.kind === 'camera' || background.kind === 'motion' ? undefined : background.fit ?? 'cover';
+  const fit = background.kind === 'color' || background.kind === 'gradient' || background.kind === 'camera' || background.kind === 'motion' || background.kind === 'pattern' ? undefined : background.fit ?? 'cover';
   let node: ReactNode = null;
   let pending = false;
   if (background.kind === 'color') node = <div className="layer" style={{ background: background.value }} />;
+  else if (background.kind === 'pattern') node = <PatternBg bg={background} />;
   else if (background.kind === 'gradient') node = <div className="layer" style={{ backgroundImage: background.value }} />;
   else if (background.kind === 'motion') node = <MotionLayer bg={background} animate={animate} />;
   else if (background.kind === 'camera') node = <CameraBg deviceId={background.deviceId} label={background.label} animate={animate} />;
   else if (background.kind === 'image' || background.mediaType === 'image') {
     pending = !ready;
-    if (ready) node = <img className="layer media" style={{ objectFit: fit, background: background.kind === 'image' ? '#fff' : undefined }} src={ready} alt="" decoding="sync" />;
+    if (ready) node = <img className="layer media" style={{ objectFit: fit, background: background.kind === 'image' ? '#fff' : undefined, opacity: background.kind === 'media' && background.transparency ? 1 - background.transparency : undefined }} src={ready} alt="" decoding="sync" />;
   } else if (url) {
     node = animate
       ? <VideoBg url={url} fit={fit!} loop={background.loop !== false} video={video} onTime={onTime} />
@@ -129,7 +145,7 @@ function BackgroundLayer({ background, animate, video, onTime }: { background: B
 /** Timers available to dynamic text ({timer:Name}) inside slides. */
 const TimersContext = createContext<Timer[]>([]);
 
-const TOKEN = /\{(time|date|slide|timer:[^}]+)\}/;
+const TOKEN = /\{(time|date|date:[a-z]+\d+|slide|timer:[^}]+)\}/;
 
 /** Replace {time}, {date} and {timer:Name} with live values. */
 function DynamicText({ text }: { text: string }) {
@@ -139,6 +155,7 @@ function DynamicText({ text }: { text: string }) {
   const out = text.replace(new RegExp(TOKEN.source, 'g'), (_, tok: string) => {
     if (tok === 'time') return new Date(now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     if (tok === 'date') return new Date(now).toLocaleDateString();
+    if (tok.startsWith('date:')) return formatDateField(tok.slice(5), new Date(now));
     if (tok === 'slide') return String(slideNumber ?? '#');
     const name = tok.slice(6).trim().toLowerCase();
     const t = timers.find((x) => x.name.toLowerCase() === name || x.id === name);
@@ -223,7 +240,10 @@ function FooterLayer({ slide, theme }: { slide: Slide; theme: Theme }) {
   const n = useContext(SlideNumberContext);
   const f = slide.footer;
   if (!f || (!f.date && !f.slideNumber && !f.text)) return null;
-  const date = f.date === true ? new Date().toLocaleDateString('ko-KR') : typeof f.date === 'string' ? f.date : '';
+  // Header & Footer › Don't show on title slide.
+  // (the title slide is the first one, where a deck's title sits)
+  if (f.hideOnTitle && n === 1) return null;
+  const date = f.date === true ? (f.dateFormat ? formatDateField(f.dateFormat, new Date()) : new Date().toLocaleDateString('ko-KR')) : typeof f.date === 'string' ? f.date : '';
   const style: CSSProperties = { position: 'absolute', bottom: 28, fontSize: 30, color: theme.color, opacity: 0.85, fontFamily: theme.fontFamily, whiteSpace: 'nowrap' };
   return (
     <div className="footer-layer">
@@ -246,32 +266,77 @@ const PICTURE_STYLES: Record<string, CSSProperties> = {
   tilted: { transform: 'perspective(1000px) rotateY(-14deg)', boxShadow: '12px 10px 20px rgba(0,0,0,.45)' },
   beveled: { boxShadow: 'inset 4px 4px 8px rgba(255,255,255,.5), inset -4px -4px 8px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.4)' },
 };
-/** Picture Format › Picture Styles. */
+/** Picture Format › Picture Styles from earlier versions (still drawn; the gallery offers DeckCraft's 24, see pictureStyles). */
 export const PICTURE_STYLE_IDS = Object.keys(PICTURE_STYLES);
-const pictureStyleCss = (id: string | undefined): CSSProperties => (id ? PICTURE_STYLES[id] ?? {} : {});
+const pictureStyleCss = (id: string | undefined, w?: number, h?: number): CSSProperties => (id ? pictureLookCss(id, w, h) ?? PICTURE_STYLES[id] ?? {} : {});
+/** Picture Border › Dashes as a CSS outline style. */
+const OUTLINE_DASH: Record<string, string> = { sysDot: 'dotted', dot: 'dotted', sysDash: 'dashed', dash: 'dashed', dashDot: 'dashed', lgDash: 'dashed', lgDashDot: 'dashed', lgDashDotDot: 'dashed' };
 
-/** A video object: in a slide show it follows its playback settings (start / end, loop, volume, sound). */
+/** A paused animated GIF: its first frame, drawn once into a canvas (an <img> always animates). */
+function StillPicture({ el, url, box }: { el: SlideElement; url: string; box: CSSProperties }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      const c = ref.current;
+      if (!c) return;
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext('2d')?.drawImage(img, 0, 0);
+    };
+    img.src = url;
+  }, [url]);
+  return <canvas ref={ref} aria-label={el.alt ?? ''} style={{ ...box, ...pictureStyleCss(el.pictureStyle, el.w, el.h), objectFit: el.fit ?? 'contain' }} />;
+}
+
+/** A video object: in a slide show it follows its playback settings (trim, fades, loop, rewind, volume, sound, hide, full screen). */
 function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; style: CSSProperties; live: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   const pb = el.playback ?? {};
+  const [playing, setPlaying] = useState(false);
+  const [gain, setGain] = useState(1);
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
-    v.volume = pb.volume ?? 1;
-    if (pb.start) v.currentTime = pb.start;
-    if (!live) { v.pause(); if (pb.poster) v.currentTime = pb.poster; return; }
+    v.volume = playVolume(pb, v.currentTime, v.duration || 0);
+    v.currentTime = live ? playStart(pb) : pb.poster ?? playStart(pb);
+    if (!live) { v.pause(); return; }
     if (pb.autoplay !== false) v.play().catch(() => undefined);
-    const onTime = () => {
-      if (pb.end && v.currentTime >= pb.end) {
-        if (pb.loop !== false) v.currentTime = pb.start ?? 0;
-        else v.pause();
-      }
-    };
-    v.addEventListener('timeupdate', onTime);
-    return () => v.removeEventListener('timeupdate', onTime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, url, pb.start, pb.end, pb.loop, pb.volume, pb.autoplay, pb.poster]);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    let raf = 0;
+    const tick = () => {
+      const d = v.duration || 0;
+      v.volume = playVolume(pb, v.currentTime, d);
+      setGain(pb.fadeIn || pb.fadeOut ? fadeGain(v.currentTime, pb, d) : 1);
+      const end = atEnd(v.currentTime, pb, d);
+      if (end === 'loop') v.currentTime = playStart(pb);
+      else if (end !== 'play') { v.pause(); if (end === 'rewind') v.currentTime = pb.poster ?? playStart(pb); }
+      if (!v.paused) raf = requestAnimationFrame(tick);
+    };
+    const onPlay = () => { setPlaying(true); raf = requestAnimationFrame(tick); };
+    const onPause = () => { setPlaying(false); cancelAnimationFrame(raf); };
+    // Action › Play Media and the Playback tab's Play / Pause reach the video by its id.
+    const onCmd = (e: Event) => {
+      const d = (e as CustomEvent<{ id: string; action: 'toggle' | 'play' | 'pause' }>).detail;
+      if (d?.id !== el.id) return;
+      if (d.action === 'pause' || (d.action === 'toggle' && !v.paused)) v.pause();
+      else { if (atEnd(v.currentTime, pb, v.duration || 0) !== 'play' || v.currentTime < playStart(pb)) v.currentTime = playStart(pb); v.play().catch(() => undefined); }
+    };
+    v.addEventListener('play', onPlay);
+    v.addEventListener('pause', onPause);
+    window.addEventListener('lightcast-media', onCmd);
+    return () => { cancelAnimationFrame(raf); v.removeEventListener('play', onPlay); v.removeEventListener('pause', onPause); window.removeEventListener('lightcast-media', onCmd); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, el.id, pb.start, pb.end, pb.loop, pb.rewind, pb.fadeIn, pb.fadeOut, pb.volume, pb.muted, pb.poster]);
+  const full = live && playing && pb.fullScreen ? { left: 0, top: 0, width: CANVAS_W, height: CANVAS_H, transform: 'none', zIndex: 5, background: '#000' } : {};
+  const hidden = live && !playing && pb.hideDuringShow ? { visibility: 'hidden' as const } : {};
+  const faded = gain < 1 ? { opacity: ((style.opacity as number | undefined) ?? 1) * gain } : {};
   // Output windows play without sound unless the video's sound is turned on (the room hears one copy).
-  return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover' }} muted={pb.muted !== false} loop={pb.loop !== false && !pb.end} playsInline />;
+  return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover', ...faded, ...full, ...hidden }} muted={live && pb.muted !== false} playsInline preload="metadata" />;
 }
 
 /** One free-positioned object from the slide editor. */
@@ -296,8 +361,9 @@ export function ElementView({ el }: { el: SlideElement }) {
   // While a picture is still loading nothing is drawn (a placeholder box would flash); the slide waits for it, see useReadySlide.
   if (el.kind === 'image') {
     if (!url) return null;
+    if (el.gifPaused) return <StillPicture el={el} url={url} box={box} />;
     const mask = el.maskShape ? shapeGeometry(el.maskShape, el.w, el.h)?.paths.map((q) => q.d).join(' ') : undefined;
-    const style = { ...box, ...pictureStyleCss(el.pictureStyle), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px solid ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}), ...(mask ? { clipPath: `path('${mask}')` } : {}) };
+    const style = { ...box, ...pictureStyleCss(el.pictureStyle, el.w, el.h), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px ${OUTLINE_DASH[el.dash ?? ''] ?? 'solid'} ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}), ...(mask ? { clipPath: `path('${mask}')` } : {}) };
     const c = el.crop;
     if (!c || c.every((v) => !v)) return <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ ...style, objectFit: el.fit ?? 'contain' }} />;
     // Cropped: the picture stretched so its kept part fills the box.

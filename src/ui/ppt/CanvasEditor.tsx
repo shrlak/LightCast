@@ -1,4 +1,5 @@
 import { isFrontSlide } from '../../domain/frontLayout';
+import { actionButtonAction } from '../../domain/insertTools';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as RClipboardEvent, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent } from 'react';
 import { flushSync } from 'react-dom';
 import type { Background, BackgroundEffect, ListStyle, Slide, SlideElement, TextRun, Theme } from '../../domain/types';
@@ -818,7 +819,10 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       const el = tool.name === 'textBox' ? (click ? newTextBox(uid('el'), { x: d.x0, y: d.y0 }) : newTextBox(uid('el'), r, r))
         : click ? makeShape(tool.name, clickBox(d.x0, d.y0, line))
         : makeShape(tool.name, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
-      const styled = el.kind === 'shape' && defaultShape ? { ...el, ...(line ? lineLook(defaultShape) : defaultShape) } : el;
+      const withDefault = el.kind === 'shape' && defaultShape ? { ...el, ...(line ? lineLook(defaultShape) : defaultShape) } : el;
+      // An action button carries its action as it is drawn (DeckCraft insert.actionButton).
+      const act = actionButtonAction(withDefault.shape);
+      const styled = act ? { ...withDefault, action: act } : withDefault;
       setElements([...elements, styled]);
       onSelect([styled.id]);
       if (!tool.keep) onToolDone?.();

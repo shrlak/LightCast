@@ -63,7 +63,9 @@ export type MediaFit = 'cover' | 'contain' | 'fill';
 export type Background =
   | { kind: 'color'; value: string }
   | { kind: 'gradient'; value: string }
-  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean }
+  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean; /** Format Background › Transparency, 0–1. */ transparency?: number }
+  /** Format Background › Pattern fill (domain/patterns). */
+  | { kind: 'pattern'; preset: string; fg: string; bg: string }
   /** Built-in image shipped with the app (the church's template backgrounds). */
   | { kind: 'image'; url: string; fit?: MediaFit }
   | { kind: 'camera'; deviceId: string; label: string }
@@ -133,9 +135,12 @@ export interface TextRun {
 
 /** What clicking an object does in a slide show (Insert › Action). */
 export interface ElementAction {
-  kind: 'next' | 'prev' | 'first' | 'last' | 'slide' | 'url' | 'end';
+  /** lastViewed: back to the slide shown before; customShow: play custom show `show` and come back; playMedia: play the object's own audio / video. */
+  kind: 'next' | 'prev' | 'first' | 'last' | 'slide' | 'url' | 'end' | 'lastViewed' | 'customShow' | 'playMedia';
   slideId?: string;
   url?: string;
+  /** customShow: the custom show's id. */
+  show?: string;
 }
 
 /** Playback (video / audio objects). */
@@ -151,10 +156,16 @@ export interface MediaPlayback {
   end?: number;
   fadeIn?: number;
   fadeOut?: number;
-  /** Audio: hide the icon during the show. */
+  /** Hide the object during the show while it is not playing (audio icon, video). */
   hideDuringShow?: boolean;
   /** Video poster frame, seconds. */
   poster?: number;
+  /** Rewind after playing: back to the start (or poster frame) when it ends. */
+  rewind?: boolean;
+  /** Play across slides: audio keeps playing after its slide is left. */
+  acrossSlides?: boolean;
+  /** Play full screen: a video fills the slide while it plays. */
+  fullScreen?: boolean;
 }
 
 /** Picture Format adjustments; the shown picture is made from `original` by the engine. */
@@ -286,6 +297,10 @@ export interface SlideElement {
   alt?: string;
   /** A link opened when the object is clicked in a slide show. */
   href?: string;
+  /** Insert › Link › ScreenTip: shown when the pointer rests on the object in a slide show. */
+  tooltip?: string;
+  /** Insert › Action › Mouse Over: what pointing at the object does in a slide show. */
+  hoverAction?: ElementAction;
   table?: import('../engine').TableData;
   chart?: import('../engine').ChartData;
   /** Lucide icon name ('icon' objects). */
@@ -324,6 +339,8 @@ export interface SlideElement {
   picture?: PictureAdjust;
   /** Picture Styles preset. */
   pictureStyle?: string;
+  /** An animated GIF held on its first frame (DeckCraft media.gifPlay). */
+  gifPaused?: boolean;
   /** Picture Format › Crop › Crop to Shape: the preset the picture is cut to. */
   maskShape?: string;
   playback?: MediaPlayback;
@@ -453,6 +470,10 @@ export interface Slide {
 export interface SlideFooter {
   /** true: today's date; a string: that fixed text. */
   date?: boolean | string;
+  /** Header & Footer › Don't show on title slide. */
+  hideOnTitle?: boolean;
+  /** Date & Time format of an updating date (insertTools DATE_FORMATS id); the locale date when absent. */
+  dateFormat?: string;
   slideNumber?: boolean;
   text?: string;
 }

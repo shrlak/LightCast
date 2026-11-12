@@ -1965,3 +1965,8 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .sel-list li.drop-above { box-shadow: inset 0 2px 0 var(--pp, #1f8a52); }
 .sel-list li.drop-below { box-shadow: inset 0 -2px 0 var(--pp, #1f8a52); }
 .sel-list li[draggable="true"] { cursor: grab; }
+/* Picture Format › Picture Styles: DeckCraft's 24 styles, six to a row, drawn on a small landscape. */
+.pic-style-grid.six { grid-template-columns: repeat(6, 64px); }
+.pic-style-grid.six .pic-style span { background: linear-gradient(165deg, #d9efe2 0 55%, #2e9e66 55% 100%); }
+/* 재생 tab: seconds boxes for fades. */
+.rb-secs { width: 44px; margin: 0 2px; }

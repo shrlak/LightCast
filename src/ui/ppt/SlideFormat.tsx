@@ -3,6 +3,9 @@ import type { Action, AppState } from '../../domain/reducer';
 import type { Background, Presentation, Slide, SlideStyle, Theme } from '../../domain/types';
 import { BACKGROUND_PRESETS } from '../../domain/defaults';
 import { swatchStyle } from '../backgroundSwatch';
+import { gradientCss, hexOf, parseGradient, transparencyOf, withTransparency, type GradientSpec } from '../../domain/backgroundFormat';
+import { PATTERNS } from '../../domain/patterns';
+import { withMaster } from '../../domain/master';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { assetUrl, slideTheme } from '../SlideCanvas';
@@ -85,6 +88,10 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
   };
   const bg = slide.background;
   const bgColor = bg?.kind === 'color' ? bg.value : '#000000';
+  const grad = bg?.kind === 'gradient' ? parseGradient(bg.value) : null;
+  const setGrad = (patch: Partial<GradientSpec>) => setBg({ kind: 'gradient', value: gradientCss({ type: 'linear', angle: 90, from: '#1f8a52', to: '#0a1a35', ...grad, ...patch }) });
+  const pat = bg?.kind === 'pattern' ? bg : null;
+  const setPat = (patch: Partial<Extract<Background, { kind: 'pattern' }>>) => setBg({ kind: 'pattern', preset: 'pct50', fg: '#1f8a52', bg: '#000000', ...pat, ...patch });
 
   const selected = slide.elements?.find((e) => e.id === selectedId);
   const elements = slide.elements ?? [];
@@ -164,10 +171,35 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
           ))}
         </div>
         <div className="fmt-row">
-          <label className="fmt-color grow" title="단색 배경"><span style={{ background: bgColor }} />단색<input type="color" value={bgColor} onChange={(e) => setBg({ kind: 'color', value: e.target.value })} /></label>
+          <label className="fmt-color grow" title="단색 배경"><span style={{ background: bgColor }} />단색<input type="color" value={hexOf(bgColor)} onChange={(e) => setBg({ kind: 'color', value: withTransparency(e.target.value, transparencyOf(bgColor)) })} /></label>
           <button onClick={() => fileRef.current?.click()}>그림 · 동영상…</button>
           <input ref={fileRef} type="file" accept="image/*,video/*" hidden onChange={(e) => uploadBg(e.target.files?.[0])} />
         </div>
+        {bg?.kind === 'color' && (
+          <label>투명도 <span className="muted">{Math.round(transparencyOf(bgColor) * 100)}%</span><input type="range" min={0} max={100} value={Math.round(transparencyOf(bgColor) * 100)} onChange={(e) => setBg({ kind: 'color', value: withTransparency(hexOf(bgColor), Number(e.target.value) / 100) })} /></label>
+        )}
+        {bg?.kind === 'media' && bg.mediaType === 'image' && (
+          <label>그림 투명도 <span className="muted">{Math.round((bg.transparency ?? 0) * 100)}%</span><input type="range" min={0} max={100} value={Math.round((bg.transparency ?? 0) * 100)} onChange={(e) => setBg({ ...bg, transparency: Number(e.target.value) / 100 || undefined })} /></label>
+        )}
+        <div className="fmt-row">
+          <button className={`fmt-tog ${grad ? 'on' : ''}`} onClick={() => setGrad({})}>그라데이션 채우기</button>
+          <button className={`fmt-tog ${pat ? 'on' : ''}`} onClick={() => setPat({})}>패턴 채우기</button>
+        </div>
+        {grad && (
+          <div className="fmt-row">
+            <select value={grad.type} onChange={(e) => setGrad({ type: e.target.value as GradientSpec['type'] })}><option value="linear">선형</option><option value="radial">방사형</option></select>
+            <input type="color" title="시작 색" value={grad.from} onChange={(e) => setGrad({ from: e.target.value })} />
+            <input type="color" title="끝 색" value={grad.to} onChange={(e) => setGrad({ to: e.target.value })} />
+            {grad.type === 'linear' && <input type="number" title="각도" min={0} max={359} style={{ width: 56 }} value={grad.angle} onChange={(e) => setGrad({ angle: Number(e.target.value) })} />}
+          </div>
+        )}
+        {pat && (
+          <div className="fmt-row">
+            <select value={pat.preset} onChange={(e) => setPat({ preset: e.target.value })}>{PATTERNS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select>
+            <input type="color" title="전경색" value={pat.fg} onChange={(e) => setPat({ fg: e.target.value })} />
+            <input type="color" title="배경색" value={pat.bg} onChange={(e) => setPat({ bg: e.target.value })} />
+          </div>
+        )}
         {bg && (bg.kind === 'media' || bg.kind === 'image') && (
           <div className="fmt-row">
             <span className="muted">맞춤</span>
@@ -175,7 +207,11 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
             <button className={`fmt-tog ${bg.fit === 'contain' ? 'on' : ''}`} onClick={() => setBg({ ...bg, fit: 'contain' })}>맞추기</button>
           </div>
         )}
-        <button disabled={!bg} onClick={() => applyToAll('background')}>이 배경을 모든 슬라이드에 적용</button>
+        <label className="check small" title="슬라이드 마스터의 개체를 이 슬라이드에서 숨깁니다"><input type="checkbox" checked={!!slide.hideMaster} disabled={!p.master?.elements.length} onChange={(e) => upd({ hideMaster: e.target.checked || undefined, elements: withMaster({ ...slide, hideMaster: e.target.checked }, p.master?.elements ?? []).elements })} /> 배경 그래픽 숨기기</label>
+        <div className="fmt-row">
+          <button className="grow" disabled={!bg} onClick={() => applyToAll('background')}>모두 적용</button>
+          <button disabled={!bg} onClick={() => setBg(undefined)} title="자동 배경으로 되돌리기">배경 다시 설정</button>
+        </div>
       </Section>
 
     </div>

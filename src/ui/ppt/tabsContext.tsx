@@ -4,12 +4,15 @@ import { useRef, useState, type CSSProperties } from 'react';
 import type { PictureAdjust, SlideElement } from '../../domain/types';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
-import { PICTURE_STYLE_IDS } from '../SlideCanvas';
-import { adjustPicture, colorAt } from './pictureTools';
+import { adjustPicture, colorAt, pictureSize } from './pictureTools';
+import { PICTURE_STYLES, REMOVE_BACKGROUND_LEVELS, RESET_PICTURE, SATURATION_STEPS, TRANSPARENCY_STEPS, naturalSize, pictureStylePatch, recolorLabel } from '../../domain/pictureFormat';
+import { lookCss } from '../pictureStyles';
+import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { EffectsMenu } from './tabsMain';
 import { pictureCatalog, type PictureSteps } from '../../engine';
 import { editTable, tableStyles, type ChartKind, type TableAction, type TableData } from '../../engine';
 import type { Ed } from './editor';
+import { PlaybackTab } from './tabPlayback';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
@@ -22,8 +25,8 @@ import { applyBorders, CELL_MARGINS, type BorderMode } from '../../domain/tableB
 import type { CellBorder } from '../../engine';
 import { layoutTable } from '../../engine';
 
-export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart';
-export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인' };
+export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart' | 'playback';
+export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인', playback: '재생' };
 
 /** The contextual tabs for what is selected. */
 export function contextTabs(ed: Ed): ContextTab[] {
@@ -32,6 +35,8 @@ export function contextTabs(ed: Ed): ContextTab[] {
   if (kinds.size === 1 && kinds.has('table')) return ['tableDesign', 'tableLayout'];
   if (kinds.size === 1 && kinds.has('chart')) return ['chart'];
   if (kinds.size === 1 && kinds.has('image')) return ['picture'];
+  // Video / Audio: their 서식 (shape) and 재생 tabs.
+  if ([...kinds].every((k) => k === 'audio' || k === 'video')) return ['shape', 'playback'];
   return ['shape'];
 }
 
@@ -229,12 +234,7 @@ const ARTISTIC_LABEL: Record<string, string> = {
   artisticBlur: '흐리게', artisticPencilGrayscale: '연필 회색조', artisticLineDrawing: '선 그리기', artisticPhotocopy: '복사',
   artisticFilmGrain: '필름 입자', artisticCutout: '오려내기', artisticGlowEdges: '네온 가장자리',
 };
-const RECOLOR_LABEL = (id: string) => ({ none: '다시 칠하기 없음', grayscale: '회색조', sepia: '세피아', washout: '희미하게', bw25: '흑백: 25%', bw50: '흑백: 50%', bw75: '흑백: 75%' } as Record<string, string>)[id]
-  ?? id.replace(/accent(\d)(Dark|Light)/, (_, n, k) => `강조 ${n} ${k === 'Dark' ? '어둡게' : '밝게'}`);
-const PIC_STYLE_LABEL: Record<string, string> = {
-  simpleFrame: '단순형 프레임, 흰색', thickMatte: '두꺼운 매트, 검정', polaroid: '사진 테두리', shadowRect: '그림자 사각형', rounded: '둥근 대각선 모서리',
-  oval: '타원', softEdge: '부드러운 가장자리 사각형', reflected: '반사된 둥근 사각형', tilted: '원근감 있는 그림자', beveled: '입체 사각형',
-};
+const PIC_STYLE_TILE: CSSProperties = { width: 46, height: 34 };
 
 export function PictureFormatTab({ ed }: { ed: Ed }) {
   const pics = ed.selEls.filter((e) => e.kind === 'image');
@@ -271,10 +271,31 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
     ed.dispatch({ type: 'media/add', media: { id, name: file.name, type: 'image' } });
     set({ mediaId: id, picture: undefined, crop: undefined });
   };
+  const resetSize = async () => {
+    if (!p?.mediaId) return;
+    const size = await pictureSize(p.picture?.original ?? p.mediaId);
+    set({ ...RESET_PICTURE, ...(size ? naturalSize(p, size.w, size.h, CANVAS_W, CANVAS_H) : {}), rotation: undefined });
+  };
+  const pickTransparent = () => {
+    if (!p) return;
+    ed.setTool({ kind: 'eyedrop', id: p.id, onPick: (fx, fy) => void colorAt(p, fx, fy).then((c) => {
+      if (c === 'off') ed.cmd.notify('선택한 그림 위를 클릭하세요');
+      else if (c === 'clear') ed.cmd.notify('그림의 그 부분은 이미 투명합니다');
+      else if (c) void adjust({ transparentColor: c });
+    }) });
+  };
+  const styleOf = (id: string) => { const patch = pictureStylePatch(id); if (patch) set(patch); };
+  const gif = !!p && /\.gif$/i.test(ed.state.library.media.find((m) => m.id === p.mediaId)?.name ?? p.name ?? '');
   return (
     <>
       <Group label="조정">
-        <Big icon="✂" label={busy ? '처리 중…' : '배경 제거'} title="가장자리에서 이어진 배경을 투명하게 (엔진)" disabled={!p || busy} onClick={() => void adjust({ removeBackground: a?.removeBackground ? undefined : 20 })} active={!!a?.removeBackground} />
+        <DropButton big icon="✂" label={busy ? '처리 중…' : '배경 제거'} title="가장자리에서 이어진 배경을 투명하게 (엔진)" disabled={!p || busy} active={!!a?.removeBackground} split onMain={() => void adjust({ removeBackground: a?.removeBackground ? undefined : 20 })} render={(close) => (
+          <>
+            {REMOVE_BACKGROUND_LEVELS.map(([label, tol]) => <MenuItem key={tol} label={label} on={a?.removeBackground === tol} onClick={() => { void adjust({ removeBackground: tol }); close(); }} />)}
+            <MenuSep />
+            <MenuItem label="배경 제거 취소" disabled={!a?.removeBackground} onClick={() => { void adjust({ removeBackground: undefined }); close(); }} />
+          </>
+        )} />
         <DropButton big icon="☀" label="수정" disabled={!p || busy} wide render={(close) => (
           <>
             <MenuHead>선명도 조정</MenuHead>
@@ -288,13 +309,13 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
         <DropButton big icon="🎨" label="색" disabled={!p || busy} wide render={(close) => (
           <>
             <MenuHead>채도</MenuHead>
-            <div className="adj-grid">{[-1, -0.5, 0, 0.5, 1].map((v) => <button key={v} type="button" className={`mini-btn ${(a?.saturation ?? 0) === v ? 'on' : ''}`} onClick={() => { void adjust({ saturation: v || undefined }); close(); }}>{Math.round((1 + v) * 100)}%</button>)}</div>
+            <div className="adj-grid">{SATURATION_STEPS.map((m) => { const v = Math.round((m - 1) * 100) / 100; return <button key={m} type="button" className={`mini-btn ${Math.round((a?.saturation ?? 0) * 100) === Math.round(v * 100) ? 'on' : ''}`} onClick={() => { void adjust({ saturation: v || undefined }); close(); }}>채도: {Math.round(m * 100)}%</button>; })}</div>
             <MenuHead>색조</MenuHead>
             <div className="adj-grid">{[-0.6, -0.3, 0, 0.3, 0.6].map((v) => <button key={v} type="button" className={`mini-btn ${(a?.temperature ?? 0) === v ? 'on' : ''}`} onClick={() => { void adjust({ temperature: v || undefined }); close(); }}>{v < 0 ? '차갑게' : v > 0 ? '따뜻하게' : '그대로'} {v ? Math.abs(v * 100) : ''}</button>)}</div>
             <MenuHead>다시 칠하기</MenuHead>
-            <div className="recolor-list">{(cat?.recolor ?? []).map((r) => <MenuItem key={r} label={RECOLOR_LABEL(r)} on={(a?.recolor ?? 'none') === r} onClick={() => { void adjust({ recolor: r === 'none' ? undefined : r }); close(); }} />)}</div>
+            <div className="recolor-list">{(cat?.recolor ?? []).map((r) => <MenuItem key={r} label={recolorLabel(r)} on={(a?.recolor ?? 'none') === r} onClick={() => { void adjust({ recolor: r === 'none' ? undefined : r }); close(); }} />)}</div>
             <MenuSep />
-            <MenuItem label="투명한 색 설정 — 그림에서 클릭" onClick={() => { if (p) ed.setTool({ kind: 'eyedrop', id: p.id, onPick: (fx, fy) => void colorAt(p, fx, fy).then((c) => { if (c) void adjust({ transparentColor: c }); }) }); close(); }} />
+            <MenuItem label="투명한 색 설정 — 그림에서 클릭" onClick={() => { pickTransparent(); close(); }} />
             {a?.transparentColor && <MenuItem label="투명한 색 없애기" onClick={() => { void adjust({ transparentColor: undefined }); close(); }} />}
           </>
         )} />
@@ -304,26 +325,45 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
             {(cat?.artistic ?? []).map((x) => <MenuItem key={x} label={ARTISTIC_LABEL[x] ?? x} on={a?.artistic === x} onClick={() => { void adjust({ artistic: x }); close(); }} />)}
           </>
         )} />
-        <DropButton big icon="◐" label="투명도" disabled={!p} render={(close) => <>{[0, 15, 30, 50, 65, 80].map((t) => <MenuItem key={t} label={`투명도: ${t}%`} on={Math.round((1 - (p?.opacity ?? 1)) * 100) === t} onClick={() => { set({ opacity: 1 - t / 100 }); close(); }} />)}</>} />
+        <DropButton big icon="◐" label="투명도" disabled={!p} render={(close) => <>{TRANSPARENCY_STEPS.map((t) => <MenuItem key={t} label={`투명도: ${t}%`} on={Math.round((1 - (p?.opacity ?? 1)) * 100) === t} onClick={() => { set({ opacity: t ? 1 - t / 100 : undefined }); close(); }} />)}</>} />
         <Col>
-          <Small icon="🗜" label="그림 압축" title="긴 쪽을 1920픽셀로 줄여 파일을 작게" disabled={!p || busy} onClick={() => void adjust({}, { maxSide: 1920 })} />
-          <Small icon="🔁" label="그림 바꾸기" disabled={!p} onClick={() => fileRef.current?.click()} />
-          <Small icon="↺" label="그림 원래대로" disabled={!p || (!a && !p.crop && !p.pictureStyle && !p.maskShape)} onClick={() => { void adjust(null); set({ crop: undefined, pictureStyle: undefined, maskShape: undefined }); }} />
+          <Small icon="🗜" label="그림 압축" title="보여 주는 크기에 맞는 해상도로 줄이고 잘린 부분을 지웁니다" disabled={!ed.p || busy} onClick={() => ed.setDialog('compress')} />
+          <DropButton icon="🔁" label="그림 바꾸기" disabled={!p} split onMain={() => fileRef.current?.click()} render={(close) => <MenuItem label="파일에서…" onClick={() => { fileRef.current?.click(); close(); }} />} />
+          <DropButton icon="↺" label="그림 원래대로" disabled={!p} split onMain={() => set(RESET_PICTURE)} render={(close) => (
+            <>
+              <MenuItem label="그림 원래대로" onClick={() => { set(RESET_PICTURE); close(); }} />
+              <MenuItem label="그림 및 크기 다시 설정" onClick={() => { void resetSize(); close(); }} />
+            </>
+          )} />
+          {gif && <Small icon={p?.gifPaused ? '▶' : '❚❚'} label={p?.gifPaused ? 'GIF 재생' : 'GIF 일시 중지'} title="움직이는 GIF를 멈추거나 다시 재생" onClick={() => set({ gifPaused: p?.gifPaused ? undefined : true })} />}
         </Col>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { void replace(e.target.files?.[0]); e.target.value = ''; }} />
       </Group>
       <Group label="그림 스타일">
         <DropButton big icon="🖼" label="빠른 스타일" disabled={!p} wide render={(close) => (
-          <div className="pic-style-grid">
-            <button type="button" className={`pic-style ${!p?.pictureStyle ? 'on' : ''}`} title="스타일 없음" onClick={() => { set({ pictureStyle: undefined }); close(); }}><span /></button>
-            {PICTURE_STYLE_IDS.map((id) => <button key={id} type="button" className={`pic-style ${p?.pictureStyle === id ? 'on' : ''}`} title={PIC_STYLE_LABEL[id] ?? id} onClick={() => { set({ pictureStyle: id }); close(); }}><span style={PICTURE_STYLE_PREVIEW[id]} /></button>)}
-          </div>
+          <>
+            <div className="pic-style-grid six">
+              {PICTURE_STYLES.map((s) => <button key={s.id} type="button" className={`pic-style ${p?.pictureStyle === s.id ? 'on' : ''}`} title={s.label} aria-label={s.label} onClick={() => { styleOf(s.id); close(); }}><span style={{ ...PIC_STYLE_TILE, ...lookCss(s.look, 46, 34) }} /></button>)}
+            </div>
+            <MenuSep />
+            <MenuItem label="그림 스타일 다시 설정" disabled={!p?.pictureStyle} onClick={() => { styleOf('none'); close(); }} />
+          </>
         )} />
         <Col>
-          <ColorButton icon={RI.outline} label="그림 테두리" title="그림 테두리" value={p?.stroke} onPick={(c) => set({ stroke: c, strokeWidth: p?.strokeWidth ?? 6 })} onNone={() => set({ stroke: undefined })} noneLabel="윤곽선 없음" />
+          <ColorButton icon={RI.outline} label="그림 테두리" title="그림 테두리" value={p?.stroke} onPick={(c) => set({ stroke: c, strokeWidth: p?.strokeWidth ?? 2 })} onNone={() => set({ stroke: undefined, strokeWidth: undefined, dash: undefined })} noneLabel="윤곽선 없음" extra={(close) => (
+            <>
+              <MenuHead>두께</MenuHead>
+              <div className="rb-chip-row">{[0.25, 0.5, 0.75, 1, 1.5, 2.25, 3, 4.5, 6].map((w) => <button key={w} type="button" className={`mini-btn ${p?.stroke && p.strokeWidth === w * 2 ? 'on' : ''}`} onClick={() => { set({ strokeWidth: w * 2, stroke: p?.stroke ?? '#000000' }); close(); }}>{w} pt</button>)}</div>
+              <MenuHead>대시</MenuHead>
+              {([['solid', '실선'], ['dot', '둥근 점선'], ['dash', '파선'], ['dashDot', '파선-점선']] as const).map(([d, l]) => <MenuItem key={d} label={l} on={(p?.dash ?? 'solid') === d} onClick={() => { set({ dash: d === 'solid' ? undefined : d, stroke: p?.stroke ?? '#000000', strokeWidth: p?.strokeWidth ?? 2 }); close(); }} />)}
+            </>
+          )} />
           <DropButton icon={RI.effects} label="그림 효과" disabled={!p} wide render={(close) => <EffectsMenu first={p} set={set} close={close} />} />
           <DropButton icon="▣" label="맞춤" render={(close) => <>{([['fill', '늘려서 채우기'], ['contain', '비율 유지 (전체)'], ['cover', '비율 유지 (꽉 차게)']] as const).map(([v, l]) => <MenuItem key={v} label={l} on={(p?.fit ?? 'contain') === v} onClick={() => { set({ fit: v }); close(); }} />)}</>} />
         </Col>
+      </Group>
+      <Group label="접근성">
+        <Big icon="💬" label="대체 텍스트" title="화면 낭독 프로그램이 읽어 줄 그림 설명" disabled={!p} onClick={() => ed.setDialog('altText')} />
       </Group>
       <ArrangeGroup ed={ed} />
       <Group label="크기">
@@ -335,6 +375,8 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
             <MenuHead>도형에 맞춰 자르기</MenuHead>
             <ShapeGallery compact onPick={(n) => { set({ maskShape: n === 'rect' ? undefined : n }); close(); }} />
             <MenuSep />
+            <MenuItem label="채우기" hint="상자를 그림으로 채우고 넘치는 부분은 자르기" onClick={() => { set({ fit: 'cover', crop: undefined }); close(); }} />
+            <MenuItem label="맞춤" hint="그림 전체를 상자 안에 보이기" onClick={() => { set({ fit: 'contain', crop: undefined }); close(); }} />
             <MenuItem label="자르기 없애기" onClick={() => { set({ crop: undefined, maskShape: undefined }); close(); }} />
           </>
         )} />
@@ -343,12 +385,6 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
     </>
   );
 }
-
-const PICTURE_STYLE_PREVIEW: Record<string, CSSProperties> = {
-  simpleFrame: { border: '3px solid #fff', boxShadow: '0 1px 3px rgba(0,0,0,.5)' }, thickMatte: { border: '5px solid #222' }, polaroid: { borderStyle: 'solid', borderColor: '#fff', borderWidth: '3px 3px 9px' },
-  shadowRect: { boxShadow: '3px 3px 5px rgba(0,0,0,.6)' }, rounded: { borderRadius: 8 }, oval: { borderRadius: '50%' }, softEdge: { WebkitMaskImage: 'radial-gradient(ellipse, #000 50%, transparent 75%)' },
-  reflected: { borderRadius: 4, WebkitBoxReflect: 'below 1px linear-gradient(transparent 50%, rgba(255,255,255,.4))' }, tilted: { transform: 'perspective(80px) rotateY(-14deg)' }, beveled: { boxShadow: 'inset 2px 2px 3px rgba(255,255,255,.6), inset -2px -2px 3px rgba(0,0,0,.4)' },
-};
 
 const STYLE_KIND: Record<string, string> = { none: '스타일 없음', grid: '표 눈금', light1: '밝은 스타일 1', light2: '밝은 스타일 2', medium2: '보통 스타일 2', medium4: '보통 스타일 4', dark1: '어두운 스타일 1' };
 const styleLabel = (id: string) => {
@@ -512,6 +548,7 @@ export function ChartDesignTab({ ed }: { ed: Ed }) {
 export function ContextTabBody({ tab, ed }: { tab: ContextTab; ed: Ed }) {
   if (tab === 'shape') return <ShapeFormatTab ed={ed} />;
   if (tab === 'picture') return <PictureFormatTab ed={ed} />;
+  if (tab === 'playback') return <PlaybackTab ed={ed} />;
   if (tab === 'tableDesign') return <TableDesignTab ed={ed} />;
   if (tab === 'tableLayout') return <TableLayoutTab ed={ed} />;
   return <ChartDesignTab ed={ed} />;

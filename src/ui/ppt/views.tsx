@@ -1,9 +1,10 @@
 // Views and dialogs of the PowerPoint window: 찾기 / 바꾸기, 개요 보기, 여러 슬라이드, 읽기용 보기,
 // transition and animation previews, and the 파일 (backstage) view.
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
-import type { Slide, SlideElement } from '../../domain/types';
+import type { ElementAction, Slide, SlideElement } from '../../domain/types';
 import { CANVAS_W } from '../../domain/canvas';
-import { actionAt } from '../../domain/showActions';
+import { actionAt, hoverAt, lastViewed } from '../../domain/showActions';
+import { playMedia } from './mediaControl';
 export { actionAt };
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
@@ -142,11 +143,18 @@ export function SlideSorter({ ed }: { ed: Ed }) {
  */
 export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: () => void; ids?: string[]; rehearse?: boolean }) {
   const p = ed.p;
+  // Action › Custom Show: the show's slides, then back to the slide that started it.
+  const [custom, setCustom] = useState<{ ids: string[]; back: number } | null>(null);
   const pages = useMemo(() => {
     if (!p) return [];
     const all = sequence(p).filter((x) => !x.slide.disabled);
-    return ids ? ids.map((id) => all.find((x) => x.slide.id === id)).filter((x): x is (typeof all)[number] => !!x) : all;
-  }, [p, ids]);
+    const only = custom?.ids ?? ids;
+    return only ? only.map((id) => all.find((x) => x.slide.id === id)).filter((x): x is (typeof all)[number] => !!x) : all;
+  }, [p, ids, custom]);
+  /** Pages shown, for Action › Last Slide Viewed. */
+  const history = useRef<number[]>([]);
+  const hovered = useRef<string | null>(null);
+  const [tip, setTip] = useState<string | undefined>();
   const start = ids || rehearse ? 0 : Math.max(0, pages.findIndex((x) => x.slide.id === ed.slide?.id));
   const [i, setI] = useState(start);
   const [build, setBuild] = useState<LiveBuild | null>(null);
@@ -169,17 +177,21 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     void import('../../domain/animations').then(({ initialBuild }) => setBuild(ed.p?.showSetup?.noAnimation ? null : initialBuild(slide, Date.now()) ?? null));
   }, [slide, ed.p?.showSetup?.noAnimation]);
   const record = () => { if (rehearse && slide) times.current[slide.id] = (times.current[slide.id] ?? 0) + (Date.now() - shownAt.current) / 1000; };
-  const finish = () => { record(); if (rehearse) setEnded(true); else onClose(); };
-  const goTo = (n: number) => { if (n === i) return; record(); if (n >= pages.length) return finish(); setI(Math.max(0, n)); };
+  const finish = () => {
+    record();
+    if (custom) { const back = custom.back; setCustom(null); setI(back); return; }
+    if (rehearse) setEnded(true); else onClose();
+  };
+  const goTo = (n: number) => { if (n === i) return; record(); if (n >= pages.length) return finish(); history.current.push(i); setI(Math.max(0, n)); };
   const next = async () => {
     const { advanceBuild } = await import('../../domain/animations');
     const b = slide && !ed.p?.showSetup?.noAnimation ? advanceBuild(slide, build ?? undefined, Date.now()) : null;
     if (b) setBuild(b); else goTo(i + 1);
   };
   const prev = () => goTo(i - 1);
-  const act = (el: SlideElement) => {
-    if (el.kind === 'zoom' && el.targetSlideId) { const n = pages.findIndex((x) => x.slide.id === el.targetSlideId); if (n >= 0) goTo(n); return; }
-    const a = el.action ?? (el.href ? { kind: 'url' as const, url: el.href } : null);
+  const act = (el: SlideElement, over?: ElementAction) => {
+    if (!over && el.kind === 'zoom' && el.targetSlideId) { const n = pages.findIndex((x) => x.slide.id === el.targetSlideId); if (n >= 0) goTo(n); return; }
+    const a = over ?? el.action ?? (el.href ? { kind: 'url' as const, url: el.href } : null);
     if (!a) return;
     if (a.kind === 'next') goTo(i + 1);
     else if (a.kind === 'prev') goTo(i - 1);
@@ -188,6 +200,25 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     else if (a.kind === 'end') finish();
     else if (a.kind === 'slide') { const n = pages.findIndex((x) => x.slide.id === a.slideId); if (n >= 0) goTo(n); }
     else if (a.kind === 'url' && a.url) window.open(a.url, '_blank', 'noopener');
+    else if (a.kind === 'lastViewed') { const n = lastViewed(history.current, i); if (n != null) { record(); setI(n); } }
+    else if (a.kind === 'customShow') {
+      const cs = p?.customShows?.find((c) => c.id === a.show);
+      if (cs?.slideIds.length && !custom) { record(); history.current.push(i); setCustom({ ids: cs.slideIds, back: i }); setI(0); }
+    } else if (a.kind === 'playMedia') playMedia(el, ed.dispatch);
+  };
+  const onStageMove = (e: MouseEvent<HTMLDivElement>) => {
+    const r = stage.current?.querySelector('.slide-canvas, .canvas, div')?.getBoundingClientRect();
+    if (!r?.width) return;
+    const k = CANVAS_W / r.width;
+    const x = (e.clientX - r.left) * k, y = (e.clientY - r.top) * k;
+    const over = hoverAt(slide, x, y);
+    const click = actionAt(slide, x, y);
+    setTip(over?.tooltip ?? click?.tooltip);
+    // Mouse Over fires once as the pointer enters the object.
+    if (over?.id !== hovered.current) {
+      hovered.current = over?.id ?? null;
+      if (over?.hoverAction) act(over, over.hoverAction);
+    }
   };
   const onStageClick = (e: MouseEvent<HTMLDivElement>) => {
     const r = stage.current?.querySelector('.slide-canvas, .canvas, div')?.getBoundingClientRect() ?? stage.current?.getBoundingClientRect();
@@ -227,9 +258,9 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
       if (e.key === 'End') goTo(pages.length - 1);
       if (e.key === 'Escape') finish();
     }} onClick={onStageClick}>
-      <div className="reading-stage" ref={stage}><SlideCanvas slide={slide} theme={ed.theme} background={slide ? resolveBackground(slide, p) : null} bgEffect={p.bgEffect} transition={transition} build={build} animate number={i + 1} /></div>
+      <div className="reading-stage" ref={stage} title={tip} onMouseMove={onStageMove}><SlideCanvas slide={slide} theme={ed.theme} background={slide ? resolveBackground(slide, p) : null} bgEffect={p.bgEffect} transition={transition} build={build} animate number={i + 1} /></div>
       <div className="reading-bar" onClick={(e) => e.stopPropagation()}>
-        <span>{p.title}{ids ? ' · 재구성한 쇼' : ''}</span><span className="grow" />
+        <span>{p.title}{ids || custom ? ' · 재구성한 쇼' : ''}</span><span className="grow" />
         {rehearse && <span className="rehearse-clock">⏱ {Math.floor(onSlide / 60)}:{String(Math.floor(onSlide % 60)).padStart(2, '0')}</span>}
         <button type="button" onClick={prev}>◀</button><span>슬라이드 {i + 1} / {pages.length}</span><button type="button" onClick={() => void next()}>▶</button>
         <button type="button" onClick={finish}>{rehearse ? '예행 연습 마침 (Esc)' : '읽기용 보기 닫기 (Esc)'}</button>

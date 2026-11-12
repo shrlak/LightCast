@@ -22,6 +22,7 @@ import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries
 import { shapeLabel } from './ko';
 import { seedSmartArt } from './dialogsMore';
 import { PATTERNS, patternPath } from '../../domain/patterns';
+import { SYMBOL_GROUPS } from '../../domain/insertTools';
 import { slideFromLayout, withMaster } from '../../domain/master';
 import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
@@ -431,7 +432,6 @@ function ConvertToSmartArt({ ed }: { ed: Ed }) {
   );
 }
 
-const SYMBOLS = '©®™°±×÷≠≤≥∞→←↑↓↔⇒★☆♥♡♪♫✓✔✝☩✞☀☁☂☺♠♣♦•·…—–「」『』《》〈〉※§¶€£¥₩'.split('');
 const WORDART = [
   { label: '채우기: 흰색, 그림자', patch: { color: '#ffffff', shadow: true, bold: true } },
   { label: '채우기: 검정', patch: { color: '#111111', bold: true } },
@@ -442,7 +442,7 @@ const WORDART = [
 ] as const;
 const CHARTS: [ChartKind, string][] = [['column', '세로 막대형'], ['columnStacked', '누적 세로 막대형'], ['bar', '가로 막대형'], ['barStacked', '누적 가로 막대형'], ['line', '꺾은선형'], ['area', '영역형'], ['pie', '원형'], ['doughnut', '도넛형'], ['scatter', '분산형']];
 
-export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
+export function InsertTab({ ed, onLink: _onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const kind = useRef<'image' | 'video' | 'audio'>('image');
   const [hover, setHover] = useState<[number, number]>([0, 0]);
@@ -466,6 +466,7 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
         <DropButton big icon={RI.table} label="표" render={(close) => (
           <div className="table-picker" onMouseLeave={() => setHover([0, 0])}>
             <MenuHead>{hover[0] ? `${hover[1]}x${hover[0]} 표` : '표 삽입'}</MenuHead>
+            <MenuItem label="표 삽입…" onClick={() => { ed.setDialog('insertTable'); close(); }} />
             <div className="table-picker-grid">
               {Array.from({ length: 8 }, (_, r) => Array.from({ length: 10 }, (_, c) => (
                 <span key={`${r}-${c}`} className={`tp-cell ${r < hover[0] && c < hover[1] ? 'on' : ''}`} onMouseEnter={() => setHover([r + 1, c + 1])} onClick={() => { add(makeTable(r + 1, c + 1)); close(); }} />
@@ -491,7 +492,7 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
       </Group>
       <Group label="링크">
         <Big icon="⊕" label="확대/축소" title="요약 · 구역 · 슬라이드 확대/축소" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('zoom')} />
-        <Big icon={RI.link} label="링크" title="선택한 개체에 링크 연결 (슬라이드 쇼에서 클릭하면 열림)" disabled={!ed.selEls.length} onClick={onLink} />
+        <Big icon={RI.link} label="링크" title="웹 페이지 · 현재 문서의 슬라이드 · 전자 메일 주소로 링크 (슬라이드 쇼에서 클릭하면 열림)" disabled={!ed.slide} onClick={() => ed.setDialog('hyperlink')} />
         <Big icon="☛" label="실행" title="개체를 클릭했을 때 할 일 (실행 설정)" disabled={!ed.selEls.length} onClick={() => ed.setDialog('action')} />
       </Group>
       <Group label="메모">
@@ -504,13 +505,18 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
         ))}</>} />
         <Col>
           <Small icon="▭" label="머리글/바닥글" disabled={!ed.slide} onClick={() => ed.setDialog('headerFooter')} />
-          <Small icon="#" label="슬라이드 번호" disabled={!ed.slide} onClick={() => ed.setDialog('headerFooter')} />
-          <Small icon={RI.date} label="날짜 및 시간" disabled={!ed.slide} onClick={() => add({ id: uid('el'), kind: 'text', text: '{date}', x: 940, y: 980, w: 460, h: 70, fontSize: 36, color: '#ffffff', align: 'right' })} />
+          <Small icon="#" label="슬라이드 번호" disabled={!ed.slide} onClick={() => {
+            // At the caret as a field; otherwise turn slide numbers on for the slide (DeckCraft insert.slideNumber).
+            if (document.activeElement?.classList.contains('ce-rich')) document.execCommand('insertText', false, '{slide}');
+            else if (ed.slide) ed.updateSlide({ footer: { ...(ed.slide.footer ?? {}), slideNumber: true } });
+          }} />
+          <Small icon={RI.date} label="날짜 및 시간" disabled={!ed.slide} onClick={() => ed.setDialog('dateTime')} />
           <Small icon="🕒" label="현재 시각" disabled={!ed.slide} onClick={() => add({ id: uid('el'), kind: 'text', text: '{time}', x: 940, y: 900, w: 460, h: 70, fontSize: 36, color: '#ffffff', align: 'right' })} />
         </Col>
       </Group>
       <Group label="기호">
-        <DropButton big icon={RI.symbol} label="기호" render={(close) => <div className="symbol-grid">{SYMBOLS.map((c) => <button key={c} type="button" className="symbol-cell" onMouseDown={(e) => e.preventDefault()} onClick={() => { insertSymbol(c); close(); }}>{c}</button>)}</div>} />
+        <DropButton big icon="π" label="수식" title="선형 형식으로 수식 입력" disabled={!ed.slide} render={(close) => <MenuItem label="수식 삽입…" onClick={() => { ed.setDialog('equation'); close(); }} />} />
+        <DropButton big icon={RI.symbol} label="기호" wide render={(close) => <div className="symbol-groups">{SYMBOL_GROUPS.map(([g, chars]) => <div key={g}><MenuHead>{g}</MenuHead><div className="symbol-grid">{[...chars].map((c) => <button key={c} type="button" className="symbol-cell" onMouseDown={(e) => e.preventDefault()} onClick={() => { insertSymbol(c); close(); }}>{c}</button>)}</div></div>)}</div>} />
       </Group>
       <Group label="미디어">
         <Big icon={RI.video} label="비디오" onClick={() => { kind.current = 'video'; if (fileRef.current) { fileRef.current.accept = 'video/*'; fileRef.current.click(); } }} />
