@@ -68,6 +68,14 @@ function ArrangeGroup({ ed }: { ed: Ed }) {
   );
 }
 
+/** Set as Default Shape: the look new shapes take (fill, outline, effects, text colour and size). */
+function defaultLook(e: SlideElement): Partial<SlideElement> {
+  const keys = ['fill', 'stroke', 'strokeWidth', 'dash', 'gradient', 'gradientAngle', 'gradientType', 'fillImage', 'pattern', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'softEdge', 'reflection', 'reflectionOpts', 'bevel', 'bevelKind', 'rotate3d', 'camera3d', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'opacity', 'color', 'fontSize', 'fontFamily', 'bold', 'italic'] as const;
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (e[k] !== undefined) out[k] = e[k];
+  return out as Partial<SlideElement>;
+}
+
 function SizeGroup({ ed }: { ed: Ed }) {
   const one = ed.selEls.length === 1 ? ed.selEls[0] : null;
   const locked = !!one && !!one.locked;
@@ -132,7 +140,7 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
             ))}
           </>
         )} />
-        <Small icon="★" label="기본 도형으로 설정" title="새로 그리는 도형이 이 서식을 따릅니다" disabled={shapes.length !== 1} onClick={() => { const e = shapes[0]; ed.updatePres({ defaultShape: { fill: e.fill, stroke: e.stroke, strokeWidth: e.strokeWidth, gradient: e.gradient, gradientAngle: e.gradientAngle, dropShadow: e.dropShadow, glow: e.glow, color: e.color, fontSize: e.fontSize } }); ed.cmd.notify('새 도형이 이 서식으로 그려집니다'); }} />
+        <Small icon="★" label="기본 도형으로 설정" title="새로 그리는 도형이 이 서식을 따릅니다" disabled={shapes.length !== 1} onClick={() => { const e = shapes[0]; ed.updatePres({ defaultShape: defaultLook(e) }); ed.cmd.notify('새 도형이 이 서식으로 그려집니다'); }} />
       </Group>
       {smartArtOwner(ed.elements, ed.selEls) && (
         <Group label="SmartArt">

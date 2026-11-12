@@ -5,6 +5,7 @@ import { uid } from '../../domain/lyrics';
 import { getDevice } from '../../domain/device';
 import { loadSession } from '../../domain/cloud';
 import { orderSelection, moveAnimation } from '../../domain/editOps';
+import { moveInOrder, revealOnPick } from '../../domain/shapeOps';
 import { animationClicks, slideTimeline, textParagraphs } from '../../domain/animations';
 import type { Ed } from './editor';
 import { ANIMATION, ANIMATION_START } from './ko';
@@ -72,6 +73,8 @@ export function SelectionPane({ ed }: { ed: Ed }) {
   const els = ed.elements;
   const set = (fn: (els: SlideElement[]) => SlideElement[]) => ed.setElements(fn);
   const [renaming, setRenaming] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [over, setOver] = useState<{ id: string; above: boolean } | null>(null);
   return (
     <div className="task-pane">
       <PaneHead title="선택" onClose={() => ed.setPane(null)} />
@@ -88,8 +91,15 @@ export function SelectionPane({ ed }: { ed: Ed }) {
           const i = els.indexOf(el);
           const on = ed.selEls.some((s) => s.id === el.id);
           return (
-            <li key={el.id} className={`${on ? 'on' : ''} ${el.hidden ? 'hidden' : ''} ${el.groupId ? 'grouped' : ''}`}
-              onClick={(e) => ed.setSel(e.shiftKey || e.ctrlKey || e.metaKey ? [...ed.sel, el.id] : [el.id])} onDoubleClick={() => setRenaming(el.id)}>
+            <li key={el.id} className={`${on ? 'on' : ''} ${el.hidden ? 'hidden' : ''} ${el.groupId ? 'grouped' : ''} ${over?.id === el.id ? (over.above ? 'drop-above' : 'drop-below') : ''}`}
+              draggable={renaming !== el.id} onDragStart={(e) => { e.dataTransfer.setData('text/plain', el.id); setDragId(el.id); }} onDragEnd={() => { setDragId(null); setOver(null); }}
+              onDragOver={(e) => { if (!dragId || dragId === el.id) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setOver({ id: el.id, above: e.clientY < r.top + r.height / 2 }); }}
+              onDrop={(e) => { e.preventDefault(); if (dragId && over) { const { id, above } = over; set((l) => moveInOrder(l, dragId, id, above)); } setDragId(null); setOver(null); }}
+              onClick={(e) => {
+                // A hidden object picked in the list is shown (DeckCraft's selection.select).
+                if (el.hidden) set((l) => revealOnPick(l, el.id));
+                ed.setSel(e.shiftKey || e.ctrlKey || e.metaKey ? (ed.sel.includes(el.id) ? ed.sel.filter((x) => x !== el.id) : [...ed.sel, el.id]) : [el.id]);
+              }} onDoubleClick={() => setRenaming(el.id)}>
               {renaming === el.id
                 ? <input autoFocus defaultValue={elementName(el, i)} onBlur={(e) => { const v = e.target.value.trim(); set((l) => l.map((x) => (x.id === el.id ? { ...x, name: v || undefined } : x))); setRenaming(null); }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }} />
                 : <span className="sel-name">{el.groupId ? '▸ ' : ''}{elementName(el, i)}</span>}
