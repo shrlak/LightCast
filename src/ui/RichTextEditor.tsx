@@ -718,7 +718,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         // Focus moving to a ribbon or Format pane control keeps the session (and selection) alive.
         setTimeout(() => {
           const f = document.activeElement as HTMLElement | null;
-          if (f && (f === ref.current || f.closest('.ribbon, .ppt-format, .ppt-menu, .rb-menu, .ce-rich, .ppt-dialog'))) return;
+          if (f && (f === ref.current || f.closest('.ribbon, .ppt-format, .ppt-menu, .rb-menu, .ce-rich, .ppt-dialog, .name-dialog'))) return;
           if (!ref.current?.isConnected) return;
           latest.current.onDone();
         }, 0);

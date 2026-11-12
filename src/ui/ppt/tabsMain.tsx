@@ -469,7 +469,7 @@ const WORDART = [
   { label: '채우기: 빨강', patch: { color: '#d83f6b', bold: true, shadow: true } },
 ] as const;
 
-export function InsertTab({ ed, onLink: _onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
+export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const kind = useRef<'image' | 'video' | 'audio'>('image');
   const [hover, setHover] = useState<[number, number]>([0, 0]);
@@ -521,7 +521,7 @@ export function InsertTab({ ed, onLink: _onLink, onComment }: { ed: Ed; onLink: 
       </Group>
       <Group label="링크">
         <Big icon="⊕" label="확대/축소" title="요약 · 구역 · 슬라이드 확대/축소" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('zoom')} />
-        <Big icon={RI.link} label="링크" title="웹 페이지 · 현재 문서의 슬라이드 · 전자 메일 주소로 링크 (슬라이드 쇼에서 클릭하면 열림)" disabled={!ed.slide} onClick={() => ed.setDialog('hyperlink')} />
+        <Big icon={RI.link} label="링크" title="웹 페이지 · 현재 문서의 슬라이드 · 전자 메일 주소로 링크 (슬라이드 쇼에서 클릭하면 열림; 글자를 골라 두면 그 글자에만)" disabled={!ed.slide} onClick={() => (activeTextEditor()?.hasSelection() ? onLink() : ed.setDialog('hyperlink'))} />
         <Big icon="☛" label="실행" title="개체를 클릭했을 때 할 일 (실행 설정)" disabled={!ed.selEls.length} onClick={() => ed.setDialog('action')} />
       </Group>
       <Group label="메모">
