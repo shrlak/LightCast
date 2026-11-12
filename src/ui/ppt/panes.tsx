@@ -132,7 +132,7 @@ export function CommentsPane({ ed, draftOpen, onDraftDone }: { ed: Ed; draftOpen
   const [writing, setWriting] = useState(false);
   const [reply, setReply] = useState<Record<string, string>>({});
   const focus = useCommentFocus();
-  const author = loadSession()?.username ?? getDevice().userName ?? '나';
+  const author = loadSession()?.username || getDevice().userName || '나';
   const anchor = ed.sel.length === 1 && ed.elements.some((e) => e.id === ed.sel[0]) ? ed.sel[0] : undefined;
   const save = () => {
     if (!slide || !text.trim()) return;

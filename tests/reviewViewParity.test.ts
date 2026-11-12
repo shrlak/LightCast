@@ -197,3 +197,18 @@ describe('Zoom and print range', () => {
     expect('error' in parseSlideRange('1-2-3', 6)).toBe(true);
   });
 });
+
+import { htmlMatchesText, htmlToLines, MAX_HTML, pastedLines } from '../src/domain/clipboard';
+
+describe('Rich clipboard (DeckCraft richclip)', () => {
+  it('foreign HTML is used only while it says the same words as the plain text', () => {
+    expect(htmlMatchesText('<p><b>Hello</b> world</p>', 'Hello world')).toBe(true);
+    expect(htmlMatchesText('<p>old copy</p>', 'something else')).toBe(false);
+    expect(htmlMatchesText('<p>a</p><p></p><p>b</p>', 'a\n\nb')).toBe(true);
+    expect(htmlMatchesText('<p>x</p>', '')).toBe(true);
+  });
+  it('a huge fragment is refused', () => {
+    expect(htmlToLines(`<p>${'a'.repeat(MAX_HTML + 1)}</p>`)).toEqual([]);
+    expect(pastedLines('<p>' + 'a'.repeat(MAX_HTML + 1) + '</p>')).toBeNull();
+  });
+});
