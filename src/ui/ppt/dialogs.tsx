@@ -166,15 +166,17 @@ function ParagraphDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const boxes = t.els.length > 0;
   const ok = () => {
     const lineHeight = Math.round(line * SINGLE_SPACING * 100) / 100;
-    t.onChange({ align, indent: level, lineHeight, vAlign, autoFit, columns });
+    const common = { align, indent: level, lineHeight, vAlign, autoFit, columns };
+    // One patch for the boxes: two setElements calls in a row would each start from the same slide, the second undoing the first.
     if (boxes) {
       t.patchEach(() => ({
+        ...common,
         lineExact: lineKind === 'multiple' ? undefined : { mode: lineKind, px: Math.max(1, lineAt) * 2 },
         firstIndent: special === 'none' ? undefined : (special === 'first' ? 1 : -1) * by * 2,
         spaceBefore: before ? before * 2 : undefined, spaceAfter: after ? after * 2 : undefined, rtl: rtl || undefined,
         margins: margins.map((x) => Math.max(0, x * 2)) as [number, number, number, number], wrap: wrap ? undefined : false,
       }));
-    }
+    } else t.onChange(common);
     onClose();
   };
   const setMargin = (i: number, n: number) => setMargins((cur) => cur.map((x, j) => (j === i ? n : x)) as [number, number, number, number]);
