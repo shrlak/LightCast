@@ -443,9 +443,9 @@ function ZoomDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
     if (!targets.length) return;
     const els = zoomElements(mode, targets, back, snap);
     if (mode === 'summary') {
-      // A new slide with the title and the tiles, before the section that holds the first part.
+      // A new slide with the title and the tiles, before the section that holds the first part (the title is a text shape: song decks re-centre text boxes).
       const at = summaryInsertIndex(p.slides, targets);
-      const slide: Slide = { id: uid('s'), group: SUMMARY_TITLE, text: '', elements: [{ id: uid('el'), kind: 'text', text: SUMMARY_TITLE, x: 80, y: 50, w: CANVAS_W - 160, h: 120, fontSize: 72, bold: true, color: '#ffffff', align: 'center' }, ...els] };
+      const slide: Slide = { id: uid('s'), group: SUMMARY_TITLE, text: '', background: { kind: 'color', value: '#000000' }, lyricBody: true, elements: [{ id: uid('el'), kind: 'shape', shape: 'rect', fill: 'transparent', strokeWidth: 0, text: SUMMARY_TITLE, x: 80, y: 50, w: CANVAS_W - 160, h: 120, fontSize: 72, bold: true, color: '#ffffff', align: 'center' }, ...els] };
       const slides = [...p.slides];
       slides.splice(at, 0, p.master?.elements.length ? withMaster(slide, p.master.elements) : slide);
       ed.updatePres({ slides, ...(p.arrangementId ? { arrangementId: null } : {}) });
