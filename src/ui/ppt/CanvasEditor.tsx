@@ -13,7 +13,7 @@ import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
 import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
 import {
-  boxOf, cloneElements, deleteSelection, duplicateSelection, expandSelection, groupSelection, inkToShape, makeInk, makeShape, nudgeSelection,
+  boxOf, cloneElements, deleteSelection, duplicateSelection, enterGroup, enteredGroups, expandSelection, groupSelection, leaveGroups, pruneEntered, inkToShape, makeInk, makeShape, nudgeSelection,
   orderSelection, pasteStyle, selectionUnits, ungroupSelection, type CopiedStyle,
   lineBox, makeFreeform, pathShapeOf, routeConnectors,
 } from '../../domain/editOps';
@@ -74,7 +74,7 @@ export interface ViewOptions {
 }
 
 type Drag =
-  | { mode: 'move'; ids: string[]; startX: number; startY: number; orig: Map<string, Box>; moved: boolean; copy: boolean; clickedText: string | null }
+  | { mode: 'move'; ids: string[]; startX: number; startY: number; orig: Map<string, Box>; moved: boolean; copy: boolean; clickedText: string | null; enter?: { group: string; hit: string } }
   | { mode: 'resize'; ids: string[]; handle: Handle; startX: number; startY: number; unit: EBox; orig: Map<string, Box & { rot: number }>; moved: boolean }
   | { mode: 'rotate'; id: string; ids: string[]; unit: EBox; moved: boolean }
   | { mode: 'lineEnd'; id: string; end: 0 | 1; moved: boolean; glue?: { id: string; site: number } | null }
@@ -238,11 +238,13 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   }, [identity, editing, theme.padding, theme.fontSize, theme.align, theme.vAlign, width, readOnly]);
 
   // A different slide: stop typing.
-  useEffect(() => { setSession(null); setPreview(null); }, [identity]);
+  useEffect(() => { setSession(null); setPreview(null); leaveGroups(); }, [identity]);
   // The last keystroke belongs to the old slide, even if it is switched or closed immediately.
   useEffect(() => flushText, [identity, flushText]);
 
   const hasSlideText = !!(slide.text.trim() || slide.title || slide.subtext);
+  // A group entered by a second click stays entered only while one of its members is selected.
+  pruneEntered(elements, selected);
   const sel = expandSelection(elements, selected.filter((id) => id !== SLIDE_TEXT));
   const units = selectionUnits(elements, sel);
   const elOf = (id: string) => elements.find((e) => e.id === id);
@@ -499,6 +501,14 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     let next = selected.filter((id) => id !== SLIDE_TEXT);
     const already = sel.includes(hit);
+    const hitGroup = elOf(hit)?.groupId;
+    const inGroup = !!hitGroup && enteredGroups().has(hitGroup);
+    // Clicking outside the group entered with a second click leaves it.
+    if (!inGroup && !(e.shiftKey || e.ctrlKey || e.metaKey)) leaveGroups();
+    // A click (not a drag) on a member of the selected group selects just that member; the drag still moves the group.
+    const groupMembers = hitGroup ? elements.filter((x) => x.groupId === hitGroup).map((x) => x.id) : [];
+    const enter = already && !inGroup && !(e.shiftKey || e.ctrlKey || e.metaKey) && !!hitGroup && sel.length === groupMembers.length && groupMembers.every((id) => sel.includes(id))
+      ? { group: hitGroup!, hit } : undefined;
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
       const group = expandSelection(elements, [hit]);
       next = already ? next.filter((id) => !group.includes(id)) : [...next, hit];
@@ -513,7 +523,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const ids = movableIds(elements, all);
     const el = elOf(hit);
     drag.current = {
-      mode: 'move', ids, startX: x, startY: y, moved: false, copy: false,
+      mode: 'move', ids, startX: x, startY: y, moved: false, copy: false, enter,
       orig: new Map(ids.map((id) => { const o = elOf(id)!; return [id, { x: o.x, y: o.y, w: o.w, h: o.h }]; })),
       clickedText: already && all.length === 1 && (el?.kind === 'text' || (el?.kind === 'shape' && !!el.text)) ? hit : el?.kind === 'text' && all.length === 1 && !el.groupId ? hit : null,
     };
@@ -837,6 +847,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     if (d.mode === 'move') {
       if (!d.moved) {
+        if (d.enter && !(e.shiftKey || e.ctrlKey || e.metaKey)) { enterGroup(d.enter.group); onSelect([d.enter.hit]); return; }
         // A click on text (no drag) puts the cursor in it, as in PowerPoint.
         if (d.clickedText && !(e.shiftKey || e.ctrlKey || e.metaKey)) startEditing(d.clickedText, { start: { point: [e.clientX, e.clientY] } });
         return;
@@ -941,7 +952,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const key = e.key.toLowerCase();
     const handled = () => { e.preventDefault(); e.stopPropagation(); };
     // Select All leaves hidden and locked objects out (DeckCraft's edit.selectAll).
-    if (mod && key === 'a' && !e.shiftKey) { onSelect(selectAllIds(elements)); return handled(); }
+    if (mod && key === 'a' && !e.shiftKey) { leaveGroups(); onSelect(selectAllIds(elements)); return handled(); }
     // Tab / Shift+Tab: the next / previous object, a group once; from nothing, the first / last.
     if (key === 'tab' && !mod) { const next = cycleSelection(elements, sel, !e.shiftKey); if (next) onSelect([next]); return handled(); }
     if (!sel.length) {
@@ -949,7 +960,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       return;
     }
     if (mod && key === 'g' && !e.shiftKey) { setElements(groupSelection(elements, sel)); return handled(); }
-    if (mod && key === 'g' && e.shiftKey) { setElements(ungroupSelection(elements, sel)); return handled(); }
+    if (mod && key === 'g' && e.shiftKey) { setElements(ungroupSelection(elements, sel)); leaveGroups(); return handled(); }
     if (mod && key === 'd') {
       // Duplicating the last copies again repeats how far they were moved (DeckCraft #966).
       const r = duplicateSelection(elements, sel, duplicateOffset(elements, sel, lastDup.current));
@@ -1095,6 +1106,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         {view?.grid && gridStep(gridPx, k) && <div className="ce-grid" style={{ backgroundSize: `${gridPx * k}px ${gridPx * k}px` }} />}
         {view?.guides && !guideCount(customGuides) && <><div className="ce-guide ce-guide-v ce-fixed" style={{ left: (CANVAS_W / 2) * k }} /><div className="ce-guide ce-guide-h ce-fixed" style={{ top: (CANVAS_H / 2) * k }} /></>}
         {hasSlideText && !editing && <div className={`ce-box slide-text ${selected.includes(SLIDE_TEXT) ? 'on' : ''}`} style={at(textBox)} />}
+        {[...enteredGroups()].map((g) => {
+          // The group a member is picked inside of, drawn dashed; it follows its members as they move or size.
+          const b = boundsOf(elements.filter((x) => x.groupId === g).map((x) => boxOf(shownEl(x))));
+          return b ? <div key={`grp${g}`} className="ce-outline group-open" style={at(b)} /> : null;
+        })}
         {visible.map((raw) => {
           const el = shownEl(raw);
           const on = sel.includes(el.id);
@@ -1200,7 +1216,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
 /** What a new line takes from Set as Default Shape: its outline, not the fill. */
 function lineLook(d: Partial<SlideElement>): Partial<SlideElement> {
   const out: Partial<SlideElement> = {};
-  for (const k of ['stroke', 'strokeWidth', 'dash', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'opacity'] as const) {
+  for (const k of ['stroke', 'strokeWidth', 'dash', 'cap', 'join', 'compound', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'opacity'] as const) {
     if (d[k] !== undefined) (out as Record<string, unknown>)[k] = d[k];
   }
   return out;

@@ -317,6 +317,8 @@ export interface SlideElement {
   flipV?: boolean;
   /** Objects with the same group id are selected, moved and sized together (Arrange › Group). */
   groupId?: string;
+  /** Selection pane name of the group (kept on its members). */
+  groupName?: string;
   /** Review › Language: the proofing language (BCP-47), and "do not check spelling". */
   lang?: string;
   noProof?: boolean;
