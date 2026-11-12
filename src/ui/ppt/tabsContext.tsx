@@ -17,6 +17,7 @@ import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroup
 import { shapeToPath, smoothCorners, warpCatalog, warpGuides } from '../../engine';
 import { WARP_LABEL, polyD, warpPreset } from '../../domain/textWarp';
 import { smartArtOwner } from '../../domain/smartArt';
+import { aspectLocked, fromCm, sizeUnit, toCm, type SizeSpec } from '../../domain/shapeOps';
 import { applyBorders, CELL_MARGINS, type BorderMode } from '../../domain/tableBorders';
 import type { CellBorder } from '../../engine';
 import { layoutTable } from '../../engine';
@@ -69,16 +70,17 @@ function ArrangeGroup({ ed }: { ed: Ed }) {
 
 function SizeGroup({ ed }: { ed: Ed }) {
   const one = ed.selEls.length === 1 ? ed.selEls[0] : null;
-  const set = (patch: Partial<SlideElement>) => one && ed.setElements((els) => els.map((e) => (e.id === one.id ? { ...e, ...patch, ...(e.kind === 'text' ? { autoFit: false } : {}) } : e)));
-  // Canvas pixels: a 1440-wide slide is 25.4 cm, so 1 cm ≈ 56.7 px.
-  const cm = (px: number) => (px / (1440 / 25.4)).toFixed(2);
-  const px = (v: string) => Math.max(1, Math.round(Number(v) * (1440 / 25.4)));
+  const locked = !!one && !!one.locked;
+  // 비율 고정: a size box then moves the other side too (DeckCraft's shape.resize lockAspect).
+  const lock = one ? aspectLocked(one) : false;
+  const set = (spec: SizeSpec) => one && ed.setElements((els) => sizeUnit(els, [one.id], spec));
   return (
-    <Group label="크기">
+    <Group label="크기" launcher={ed.selEls.length ? () => ed.setDialog('sizePosition') : undefined}>
       <Col>
-        <label className="rb-field">↕ 높이: <input type="number" step={0.1} disabled={!one} value={one ? cm(one.h) : ''} onChange={(e) => set({ h: px(e.target.value) })} /> cm</label>
-        <label className="rb-field">↔ 너비: <input type="number" step={0.1} disabled={!one} value={one ? cm(one.w) : ''} onChange={(e) => set({ w: px(e.target.value) })} /> cm</label>
-        <label className="rb-field">⟳ 회전: <input type="number" step={1} disabled={!one} value={one?.rotation ?? 0} onChange={(e) => set({ rotation: Number(e.target.value) || undefined })} /> °</label>
+        <label className="rb-field">↕ 높이: <input type="number" step={0.1} disabled={!one || locked} value={one ? toCm(one.h) : ''} onChange={(e) => set({ h: fromCm(Number(e.target.value)), lockAspect: lock })} /> cm</label>
+        <label className="rb-field">↔ 너비: <input type="number" step={0.1} disabled={!one || locked} value={one ? toCm(one.w) : ''} onChange={(e) => set({ w: fromCm(Number(e.target.value)), lockAspect: lock })} /> cm</label>
+        <label className="rb-field">⟳ 회전: <input type="number" step={1} disabled={!one || locked} value={one?.rotation ?? 0} onChange={(e) => set({ rot: Number(e.target.value) || 0, lockAspect: lock })} /> °</label>
+        <label className="rb-check" title="크기 상자가 가로 세로 비율을 유지합니다"><input type="checkbox" disabled={!one} checked={lock} onChange={(e) => set({ lockAspect: e.target.checked })} /> 비율 고정</label>
       </Col>
     </Group>
   );

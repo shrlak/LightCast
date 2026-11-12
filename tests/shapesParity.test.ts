@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SlideElement } from '../src/domain/types';
 import {
   applySize, aspectLocked, clickBox, constrain45, cycleSelection, drawBox, duplicateOffset, freeformPath, lineEnds, moveInOrder, moveLineEnd,
-  movableIds, resizeFlip, revealOnPick, scribbleCloses, selectAllIds, DUPLICATE_OFFSET,
+  movableIds, resizeFlip, sizeUnit, revealOnPick, scribbleCloses, selectAllIds, DUPLICATE_OFFSET,
 } from '../src/domain/shapeOps';
 import { parsePath, pointKind, setHandle, writePath } from '../src/domain/pathEdit';
 import { bevelCss, dashPattern, effectFilter, reflectCss, shadowOf, transformOf } from '../src/domain/shapeEffects';
@@ -175,5 +175,17 @@ describe('Shape Effects', () => {
     expect(dashPattern(undefined, 4)).toBeUndefined();
     expect(dashPattern('lgDash', 2)).toBe('16 6');
     expect(dashPattern('sysDot', 3)).toBe('3 3');
+  });
+});
+
+describe('sizeUnit (Size and Position on an object or a group)', () => {
+  it('sizes one object, a group as a whole, and leaves locked ones', () => {
+    const a = el('a', { x: 0, y: 0, w: 100, h: 50 }), b = el('b', { x: 100, y: 0, w: 100, h: 50, groupId: 'g' }), c = el('c', { x: 0, y: 50, w: 100, h: 50, groupId: 'g' });
+    const one = sizeUnit([a], ['a'], { scaleW: 200, lockAspect: true });
+    expect(one[0]).toMatchObject({ w: 200, h: 100, lockAspect: true });
+    const grp = sizeUnit([b, c], ['b', 'c'], { scaleW: 200 });
+    expect(grp.map((e) => [e.x, e.w])).toEqual([[200, 200], [0, 200]]);
+    const lk = [{ ...a, locked: true }];
+    expect(sizeUnit(lk, ['a'], { w: 10 })).toBe(lk);
   });
 });

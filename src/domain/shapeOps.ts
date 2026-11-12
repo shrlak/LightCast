@@ -169,6 +169,26 @@ export function applySize(b: Box & { rot?: number }, s: SizeSpec): Box & { rot: 
   return { x: s.x ?? b.x, y: s.y ?? b.y, w: clamp(w), h: clamp(h), rot };
 }
 
+/**
+ * The dialog's values applied to one object or one group (`members`): a group is scaled and placed
+ * as a whole (its members keep their places within it); a locked unit is left alone.
+ */
+export function sizeUnit(els: SlideElement[], members: string[], spec: SizeSpec): SlideElement[] {
+  const ms = els.filter((e) => members.includes(e.id));
+  if (!ms.length || movableIds(els, members).length !== ms.length) return els;
+  if (ms.length === 1) {
+    const e = ms[0];
+    const b = applySize({ x: e.x, y: e.y, w: e.w, h: e.h, rot: e.rotation ?? 0 }, spec);
+    const r = (v: number) => Math.round(v * 100) / 100;
+    return els.map((x) => (x.id === e.id ? { ...x, x: r(b.x), y: r(b.y), w: r(b.w), h: r(b.h), rotation: b.rot || undefined, ...(spec.lockAspect !== undefined ? { lockAspect: spec.lockAspect } : {}), ...(x.kind === 'text' ? { autoFit: false } : {}) } : x));
+  }
+  const x0 = Math.min(...ms.map((e) => e.x)), y0 = Math.min(...ms.map((e) => e.y));
+  const box = { x: x0, y: y0, w: Math.max(...ms.map((e) => e.x + e.w)) - x0, h: Math.max(...ms.map((e) => e.y + e.h)) - y0 };
+  const b = applySize(box, { ...spec, rot: undefined });
+  const sx = b.w / Math.max(1, box.w), sy = b.h / Math.max(1, box.h);
+  return els.map((e) => (members.includes(e.id) ? { ...e, x: Math.round(b.x + (e.x - box.x) * sx), y: Math.round(b.y + (e.y - box.y) * sy), w: Math.max(1, Math.round(e.w * sx)), h: Math.max(1, Math.round(e.h * sy)) } : e));
+}
+
 /** Canvas pixels ↔ centimetres (a 1440-wide slide is 25.4 cm). */
 export const PX_PER_CM = 1440 / 25.4;
 export const toCm = (px: number) => Math.round((px / PX_PER_CM) * 100) / 100;
