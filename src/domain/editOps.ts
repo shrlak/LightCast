@@ -5,6 +5,7 @@
 import type { Slide, SlideAnimation, SlideElement } from './types';
 import { CANVAS_H, CANVAS_W } from './canvas';
 import { uid } from './lyrics';
+import { sampleChart } from './chartTypes';
 import {
   connectShapes, mergeShapes, type MergeMode, type PathShape,
   alignBoxes, boundsOf, distributeBoxes, flipBoxes, newTable, orderIds, recognizeInk, rotateBoxes, shapeCatalog, smoothInk,
@@ -224,15 +225,9 @@ export function makeTable(rows: number, cols: number): SlideElement | null {
   return { id: uid('el'), kind: 'table', table, ...centred(w, h), fontSize: 32, color: '#ffffff' };
 }
 
-export const CHART_SAMPLE: Record<'categories' | 'series', never> | ChartData = {
-  kind: 'column', title: '', legend: true, dataLabels: false,
-  categories: ['항목 1', '항목 2', '항목 3', '항목 4'],
-  series: [{ name: '계열 1', values: [4.3, 2.5, 3.5, 4.5] }, { name: '계열 2', values: [2.4, 4.4, 1.8, 2.8] }, { name: '계열 3', values: [2, 2, 3, 5] }],
-};
+export const CHART_SAMPLE: ChartData = sampleChart('column');
 export function makeChart(kind: ChartKind): SlideElement {
-  const sample = CHART_SAMPLE as ChartData;
-  const single = kind === 'pie' || kind === 'doughnut';
-  return { id: uid('el'), kind: 'chart', chart: { ...sample, kind, series: single ? sample.series.slice(0, 1) : sample.series }, ...centred(960, 640), color: '#ffffff' };
+  return { id: uid('el'), kind: 'chart', chart: sampleChart(kind), ...centred(960, 640), color: '#ffffff' };
 }
 
 export const makeIcon = (name: string): SlideElement => ({ id: uid('el'), kind: 'icon', icon: name, ...centred(240, 240), color: '#ffffff' });

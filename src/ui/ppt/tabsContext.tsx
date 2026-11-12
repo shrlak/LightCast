@@ -8,7 +8,10 @@ import { PICTURE_STYLE_IDS } from '../SlideCanvas';
 import { adjustPicture, colorAt } from './pictureTools';
 import { EffectsMenu } from './tabsMain';
 import { pictureCatalog, type PictureSteps } from '../../engine';
-import { editTable, tableStyles, type ChartKind, type TableAction, type TableData } from '../../engine';
+import { colorPalette, editTable, tableStyles, type ChartData, type TableAction, type TableData } from '../../engine';
+import { applyChartStyle, CHART_LABEL, CHART_PALETTES, CHART_STYLES, chartTraits, convertChart, switchRowColumn } from '../../domain/chartTypes';
+import { ChartMenu } from './chartMenu';
+import { ChartKindOptions } from './ElementFormat';
 import type { Ed } from './editor';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
@@ -469,13 +472,15 @@ export function TableLayoutTab({ ed }: { ed: Ed }) {
   );
 }
 
-const CHART_TYPES: [ChartKind, string][] = [['column', '세로 막대형'], ['columnStacked', '누적 세로 막대형'], ['bar', '가로 막대형'], ['barStacked', '누적 가로 막대형'], ['line', '꺾은선형'], ['area', '영역형'], ['pie', '원형'], ['doughnut', '도넛형'], ['scatter', '분산형']];
-
 export function ChartDesignTab({ ed }: { ed: Ed }) {
   const el = ed.selEls.find((e) => e.kind === 'chart');
   const ch = el?.chart;
   if (!el || !ch) return null;
-  const set = (patch: Partial<typeof ch>) => ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, chart: { ...ch, ...patch } } : e)));
+  const replace = (next: ChartData) => ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, chart: next } : e)));
+  const set = (patch: Partial<ChartData>) => replace({ ...ch, ...patch });
+  const t = chartTraits(ch.kind);
+  const accent = (n: number) => colorPalette()?.theme.find((c) => c.slot === `accent${n}`)?.hex ?? '#2e9e66';
+  const palette = ch.palette || 'colorful';
   return (
     <>
       <Group label="차트 레이아웃">
@@ -483,14 +488,25 @@ export function ChartDesignTab({ ed }: { ed: Ed }) {
           <label className="rb-check"><input type="checkbox" checked={!!ch.title} onChange={(e) => set({ title: e.target.checked ? '차트 제목' : '' })} /> 차트 제목</label>
           <label className="rb-check"><input type="checkbox" checked={ch.legend !== false} onChange={(e) => set({ legend: e.target.checked })} /> 범례</label>
           <label className="rb-check"><input type="checkbox" checked={!!ch.dataLabels} onChange={(e) => set({ dataLabels: e.target.checked })} /> 데이터 레이블</label>
+          <label className="rb-check"><input type="checkbox" disabled={t.noGrid} checked={ch.gridlines !== false && !t.noGrid} onChange={(e) => set({ gridlines: e.target.checked })} /> 눈금선</label>
         </Col>
+      </Group>
+      <Group label="차트 스타일">
+        <DropButton big icon={RI.chart} label="차트 스타일" render={(close) => <>{CHART_STYLES.map((st) => <MenuItem key={st.id} label={st.label} onClick={() => { replace(applyChartStyle(ch, st.id)); close(); }} />)}</>} />
+        <DropButton big icon="🎨" label="색 변경" render={(close) => <>{CHART_PALETTES.map((p, i) => (
+          <MenuItem key={p.id} on={palette === p.id} label={<span style={{ display: 'inline-flex', gap: 2, alignItems: 'center' }}>{[0, 1, 2, 3].map((k) => <span key={k} style={{ width: 12, height: 12, background: p.id === 'colorful' ? accent(k + 1) : accent(i), opacity: p.id === 'colorful' ? 1 : 1 - k * 0.22, border: '1px solid #c8c6c4' }} />)}<span style={{ marginLeft: 6 }}>{p.label}</span></span>} onClick={() => { set({ palette: p.id }); close(); }} />
+        ))}</>} />
       </Group>
       <Group label="데이터">
         <Big icon={RI.editData} label="데이터 편집" title="서식 창의 데이터 표에서 값과 이름을 바꿉니다" onClick={() => ed.setPane('format')} />
+        <Small label="행/열 전환" title="계열과 항목을 맞바꿉니다" disabled={t.observations || t.hierarchy || ch.kind === 'bubble'} onClick={() => replace(switchRowColumn(ch))} />
       </Group>
       <Group label="종류">
-        <DropButton big icon={RI.chart} label="차트 종류 변경" render={(close) => <>{CHART_TYPES.map(([k, l]) => <MenuItem key={k} label={l} on={ch.kind === k} onClick={() => { set({ kind: k }); close(); }} />)}</>} />
+        <DropButton big icon={RI.chart} label="차트 종류 변경" wide render={(close) => <ChartMenu current={ch.kind} onPick={(k) => { replace(convertChart(ch, k)); close(); }} />} />
       </Group>
+      {(ch.kind === 'histogram' || ch.kind === 'pareto' || ch.kind === 'boxWhisker' || ch.kind === 'stock') && (
+        <Group label={`${CHART_LABEL[ch.kind]} 옵션`}><ChartKindOptions chart={ch} set={replace} /></Group>
+      )}
       <Group label="색">
         <ColorButton icon={<b>A</b>} label="글자 색" title="차트 글자와 축 색" value={ch.textColor ?? el.color} onPick={(c) => set({ textColor: c })} />
       </Group>

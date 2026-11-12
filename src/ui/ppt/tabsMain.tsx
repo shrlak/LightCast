@@ -11,7 +11,8 @@ import {
   alignSelection, canGroup, canUngroup, copyStyle, deleteSelection, distributeSelection, flipSelection, groupSelection, makeChart, makeIcon,
   makeTable, orderSelection, rotateSelection, ungroupSelection, regroupSelection, canRegroup,
 } from '../../domain/editOps';
-import { shapeQuickStyles, type ChartKind } from '../../engine';
+import { shapeQuickStyles } from '../../engine';
+import { ChartMenu } from './chartMenu';
 import { TextFormatPanel } from './TextFormatPanel';
 import { textTarget, useTextSelectionTick, type Ed } from './editor';
 import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
@@ -399,7 +400,6 @@ const WORDART = [
   { label: '채우기: 금색', patch: { color: '#e3b21c', bold: true, shadow: true } },
   { label: '채우기: 빨강', patch: { color: '#d83f6b', bold: true, shadow: true } },
 ] as const;
-const CHARTS: [ChartKind, string][] = [['column', '세로 막대형'], ['columnStacked', '누적 세로 막대형'], ['bar', '가로 막대형'], ['barStacked', '누적 가로 막대형'], ['line', '꺾은선형'], ['area', '영역형'], ['pie', '원형'], ['doughnut', '도넛형'], ['scatter', '분산형']];
 
 export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
@@ -446,7 +446,7 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
         <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} />
         <DropButton big icon={RI.icons} label="아이콘" wide render={(close) => <IconGallery onPick={(n) => { add(makeIcon(n)); close(); }} />} />
         <Big icon="⧉" label="SmartArt" title="SmartArt 그래픽 삽입" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('smartArt')} />
-        <DropButton big icon={RI.chart} label="차트" render={(close) => <>{CHARTS.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { add(makeChart(k)); close(); }} />)}</>} />
+        <DropButton big icon={RI.chart} label="차트" wide render={(close) => <ChartMenu onPick={(k) => { add(makeChart(k)); close(); }} />} />
       </Group>
       <Group label="링크">
         <Big icon="⊕" label="확대/축소" title="요약 · 구역 · 슬라이드 확대/축소" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('zoom')} />

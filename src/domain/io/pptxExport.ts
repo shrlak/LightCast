@@ -1,6 +1,7 @@
 import PptxGenJS from 'pptxgenjs';
 import type { Background, Library, ListStyle, Playlist, Presentation, SlideElement, Theme } from '../types';
-import { iconCatalog, layoutTable } from '../../engine';
+import { chartSvg, iconCatalog, layoutTable } from '../../engine';
+import { histogramColumns, pptxPlan } from '../chartTypes';
 import { lineRuns } from '../richText';
 import { sequence } from '../arrangement';
 import { getMedia } from '../media';
@@ -53,16 +54,96 @@ function addTableElement(s: PptxGenJS.Slide, el: SlideElement, box: Box) {
   s.addTable(rows, { x: box.x, y: box.y, w: box.w, colW: t.cols.map((c) => (c / sum(t.cols)) * box.w), rowH: t.heights.map((h) => (h / sum(t.heights)) * box.h), fontSize: (el.fontSize ?? 32) * 0.5, fontFace: el.fontFamily ? pptxFont(el.fontFamily) : undefined });
 }
 
+/** A chart goes as a native PowerPoint chart (an editable one of the same or a close type) or, for the Office 2016
+ *  types PptxGenJS cannot write, as a picture of what is drawn on screen; `pptxPlan` says which. */
 function addChartElement(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideElement, box: Box) {
   const ch = el.chart!;
-  const type = ({ column: pptx.ChartType.bar, columnStacked: pptx.ChartType.bar, bar: pptx.ChartType.bar, barStacked: pptx.ChartType.bar, line: pptx.ChartType.line, area: pptx.ChartType.area, pie: pptx.ChartType.pie, doughnut: pptx.ChartType.doughnut, scatter: pptx.ChartType.scatter } as const)[ch.kind];
-  const data = ch.series.map((sr) => ({ name: sr.name, labels: ch.categories, values: sr.values }));
+  const plan = pptxPlan(ch.kind);
   const text = hex(ch.textColor ?? el.color);
-  s.addChart(type, data, {
-    ...box, barDir: ch.kind.startsWith('bar') ? 'bar' : 'col', barGrouping: ch.kind.endsWith('Stacked') ? 'stacked' : 'clustered',
-    showLegend: ch.legend !== false, legendPos: 'b', showTitle: !!ch.title, title: ch.title || undefined, showValue: !!ch.dataLabels,
+  if (plan.mode === 'picture') {
+    const svg = chartSvg({ ...ch, textColor: ch.textColor ?? el.color ?? '#ffffff' }, Math.round(el.w), Math.round(el.h), undefined, el.fontFamily);
+    if (svg) s.addImage({ ...box, data: `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svg)))}` });
+    return;
+  }
+  const CT = pptx.ChartType;
+  const common = {
+    ...box, showLegend: ch.legend !== false, legendPos: 'b' as const, showTitle: !!ch.title, title: ch.title || undefined, showValue: !!ch.dataLabels,
     titleColor: text, legendColor: text, catAxisLabelColor: text, valAxisLabelColor: text, dataLabelColor: text,
-  });
+    valGridLine: ch.gridlines === false ? { style: 'none' as const } : undefined,
+    ...(ch.palette ? { chartColors: paletteColors(ch.palette, ch.series.length) } : {}),
+  };
+  const rows = Math.max(ch.categories.length, ...ch.series.map((sr) => sr.values.length));
+  const labels = Array.from({ length: rows }, (_, i) => ch.categories[i] ?? '');
+  const series = ch.series.map((sr) => ({ name: sr.name, labels, values: labels.map((_, i) => sr.values[i] ?? 0) }));
+  const first = ch.series.slice(0, 1).map((sr) => ({ name: sr.name, labels, values: labels.map((_, i) => sr.values[i] ?? 0) }));
+  switch (ch.kind) {
+    case 'column': case 'bar':
+      return void s.addChart(CT.bar, series, { ...common, barDir: ch.kind === 'bar' ? 'bar' : 'col', barGrouping: 'clustered' });
+    case 'columnStacked': case 'barStacked': case 'columnPercent': case 'barPercent':
+      return void s.addChart(CT.bar, series, { ...common, barDir: ch.kind.startsWith('bar') ? 'bar' : 'col', barGrouping: ch.kind.endsWith('Percent') ? 'percentStacked' : 'stacked' });
+    case 'line': case 'lineMarkers':
+      return void s.addChart(CT.line, series, { ...common, lineDataSymbol: ch.kind === 'line' ? 'none' : 'circle' });
+    case 'lineStacked': {
+      const run = labels.map(() => 0);
+      return void s.addChart(CT.line, series.map((sr) => ({ ...sr, values: sr.values.map((v, i) => Math.round((run[i] += v) * 1e9) / 1e9) })), { ...common, lineDataSymbol: 'circle' });
+    }
+    case 'area': case 'areaStacked':
+      return void s.addChart(CT.area, series, { ...common, barGrouping: ch.kind === 'areaStacked' ? 'stacked' : 'standard' });
+    case 'pie': case 'doughnut':
+      return void s.addChart(ch.kind === 'pie' ? CT.pie : CT.doughnut, first, common);
+    case 'radar': case 'radarFilled':
+      return void s.addChart(CT.radar, series, { ...common, radarStyle: ch.kind === 'radarFilled' ? 'filled' : 'marker' });
+    case 'scatter': {
+      // PptxGenJS wants the x values as the first series.
+      const xs = labels.map((_, i) => ch.series[0]?.xValues?.[i] ?? i + 1);
+      return void s.addChart(CT.scatter, [{ name: 'X', values: xs }, ...ch.series.map((sr) => ({ name: sr.name, values: labels.map((_, i) => sr.values[i] ?? 0) }))], { ...common, lineSize: 0 });
+    }
+    case 'bubble': {
+      const xs = labels.map((_, i) => ch.series[0]?.xValues?.[i] ?? i + 1);
+      return void s.addChart(CT.bubble, [{ name: 'X', values: xs }, ...ch.series.flatMap((sr) => [{ name: sr.name, values: labels.map((_, i) => sr.values[i] ?? 0), sizes: labels.map((_, i) => sr.sizes?.[i] ?? 10) }])], common);
+    }
+    case 'histogram': {
+      // The bins' counts as touching columns: PowerPoint's own histogram is a chartEx part.
+      const h = histogramColumns(ch);
+      return void s.addChart(CT.bar, [{ name: ch.series[0]?.name ?? '', labels: h.labels, values: h.counts }], { ...common, barDir: 'col', barGapWidthPct: 0, showLegend: false });
+    }
+    case 'pareto': {
+      const h = histogramColumns(ch);
+      const colors = paletteColors(ch.palette ?? 'colorful', 2);
+      return addMulti(s,
+        [{ type: CT.bar, data: [{ name: ch.series[0]?.name ?? '', labels: h.labels, values: h.counts }], options: { chartColors: [colors[0]], barGapWidthPct: 10 } },
+          { type: CT.line, data: [{ name: '누적 %', labels: h.labels, values: h.cumulative }], options: { chartColors: [colors[1]], secondaryValAxis: true, secondaryCatAxis: true, lineDataSymbol: 'circle' } }],
+        { ...common, valAxes: [{ showValAxisTitle: false }, { showValAxisTitle: false, valAxisMinVal: 0, valAxisMaxVal: 100, valGridLine: { style: 'none' } }], catAxes: [{ catAxisLabelColor: text }, { catAxisHidden: true }] },
+      );
+    }
+    case 'combo': {
+      const bars = ch.series.filter((sr) => (sr.kind ?? 'column') === 'column' || sr.kind === 'area');
+      const lines = ch.series.filter((sr) => sr.kind === 'line' || sr.kind === 'lineMarkers');
+      const pack = (list: typeof ch.series) => list.map((sr) => ({ name: sr.name, labels, values: labels.map((_, i) => sr.values[i] ?? 0) }));
+      const secondary = lines.some((sr) => sr.secondaryAxis);
+      const parts: PptxGenJS.IChartMulti[] = [];
+      if (bars.length) parts.push({ type: CT.bar, data: pack(bars), options: { chartColors: paletteColors(ch.palette ?? 'colorful', ch.series.length).slice(0, bars.length) } });
+      if (lines.length) parts.push({ type: CT.line, data: pack(lines), options: { chartColors: paletteColors(ch.palette ?? 'colorful', ch.series.length).slice(bars.length, bars.length + lines.length), lineDataSymbol: 'circle', ...(secondary ? { secondaryValAxis: true, secondaryCatAxis: true } : {}) } });
+      return addMulti(s, parts, secondary
+        ? { ...common, valAxes: [{ showValAxisTitle: false }, { showValAxisTitle: false, valGridLine: { style: 'none' } }], catAxes: [{ catAxisLabelColor: text }, { catAxisHidden: true }] }
+        : common);
+    }
+    default:
+      return;
+  }
+}
+
+/** A multi-type chart: PptxGenJS reads the chart options from the second argument (its typings say otherwise). */
+function addMulti(s: PptxGenJS.Slide, parts: PptxGenJS.IChartMulti[], opts: PptxGenJS.IChartOpts) {
+  s.addChart(parts, opts as unknown as unknown[]);
+}
+
+/** The hex colours of a chart palette (the theme accents are PowerPoint's own on import; these match the screen's default theme). */
+function paletteColors(palette: string, n: number): string[] {
+  const accents = ['2E9E66', 'FDE718', '1F8A52', '8CC63F', '4F9D9D', 'B7B7B7'];
+  const mono = /^monochrome([1-6])$/.exec(palette);
+  const mix = (hex6: string, t: number) => [0, 2, 4].map((i) => Math.round(parseInt(hex6.slice(i, i + 2), 16) * (1 - t) + 255 * t).toString(16).padStart(2, '0')).join('').toUpperCase();
+  return Array.from({ length: Math.max(1, n) }, (_, i) => (mono ? mix(accents[Number(mono[1]) - 1], Math.min(0.75, i * 0.18)) : accents[i % 6]));
 }
 
 /** Icons and ink go to PowerPoint as SVG pictures (what they are drawn with on screen). */
