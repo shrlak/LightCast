@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=6eebec7df67e7b42118496e010d35d0bce1df15d
+DECKCRAFT_SYNCED=9b1fe3ff23ca55ace1acd97a7376f5dcebfa6e22
 ```
 
-(`Decrease Font Size steps down one size at a time from any size (#2070)`.)
+(`PPTX: evaluate a custom geometry's guide lists once per coordinate space`.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -39,3 +39,7 @@ DECKCRAFT_SYNCED=6eebec7df67e7b42118496e010d35d0bce1df15d
 ## Ported so far
 
 - Everything up to `6eebec7` (see README, "더 많은 DeckCraft 기능").
+- `6eebec7..9b1fe3f` (10 commits, 2026-11-12): nothing to port. They fix DeckCraft's own PPTX reader, writer and
+  renderer (chart legend entries `c:legendEntry`, a picture in a placeholder showing the layout fill, custom
+  geometry guide lists); LightCast reads no charts or layout placeholder fills from PPTX and draws `custGeom` as a
+  rectangle. Revisit if LightCast ever imports PPTX charts or custom geometry.

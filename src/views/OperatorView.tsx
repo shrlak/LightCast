@@ -1,3 +1,5 @@
+import { RecoveryNotice } from '../ui/RecoveryNotice';
+import { beginSession, noteSaveFailed } from '../domain/sessionRecovery';
 import { TeamRequestsModal } from '../ui/TeamRequestsModal';
 import { blockedProtectedAction, protectedMediaIds, PROTECTED_MESSAGE } from '../domain/materialProtection';
 import type { TeamRequest } from '../domain/teamRequests';
@@ -139,7 +141,18 @@ export function OperatorView() {
     toastTimer.current = setTimeout(() => setToast(null), 6000);
   };
 
-  useEffect(() => saveLibrary(state.library), [state.library]);
+  const [recovery, setRecovery] = useState<{ saveFailed: boolean } | null>(null);
+  useEffect(() => beginSession((r) => setRecovery({ saveFailed: r.saveFailed })), []);
+  const lastFailedSnap = useRef(0);
+  useEffect(() => {
+    const ok = saveLibrary(state.library);
+    noteSaveFailed(!ok);
+    // The copy on this computer could not be written: keep one in IndexedDB instead (at most once a minute).
+    if (!ok && Date.now() - lastFailedSnap.current > 60_000) {
+      lastFailedSnap.current = Date.now();
+      void saveRestorePoint(state.library, 'auto').catch(() => undefined);
+    }
+  }, [state.library]);
   // Restore points: a snapshot of the library every 10 minutes while it keeps changing.
   const snapped = useRef<Library | null>(null);
   useEffect(() => {
@@ -668,6 +681,7 @@ export function OperatorView() {
         <RestorePointsModal library={state.library} notify={notify} onClose={() => setModal(null)}
           onRestore={(lib) => { dispatch({ type: 'library/replace', library: lib }); notify('복원했습니다 (⌘Z로 되돌릴 수 있습니다)'); }} />
       )}
+      {recovery && <RecoveryNotice saveFailed={recovery.saveFailed} onClose={() => setRecovery(null)} onRestorePoints={() => { setRecovery(null); setModal('restore'); }} />}
       {modal === 'confession' && <ConfessionSetting library={state.library} dispatch={dispatch} notify={notify} onClose={() => setModal(null)} />}
 
     </div>
