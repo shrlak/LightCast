@@ -156,7 +156,8 @@ export function convertChart(c: ChartData, kind: ChartKind): ChartData {
   }
   if (kind === 'stock') out.upDownBars = out.series.length >= 4;
   if (kind === 'waterfall') out.subtotals = (c.subtotals ?? []).filter((i) => i < rows);
-  if (t.noLabels && c.categories.length) out.categories = [];
+  // A type without row labels (histogram) keeps them, so switching back and forth loses nothing; one that shows them gets a name per row.
+  if (!t.noLabels) out.categories = Array.from({ length: rows }, (_, i) => c.categories[i] || `항목 ${i + 1}`);
   if (kind === 'boxWhisker' && c.kind !== 'boxWhisker' && !out.categories.length) out.categories = Array.from({ length: rows }, () => '그룹 A');
   return out;
 }

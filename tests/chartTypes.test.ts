@@ -208,7 +208,10 @@ describe('changing the type keeps the data', () => {
     const bubble = convertChart(col, 'bubble');
     expect(bubble.series[0].xValues).toEqual([1, 2, 3, 4]);
     expect(bubble.series[0].sizes).toHaveLength(4);
-    expect(convertChart(col, 'histogram').categories).toEqual([]);
+    expect(convertChart(col, 'histogram').categories).toEqual(col.categories);
+    // Going through a type without row labels and back keeps them (and names unnamed rows).
+    expect(convertChart(convertChart(col, 'histogram'), 'column').categories).toEqual(col.categories);
+    expect(convertChart({ ...col, categories: [] }, 'treemap').categories).toEqual(['항목 1', '항목 2', '항목 3', '항목 4']);
     expect(convertChart(col, 'boxWhisker').categories).toHaveLength(4);
   });
 

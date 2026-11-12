@@ -487,6 +487,8 @@ export function ChartDesignTab({ ed }: { ed: Ed }) {
         <Col>
           <label className="rb-check"><input type="checkbox" checked={!!ch.title} onChange={(e) => set({ title: e.target.checked ? '차트 제목' : '' })} /> 차트 제목</label>
           <label className="rb-check"><input type="checkbox" checked={ch.legend !== false} onChange={(e) => set({ legend: e.target.checked })} /> 범례</label>
+        </Col>
+        <Col>
           <label className="rb-check"><input type="checkbox" checked={!!ch.dataLabels} onChange={(e) => set({ dataLabels: e.target.checked })} /> 데이터 레이블</label>
           <label className="rb-check"><input type="checkbox" disabled={t.noGrid} checked={ch.gridlines !== false && !t.noGrid} onChange={(e) => set({ gridlines: e.target.checked })} /> 눈금선</label>
         </Col>
