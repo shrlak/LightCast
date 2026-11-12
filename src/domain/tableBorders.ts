@@ -2,7 +2,7 @@
 // Layout › Cell Margins, on LightCast's table (src/engine TableData).
 import { editTable, type CellBorder, type CellBorders, type TableData } from '../engine';
 
-export type BorderMode = 'all' | 'outside' | 'inside' | 'top' | 'bottom' | 'left' | 'right' | 'insideH' | 'insideV' | 'none';
+export type BorderMode = 'all' | 'outside' | 'inside' | 'top' | 'bottom' | 'left' | 'right' | 'insideH' | 'insideV' | 'diagDown' | 'diagUp' | 'none';
 export interface CellRange { r: number; c: number; r1: number; c1: number }
 
 /** The borders of the cells in `range` drawn (or removed) with `pen`. */
@@ -16,7 +16,9 @@ export function applyBorders(t: TableData, range: CellRange, mode: BorderMode, p
     const top = r === r0, bottom = r === r1, left = c === c0, right = c === c1;
     switch (mode) {
       case 'all': set('t', true); set('b', true); set('l', true); set('r', true); break;
-      case 'none': set('t', false); set('b', false); set('l', false); set('r', false); break;
+      case 'none': set('t', false); set('b', false); set('l', false); set('r', false); set('dd', false); set('du', false); break;
+      case 'diagDown': set('dd', true); break;
+      case 'diagUp': set('du', true); break;
       case 'outside': if (top) set('t', true); if (bottom) set('b', true); if (left) set('l', true); if (right) set('r', true); break;
       case 'inside': if (!top) set('t', true); if (!bottom) set('b', true); if (!left) set('l', true); if (!right) set('r', true); break;
       case 'insideH': if (!top) set('t', true); if (!bottom) set('b', true); break;
@@ -32,7 +34,7 @@ export function applyBorders(t: TableData, range: CellRange, mode: BorderMode, p
 }
 
 /** The line drawn on side `side` of cell (r, c), counting the neighbour's matching side. */
-export function sideOf(t: TableData, r: number, c: number, side: keyof CellBorders): CellBorder | null | undefined {
+export function sideOf(t: TableData, r: number, c: number, side: 't' | 'r' | 'b' | 'l'): CellBorder | null | undefined {
   const own = t.rows[r]?.[c]?.borders?.[side];
   if (own !== undefined) return own;
   const n = side === 't' ? t.rows[r - 1]?.[c] : side === 'b' ? t.rows[r + 1]?.[c] : side === 'l' ? t.rows[r]?.[c - 1] : t.rows[r]?.[c + 1];

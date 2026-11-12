@@ -193,10 +193,10 @@ export const transitionFrame = (kind: string, option: string, t: number, aspect 
   engineCall<{ layers: TransitionLayer[]; parts: boolean }>('transition.frame', { kind, option, t, aspect })?.layers ?? null;
 
 // ── Tables ────────────────────────────────────────────────────────────────────────────────────
-export interface CellBorder { color: string; width: number }
+export interface CellBorder { color: string; width: number; /** CSS line style: solid (default), dashed or dotted. */ dash?: 'dashed' | 'dotted' | 'double' }
 /** Sides drawn by Table Design › Borders; `null` = that side has no line. */
-export interface CellBorders { t?: CellBorder | null; r?: CellBorder | null; b?: CellBorder | null; l?: CellBorder | null }
-export interface TableCell { text: string; span?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; fill?: string; color?: string; bold?: boolean; align?: string; borders?: CellBorders }
+export interface CellBorders { t?: CellBorder | null; r?: CellBorder | null; b?: CellBorder | null; l?: CellBorder | null; /** Diagonal from the top left corner down (Table Design › Borders › Diagonal Down). */ dd?: CellBorder | null; /** Diagonal from the bottom left corner up. */ du?: CellBorder | null }
+export interface TableCell { text: string; span?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; fill?: string; color?: string; bold?: boolean; align?: string; /** Table Layout › Align Top / Center / Bottom (vertical; middle when unset). */ anchor?: 'top' | 'middle' | 'bottom'; borders?: CellBorders }
 export interface TableData {
   rows: TableCell[][];
   cols: number[];

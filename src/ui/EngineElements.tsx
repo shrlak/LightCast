@@ -162,11 +162,14 @@ function ownBorders(t: TableData, r: number, c: number): CSSProperties {
   const side = (k: 't' | 'r' | 'b' | 'l', prop: 'borderTop' | 'borderRight' | 'borderBottom' | 'borderLeft') => {
     const b = sideOf(t, r, c, k);
     if (b === null) css[prop] = 'none';
-    else if (b) css[prop] = `${b.width}px solid ${b.color}`;
+    else if (b) css[prop] = `${b.width}px ${b.dash ?? 'solid'} ${b.color}`;
   };
   side('t', 'borderTop'); side('r', 'borderRight'); side('b', 'borderBottom'); side('l', 'borderLeft');
   return css;
 }
+
+const ANCHOR = { top: 'flex-start', middle: 'center', bottom: 'flex-end' } as const;
+const CELL_DASH: Record<string, string | undefined> = { dashed: '12 6', dotted: '2 5' };
 
 export function TableElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
@@ -181,10 +184,21 @@ export function TableElement({ el }: { el: SlideElement }) {
         <div key={`${c.r}:${c.c}`} style={{
           position: 'absolute', left: c.x, top: c.y, width: c.w, height: c.h, boxSizing: 'border-box', background: c.fill ?? undefined,
           border: c.border ? `${c.borderWidth}px solid ${c.border}` : undefined, ...ownBorders(t, c.r, c.c), color: c.color ?? el.color ?? '#ffffff', fontWeight: c.bold ? 700 : 400,
-          display: 'flex', alignItems: 'center', justifyContent: c.align === 'center' ? 'center' : c.align === 'right' ? 'flex-end' : 'flex-start',
+          display: 'flex', alignItems: ANCHOR[t.rows[c.r]?.[c.c]?.anchor ?? 'middle'], justifyContent: c.align === 'center' ? 'center' : c.align === 'right' ? 'flex-end' : 'flex-start',
           textAlign: (c.align as CSSProperties['textAlign']) ?? 'left', padding: t.margins ? `${t.margins[1]}px ${t.margins[2]}px ${t.margins[3]}px ${t.margins[0]}px` : `${fs * 0.15}px ${fs * 0.35}px`, overflow: 'hidden', whiteSpace: 'pre-wrap', lineHeight: 1.2,
         }}>{c.text}</div>
       ))}
+      {cells.map((c) => {
+        const b = t.rows[c.r]?.[c.c]?.borders;
+        if (!b?.dd && !b?.du) return null;
+        // Diagonal borders: a line corner to corner in the cell.
+        return (
+          <svg key={`d${c.r}:${c.c}`} style={{ position: 'absolute', left: c.x, top: c.y, width: c.w, height: c.h, overflow: 'visible', pointerEvents: 'none' }} viewBox={`0 0 ${c.w} ${c.h}`}>
+            {b.dd && <line x1={0} y1={0} x2={c.w} y2={c.h} stroke={b.dd.color} strokeWidth={b.dd.width} strokeDasharray={CELL_DASH[b.dd.dash ?? '']} />}
+            {b.du && <line x1={0} y1={c.h} x2={c.w} y2={0} stroke={b.du.color} strokeWidth={b.du.width} strokeDasharray={CELL_DASH[b.du.dash ?? '']} />}
+          </svg>
+        );
+      })}
     </div>
   );
 }

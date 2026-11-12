@@ -54,6 +54,9 @@ pub struct CellIn {
     pub bold: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub align: Option<String>,
+    /// Table Layout › Alignment: where the text sits in the cell (top, middle, bottom; kept through edits).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<String>,
     /// Table Design › Borders drawn on this cell's sides (LightCast draws them; kept through edits).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub borders: Option<serde_json::Value>,
@@ -156,6 +159,7 @@ fn from_dc(d: &Table, orig: &TableIn) -> TableIn {
                         color: base.color,
                         bold: base.bold,
                         align: base.align,
+                        anchor: base.anchor,
                         borders: base.borders,
                     }
                 })

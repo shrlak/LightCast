@@ -1,6 +1,7 @@
 // Draw Table, Slide Master placeholders and Summary Zoom (DeckCraft table.rs / master_view.rs / zoom.rs).
 import { describe, expect, it } from 'vitest';
-import { newTable, type TableData } from '../src/engine';
+import { editTable, newTable, type TableData } from '../src/engine';
+import { applyBorders } from '../src/domain/tableBorders';
 import { drawTableLine, eraseTableLine } from '../src/domain/drawTable';
 import { deleteLayoutBlocker, duplicateLayout, insertLayout, makePlaceholder, placeholderState, setPlaceholders, slideFromLayout, withMaster } from '../src/domain/master';
 import type { MasterLayout, Slide } from '../src/domain/types';
@@ -141,5 +142,25 @@ describe('Summary and Section Zoom', () => {
     expect(returnAfter({ from: 4, after: 'b3' }, 'b2')).toBeNull();
     expect(returnAfter({ from: 4, after: 'b3' }, 'b3')).toBe(4);
     expect(returnAfter(null, 'b3')).toBeNull();
+  });
+});
+
+describe('Table cell alignment and diagonal borders', () => {
+  it('keeps the vertical anchor and dashed borders through engine edits', () => {
+    let t = newTable(2, 2)!;
+    t = { ...t, rows: t.rows.map((row, r) => row.map((c, ci) => (r === 1 && ci === 1 ? { ...c, anchor: 'bottom' as const, align: 'justify' } : c))) };
+    const grown = editTable(t, 'insertRowAbove', 0, 0)!;
+    expect(grown.rows).toHaveLength(3);
+    expect(grown.rows[2][1]).toMatchObject({ anchor: 'bottom', align: 'justify' });
+  });
+  it('draws diagonals and clears them with No Border', () => {
+    const t = newTable(1, 2)!;
+    const pen = { color: '#fde718', width: 2, dash: 'dashed' as const };
+    const d = applyBorders(t, { r: 0, c: 0, r1: 0, c1: 0 }, 'diagDown', pen);
+    expect(d.rows[0][0].borders?.dd).toEqual(pen);
+    expect(d.rows[0][1].borders).toBeUndefined();
+    const u = applyBorders(d, { r: 0, c: 0, r1: 0, c1: 1 }, 'diagUp', pen);
+    expect(u.rows[0][1].borders?.du).toEqual(pen);
+    expect(applyBorders(u, { r: 0, c: 0, r1: 0, c1: 1 }, 'none', pen).rows[0][0].borders).toMatchObject({ dd: null, du: null });
   });
 });
