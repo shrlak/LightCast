@@ -17,8 +17,8 @@ import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroup
 import { shapeToPath, smoothCorners, warpCatalog, warpGuides } from '../../engine';
 import { WARP_LABEL, polyD, warpPreset } from '../../domain/textWarp';
 import { smartArtOwner } from '../../domain/smartArt';
-import { applyBorders, CELL_MARGINS, type BorderMode } from '../../domain/tableBorders';
-import type { CellBorder } from '../../engine';
+import { applyBorders, CELL_MARGINS, editCells, setTrackSize, trackSizes, type BorderMode } from '../../domain/tableBorders';
+import type { CellBorder, TableCell } from '../../engine';
 import { layoutTable } from '../../engine';
 
 export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart';
@@ -389,14 +389,24 @@ export function TableDesignTab({ ed }: { ed: Ed }) {
         <ColorButton icon={RI.fill} label="음영" title="선택한 셀 음영 (서식 창에서 셀 선택)" onPick={(col) => shade(col)} onNone={() => shade(undefined)} noneLabel="채우기 없음" />
         <DropButton icon="▦" label="테두리" title="선택한 셀의 테두리를 펜 색과 두께로" render={(close) => (
           <>
-            {([['bottom', '아래쪽 테두리'], ['top', '위쪽 테두리'], ['left', '왼쪽 테두리'], ['right', '오른쪽 테두리'], ['none', '테두리 없음'], ['all', '모든 테두리'], ['outside', '바깥쪽 테두리'], ['inside', '안쪽 테두리'], ['insideH', '안쪽 가로 테두리'], ['insideV', '안쪽 세로 테두리']] as [BorderMode, string][]).map(([m, l]) => (
+            {([['bottom', '아래쪽 테두리'], ['top', '위쪽 테두리'], ['left', '왼쪽 테두리'], ['right', '오른쪽 테두리'], ['none', '테두리 없음'], ['all', '모든 테두리'], ['outside', '바깥쪽 테두리'], ['inside', '안쪽 테두리'], ['insideH', '안쪽 가로 테두리'], ['insideV', '안쪽 세로 테두리'], ['diagDown', '하향 대각선 테두리'], ['diagUp', '상향 대각선 테두리']] as [BorderMode, string][]).map(([m, l]) => (
               <MenuItem key={m} label={l} onClick={() => { setTable(applyBorders(t, ed.cell, m, pen)); close(); }} />
             ))}
+          </>
+        )} />
+        <DropButton icon="✦" label="효과" title="표 효과: 셀 입체 효과 · 그림자 · 반사" render={(close) => (
+          <>
+            <MenuItem label="셀 입체 효과" on={!!t.cellBevel} onClick={() => { setTable({ ...t, cellBevel: !t.cellBevel || undefined }); close(); }} />
+            <MenuItem label="그림자" on={!!el.dropShadow} onClick={() => { ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, dropShadow: !e.dropShadow || undefined } : e))); close(); }} />
+            <MenuItem label="반사" on={!!el.reflection} onClick={() => { ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, reflection: !e.reflection || undefined } : e))); close(); }} />
           </>
         )} />
       </Group>
       <Group label="테두리 그리기">
         <Col>
+          <label className="rb-field">펜 스타일 <select value={pen.dash ?? 'solid'} onChange={(e) => setPen({ ...pen, dash: e.target.value === 'solid' ? undefined : (e.target.value as CellBorder['dash']) })}>
+            {([['solid', '실선'], ['dash', '파선'], ['dot', '점선'], ['dashDot', '파선-점선'], ['longDash', '긴 파선']] as const).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select></label>
           <label className="rb-field">펜 두께 <select value={pen.width} onChange={(e) => setPen({ ...pen, width: Number(e.target.value) })}>{[1, 1.5, 2, 3, 4.5, 6, 9, 12].map((w) => <option key={w} value={w}>{w / 2} pt</option>)}</select></label>
           <label className="rb-field">펜 색 <input type="color" value={pen.color} onChange={(e) => setPen({ ...pen, color: e.target.value })} /></label>
         </Col>
@@ -417,9 +427,32 @@ export function TableLayoutTab({ ed }: { ed: Ed }) {
     if (next) ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, table: next } : e)));
     if (a === 'merge' || a === 'deleteRow' || a === 'deleteCol') ed.setCell({ r: Math.min(r, r1), c: Math.min(c, c1), r1: Math.min(r, r1), c1: Math.min(c, c1) });
   };
-  const align = (al: 'left' | 'center' | 'right') => ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, table: { ...t, rows: t.rows.map((row, ri) => row.map((cell, ci) => (ri >= Math.min(r, r1) && ri <= Math.max(r, r1) && ci >= Math.min(c, c1) && ci <= Math.max(c, c1) ? { ...cell, align: al } : cell))) } } : e)));
+  const setT = (table: TableData, patch: Partial<SlideElement> = {}) => ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, ...patch, table } : e)));
+  const cellsDo = (fn: (cell: TableCell) => TableCell) => setT(editCells(t, ed.cell, fn));
+  const align = (al: 'left' | 'center' | 'right' | 'justify') => cellsDo((cell) => ({ ...cell, align: al }));
+  const anchor = (a: 'top' | 'middle' | 'bottom') => cellsDo((cell) => ({ ...cell, anchor: a === 'middle' ? undefined : a }));
+  const here = t.rows[Math.min(r, r1)]?.[Math.min(c, c1)];
+  const nCols = Math.max(0, ...t.rows.map((x) => x.length));
+  // Cell Size › Height / Width of the selected row and column, in points (2 canvas px per pt).
+  const rowPx = trackSizes(t.heights, t.rows.length, el.h)[Math.min(r, r1)] ?? 0;
+  const colPx = trackSizes(t.cols, nCols, el.w)[Math.min(c, c1)] ?? 0;
+  const size = (axis: 'row' | 'col', pt: number) => {
+    if (!(pt > 0)) return;
+    const res = setTrackSize(t, axis, axis === 'row' ? Math.min(r, r1) : Math.min(c, c1), pt * 2, axis === 'row' ? el.h : el.w);
+    setT(res.table, axis === 'row' ? { h: res.total } : { w: res.total });
+  };
   return (
     <>
+      <Group label="표">
+        <DropButton big icon="⬚" label="선택" render={(close) => (
+          <>
+            <MenuItem label="셀 선택" onClick={() => { ed.setCell({ r: Math.min(r, r1), c: Math.min(c, c1), r1: Math.min(r, r1), c1: Math.min(c, c1) }); close(); }} />
+            <MenuItem label="열 선택" onClick={() => { ed.setCell({ r: 0, c: Math.min(c, c1), r1: t.rows.length - 1, c1: Math.max(c, c1) }); close(); }} />
+            <MenuItem label="행 선택" onClick={() => { ed.setCell({ r: Math.min(r, r1), c: 0, r1: Math.max(r, r1), c1: nCols - 1 }); close(); }} />
+            <MenuItem label="표 선택" onClick={() => { ed.setCell({ r: 0, c: 0, r1: t.rows.length - 1, c1: nCols - 1 }); close(); }} />
+          </>
+        )} />
+      </Group>
       <Group label="행 및 열">
         <DropButton big icon={RI.deleteIcon} label="삭제" render={(close) => (
           <>
@@ -438,6 +471,10 @@ export function TableLayoutTab({ ed }: { ed: Ed }) {
         <Big icon={RI.split} label="셀 분할" onClick={() => act('split')} />
       </Group>
       <Group label="셀 크기">
+        <Col>
+          <label className="rb-field" title="선택한 행의 높이 (pt)">↕ 높이: <input key={`h${r}-${rowPx}`} className="rb-num" type="number" min={4} step={1} defaultValue={Math.round(rowPx / 2 * 10) / 10} onBlur={(e) => size('row', Number(e.target.value))} onKeyDown={(e) => { if (e.key === 'Enter') size('row', Number((e.target as HTMLInputElement).value)); }} /></label>
+          <label className="rb-field" title="선택한 열의 너비 (pt)">↔ 너비: <input key={`w${c}-${colPx}`} className="rb-num" type="number" min={4} step={1} defaultValue={Math.round(colPx / 2 * 10) / 10} onBlur={(e) => size('col', Number(e.target.value))} onKeyDown={(e) => { if (e.key === 'Enter') size('col', Number((e.target as HTMLInputElement).value)); }} /></label>
+        </Col>
         <Col>
           <Small icon={RI.distributeRows} label="행 높이를 같게" onClick={() => act('distributeRows')} />
           <Small icon={RI.distributeCols} label="열 너비를 같게" onClick={() => act('distributeCols')} />
@@ -459,9 +496,24 @@ export function TableLayoutTab({ ed }: { ed: Ed }) {
           </>
         )} />
         <Col>
-          <Small icon="⯇" label="왼쪽 맞춤" onClick={() => align('left')} />
-          <Small icon="≡" label="가운데 맞춤" onClick={() => align('center')} />
-          <Small icon="⯈" label="오른쪽 맞춤" onClick={() => align('right')} />
+          <Small icon="⯇" label="왼쪽 맞춤" active={(here?.align ?? 'left') === 'left'} onClick={() => align('left')} />
+          <Small icon="≡" label="가운데 맞춤" active={here?.align === 'center'} onClick={() => align('center')} />
+          <Small icon="⯈" label="오른쪽 맞춤" active={here?.align === 'right'} onClick={() => align('right')} />
+        </Col>
+        <Col>
+          <Small icon="☰" label="양쪽 맞춤" active={here?.align === 'justify'} onClick={() => align('justify')} />
+          <Small icon="⤒" label="위쪽 맞춤" active={here?.anchor === 'top'} onClick={() => anchor('top')} />
+          <Small icon="↕" label="세로 가운데 맞춤" active={!here?.anchor || here.anchor === 'middle'} onClick={() => anchor('middle')} />
+        </Col>
+        <Col>
+          <Small icon="⤓" label="아래쪽 맞춤" active={here?.anchor === 'bottom'} onClick={() => anchor('bottom')} />
+          <DropButton icon="⟲" label="텍스트 방향" render={(close) => (
+            <>
+              {([['horz', '가로'], ['vert', '모든 텍스트 90도 회전'], ['vert270', '모든 텍스트 270도 회전'], ['stacked', '스택형']] as const).map(([d, l]) => (
+                <MenuItem key={d} label={l} on={(here?.dir ?? 'horz') === d} onClick={() => { cellsDo((cell) => ({ ...cell, dir: d === 'horz' ? undefined : d })); close(); }} />
+              ))}
+            </>
+          )} />
         </Col>
       </Group>
       <SizeGroup ed={ed} />
