@@ -107,7 +107,9 @@ export interface MediaMeta {
 
 /** 'table', 'chart', 'icon' and 'ink' are drawn by the Rust engine (src/engine), as are preset shapes. */
 export type ElementKind = 'text' | 'image' | 'shape' | 'video' | 'camera' | 'qr' | 'table' | 'chart' | 'icon' | 'ink' | 'audio' | 'zoom';
-export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot';
+export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot' | 'lgDash' | 'sysDash' | 'sysDot';
+/** Shape Outline › Arrows: the arrowhead drawn at a line's end (DeckCraft's LineEnd kinds). */
+export type ArrowKind = 'triangle' | 'stealth' | 'diamond' | 'oval' | 'arrow';
 
 /** A stretch of text inside a line with its own character formatting (see domain/richText). */
 export interface TextRun {
@@ -283,13 +285,29 @@ export interface SlideElement {
   /** Glued connector: its ends follow these objects' connection sites. */
   connect?: { from?: { id: string; site: number }; to?: { id: string; site: number } };
   /** Shape effects beyond shadow / glow. */
-  shadowKind?: 'outer' | 'inner' | 'perspective';
+  shadowKind?: 'outer' | 'inner' | 'perspective' | 'bottom' | 'center';
+  /** Format Shape › Shadow: colour, transparency (0–1), blur and distance (canvas px), angle (°). */
+  shadowOpts?: { color?: string; transparency?: number; blur?: number; dist?: number; dir?: number };
   glowSize?: number;
+  /** Glow transparency 0–1 (default 0.6, PowerPoint's 60%). */
+  glowAlpha?: number;
   reflection?: boolean;
-  /** 3-D rotation in degrees (x tilts forward, y turns sideways). */
-  rotate3d?: { x: number; y: number };
+  /** Reflection variations: size (0–1 of the object shown), transparency (0–1), distance (px). */
+  reflectionOpts?: { size?: number; transparency?: number; dist?: number };
+  /** 3-D rotation in degrees (x tilts forward, y turns sideways, z turns in the slide); `persp` draws it in perspective. */
+  rotate3d?: { x: number; y: number; z?: number; persp?: boolean };
+  /** The 3-D rotation preset picked (DeckCraft's camera presets), shown as chosen in the gallery. */
+  camera3d?: string;
   bevel?: boolean;
-  /** Selection pane lock: cannot be selected or moved on the slide. */
+  /** Bevel preset (circle, relaxedInset, cross, coolSlant, angle, softRound, convex, slope, divot, riblet, hardEdge, artDeco). */
+  bevelKind?: string;
+  /** Arrowhead kinds and size (default triangle, medium) where `arrowStart` / `arrowEnd` are on. */
+  arrowStartKind?: ArrowKind;
+  arrowEndKind?: ArrowKind;
+  arrowSize?: 'sm' | 'med' | 'lg';
+  /** Size and Position › 가로 세로 비율 고정 (pictures default to on). */
+  lockAspect?: boolean;
+  /** Selection pane lock: selectable and formattable, but not moved, sized or turned on the slide. */
   locked?: boolean;
   /** Placed by the slide master (kept in step with it; not selectable on the slide). */
   master?: boolean;

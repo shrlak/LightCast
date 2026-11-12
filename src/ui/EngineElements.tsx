@@ -1,7 +1,8 @@
 // Slide objects whose drawing comes from the Rust engine: PowerPoint preset shapes (with text inside
 // them), tables, charts, icons and ink.
 import { useId, useSyncExternalStore, type CSSProperties } from 'react';
-import type { DashStyle, SlideElement } from '../domain/types';
+import type { SlideElement } from '../domain/types';
+import { ARROW_SCALE, arrowPath, dashPattern, effectFilter, effectStyle, transformOf } from '../domain/shapeEffects';
 import { lineRuns } from '../domain/richText';
 
 import { runStyle as runCss } from './runStyle';
@@ -18,9 +19,6 @@ export const useEngineEpoch = () => useSyncExternalStore(onEngineReady, () => ep
 export const DEFAULT_STROKE_WIDTH = 4;
 const SHADE: Record<FillMode, [string, number] | null> = {
   norm: null, none: null, lighten: ['#fff', 0.4], lightenLess: ['#fff', 0.2], darken: ['#000', 0.4], darkenLess: ['#000', 0.2],
-};
-const DASH: Record<DashStyle, (w: number) => string | undefined> = {
-  solid: () => undefined, dash: (w) => `${w * 4} ${w * 3}`, dot: (w) => `${w} ${w * 2}`, dashDot: (w) => `${w * 4} ${w * 2} ${w} ${w * 2}`,
 };
 
 /** The preset a shape object draws: its own, or the plain box / circle of slides made before presets. */
@@ -39,35 +37,13 @@ export function geometryOf(el: SlideElement): ShapeGeometry | null {
   return shapeGeometry(presetOf(el), el.w, el.h, adjOf(el));
 }
 
-export function effects(el: SlideElement): string | undefined {
-  const shadow = !el.dropShadow ? null
-    : el.shadowKind === 'perspective' ? 'drop-shadow(18px 22px 10px rgba(0,0,0,.35))'
-      : el.shadowKind === 'inner' ? 'drop-shadow(0 0 2px rgba(0,0,0,.6))'
-        : 'drop-shadow(0 8px 14px rgba(0,0,0,.45))';
-  const g = el.glowSize ?? 18;
-  const f = [shadow, el.glow && `drop-shadow(0 0 ${g}px ${el.glow}) drop-shadow(0 0 ${g / 2}px ${el.glow})`].filter(Boolean);
-  return f.length ? f.join(' ') : undefined;
-}
+/** Shadow and glow as a CSS filter (presets and options in src/domain/shapeEffects). */
+export const effects = (el: SlideElement): string | undefined => effectFilter(el);
 
-/**
- * Shape Effects beyond shadow and glow, as CSS: reflection (below the object), soft edges (a
- * feathered mask), 3-D rotation (perspective) and bevel (a lit inner edge).
- */
-export function effectCss(el: SlideElement): CSSProperties {
-  const css: CSSProperties = {};
-  if (el.reflection) css.WebkitBoxReflect = 'below 4px linear-gradient(transparent 55%, rgba(255,255,255,.4))';
-  if (el.softEdge) {
-    const e = `${el.softEdge}px`;
-    css.WebkitMaskImage = `linear-gradient(to right, transparent, #000 ${e}, #000 calc(100% - ${e}), transparent), linear-gradient(to bottom, transparent, #000 ${e}, #000 calc(100% - ${e}), transparent)`;
-    css.WebkitMaskComposite = 'source-in';
-    css.maskComposite = 'intersect';
-  }
-  if (el.bevel) css.boxShadow = 'inset 3px 3px 6px rgba(255,255,255,.45), inset -3px -3px 6px rgba(0,0,0,.35)';
-  return css;
-}
+/** Reflection, soft edges and bevel as CSS. */
+export const effectCss = (el: SlideElement): CSSProperties => effectStyle(el);
 
-export const elementTransform = (el: SlideElement) =>
-  [el.rotate3d ? `perspective(1200px) rotateX(${el.rotate3d.x}deg) rotateY(${el.rotate3d.y}deg)` : '', el.rotation ? `rotate(${el.rotation}deg)` : '', el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].filter(Boolean).join(' ') || undefined;
+export const elementTransform = (el: SlideElement) => transformOf(el);
 
 
 /** A preset shape as SVG, with its text laid in the shape's text area. */
@@ -115,11 +91,15 @@ export function ShapeElement({ el }: { el: SlideElement }) {
               <stop offset="0" stopColor={el.gradient[0]} /><stop offset="1" stopColor={el.gradient[1]} />
             </linearGradient>
           )}
-          {(el.arrowStart || el.arrowEnd) && (
-            <marker id={`a${gid}`} viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
-              <path d="M0 0 L10 5 L0 10 Z" fill={stroke ?? '#fff'} />
-            </marker>
-          )}
+          {([['s', el.arrowStart, el.arrowStartKind], ['e', el.arrowEnd, el.arrowEndKind]] as const).map(([end, on, kind]) => {
+            if (!on) return null;
+            const a = arrowPath(kind), m = ARROW_SCALE[el.arrowSize ?? 'med'];
+            return (
+              <marker key={end} id={`a${end}${gid}`} viewBox="-1 -1 12 12" refX={kind === 'oval' || kind === 'diamond' ? 5 : 8.5} refY="5" markerWidth={m} markerHeight={m} orient="auto-start-reverse">
+                <path d={a.d} fill={a.filled ? stroke ?? '#fff' : 'none'} stroke={a.filled ? undefined : stroke ?? '#fff'} strokeWidth={a.filled ? undefined : 1.6} />
+              </marker>
+            );
+          })}
         </defs>
         <g transform={custom}>
         {g.paths.map((p, i) => {
@@ -128,12 +108,12 @@ export function ShapeElement({ el }: { el: SlideElement }) {
             vectorEffect: custom ? 'non-scaling-stroke' as const : undefined,
             d: p.d, fillRule: p.evenOdd ? 'evenodd' as const : undefined,
             stroke: p.stroke && sw > 0 ? stroke : undefined, strokeWidth: p.stroke && sw > 0 ? sw : undefined,
-            strokeDasharray: DASH[el.dash ?? 'solid'](sw || 1), strokeLinejoin: 'round' as const, strokeLinecap: line ? 'round' as const : undefined,
+            strokeDasharray: dashPattern(el.dash, sw || 1), strokeLinejoin: 'round' as const, strokeLinecap: line ? 'round' as const : undefined,
           };
           return (
             <g key={i}>
               <path {...common} fill={p.fill === 'none' || g.open ? 'none' : fill}
-                markerStart={el.arrowStart ? `url(#a${gid})` : undefined} markerEnd={el.arrowEnd ? `url(#a${gid})` : undefined} />
+                markerStart={el.arrowStart ? `url(#as${gid})` : undefined} markerEnd={el.arrowEnd ? `url(#ae${gid})` : undefined} />
               {shade && <path d={p.d} fill={shade[0]} fillOpacity={shade[1]} fillRule={common.fillRule} />}
             </g>
           );
