@@ -305,6 +305,8 @@ export interface SlideElement {
   /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */
   targetSlideId?: string;
   zoomOf?: { slide: Slide; theme: Theme; background: Background | null };
+  /** Return to Zoom: the slide after which the slide show comes back to this zoom's slide (the target slide, or its section's last). */
+  zoomReturn?: string;
   /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it). */
   smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number } };
   /** Text effects. */

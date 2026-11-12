@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, 
 import type { Presentation, Slide, SlideElement } from '../../domain/types';
 import { CANVAS_W } from '../../domain/canvas';
 import { actionAt } from '../../domain/showActions';
+import { returnAfter, type ZoomReturn } from '../../domain/zoom';
 export { actionAt };
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
@@ -178,6 +179,7 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
   const [build, setBuild] = useState<LiveBuild | null>(null);
   const [ended, setEnded] = useState(false);
   const times = useRef<Record<string, number>>({});
+  const zoomBack = useRef<ZoomReturn | null>(null);
   const shownAt = useRef(Date.now());
   const [now, setNow] = useState(Date.now());
   const slide = pages[i]?.slide ?? null;
@@ -200,11 +202,18 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
   const next = async () => {
     const { advanceBuild } = await import('../../domain/animations');
     const b = slide && !ed.p?.showSetup?.noAnimation ? advanceBuild(slide, build ?? undefined, Date.now()) : null;
-    if (b) setBuild(b); else goTo(i + 1);
+    if (b) { setBuild(b); return; }
+    const back = returnAfter(zoomBack.current, slide?.id);
+    if (back !== null) { zoomBack.current = null; goTo(back); } else goTo(i + 1);
   };
   const prev = () => goTo(i - 1);
   const act = (el: SlideElement) => {
-    if (el.kind === 'zoom' && el.targetSlideId) { const n = pages.findIndex((x) => x.slide.id === el.targetSlideId); if (n >= 0) goTo(n); return; }
+    if (el.kind === 'zoom' && el.targetSlideId) {
+      const n = pages.findIndex((x) => x.slide.id === el.targetSlideId);
+      // Return to Zoom: going on past the target (or its section's last slide) comes back to this slide.
+      if (n >= 0) { zoomBack.current = el.zoomReturn ? { from: i, after: el.zoomReturn } : null; goTo(n); }
+      return;
+    }
     const a = el.action ?? (el.href ? { kind: 'url' as const, url: el.href } : null);
     if (!a) return;
     if (a.kind === 'next') goTo(i + 1);

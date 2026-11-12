@@ -4,6 +4,7 @@ import { newTable, type TableData } from '../src/engine';
 import { drawTableLine, eraseTableLine } from '../src/domain/drawTable';
 import { deleteLayoutBlocker, duplicateLayout, insertLayout, makePlaceholder, placeholderState, setPlaceholders, slideFromLayout, withMaster } from '../src/domain/master';
 import type { MasterLayout, Slide } from '../src/domain/types';
+import { returnAfter, sectionTargets, slideTargets, summaryInsertIndex, summaryTargets, zoomElements, zoomGrid, zoomArea } from '../src/domain/zoom';
 
 /** The grid as text: o = a cell, M = a merged cell's anchor, . = covered. */
 const grid = (t: TableData) => t.rows.map((r) => r.map((c) => (c.hMerge || c.vMerge ? '.' : (c.span ?? 1) > 1 || (c.rowSpan ?? 1) > 1 ? 'M' : 'o')).join('')).join('/');
@@ -94,5 +95,51 @@ describe('Slide Master layouts', () => {
     expect(deleteLayoutBlocker([L('a'), L('b')], slides, 'a')).toMatch(/슬라이드/);
     expect(deleteLayoutBlocker([L('a')], [], 'a')).toMatch(/하나/);
     expect(deleteLayoutBlocker([L('a'), L('b')], slides, 'b')).toBeNull();
+  });
+});
+
+describe('Summary and Section Zoom', () => {
+  const sl = (id: string, group: string): Slide => ({ id, group, text: id });
+  const deck = [sl('a1', 'A'), sl('a2', 'A'), sl('b1', 'B'), sl('b2', 'B'), sl('b3', 'B'), sl('c1', 'C')];
+  const ids = (t: { slide: Slide; last: Slide }[]) => t.map((x) => `${x.slide.id}>${x.last.id}`);
+
+  it('summary: each part runs to the slide before the next one picked', () => {
+    expect(ids(summaryTargets(deck))).toEqual(['a1>a2', 'b1>b3', 'c1>c1']);
+    // Picking slides (not section starts) makes parts of them, in slide order whatever order they were ticked.
+    expect(ids(summaryTargets(deck, ['b2', 'a1']))).toEqual(['a1>b1', 'b2>c1']);
+    expect(ids(summaryTargets(deck, ['c1']))).toEqual(['c1>c1']);
+  });
+  it('section zoom goes to the section start and returns after its last slide', () => {
+    expect(ids(sectionTargets(deck, ['b1', 'a1']))).toEqual(['a1>a2', 'b1>b3']);
+    expect(ids(slideTargets(deck, ['b2']))).toEqual(['b2>b2']);
+  });
+  it('lays tiles out in a grid inside the area, a single slide zoom at most half its width', () => {
+    const area = zoomArea('summary', 3);
+    const boxes = zoomGrid(3, area);
+    expect(boxes).toHaveLength(3);
+    for (const b of boxes) {
+      expect(b.x).toBeGreaterThanOrEqual(area.x - 0.01);
+      expect(b.x + b.w).toBeLessThanOrEqual(area.x + area.w + 0.01);
+      expect(b.y + b.h).toBeLessThanOrEqual(area.y + area.h + 0.01);
+      expect(b.w / b.h).toBeCloseTo(4 / 3);
+    }
+    expect(zoomGrid(1, zoomArea('slide', 1))[0].w).toBeLessThanOrEqual(zoomArea('slide', 1).w / 2 + 0.01);
+    expect(zoomGrid(0, area)).toEqual([]);
+  });
+  it('builds zoom objects that carry the return slide only with Return to Zoom', () => {
+    const t = summaryTargets(deck);
+    const snap = (s: Slide) => ({ slide: s, theme: {} as never, background: null });
+    const on = zoomElements('summary', t, true, snap);
+    expect(on.map((e) => [e.targetSlideId, e.zoomReturn])).toEqual([['a1', 'a2'], ['b1', 'b3'], ['c1', 'c1']]);
+    expect(zoomElements('slide', t, false, snap).every((e) => e.zoomReturn === undefined)).toBe(true);
+  });
+  it('puts the summary slide before the section of its first part', () => {
+    expect(summaryInsertIndex(deck, summaryTargets(deck, ['b2', 'c1']))).toBe(2);
+    expect(summaryInsertIndex(deck, summaryTargets(deck))).toBe(0);
+  });
+  it('returns to the zoom slide after the target slide, once', () => {
+    expect(returnAfter({ from: 4, after: 'b3' }, 'b2')).toBeNull();
+    expect(returnAfter({ from: 4, after: 'b3' }, 'b3')).toBe(4);
+    expect(returnAfter(null, 'b3')).toBeNull();
   });
 });

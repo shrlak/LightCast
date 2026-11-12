@@ -2,7 +2,7 @@
 // playback), Home › New Slide (Reuse Slides, Slides from Outline), Slide Show (Set Up Slide Show,
 // Custom Shows), View (Guides) and Review (Thesaurus).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ElementAction, MediaPlayback, Presentation, Slide, SlideElement } from '../../domain/types';
+import type { ElementAction, MediaPlayback, Presentation, Slide } from '../../domain/types';
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
 import { putMedia } from '../../domain/media';
@@ -18,6 +18,7 @@ import { activeTextEditor } from '../RichTextEditor';
 import { Check, Dialog, Field, Num } from './dialogs';
 import { SMARTART_CATEGORIES, SMARTART_LAYOUT, SMARTART_STYLE, smartArtColorLabel } from './ko';
 import type { DialogKind, Ed } from './editor';
+import { SUMMARY_TITLE, defaultSummaryStarts, sectionTargets, slideTargets, summaryInsertIndex, summaryTargets, zoomElements, type ZoomKind } from '../../domain/zoom';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
@@ -425,43 +426,59 @@ function ThesaurusDialog({ onClose }: { ed: Ed; onClose: () => void }) {
 // ── Insert › Zoom (Summary / Section / Slide Zoom) ────────────────────────────────────────────
 function ZoomDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const p = ed.p;
-  const [mode, setMode] = useState<'slide' | 'section' | 'summary'>('slide');
+  const [mode, setMode] = useState<ZoomKind>('slide');
   const [picked, setPicked] = useState<string[]>([]);
+  const [back, setBack] = useState(false);
+  // Summary Zoom starts from the first slide of every section (the boxes can be changed); Section Zoom from none.
+  const [summary, setSummary] = useState<string[] | null>(null);
   if (!p || !ed.theme) return null;
   const theme = ed.theme;
   const secs = sections(p.slides);
-  const zoomEl = (target: Slide, box: { x: number; y: number; w: number; h: number }): SlideElement => ({
-    id: uid('el'), kind: 'zoom', ...box, targetSlideId: target.id, name: `확대/축소: ${target.title || target.group}`,
-    zoomOf: { slide: target, theme, background: resolveBackground(target, p) },
-  });
-  const grid = (targets: Slide[]) => {
-    const n = targets.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
-    const cw = (CANVAS_W - 160) / cols, ch = (CANVAS_H - 260) / rows;
-    const w = Math.min(cw - 30, (ch - 30) * (CANVAS_W / CANVAS_H)), h = w * (CANVAS_H / CANVAS_W);
-    return targets.map((t, i) => zoomEl(t, { x: 80 + (i % cols) * cw + (cw - w) / 2, y: 200 + Math.floor(i / cols) * ch + (ch - h) / 2, w, h }));
-  };
+  const starts = summary ?? defaultSummaryStarts(p.slides);
+  const choose = (m: ZoomKind) => { setMode(m); setPicked([]); setBack(m !== 'slide'); };
+  const toggle = (list: string[], id: string, on: boolean) => (on ? [...list, id] : list.filter((x) => x !== id));
+  const snap = (s: Slide) => ({ slide: s, theme, background: resolveBackground(s, p) });
+  const targets = mode === 'summary' ? summaryTargets(p.slides, starts) : mode === 'section' ? sectionTargets(p.slides, picked) : slideTargets(p.slides, picked);
   const ok = () => {
+    if (!targets.length) return;
+    const els = zoomElements(mode, targets, back, snap);
     if (mode === 'summary') {
-      const targets = secs.map((s) => p.slides[s.start]);
-      insertSlides(ed, [{ id: uid('s'), group: '요약', text: '', elements: [{ id: uid('el'), kind: 'text', text: '요약', x: 80, y: 50, w: CANVAS_W - 160, h: 120, fontSize: 72, bold: true, color: '#ffffff', align: 'center' }, ...grid(targets)] }]);
+      // A new slide with the title and the tiles, before the section that holds the first part.
+      const at = summaryInsertIndex(p.slides, targets);
+      const slide: Slide = { id: uid('s'), group: SUMMARY_TITLE, text: '', elements: [{ id: uid('el'), kind: 'text', text: SUMMARY_TITLE, x: 80, y: 50, w: CANVAS_W - 160, h: 120, fontSize: 72, bold: true, color: '#ffffff', align: 'center' }, ...els] };
+      const slides = [...p.slides];
+      slides.splice(at, 0, p.master?.elements.length ? withMaster(slide, p.master.elements) : slide);
+      ed.updatePres({ slides, ...(p.arrangementId ? { arrangementId: null } : {}) });
+      ed.cmd.setSlideId(slide.id);
     } else {
-      const targets = mode === 'section' ? picked.map((name) => p.slides[secs.find((s) => s.name === name)?.start ?? -1]).filter(Boolean) : picked.map((id) => p.slides.find((s) => s.id === id)).filter((s): s is Slide => !!s);
-      const els = grid(targets);
       ed.setElements((cur) => [...cur, ...els]);
       ed.setSel(els.map((e) => e.id));
     }
     onClose();
   };
   return (
-    <Dialog title="확대/축소 삽입" onClose={onClose} onOk={ok} okLabel="삽입" okDisabled={!ed.canEdit || (mode !== 'summary' && !picked.length)} wide>
+    <Dialog title="확대/축소 삽입" onClose={onClose} onOk={ok} okLabel="삽입" okDisabled={!ed.canEdit || !targets.length} wide>
       <div className="dlg-tabs">
-        {([['slide', '슬라이드 확대/축소'], ['section', '구역 확대/축소'], ['summary', '요약 확대/축소']] as const).map(([m, l]) => <button key={m} type="button" className={mode === m ? 'on' : ''} onClick={() => { setMode(m); setPicked([]); }}>{l}</button>)}
+        {([['slide', '슬라이드 확대/축소'], ['section', '구역 확대/축소'], ['summary', '요약 확대/축소']] as const).map(([m, l]) => <button key={m} type="button" className={mode === m ? 'on' : ''} onClick={() => choose(m)}>{l}</button>)}
       </div>
-      {mode === 'summary' && <p className="dlg-note">각 구역의 첫 슬라이드로 가는 확대/축소가 담긴 요약 슬라이드를 현재 슬라이드 다음에 만듭니다 (구역 {secs.length}개).</p>}
-      {mode === 'section' && <div className="dlg-list">{secs.map((s) => <Check key={s.name + s.start} label={`${s.name} (${s.count}장)`} checked={picked.includes(s.name)} onChange={(on) => setPicked(on ? [...picked, s.name] : picked.filter((x) => x !== s.name))} />)}</div>}
-      {mode === 'slide' && (
-        <div className="reuse-grid">{p.slides.map((s, i) => <button key={s.id} type="button" className={`reuse-cell ${picked.includes(s.id) ? 'on' : ''}`} onClick={() => setPicked(picked.includes(s.id) ? picked.filter((x) => x !== s.id) : [...picked, s.id])}>{thumb(ed, s)}<span>{i + 1}</span></button>)}</div>
+      {mode === 'summary' && (
+        <>
+          <p className="dlg-note">요약 슬라이드에 넣을 슬라이드를 고릅니다. 고른 슬라이드마다 다음에 고른 슬라이드 앞까지가 한 부분이고, 요약 슬라이드는 첫 부분의 구역 앞에 만들어집니다.</p>
+          <div className="dlg-list zoom-tree">
+            {secs.map((sec) => (
+              <div key={sec.name + sec.start} className="zoom-sec">
+                <b>{sec.name}</b>
+                {p.slides.slice(sec.start, sec.start + sec.count).map((s, k) => <Check key={s.id} label={`${sec.start + k + 1}. ${(s.title || s.text || s.group || '').split('\n')[0].slice(0, 40)}`} checked={starts.includes(s.id)} onChange={(on) => setSummary(toggle(starts, s.id, on))} />)}
+              </div>
+            ))}
+          </div>
+        </>
       )}
+      {mode === 'section' && <div className="dlg-list">{secs.map((s) => <Check key={s.name + s.start} label={`${s.name} (${s.count}장)`} checked={picked.includes(p.slides[s.start].id)} onChange={(on) => setPicked(toggle(picked, p.slides[s.start].id, on))} />)}</div>}
+      {mode === 'slide' && (
+        <div className="reuse-grid">{p.slides.map((s, i) => <button key={s.id} type="button" className={`reuse-cell ${picked.includes(s.id) ? 'on' : ''}`} onClick={() => setPicked(toggle(picked, s.id, !picked.includes(s.id)))}>{thumb(ed, s)}<span>{i + 1}</span></button>)}</div>
+      )}
+      <Check label="확대/축소로 돌아가기 (대상 슬라이드나 구역이 끝나면 이 슬라이드로 돌아옵니다)" checked={back} onChange={setBack} />
     </Dialog>
   );
 }
