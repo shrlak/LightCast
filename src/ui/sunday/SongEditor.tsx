@@ -10,6 +10,7 @@ import { PROTECTED_MESSAGE } from '../../domain/materialProtection';
 import { ProtectedMaterialNotice } from '../MaterialProtection';
 import { AutoTextarea } from '../AutoTextarea';
 import type { WebLyricsOption } from '../../domain/recognition/conti';
+import { readScorePhotos, searchSongLyrics, type LyricsOption } from '../../domain/sunday/songLookup';
 
 interface Part { id: string; label: string; text: string }
 
@@ -97,6 +98,10 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const per = library.sunday.linesPerSlide;
+  // 새 찬양에서 가사 찾기: AI 검색 결과 / 사진 읽기 상태.
+  const [lookup, setLookupState] = useState<{ busy?: string; options?: LyricsOption[]; note?: string }>({});
+  const setLookup = (v: { busy?: string; options?: LyricsOption[]; note?: string }) => setLookupState(v);
+  const photoRef = useRef<HTMLInputElement>(null);
 
   const sections: SongSection[] = parts.map((p) => ({ label: p.label.trim() || 'V', lines: p.text.split('\n') }));
   const tokens = order.split(/[-–,\s]+/).map((t) => t.trim()).filter(Boolean);
@@ -185,8 +190,40 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
     review.onAccept({ ...review.draft, title: e.title, key: e.key, sections: e.sections, progression: tokens.length ? tokens : undefined });
   };
 
+  /** AI로 검색: lyrics for the typed title from the internet, listed for the operator to pick. */
+  const searchOnline = async () => {
+    const t = title.trim();
+    if (!t || /^새 찬양/.test(t)) return setLookup({ note: '찬양 제목을 먼저 입력하세요.' });
+    setLookup({ busy: '인터넷에서 가사 검색 중…' });
+    try {
+      const options = await searchSongLyrics(t);
+      setLookup({ options, note: options.length ? undefined : '인터넷에서 가사를 찾지 못했습니다. 제목을 확인하거나 악보 사진을 올려 보세요.' });
+    } catch (e) {
+      setLookup({ note: (e as Error).message });
+    }
+  };
+
+  /** 악보 사진 업로드: read the lyrics (and title, key, 진행) off photo(s) of the 악보 or of captured lyrics. */
+  const readPhotos = async (files: FileList | null) => {
+    const list = Array.from(files ?? []);
+    if (photoRef.current) photoRef.current.value = '';
+    if (!list.length) return;
+    if (parts.some((p) => p.text.trim()) && !confirm('지금 입력된 가사를 사진에서 읽은 가사로 바꿀까요?')) return;
+    setLookup({ busy: '사진 읽는 중…' });
+    try {
+      const r = await readScorePhotos(list, (m) => setLookup({ busy: m }));
+      setParts(r.sections.map((x) => ({ id: uid('pt'), label: x.label, text: x.lines.join('\n') })));
+      if (!title.trim() && r.title) setTitle(r.title);
+      if (!key.trim() && r.key) setKey(r.key);
+      if (!tokens.length && r.progression?.length) setOrder(r.progression.join('-'));
+      setLookup({ note: `✓ 사진에서 ${r.sections.length}개 파트의 가사를 읽었습니다 — 악보와 맞는지 확인하세요.` });
+    } catch (e) {
+      setLookup({ note: (e as Error).message });
+    }
+  };
+
   /** Put a web page's lyrics in, part by part (the 진행 the 콘티 wrote stays). */
-  const putWebOption = (option: WebLyricsOption) => {
+  const putWebOption = (option: Pick<WebLyricsOption, 'host' | 'sections' | 'order'> | LyricsOption) => {
     const typed = parts.some((p) => p.text.trim());
     if (typed && !confirm(`지금 입력된 가사를 ${option.host || '웹'}의 가사로 바꿀까요?`)) return;
     setParts(option.sections.map((x) => ({ id: uid('pt'), label: x.label, text: x.lines.join('\n') })));
@@ -224,9 +261,28 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
         <div className="song-editor-body">
           <div className="stack song-editor-form">
             <div className="row gap-s">
-              <label className="stack grow">제목<input autoFocus={!song} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="찬양 제목" /></label>
+              <label className="stack grow">제목<input autoFocus={!song} value={title} onChange={(e) => setTitle(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing && !lookup.busy) { e.preventDefault(); searchOnline(); } }}
+                placeholder="찬양 제목 (Enter: 인터넷에서 가사 검색)" /></label>
               <label className="stack" style={{ width: 80 }}>Key<input value={key} onChange={(e) => setKey(e.target.value)} placeholder="G" /></label>
             </div>
+            <div className="row gap-xs wrap small">
+              <button className="mini-btn" disabled={!!lookup.busy || !title.trim()} onClick={searchOnline} title="인터넷에서 제목으로 가사를 검색합니다">✨ AI로 검색</button>
+              <button className="mini-btn" disabled={!!lookup.busy} onClick={() => photoRef.current?.click()} title="악보 사진이나 가사를 캡처한 사진에서 가사를 인식합니다">📷 악보·가사 사진 업로드</button>
+              <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={(e) => readPhotos(e.target.files)} />
+              {lookup.busy && <span className="muted">⏳ {lookup.busy}</span>}
+              {lookup.note && <span className={lookup.note.startsWith('✓') ? 'ok' : 'warn'}>{lookup.note}</span>}
+            </div>
+            {lookup.options?.map((o) => (
+              <div key={o.id} className="song-web-option">
+                <div className="row gap-xs">
+                  <span className="grow small"><b>{o.host || '웹'}</b>{o.title ? ` · ${o.title}` : ''}</span>
+                  {o.url && <a className="small" href={o.url} target="_blank" rel="noreferrer">열기</a>}
+                  <button className="mini-btn" onClick={() => { putWebOption(o); setLookup({}); }}>넣기</button>
+                </div>
+                <div className="muted small">{o.sections.flatMap((x) => x.lines).filter((l) => l.trim()).slice(0, 3).join(' / ')}</div>
+              </div>
+            ))}
             {duplicate && <p className="muted small">라이브러리에 같은 제목의 찬양이 이미 있습니다 — 등록하면 그 찬양을 바꿉니다.</p>}
             <label className="stack">진행 <span className="muted small">(예: I-V1-V2-PC-C-B-C · 각 파트는 한 번씩, 처음 나오는 순서대로 슬라이드가 됩니다)</span>
               <input value={order} onChange={(e) => setOrder(e.target.value)} placeholder="I-V1-C-V2-C-B-C" />
