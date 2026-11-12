@@ -427,13 +427,25 @@ function ZoomDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const p = ed.p;
   const [mode, setMode] = useState<'slide' | 'section' | 'summary'>('slide');
   const [picked, setPicked] = useState<string[]>([]);
+  // Zoom › Return to Zoom: on for section and summary zooms, off for slide zooms (as PowerPoint).
+  const [back, setBack] = useState<boolean | null>(null);
   if (!p || !ed.theme) return null;
   const theme = ed.theme;
+  const returns = back ?? mode !== 'slide';
   const secs = sections(p.slides);
   const zoomEl = (target: Slide, box: { x: number; y: number; w: number; h: number }): SlideElement => ({
     id: uid('el'), kind: 'zoom', ...box, targetSlideId: target.id, name: `확대/축소: ${target.title || target.group}`,
     zoomOf: { slide: target, theme, background: resolveBackground(target, p) },
+    ...(returns ? { zoomReturn: true, zoomEndSlideId: endOf(target) } : {}),
   });
+  // A section zoom returns after the section's last slide; the others after the slide itself.
+  const endOf = (target: Slide) => {
+    if (mode !== 'section') return target.id;
+    const at = p.slides.findIndex((x) => x.id === target.id);
+    let last = at;
+    while (last + 1 < p.slides.length && p.slides[last + 1].group === target.group) last++;
+    return p.slides[last].id;
+  };
   const grid = (targets: Slide[]) => {
     const n = targets.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
     const cw = (CANVAS_W - 160) / cols, ch = (CANVAS_H - 260) / rows;
@@ -457,6 +469,7 @@ function ZoomDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
       <div className="dlg-tabs">
         {([['slide', '슬라이드 확대/축소'], ['section', '구역 확대/축소'], ['summary', '요약 확대/축소']] as const).map(([m, l]) => <button key={m} type="button" className={mode === m ? 'on' : ''} onClick={() => { setMode(m); setPicked([]); }}>{l}</button>)}
       </div>
+      <Check label="확대/축소로 돌아가기" checked={returns} onChange={setBack} />
       {mode === 'summary' && <p className="dlg-note">각 구역의 첫 슬라이드로 가는 확대/축소가 담긴 요약 슬라이드를 현재 슬라이드 다음에 만듭니다 (구역 {secs.length}개).</p>}
       {mode === 'section' && <div className="dlg-list">{secs.map((s) => <Check key={s.name + s.start} label={`${s.name} (${s.count}장)`} checked={picked.includes(s.name)} onChange={(on) => setPicked(on ? [...picked, s.name] : picked.filter((x) => x !== s.name))} />)}</div>}
       {mode === 'slide' && (

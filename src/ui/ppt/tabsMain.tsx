@@ -23,7 +23,7 @@ import { shapeLabel } from './ko';
 import { seedSmartArt } from './dialogsMore';
 import { PATTERNS, patternPath } from '../../domain/patterns';
 import { SYMBOL_GROUPS } from '../../domain/insertTools';
-import { slideFromLayout, withMaster } from '../../domain/master';
+import { applyLayout, resetSlide, slideFromLayout, withMaster } from '../../domain/master';
 import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
 import { slideTheme } from '../SlideCanvas';
@@ -323,7 +323,15 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
       <Group label="슬라이드">
         <NewSlideButton ed={ed} />
         <Col>
-          <Small icon={RI.reset} label="다시 설정" title="이 슬라이드의 글꼴 · 전환 · 배경 설정을 테마대로" disabled={!ed.slide || !ed.canEdit} onClick={() => ed.updateSlide({ style: undefined, transition: undefined, preferredFontSize: undefined })} />
+          <DropButton icon="▤" label="레이아웃" title="이 슬라이드의 개체 틀을 다른 레이아웃으로" disabled={!ed.slide || !ed.canEdit || !ed.p?.master?.layouts?.length} render={(close) => (
+            <>
+              <MenuHead>슬라이드 마스터 레이아웃</MenuHead>
+              {ed.p?.master?.layouts?.map((l) => (
+                <MenuItem key={l.id} label={l.name} on={ed.slide?.layoutId === l.id} onClick={() => { if (ed.slide) ed.updateSlide(applyLayout(ed.slide, l, ed.p?.master?.elements ?? [])); close(); }} />
+              ))}
+            </>
+          )} />
+          <Small icon={RI.reset} label="다시 설정" title="개체 틀의 위치 · 서식과 이 슬라이드의 배경 · 글꼴 · 전환 설정을 레이아웃대로" disabled={!ed.slide || !ed.canEdit} onClick={() => { if (ed.slide) ed.updateSlide(resetSlide(ed.slide, ed.p?.master?.layouts, ed.p?.master?.elements ?? [])); }} />
           <DropButton icon={RI.section} label="구역" disabled={!ed.slide || !ed.canEdit} render={(close) => {
             const p = ed.p, id = ed.slide?.id;
             const run = (fn: (slides: import('../../domain/types').Slide[], id: string) => import('../../domain/types').Slide[]) => { if (p && id) ed.updatePres({ slides: fn(p.slides, id), ...(p.arrangementId ? { arrangementId: null } : {}) }); close(); };

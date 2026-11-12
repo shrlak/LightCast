@@ -12,7 +12,7 @@ import { findText } from '../../engine';
 import { findItems, parseFindKey, replaceMatches } from '../../domain/findReplace';
 import { SlideCanvas } from '../SlideCanvas';
 import { printHtml } from '../printHtml';
-import type { LiveBuild } from '../../domain/animations';
+import { clickTrigger, triggerObjects, type LiveBuild } from '../../domain/animations';
 import type { Ed } from './editor';
 import { ACCEPT } from './commands';
 import { RI } from './ribbonParts';
@@ -182,15 +182,28 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     if (custom) { const back = custom.back; setCustom(null); setI(back); return; }
     if (rehearse) setEnded(true); else onClose();
   };
+  // Insert › Zoom › Return to Zoom: after the zoomed-to slide (or section) the show comes back here.
+  const zoomBack = useRef<{ from: number; endId: string } | null>(null);
   const goTo = (n: number) => { if (n === i) return; record(); if (n >= pages.length) return finish(); history.current.push(i); setI(Math.max(0, n)); };
-  const next = async () => {
+  const forward = () => {
+    const z = zoomBack.current;
+    if (z && slide?.id === z.endId) { zoomBack.current = null; return goTo(z.from); }
+    goTo(i + 1);
+  };
+  /** Next: the next build, else the next slide (a mouse click only when the slide allows it). */
+  const next = async (mouse = false) => {
     const { advanceBuild } = await import('../../domain/animations');
     const b = slide && !ed.p?.showSetup?.noAnimation ? advanceBuild(slide, build ?? undefined, Date.now()) : null;
-    if (b) setBuild(b); else goTo(i + 1);
+    if (b) setBuild(b);
+    else if (!(mouse && transition?.advanceOnClick === false)) forward();
   };
   const prev = () => goTo(i - 1);
   const act = (el: SlideElement, over?: ElementAction) => {
-    if (!over && el.kind === 'zoom' && el.targetSlideId) { const n = pages.findIndex((x) => x.slide.id === el.targetSlideId); if (n >= 0) goTo(n); return; }
+    if (!over && el.kind === 'zoom' && el.targetSlideId) {
+      const n = pages.findIndex((x) => x.slide.id === el.targetSlideId);
+      if (n >= 0) { zoomBack.current = el.zoomReturn ? { from: i, endId: el.zoomEndSlideId ?? el.targetSlideId } : null; goTo(n); }
+      return;
+    }
     const a = over ?? el.action ?? (el.href ? { kind: 'url' as const, url: el.href } : null);
     if (!a) return;
     if (a.kind === 'next') goTo(i + 1);
@@ -224,10 +237,18 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     const r = stage.current?.querySelector('.slide-canvas, .canvas, div')?.getBoundingClientRect() ?? stage.current?.getBoundingClientRect();
     if (r && r.width) {
       const k = CANVAS_W / r.width;
-      const hit = actionAt(slide, (e.clientX - r.left) * k, (e.clientY - r.top) * k);
+      const [x, y] = [(e.clientX - r.left) * k, (e.clientY - r.top) * k];
+      // Animations › Trigger: a click on a trigger object plays its sequence (a link on it still goes).
+      if (slide && !ed.p?.showSetup?.noAnimation) {
+        const ids = triggerObjects(slide);
+        const on = [...(slide.elements ?? [])].reverse().find((el) => ids.includes(el.id) && !el.hidden && x >= el.x && x <= el.x + el.w && y >= el.y && y <= el.y + Math.max(el.h, 1));
+        const b = on && clickTrigger(slide, build, on.id, Date.now());
+        if (b) { setBuild(b); const hit = actionAt(slide, x, y); if (hit?.id === on!.id) act(hit); return; }
+      }
+      const hit = actionAt(slide, x, y);
       if (hit) return act(hit);
     }
-    void next();
+    void next(true);
   };
   if (!p || !ed.theme) return null;
   if (ended) {

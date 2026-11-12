@@ -1970,3 +1970,4 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .pic-style-grid.six .pic-style span { background: linear-gradient(165deg, #d9efe2 0 55%, #2e9e66 55% 100%); }
 /* 재생 tab: seconds boxes for fades. */
 .rb-secs { width: 44px; margin: 0 2px; }
+.bgstyle-grid { display: grid; grid-template-columns: repeat(4, 44px); gap: 6px; padding: 8px; } /* Design › Background Styles */

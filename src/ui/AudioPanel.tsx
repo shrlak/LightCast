@@ -109,7 +109,7 @@ export function AudioPlayer({ state, dispatch }: Props) {
   if (!url) return null;
   return (
     <div className="audio-bar">
-      <audio ref={ref} src={url} onEnded={onEnded} onTimeUpdate={(e) => { fireMarkers(e.currentTarget.currentTime); setTime({ cur: e.currentTarget.currentTime, dur: e.currentTarget.duration || 0, paused: e.currentTarget.paused }); }} onPause={(e) => setTime((t) => ({ ...t, paused: e.currentTarget.paused }))} onPlay={() => setTime((t) => ({ ...t, paused: false }))} />
+      <audio ref={ref} src={url} loop={!!state.audio.loop} onEnded={onEnded} onTimeUpdate={(e) => { fireMarkers(e.currentTarget.currentTime); setTime({ cur: e.currentTarget.currentTime, dur: e.currentTarget.duration || 0, paused: e.currentTarget.paused }); }} onPause={(e) => setTime((t) => ({ ...t, paused: e.currentTarget.paused }))} onPlay={() => setTime((t) => ({ ...t, paused: false }))} />
       <span className="truncate small">♪ {track?.name}</span>
       <button className="mini-btn" onClick={() => (ref.current?.paused ? ref.current.play() : ref.current?.pause())}>{time.paused ? '▶' : '❚❚'}</button>
       <progress max={time.dur || 1} value={time.cur} />

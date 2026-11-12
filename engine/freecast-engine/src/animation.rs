@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use deckcraft_anim::{AnimState, Timeline};
+use deckcraft_anim::{AnimState, Sequence, Timeline, TriggerPlay};
 use deckcraft_model::anim::{ANIMATIONS, TextBuild};
 use deckcraft_model::text::{Paragraph, TextBody};
 use deckcraft_model::{AnimClass, AnimStart, Animation, Shape, ShapeId, Slide, Xfrm};
@@ -73,6 +73,10 @@ pub struct AnimIn {
     /// anything else animates the object as one (하나의 개체로).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub sequence: String,
+    /// Animations › Trigger › On Click of: the object whose click plays this effect (an
+    /// interactive sequence of its own, outside the slide's click steps).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
 }
 
 /// One paragraph of an object's text, as much as a by-paragraph build needs: its outline level and
@@ -164,7 +168,8 @@ fn build(r: &PrepareReq) -> Prepared {
                 },
                 duration_ms: if a.duration_ms > 0 { a.duration_ms.min(600_000) } else { info.map(|i| i.4).unwrap_or(500) },
                 delay_ms: a.delay_ms.min(600_000),
-                repeat: a.repeat.clamp(1, 1000),
+                // `u32::MAX` is Repeat › Until Next Click; any other count is capped.
+                repeat: if a.repeat == u32::MAX { u32::MAX } else { a.repeat.clamp(1, 1000) },
                 rewind: a.rewind,
                 text_build: if a.sequence == "paragraph" { TextBuild::ByParagraph } else { TextBuild::AsOne },
                 path: match &a.path {
@@ -172,6 +177,8 @@ fn build(r: &PrepareReq) -> Prepared {
                     _ if class == AnimClass::Path => deckcraft_model::anim::preset_path(&a.effect),
                     _ => None,
                 },
+                // A trigger on the object itself, or on one not on the slide, plays with the clicks.
+                trigger: a.trigger.as_deref().and_then(shape_of).filter(|t| *t != shape),
                 ..Default::default()
             })
         })
@@ -217,7 +224,22 @@ pub fn prepare(r: PrepareReq) -> Res {
                     "duration": e.duration,
                     "span": e.span,
                     "class": class_id(e.class),
+                    "trigger": match e.sequence {
+                        Sequence::Trigger(t) => p.ids.get((t.0 as usize).wrapping_sub(1)).cloned(),
+                        Sequence::Main => None,
+                    },
                 })
+            })
+            .collect();
+        // Interactive sequences: each trigger object, its clicks and how long each one plays.
+        let triggers: Vec<Value> = p
+            .tl
+            .trigger_shapes()
+            .into_iter()
+            .filter_map(|t| {
+                let id = p.ids.get((t.0 as usize).wrapping_sub(1))?;
+                let n = p.tl.trigger_steps(t);
+                Some(json!({ "elementId": id, "steps": n, "durations": (0..n).map(|i| p.tl.trigger_step_duration(t, i)).collect::<Vec<_>>() }))
             })
             .collect();
         Ok(json!({
@@ -227,6 +249,7 @@ pub fn prepare(r: PrepareReq) -> Res {
             "durations": (0..steps).map(|i| p.tl.step_duration(i)).collect::<Vec<_>>(),
             "total": p.tl.total_duration(),
             "effects": effects,
+            "triggers": triggers,
         }))
     })
 }
@@ -273,6 +296,19 @@ pub struct SampleReq {
     pub step: usize,
     /// Seconds into step `step` (≤ 0: not started).
     pub t: f64,
+    /// Playheads of the triggered sequences: clicks on the trigger fully played and seconds into
+    /// the one playing.
+    #[serde(default)]
+    pub triggers: Vec<TriggerIn>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TriggerIn {
+    pub element_id: String,
+    pub step: usize,
+    #[serde(default)]
+    pub t: f64,
 }
 
 /// `{elementId: state}` for every animated object at (`step`, `t`), and `{"elementId#p": state}` for
@@ -299,12 +335,20 @@ pub fn sample(r: SampleReq) -> Res {
         let c = c.borrow();
         let p = c.get(&key).ok_or("unknown timeline (prepare it again)")?;
         let mut out = serde_json::Map::new();
+        let plays: Vec<TriggerPlay> = r
+            .triggers
+            .iter()
+            .filter_map(|t| {
+                let i = p.ids.iter().position(|x| *x == t.element_id)?;
+                Some(TriggerPlay { trigger: ShapeId(i as u32 + 1), step: t.step, t: fin(t.t, 0.0) })
+            })
+            .collect();
         for shape in p.tl.animated_shapes() {
             let Some(id) = p.ids.get((shape.0 as usize).wrapping_sub(1)) else { continue };
-            let st: StateOut = p.tl.state(shape, None, r.step, fin(r.t, 0.0)).into();
+            let st: StateOut = p.tl.state_with(shape, None, r.step, fin(r.t, 0.0), &plays).into();
             out.insert(id.clone(), to_value(st)?);
             for para in p.tl.paragraph_targets(shape) {
-                let st: StateOut = p.tl.state(shape, Some(para), r.step, fin(r.t, 0.0)).into();
+                let st: StateOut = p.tl.state_with(shape, Some(para), r.step, fin(r.t, 0.0), &plays).into();
                 out.insert(format!("{id}#{para}"), to_value(st)?);
             }
         }

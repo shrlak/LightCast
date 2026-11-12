@@ -28,7 +28,8 @@ interface HistoryPosition { before: Cursor | null; after: Cursor | null }
 
 export interface AppState extends NavState {
   selectedId: string | null;
-  audio: { mediaId: string | null; nonce: number; playback?: MediaPlayback; slideId?: string };
+  /** `loop`: Transitions › Sound › Loop Until Next Sound. */
+  audio: { mediaId: string | null; nonce: number; playback?: MediaPlayback; slideId?: string; loop?: boolean };
   /** Position in the looping announcements layer. */
   announce: { presentationId: string; seq: number } | null;
   past: Library[];
@@ -179,12 +180,14 @@ function live(s: AppState, c: Cursor, now?: number): AppState {
   const shown = next.live.slide;
   const obj = shown?.elements?.find((e) => e.kind === 'audio' && e.mediaId && e.playback?.autoplay && !e.hidden);
   const sound = shown?.transition?.sound ?? obj?.mediaId;
-  // An audio object stops when its slide is left unless it plays across slides (DeckCraft media.options acrossSlides).
-  if (!sound && next.audio.slideId && next.audio.slideId !== shown?.id) next = { ...next, audio: { mediaId: null, nonce: next.audio.nonce + 1 } };
   if (sound) {
     const own = !shown?.transition?.sound && obj ? obj : undefined;
-    next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1, ...(own?.playback ? { playback: own.playback } : {}), ...(own && !own.playback?.acrossSlides ? { slideId: shown!.id } : {}) } };
+    next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1, ...(own?.playback ? { playback: own.playback } : {}), ...(own && !own.playback?.acrossSlides ? { slideId: shown!.id } : {}), ...(shown?.transition?.sound === sound && shown.transition.soundLoop ? { loop: true } : {}) } };
   }
+  // [Stop Previous Sound]: the slide silences a sound still playing.
+  else if (shown?.transition?.stopSound && next.audio.mediaId) next = { ...next, audio: { mediaId: null, nonce: next.audio.nonce + 1 } };
+  // An audio object stops when its slide is left unless it plays across slides (DeckCraft media.options acrossSlides).
+  else if (next.audio.slideId && next.audio.slideId !== shown?.id) next = { ...next, audio: { mediaId: null, nonce: next.audio.nonce + 1 } };
   const actions = next.live.slide?.actions;
   if (actions?.length) next = runActions(next, actions, now ?? 0);
   if (now != null && next.cursor && next.cursor.presentationId !== prevPres) {
