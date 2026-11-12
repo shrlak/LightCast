@@ -298,6 +298,8 @@ export interface SlideElement {
   picture?: PictureAdjust;
   /** Picture Styles preset. */
   pictureStyle?: string;
+  /** An animated GIF held on its first frame (DeckCraft media.gifPlay). */
+  gifPaused?: boolean;
   /** Picture Format › Crop › Crop to Shape: the preset the picture is cut to. */
   maskShape?: string;
   playback?: MediaPlayback;

@@ -22,6 +22,7 @@ import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effe
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
+import { pictureLookCss } from './pictureStyles';
 import { useAutoTextBoxes, useFontEpoch } from './textBoxLayout';
 import { elementTextStyle } from '../domain/textBoxLayout';
 import { fitTextNode, type TextLayout } from '../domain/boundedTextLayout';
@@ -245,9 +246,28 @@ const PICTURE_STYLES: Record<string, CSSProperties> = {
   tilted: { transform: 'perspective(1000px) rotateY(-14deg)', boxShadow: '12px 10px 20px rgba(0,0,0,.45)' },
   beveled: { boxShadow: 'inset 4px 4px 8px rgba(255,255,255,.5), inset -4px -4px 8px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.4)' },
 };
-/** Picture Format › Picture Styles. */
+/** Picture Format › Picture Styles from earlier versions (still drawn; the gallery offers DeckCraft's 24, see pictureStyles). */
 export const PICTURE_STYLE_IDS = Object.keys(PICTURE_STYLES);
-const pictureStyleCss = (id: string | undefined): CSSProperties => (id ? PICTURE_STYLES[id] ?? {} : {});
+const pictureStyleCss = (id: string | undefined, w?: number, h?: number): CSSProperties => (id ? pictureLookCss(id, w, h) ?? PICTURE_STYLES[id] ?? {} : {});
+/** Picture Border › Dashes as a CSS outline style. */
+const OUTLINE_DASH: Record<string, string> = { sysDot: 'dotted', dot: 'dotted', sysDash: 'dashed', dash: 'dashed', dashDot: 'dashed', lgDash: 'dashed', lgDashDot: 'dashed', lgDashDotDot: 'dashed' };
+
+/** A paused animated GIF: its first frame, drawn once into a canvas (an <img> always animates). */
+function StillPicture({ el, url, box }: { el: SlideElement; url: string; box: CSSProperties }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      const c = ref.current;
+      if (!c) return;
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext('2d')?.drawImage(img, 0, 0);
+    };
+    img.src = url;
+  }, [url]);
+  return <canvas ref={ref} aria-label={el.alt ?? ''} style={{ ...box, ...pictureStyleCss(el.pictureStyle, el.w, el.h), objectFit: el.fit ?? 'contain' }} />;
+}
 
 /** A video object: in a slide show it follows its playback settings (start / end, loop, volume, sound). */
 function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; style: CSSProperties; live: boolean }) {
@@ -295,8 +315,9 @@ export function ElementView({ el }: { el: SlideElement }) {
   // While a picture is still loading nothing is drawn (a placeholder box would flash); the slide waits for it, see useReadySlide.
   if (el.kind === 'image') {
     if (!url) return null;
+    if (el.gifPaused) return <StillPicture el={el} url={url} box={box} />;
     const mask = el.maskShape ? shapeGeometry(el.maskShape, el.w, el.h)?.paths.map((q) => q.d).join(' ') : undefined;
-    const style = { ...box, ...pictureStyleCss(el.pictureStyle), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px solid ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}), ...(mask ? { clipPath: `path('${mask}')` } : {}) };
+    const style = { ...box, ...pictureStyleCss(el.pictureStyle, el.w, el.h), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px ${OUTLINE_DASH[el.dash ?? ''] ?? 'solid'} ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}), ...(mask ? { clipPath: `path('${mask}')` } : {}) };
     const c = el.crop;
     if (!c || c.every((v) => !v)) return <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ ...style, objectFit: el.fit ?? 'contain' }} />;
     // Cropped: the picture stretched so its kept part fills the box.

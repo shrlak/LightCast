@@ -1912,3 +1912,7 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 /* Animation Pane: the paragraph steps of a 단락별로 build, under their effect. */
 .anim-list li.anim-sub { padding-top: 2px; padding-bottom: 2px; font-size: 11.5px; }
 .anim-list li.anim-sub .anim-name { padding-left: 14px; color: #605e5c; white-space: nowrap; text-overflow: ellipsis; }
+
+/* Picture Format › Picture Styles: DeckCraft's 24 styles, six to a row, drawn on a small landscape. */
+.pic-style-grid.six { grid-template-columns: repeat(6, 64px); }
+.pic-style-grid.six .pic-style span { background: linear-gradient(165deg, #d9efe2 0 55%, #2e9e66 55% 100%); }
