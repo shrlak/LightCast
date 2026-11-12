@@ -5,12 +5,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ElementAction, MediaPlayback, Presentation, Slide, SlideElement } from '../../domain/types';
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
-import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { sections } from '../../domain/sections';
 import { withMaster } from '../../domain/master';
-import { albumSlides, readAlbum, replaceAlbum, type AlbumPicture } from '../../domain/photoAlbum';
+import { PhotoAlbumDialog } from './albumDialog';
+import { MediaPanel } from './mediaPanel';
 import { nodesFromText, smartArtElements, smartArtOwner, relayoutSmartArt, textFromNodes, type SmartArtSpec } from '../../domain/smartArt';
 import { smartArtCatalog, thesaurus } from '../../engine';
 import { SlideCanvas } from '../SlideCanvas';
@@ -243,65 +243,6 @@ function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   );
 }
 
-// ── Insert › Photo Album ──────────────────────────────────────────────────────────────────────
-function PhotoAlbumDialog({ ed, onClose, edit }: { ed: Ed; onClose: () => void; edit?: boolean }) {
-  // Edit Photo Album: the album of the current slide (or the presentation's first album).
-  const albumId = edit ? (ed.slide?.album?.id ?? ed.p?.slides.find((x) => x.album)?.album?.id) : undefined;
-  const existing = albumId && ed.p ? readAlbum(ed.p.slides, albumId) : null;
-  const [pics, setPics] = useState<AlbumPicture[]>(existing?.pictures ?? []);
-  const [per, setPer] = useState<1 | 2 | 4>(existing?.options.per ?? 1);
-  const [titles, setTitles] = useState(existing?.options.titles ?? false);
-  const [captions, setCaptions] = useState(existing?.options.captions ?? false);
-  const [frame, setFrame] = useState<string>(existing?.options.frame ?? '');
-  const [at, setAt] = useState<number | null>(null);
-  const input = useRef<HTMLInputElement>(null);
-  if (edit && !existing) return <Dialog title="사진 앨범 편집" onClose={onClose}><p>이 프레젠테이션에 사진 앨범이 없습니다. 삽입 › 사진 앨범으로 먼저 만드세요.</p></Dialog>;
-  const addFiles = async (files: File[]) => {
-    const added: AlbumPicture[] = [];
-    for (const f of files) {
-      const id = uid('m');
-      await putMedia(id, f);
-      ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image' } });
-      added.push({ mediaId: id, name: f.name });
-    }
-    setPics((cur) => [...cur, ...added]);
-  };
-  const move = (d: -1 | 1) => {
-    if (at == null) return;
-    const j = at + d;
-    if (j < 0 || j >= pics.length) return;
-    const next = [...pics];
-    [next[at], next[j]] = [next[j], next[at]];
-    setPics(next);
-    setAt(j);
-  };
-  const ok = () => {
-    if (!pics.length || !ed.p) return;
-    const o = { per, frame, titles, captions };
-    if (existing && albumId) ed.updatePres({ slides: replaceAlbum(ed.p.slides, albumId, pics, o) });
-    else insertSlides(ed, albumSlides(pics, o, ed.slide?.group ?? '사진 앨범'));
-    onClose();
-  };
-  return (
-    <Dialog title={existing ? '사진 앨범 편집' : '사진 앨범'} onClose={onClose} onOk={ok} okLabel={existing ? '업데이트' : '만들기'} okDisabled={!pics.length || !ed.canEdit} wide>
-      <div className="dlg-row"><button type="button" onClick={() => input.current?.click()}>파일/디스크…</button><span>{pics.length ? `그림 ${pics.length}개` : '앨범에 넣을 그림을 고르세요'}</span></div>
-      <div className="dlg-list">{pics.map((f, i) => <button key={`${f.mediaId}-${i}`} type="button" className={at === i ? 'on' : ''} onClick={() => setAt(i)}>{i + 1}. {f.name}</button>)}</div>
-      <div className="dlg-row">
-        <button type="button" disabled={at == null || at === 0} onClick={() => move(-1)}>▲</button>
-        <button type="button" disabled={at == null || at === pics.length - 1} onClick={() => move(1)}>▼</button>
-        <button type="button" disabled={at == null} onClick={() => { if (at == null) return; setPics(pics.filter((_, j) => j !== at)); setAt(null); }}>제거</button>
-      </div>
-      <div className="dlg-grid3">
-        <Field label="그림 레이아웃"><select value={per} onChange={(e) => setPer(Number(e.target.value) as 1 | 2 | 4)}><option value={1}>그림 1개</option><option value={2}>그림 2개</option><option value={4}>그림 4개</option></select></Field>
-        <Field label="프레임 모양"><select value={frame} onChange={(e) => setFrame(e.target.value)}><option value="">사각형</option><option value="rounded">둥근 사각형</option><option value="simpleFrame">단순형 프레임, 흰색</option><option value="softEdge">부드러운 가장자리 사각형</option><option value="shadowRect">그림자 사각형</option></select></Field>
-      </div>
-      <Check label="제목 포함" checked={titles} onChange={setTitles} />
-      <Check label="모든 그림 아래에 캡션 넣기" checked={captions} onChange={setCaptions} />
-      <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
-    </Dialog>
-  );
-}
-
 // ── Insert › Action ───────────────────────────────────────────────────────────────────────────
 function ActionDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const el = ed.selEls[0];
@@ -490,11 +431,12 @@ function PlaybackDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const ok = () => {
     const clean = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined && x !== false && x !== 0)) as MediaPlayback;
     if (v.volume === 0) clean.volume = 0;
+    if (!clean.bookmarks?.length) delete clean.bookmarks;
     ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, playback: Object.keys(clean).length ? clean : undefined } : e)));
     onClose();
   };
   return (
-    <Dialog title={audio ? '오디오 재생' : '비디오 재생'} onClose={onClose} onOk={ok} okDisabled={!ed.canEdit}>
+    <Dialog title={audio ? '오디오 재생' : '비디오 재생'} onClose={onClose} onOk={ok} okDisabled={!ed.canEdit} wide>
       <Field label="시작"><select value={v.autoplay ? 'auto' : 'click'} onChange={(e) => set({ autoplay: e.target.value === 'auto' || undefined })}><option value="click">클릭할 때</option><option value="auto">자동 실행</option></select></Field>
       <div className="dlg-grid3">
         <Field label="볼륨"><select value={v.muted ? 'mute' : String(v.volume ?? 1)} onChange={(e) => set(e.target.value === 'mute' ? { muted: true } : { muted: undefined, volume: Number(e.target.value) })}><option value="0.25">낮게</option><option value="0.6">중간</option><option value="1">높게</option><option value="mute">음소거</option></select></Field>
@@ -516,6 +458,8 @@ function PlaybackDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           : <Check label="전체 화면 재생" checked={!!v.fullScreen} onChange={(on) => set({ fullScreen: on || undefined })} />}
       </div>
       {!audio && <Field label="포스터 프레임 (초 — 재생 전 보여 줄 장면)"><Num value={v.poster ?? 0} min={0} step={0.5} onChange={(n) => set({ poster: n || undefined })} /></Field>}
+      <MediaPanel el={el} v={v} set={set} />
+      {audio && <Check label="쇼 동안 숨기기" checked={!!v.hideDuringShow} onChange={(on) => set({ hideDuringShow: on || undefined })} />}
     </Dialog>
   );
 }
@@ -526,8 +470,8 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'setupShow': return <SetupShowDialog ed={ed} onClose={onClose} />;
     case 'customShows': return <CustomShowsDialog ed={ed} onClose={onClose} />;
     case 'smartArt': return <SmartArtDialog ed={ed} onClose={onClose} />;
-    case 'photoAlbum': return <PhotoAlbumDialog ed={ed} onClose={onClose} />;
-    case 'albumEdit': return <PhotoAlbumDialog ed={ed} onClose={onClose} edit />;
+    case 'photoAlbum': return <PhotoAlbumDialog ed={ed} onClose={onClose} onInsert={(add) => insertSlides(ed, add)} />;
+    case 'albumEdit': return <PhotoAlbumDialog ed={ed} onClose={onClose} edit onInsert={(add) => insertSlides(ed, add)} />;
     case 'action': return <ActionDialog ed={ed} onClose={onClose} />;
     case 'reuse': return <ReuseDialog ed={ed} onClose={onClose} />;
     case 'outline': return <OutlineDialog ed={ed} onClose={onClose} />;

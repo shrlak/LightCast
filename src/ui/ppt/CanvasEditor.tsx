@@ -71,6 +71,8 @@ export interface ViewOptions {
   smartGuides?: boolean;
   /** View › Color/Grayscale › 회색조: the editor shows the slides in grey (the slides are unchanged). */
   grayscale?: boolean;
+  /** 회색조: slide pictures everywhere (editor, thumbnails, sorter, reading view, print) in grayscale. */
+  gray?: boolean;
 }
 
 type Drag =

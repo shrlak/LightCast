@@ -85,6 +85,10 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [view, setViewState] = useState<ViewOptions>(() => { try { return JSON.parse(localStorage.getItem('fc.pptView') ?? '{}') as ViewOptions; } catch { return {}; } });
   const setView = (v: ViewOptions) => { setViewState(v); try { localStorage.setItem('fc.pptView', JSON.stringify(v)); } catch { /* storage unavailable */ } };
   const [pane, setPane] = useState<TaskPane>(null);
+  useEffect(() => {
+    document.body.classList.toggle('gray-view', !!view.gray);
+    return () => document.body.classList.remove('gray-view');
+  }, [view.gray]);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);

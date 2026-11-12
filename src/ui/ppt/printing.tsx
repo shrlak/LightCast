@@ -5,8 +5,8 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { HandoutMaster, NotesMaster, PagePlaceholders, Presentation, Slide } from '../../domain/types';
-import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
+import { colorFilter, printPages, type PrintOptions } from '../../domain/filePrint';
 import { SlideCanvas } from '../SlideCanvas';
 import { Check, Dialog, Field } from './dialogs';
 import type { Ed } from './editor';
@@ -35,39 +35,42 @@ function PageChrome({ m, page, children }: { m: PagePlaceholders; page: number; 
   );
 }
 
-function SlideBox({ ed, p, s }: { ed: Ed; p: Presentation; s: Slide }) {
+function SlideBox({ ed, p, s, o }: { ed: Ed; p: Presentation; s: Slide; o?: PrintOptions }) {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
-  return <div className="print-slide"><SlideCanvas slide={s} theme={theme} background={resolveBackground(s, p)} /></div>;
+  return <div className={`print-slide ${o && !o.frame ? 'noframe' : ''}`} style={{ filter: o ? colorFilter(o.color) : undefined }}><SlideCanvas slide={s} theme={theme} background={resolveBackground(s, p)} /></div>;
 }
 
-/** The pages to print, laid out like PowerPoint's print preview. */
-export function PrintPages({ ed, mode, handout, notes }: { ed: Ed; mode: PrintMode; handout?: HandoutMaster; notes?: NotesMaster }) {
+/** The pages to print, laid out like PowerPoint's print preview. `o` (File › Print) picks the slides, colour and frame. */
+export function PrintPages({ ed, mode, handout, notes, o, limit }: { ed: Ed; mode: PrintMode; handout?: HandoutMaster; notes?: NotesMaster; o?: PrintOptions; limit?: number }) {
   const p = ed.p;
   if (!p || !ed.theme) return null;
-  const slides = sequence(p).map((x) => x.slide).filter((s) => !s.disabled);
-  if (mode === 'slides') return <>{slides.map((s, i) => <div key={s.id} className="print-page slide-page"><SlideBox ed={ed} p={p} s={s} /><span className="print-num">{i + 1}</span></div>)}</>;
+  const all = printPages(p, o ?? { range: '', includeHidden: false }).pages;
+  // `limit` (the print preview) shows only the first sheets.
+  const per = mode === 'handout' ? o?.perPage ?? { ...DEFAULT_HANDOUT, ...handout }.perPage : 1;
+  const pages = limit ? all.slice(0, limit * per) : all;
+  if (mode === 'slides') return <>{pages.map((x) => <div key={x.slide.id} className={`print-page slide-page ${o && !o.fit ? 'no-fit' : ''}`}><SlideBox ed={ed} p={p} s={x.slide} o={o} /><span className="print-num">{x.number}</span></div>)}</>;
   if (mode === 'notes') {
     const m = { ...DEFAULT_NOTES, ...notes };
-    return <>{slides.map((s, i) => (
-      <PageChrome key={s.id} m={m} page={i + 1}>
-        <div className="notes-slide"><SlideBox ed={ed} p={p} s={s} /></div>
-        <div className="notes-text">{s.notes || ''}</div>
+    return <>{pages.map((x, i) => (
+      <PageChrome key={x.slide.id} m={m} page={i + 1}>
+        <div className="notes-slide"><SlideBox ed={ed} p={p} s={x.slide} o={o} /></div>
+        <div className="notes-text">{x.slide.notes || ''}</div>
       </PageChrome>
     ))}</>;
   }
-  const m = { ...DEFAULT_HANDOUT, ...handout };
+  const m = { ...DEFAULT_HANDOUT, ...handout, ...(o ? { perPage: o.perPage } : {}) };
   const [cols, rows] = handoutGrid(m.perPage);
-  return <>{paginate(slides, m.perPage).map((page, i) => (
+  return <>{paginate(pages, m.perPage).map((page, i) => (
     <PageChrome key={i} m={m} page={i + 1}>
       <div className={`handout-grid ${m.perPage === 3 ? 'with-lines' : ''}`} style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)` }}>
-        {page.map((s) => <div key={s.id} className="handout-cell"><SlideBox ed={ed} p={p} s={s} />{m.perPage === 3 && <div className="handout-lines">{Array.from({ length: 6 }, (_, k) => <i key={k} />)}</div>}</div>)}
+        {page.map((x) => <div key={x.slide.id} className="handout-cell"><SlideBox ed={ed} p={p} s={x.slide} o={o} />{m.perPage === 3 && <div className="handout-lines">{Array.from({ length: 6 }, (_, k) => <i key={k} />)}</div>}</div>)}
       </div>
     </PageChrome>
   ))}</>;
 }
 
 /** Renders the pages off screen and opens the print dialog; done when printing ends. */
-export function PrintRun({ ed, mode, onDone }: { ed: Ed; mode: PrintMode; onDone: () => void }) {
+export function PrintRun({ ed, mode, onDone, o }: { ed: Ed; mode: PrintMode; onDone: () => void; o?: PrintOptions }) {
   useEffect(() => {
     document.body.classList.add('printing');
     const done = () => { document.body.classList.remove('printing'); onDone(); };
@@ -76,11 +79,11 @@ export function PrintRun({ ed, mode, onDone }: { ed: Ed; mode: PrintMode; onDone
     const t = window.setTimeout(() => window.print(), 600);
     return () => { window.clearTimeout(t); window.removeEventListener('afterprint', done); document.body.classList.remove('printing'); };
   }, [onDone]);
-  const landscape = mode === 'slides' || (mode === 'handout' ? ed.p?.handoutMaster?.landscape : ed.p?.notesMaster?.landscape);
+  const landscape = mode === 'slides' || (o ? o.landscape : mode === 'handout' ? ed.p?.handoutMaster?.landscape : ed.p?.notesMaster?.landscape);
   return createPortal(
     <div id="print-root" className={landscape ? 'landscape' : ''}>
       <style>{`@page { size: A4 ${landscape ? 'landscape' : 'portrait'}; margin: 10mm; }`}</style>
-      <PrintPages ed={ed} mode={mode} handout={ed.p?.handoutMaster} notes={ed.p?.notesMaster} />
+      <PrintPages ed={ed} mode={mode} handout={ed.p?.handoutMaster} notes={ed.p?.notesMaster} o={o} />
     </div>,
     document.body,
   );

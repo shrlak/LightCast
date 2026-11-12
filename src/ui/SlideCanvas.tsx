@@ -376,6 +376,16 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
   const full = live && playing && pb.fullScreen ? { left: 0, top: 0, width: CANVAS_W, height: CANVAS_H, transform: 'none', zIndex: 5, background: '#000' } : {};
   const hidden = live && !playing && pb.hideDuringShow ? { visibility: 'hidden' as const } : {};
   const faded = gain < 1 ? { opacity: ((style.opacity as number | undefined) ?? 1) * gain } : {};
+  // Insert › Action › Play Media: a click (or pointing) at the object in the output window starts and pauses it.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const v = ref.current;
+      if (!v || (e as CustomEvent<{ id?: string }>).detail?.id !== el.id) return;
+      if (v.paused) v.play().catch(() => undefined); else v.pause();
+    };
+    window.addEventListener('lightcast:media', on);
+    return () => window.removeEventListener('lightcast:media', on);
+  }, [el.id]);
   // Output windows play without sound unless the video's sound is turned on (the room hears one copy).
   return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover', ...faded, ...full, ...hidden }} muted={live && pb.muted !== false} playsInline preload="metadata" />;
 }

@@ -205,6 +205,8 @@ export interface MediaPlayback {
   acrossSlides?: boolean;
   /** Play full screen: a video fills the slide while it plays. */
   fullScreen?: boolean;
+  /** Bookmarks on the clip (name, seconds), in time order: the playback preview jumps to them. */
+  bookmarks?: { name: string; t: number }[];
 }
 
 /** Picture Format adjustments; the shown picture is made from `original` by the engine. */
@@ -514,7 +516,7 @@ export interface Slide {
   lang?: string;
   noProof?: boolean;
   /** Insert › Photo Album: the album this slide belongs to (Edit Photo Album rebuilds it). */
-  album?: { id: string; per: 1 | 2 | 4; frame: string; titles: boolean; captions: boolean };
+  album?: { id: string; per: 1 | 2 | 4; frame: string; titles: boolean; captions: boolean; fit?: boolean; gray?: boolean };
   /** The Slide Master layout this slide was made from. */
   layoutId?: string;
   /** Character formatting of the slide's own text, one list of runs per line (ignored for a line they no longer spell). */
