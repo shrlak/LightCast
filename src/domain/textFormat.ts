@@ -136,3 +136,16 @@ export function formatSpan(text: string, a: number, b: number): [number, number]
   while (e < text.length && word.test(text[e])) e++;
   return s < a && a < e ? [s, e] : [0, text.length];
 }
+
+/**
+ * 모든 서식 지우기 (Ctrl+Space) on whole boxes, as DeckCraft's format.clear: the character formatting
+ * goes — every run's own, and the box's size, font, colour, bold, italic, lines, shadow, spacing,
+ * highlight and caps — and paragraph formatting (alignment, lists, spacing, columns) stays.
+ */
+export function clearTextFormat(el: SlideElement): Partial<SlideElement> {
+  return {
+    fontSize: undefined, fontFamily: undefined, color: undefined, bold: undefined, italic: undefined, underline: undefined, strike: undefined,
+    shadow: undefined, letterSpacing: undefined, highlight: undefined, caps: undefined, runs: undefined, maximizeFont: false, preferredFontSize: undefined,
+    ...(el.paragraphs ? { paragraphs: el.paragraphs.map(({ runs: _r, fontSize: _s, bold: _b, italic: _i, color: _c, ...p }) => p) } : {}),
+  };
+}

@@ -11,8 +11,8 @@ import { patchElement } from '../../domain/templates/convert';
 import { slideTheme } from '../SlideCanvas';
 import { activeTextEditor, onTextSelection } from '../RichTextEditor';
 import type { RunFormat } from '../../domain/richText';
-import { changeCase, mixedState, stepElementFont, stepFontSize, textSpans, type CaseKind } from '../../domain/textFormat';
-import { sizeOf, textValue, CLEAR_TEXT_FORMAT } from './ElementFormat';
+import { changeCase, clearTextFormat, mixedState, stepElementFont, stepFontSize, textSpans, type CaseKind } from '../../domain/textFormat';
+import { sizeOf, textValue } from './ElementFormat';
 import type { TextFormatValue } from './TextFormatPanel';
 
 export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'designer' | 'spelling' | 'revisions' | null;
@@ -156,7 +156,7 @@ export function textTarget(ed: Ed): TextTarget | null {
       onChangeCase: (k) => patchEls((e) => ({ text: changeCase(e.text ?? '', k) })),
       onClear: () => {
         if (editor) return editor.apply(CLEAR_RUN);
-        patchEls(() => CLEAR_TEXT_FORMAT);
+        patchEls(clearTextFormat);
       },
       els: texty,
       patchEach: patchEls,
@@ -178,7 +178,7 @@ export function textTarget(ed: Ed): TextTarget | null {
       onChange: (patch) => patchAll(() => toEl(patch)),
       onStep: (dir) => ed.setElements((els) => els.map((e) => (e.kind === 'text' ? stepped(e, dir) : e))),
       onChangeCase: (k) => patchAll((e) => ({ text: changeCase(e.text ?? '', k) })),
-      onClear: () => patchAll(() => CLEAR_TEXT_FORMAT),
+      onClear: () => patchAll(clearTextFormat),
       els: boxes,
       patchEach: patchAll,
     };

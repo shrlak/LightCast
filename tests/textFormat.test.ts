@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { changeCase, FONT_SIZES, formatSpan, listMarker, listMarkers, mixedState, stepElementFont, stepFontSize, textSpans } from '../src/domain/textFormat';
+import { changeCase, clearTextFormat, FONT_SIZES, formatSpan, listMarker, listMarkers, mixedState, stepElementFont, stepFontSize, textSpans } from '../src/domain/textFormat';
 import type { SlideElement } from '../src/domain/types';
 
 const pt = (px: number) => px / 2;
@@ -71,5 +71,15 @@ describe('PowerPoint text commands', () => {
     expect(formatSpan('Amazing grace', 7, 7)).toEqual([0, 13]);
     expect(formatSpan('Amazing grace', 0, 0)).toEqual([0, 13]);
     expect(formatSpan('Amazing grace', 9, 2)).toEqual([2, 9]);
+  });
+
+  it('Clear All Formatting removes character formatting only (format.clear)', () => {
+    const el: SlideElement = { id: 'b', kind: 'text', x: 0, y: 0, w: 400, h: 100, text: 'a\nb', fontSize: 80, bold: true, color: '#ff0000', fontFamily: 'Georgia',
+      align: 'left', list: 'bullet', lineHeight: 2, columns: 2, highlight: '#ffff00',
+      paragraphs: [{ text: 'a', fontSize: 40, bold: true, align: 'right', runs: [{ text: 'a', italic: true }] }, { text: 'b' }] };
+    const out = { ...el, ...clearTextFormat(el) };
+    expect([out.fontSize, out.bold, out.color, out.fontFamily, out.highlight]).toEqual([undefined, undefined, undefined, undefined, undefined]);
+    expect([out.align, out.list, out.lineHeight, out.columns]).toEqual(['left', 'bullet', 2, 2]);
+    expect(out.paragraphs).toEqual([{ text: 'a', align: 'right' }, { text: 'b' }]);
   });
 });

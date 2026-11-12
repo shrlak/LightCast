@@ -8,10 +8,10 @@ import { uid } from '../../domain/lyrics';
 import { assetUrl, slideTheme } from '../SlideCanvas';
 import { useMediaUrl } from '../hooks';
 import { patchElement } from '../../domain/templates/convert';
-import { CLEAR_TEXT_FORMAT, ElementFormat, elementPatch, sizeOf, textValue, type TableRange } from './ElementFormat';
+import { ElementFormat, elementPatch, sizeOf, textValue, type TableRange } from './ElementFormat';
 import { TextFormatPanel } from './TextFormatPanel';
 import { SlideContentEditor } from '../SlideContentEditor';
-import { changeCase } from '../../domain/textFormat';
+import { changeCase, clearTextFormat } from '../../domain/textFormat';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { PdfReadOnly } from '../PdfReadOnly';
 import { ProtectedMaterialNotice } from '../MaterialProtection';
@@ -126,7 +126,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
           }}
           onChange={boxMode ? (patch) => patchBoxes((e) => elementPatch(e, patch)) : ({ bold, ...rest }) => setStyle({ ...rest, ...(bold === undefined ? {} : { fontWeight: bold ? 700 : 400 }) })}
           onChangeCase={boxMode ? (kind) => patchBoxes((e) => ({ text: changeCase(e.text ?? '', kind) })) : (kind) => upd({ text: changeCase(slide.text, kind), ...(slide.title ? { title: changeCase(slide.title, kind) } : {}), ...(slide.subtext ? { subtext: changeCase(slide.subtext, kind) } : {}) })}
-          onClear={boxMode ? () => patchBoxes(() => CLEAR_TEXT_FORMAT) : () => upd({ style: undefined, preferredFontSize: undefined })}
+          onClear={boxMode ? () => patchBoxes(clearTextFormat) : () => upd({ style: undefined, preferredFontSize: undefined })}
           shortcuts={false}
         />
       </Section>

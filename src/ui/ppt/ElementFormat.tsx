@@ -4,7 +4,7 @@ import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { TextFormatPanel, type TextFormatValue } from './TextFormatPanel';
-import { changeCase } from '../../domain/textFormat';
+import { changeCase, clearTextFormat } from '../../domain/textFormat';
 import { AutoTextarea } from '../AutoTextarea';
 import type { ChartData as ChartModel, TableData } from '../../engine';
 
@@ -125,7 +125,7 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
             value={textValue(el)}
             onChange={(patch) => onChange(elementPatch(el, patch))}
             onChangeCase={(kind) => onChange({ text: changeCase(el.text ?? '', kind) })}
-            onClear={() => onChange(CLEAR_TEXT_FORMAT)}
+            onClear={() => onChange(clearTextFormat(el))}
           />
         </>
       )}
