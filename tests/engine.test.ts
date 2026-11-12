@@ -79,7 +79,7 @@ describe('Arrange', () => {
     expect(flipSelection(els, ['a'], 'horizontal')[0].flipH).toBe(true);
     const dup = duplicateSelection(els, ['b']);
     expect(dup.elements).toHaveLength(4);
-    expect(dup.elements[3].x).toBe(530);
+    expect(dup.elements[3].x).toBe(524); // 12 pt off, as DeckCraft's edit.duplicate
   });
   it('inserts preset shapes', () => {
     expect(makeShape('star5').shape).toBe('star5');

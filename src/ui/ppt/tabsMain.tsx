@@ -17,6 +17,7 @@ import { textTarget, useTextSelectionTick, type Ed } from './editor';
 import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { clipboardToElements, readSystemClipboard, type PasteMode } from './pasteObjects';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
+import { ARROW_KINDS, BEVELS, CAMERAS, DASHES, NO_EFFECTS, REFLECTIONS, SHADOW_PRESETS, shadowOf } from '../../domain/shapeEffects';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
 import { seedSmartArt } from './dialogsMore';
@@ -159,11 +160,17 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
             <MenuHead>두께</MenuHead>
             {[1, 2, 3, 4, 6, 9, 12, 18].map((w) => <MenuItem key={w} label={<span className="line-sample" style={{ borderTopWidth: Math.max(1, w / 2) }}>{w / 2} pt</span>} on={first?.strokeWidth === w} onClick={() => { set({ strokeWidth: w, stroke: first?.stroke ?? '#ffffff' }); close(); }} />)}
             <MenuHead>대시</MenuHead>
-            {(['solid', 'dash', 'dot', 'dashDot'] as const).map((d) => <MenuItem key={d} label={{ solid: '실선', dash: '파선', dot: '둥근 점선', dashDot: '파선-점선' }[d]} on={(first?.dash ?? 'solid') === d} onClick={() => { set({ dash: d === 'solid' ? undefined : d }); close(); }} />)}
+            {DASHES.map((d) => <MenuItem key={d.id} label={d.label} on={(first?.dash ?? 'solid') === d.id} onClick={() => { set({ dash: d.id === 'solid' ? undefined : d.id }); close(); }} />)}
             <MenuHead>화살표</MenuHead>
-            <MenuItem label="화살표 없음" onClick={() => { set({ arrowStart: undefined, arrowEnd: undefined }); close(); }} />
+            <MenuItem label="화살표 없음" onClick={() => { set({ arrowStart: undefined, arrowEnd: undefined, arrowStartKind: undefined, arrowEndKind: undefined }); close(); }} />
             <MenuItem label="끝 화살표 →" onClick={() => { set({ arrowStart: undefined, arrowEnd: true }); close(); }} />
             <MenuItem label="양쪽 화살표 ↔" onClick={() => { set({ arrowStart: true, arrowEnd: true }); close(); }} />
+            <MenuHead>화살표 머리 (끝)</MenuHead>
+            <div className="bevel-grid">{ARROW_KINDS.map((k) => <button key={k.id} type="button" className={`mini-btn ${(first?.arrowEndKind ?? 'triangle') === k.id ? 'on' : ''}`} onClick={() => { set({ arrowEnd: true, arrowEndKind: k.id }); close(); }}>{k.label.replace(' 화살표', '')}</button>)}</div>
+            <MenuHead>화살표 머리 (시작)</MenuHead>
+            <div className="bevel-grid">{ARROW_KINDS.map((k) => <button key={k.id} type="button" className={`mini-btn ${(first?.arrowStartKind ?? 'triangle') === k.id ? 'on' : ''}`} onClick={() => { set({ arrowStart: true, arrowStartKind: k.id }); close(); }}>{k.label.replace(' 화살표', '')}</button>)}</div>
+            <MenuHead>화살표 크기</MenuHead>
+            <div className="rb-chip-row">{([['sm', '작게'], ['med', '보통'], ['lg', '크게']] as const).map(([v, l]) => <button key={v} type="button" className={`mini-btn ${(first?.arrowSize ?? 'med') === v ? 'on' : ''}`} onClick={() => { set({ arrowSize: v }); close(); }}>{l}</button>)}</div>
           </>
         )} />
         <DropButton icon={RI.effects} label="도형 효과" disabled={none} wide render={(close) => <EffectsMenu first={first} set={set} close={close} />} />
@@ -212,31 +219,64 @@ function FillExtras({ ed, first, set, close }: { ed: Ed; first?: SlideElement; s
   );
 }
 
-/** Shape Format › Shape Effects: shadow, reflection, glow, soft edges, bevel, 3-D rotation. */
+/** Shape Format › Shape Effects: shadow presets and options, reflection, glow, soft edges, bevel presets, 3-D rotation presets (DeckCraft's shape.effects). */
 export function EffectsMenu({ first, set, close }: { first?: SlideElement; set: (p: Partial<SlideElement>) => void; close: () => void }) {
   const GLOWS = ['#ffd966', '#9cc3e6', '#a9d18e', '#f4b183', '#ff7c80', '#c9b6f0'];
-  const ROT: [string, { x: number; y: number } | undefined][] = [['없음', undefined], ['평행 투시: 왼쪽', { x: 0, y: 25 }], ['평행 투시: 오른쪽', { x: 0, y: -25 }], ['원근감: 위', { x: 30, y: 0 }], ['원근감: 아래', { x: -30, y: 0 }], ['등각: 왼쪽 아래', { x: 20, y: 30 }]];
+  const sh = shadowOf(first ?? ({} as SlideElement));
+  const opt = (patch: Partial<NonNullable<SlideElement['shadowOpts']>>) => set({ dropShadow: true, shadowKind: first?.shadowKind ?? 'outer', shadowOpts: { ...first?.shadowOpts, ...patch } });
+  const ropt = (patch: Partial<NonNullable<SlideElement['reflectionOpts']>>) => set({ reflection: true, reflectionOpts: { ...first?.reflectionOpts, ...patch } });
+  const rot = first?.rotate3d;
+  const tilt = (patch: Partial<{ x: number; y: number; z: number }>) => set({ camera3d: undefined, rotate3d: { x: 0, y: 0, ...rot, ...patch } });
   return (
     <div className="effects-menu">
       <MenuHead>그림자</MenuHead>
-      <MenuItem label="그림자 없음" on={!first?.dropShadow} onClick={() => { set({ dropShadow: undefined, shadowKind: undefined }); close(); }} />
-      <MenuItem label="바깥쪽" on={!!first?.dropShadow && (first.shadowKind ?? 'outer') === 'outer'} onClick={() => { set({ dropShadow: true, shadowKind: 'outer' }); close(); }} />
-      <MenuItem label="안쪽" on={first?.shadowKind === 'inner'} onClick={() => { set({ dropShadow: true, shadowKind: 'inner' }); close(); }} />
-      <MenuItem label="원근감" on={first?.shadowKind === 'perspective'} onClick={() => { set({ dropShadow: true, shadowKind: 'perspective' }); close(); }} />
+      <MenuItem label="그림자 없음" on={!first?.dropShadow} onClick={() => { set({ dropShadow: undefined, shadowKind: undefined, shadowOpts: undefined }); close(); }} />
+      {(Object.keys(SHADOW_PRESETS) as (keyof typeof SHADOW_PRESETS)[]).map((k) => (
+        <MenuItem key={k} label={SHADOW_PRESETS[k].label} on={!!first?.dropShadow && (first.shadowKind ?? 'outer') === k} onClick={() => { set({ dropShadow: true, shadowKind: k, shadowOpts: undefined }); close(); }} />
+      ))}
+      {sh && (
+        <div className="rb-chip-row" title="그림자 옵션">
+          <label className="rb-check">투명도 <input type="number" min={0} max={100} step={5} style={{ width: 52 }} value={Math.round(sh.transparency * 100)} onChange={(e) => opt({ transparency: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })} />%</label>
+          <label className="rb-check">흐림 <input type="number" min={0} max={100} style={{ width: 48 }} value={sh.blur} onChange={(e) => opt({ blur: Math.max(0, Number(e.target.value)) })} /></label>
+          <label className="rb-check">간격 <input type="number" min={0} max={100} style={{ width: 48 }} value={sh.dist} onChange={(e) => opt({ dist: Math.max(0, Number(e.target.value)) })} /></label>
+          <label className="rb-check">각도 <input type="number" min={0} max={359} style={{ width: 52 }} value={sh.dir} onChange={(e) => opt({ dir: ((Number(e.target.value) % 360) + 360) % 360 })} />°</label>
+          <input type="color" title="그림자 색" value={sh.color} onChange={(e) => opt({ color: e.target.value })} />
+        </div>
+      )}
       <MenuHead>반사</MenuHead>
-      <MenuItem label={first?.reflection ? '반사 없음' : '근접 반사'} onClick={() => { set({ reflection: first?.reflection ? undefined : true }); close(); }} />
+      <MenuItem label="반사 없음" on={!first?.reflection} onClick={() => { set({ reflection: undefined, reflectionOpts: undefined }); close(); }} />
+      {REFLECTIONS.map((r) => <MenuItem key={r.id} label={r.label} on={!!first?.reflection && first.reflectionOpts?.size === r.size} onClick={() => { set({ reflection: true, reflectionOpts: { ...first?.reflectionOpts, size: r.size, dist: r.dist } }); close(); }} />)}
+      {first?.reflection && (
+        <div className="rb-chip-row">
+          <label className="rb-check">투명도 <input type="number" min={0} max={100} step={5} style={{ width: 52 }} value={Math.round((first.reflectionOpts?.transparency ?? 0.6) * 100)} onChange={(e) => ropt({ transparency: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })} />%</label>
+          <label className="rb-check">크기 <input type="number" min={0} max={100} step={5} style={{ width: 52 }} value={Math.round((first.reflectionOpts?.size ?? 0.45) * 100)} onChange={(e) => ropt({ size: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })} />%</label>
+          <label className="rb-check">간격 <input type="number" min={0} max={100} style={{ width: 48 }} value={first.reflectionOpts?.dist ?? 4} onChange={(e) => ropt({ dist: Math.max(0, Number(e.target.value)) })} /></label>
+        </div>
+      )}
       <MenuHead>네온</MenuHead>
       <div className="rb-chip-row">{GLOWS.map((c) => <button key={c} type="button" className="rb-chip" style={{ background: c }} onClick={() => { set({ glow: c }); close(); }} />)}</div>
-      <div className="rb-chip-row">{[8, 18, 32].map((g) => <button key={g} type="button" className="mini-btn" onClick={() => { set({ glowSize: g, glow: first?.glow ?? GLOWS[0] }); close(); }}>{g / 2} pt</button>)}</div>
-      <MenuItem label="네온 없음" onClick={() => { set({ glow: undefined, glowSize: undefined }); close(); }} />
+      <div className="rb-chip-row">{[8, 18, 32, 48].map((g) => <button key={g} type="button" className={`mini-btn ${first?.glowSize === g ? 'on' : ''}`} onClick={() => { set({ glowSize: g, glow: first?.glow ?? GLOWS[0] }); close(); }}>{g / 2} pt</button>)}</div>
+      {first?.glow && <div className="rb-chip-row"><label className="rb-check">투명도 <input type="number" min={0} max={100} step={5} style={{ width: 52 }} value={Math.round((first.glowAlpha ?? 0.6) * 100)} onChange={(e) => set({ glowAlpha: Math.max(0, Math.min(100, Number(e.target.value))) / 100 })} />%</label></div>}
+      <MenuItem label="네온 없음" onClick={() => { set({ glow: undefined, glowSize: undefined, glowAlpha: undefined }); close(); }} />
       <MenuHead>부드러운 가장자리</MenuHead>
-      <div className="rb-chip-row">{[0, 5, 10, 25, 50].map((v) => <button key={v} type="button" className={`mini-btn ${(first?.softEdge ?? 0) === v ? 'on' : ''}`} onClick={() => { set({ softEdge: v || undefined }); close(); }}>{v ? `${v / 2} pt` : '없음'}</button>)}</div>
+      <div className="rb-chip-row">{[0, 2, 5, 10, 25, 50].map((v) => <button key={v} type="button" className={`mini-btn ${(first?.softEdge ?? 0) === v ? 'on' : ''}`} onClick={() => { set({ softEdge: v || undefined }); close(); }}>{v ? `${v / 2} pt` : '없음'}</button>)}</div>
       <MenuHead>입체 효과</MenuHead>
-      <MenuItem label={first?.bevel ? '입체 효과 없음' : '원형 입체'} onClick={() => { set({ bevel: first?.bevel ? undefined : true }); close(); }} />
+      <MenuItem label="입체 효과 없음" on={!first?.bevel} onClick={() => { set({ bevel: undefined, bevelKind: undefined }); close(); }} />
+      <div className="bevel-grid">{BEVELS.map((b) => <button key={b.id} type="button" className={`mini-btn ${first?.bevel && (first.bevelKind ?? 'circle') === b.id ? 'on' : ''}`} onClick={() => { set({ bevel: true, bevelKind: b.id }); close(); }}>{b.label}</button>)}</div>
       <MenuHead>3차원 회전</MenuHead>
-      {ROT.map(([l, r]) => <MenuItem key={l} label={l} on={JSON.stringify(first?.rotate3d) === JSON.stringify(r)} onClick={() => { set({ rotate3d: r }); close(); }} />)}
+      <MenuItem label="회전 없음" on={!rot} onClick={() => { set({ rotate3d: undefined, camera3d: undefined }); close(); }} />
+      {(['평행', '원근감', '오블리크'] as const).map((g) => (
+        <div key={g}>
+          <MenuHead>{g}</MenuHead>
+          <div className="bevel-grid">{CAMERAS.filter((c) => c.group === g).map((c) => <button key={c.id} type="button" className={`mini-btn ${first?.camera3d === c.id ? 'on' : ''}`} title={c.label} onClick={() => { set({ camera3d: c.id, rotate3d: { x: c.x, y: c.y, ...(c.z ? { z: c.z } : {}), ...(c.persp ? { persp: true } : {}) } }); close(); }}>{c.label.replace(/^[^:]+: /, '')}</button>)}</div>
+        </div>
+      ))}
+      <div className="rb-chip-row" title="3차원 회전 (X · Y · Z)">
+        {(['x', 'y', 'z'] as const).map((k) => <label key={k} className="rb-check">{k.toUpperCase()} <input type="number" step={5} style={{ width: 52 }} value={rot?.[k] ?? 0} onChange={(e) => tilt({ [k]: Number(e.target.value) })} />°</label>)}
+        <label className="rb-check"><input type="checkbox" checked={!!rot?.persp} onChange={(e) => set({ camera3d: undefined, rotate3d: { x: 0, y: 0, ...rot, persp: e.target.checked || undefined } })} /> 원근감</label>
+      </div>
       <MenuSep />
-      <MenuItem label="효과 모두 없애기" onClick={() => { set({ dropShadow: undefined, shadowKind: undefined, glow: undefined, glowSize: undefined, reflection: undefined, softEdge: undefined, bevel: undefined, rotate3d: undefined }); close(); }} />
+      <MenuItem label="효과 모두 없애기" onClick={() => { set(NO_EFFECTS); close(); }} />
     </div>
   );
 }
@@ -311,7 +351,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
       <Group label="그리기">
         <Gallery rows={3} className="rb-shape-strip">
           {QUICK_SHAPES.map((n) => <button key={n} type="button" className="shape-cell" title={shapeLabel(n, shapeCatalog().find((p) => p.name === n)?.label ?? n)} onClick={() => !blocked(ed) && ed.setTool({ kind: 'shape', name: n })}><ShapeThumb name={n} size={16} /></button>)}
-          <DropButton icon={<span className="rb-more">▾</span>} title="모든 도형" render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} wide />
+          <DropButton icon={<span className="rb-more">▾</span>} title="모든 도형" render={(close) => <ShapeGallery onPick={(n, keep) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n, keep }); close(); }} onFreeform={(scribble, curve) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble, curve }); close(); }} />} wide />
         </Gallery>
         <DropButton big icon={RI.arrange} label="정렬" render={(close) => <ArrangeMenu ed={ed} close={close} />} />
         <ShapeStyleButtons ed={ed} big />
@@ -444,7 +484,7 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
         )} />
       </Group>
       <Group label="일러스트레이션">
-        <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} />
+        <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n, keep) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n, keep }); close(); }} onFreeform={(scribble, curve) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble, curve }); close(); }} />} />
         <DropButton big icon={RI.icons} label="아이콘" wide render={(close) => <IconGallery onPick={(n) => { add(makeIcon(n)); close(); }} />} />
         <Big icon="⧉" label="SmartArt" title="SmartArt 그래픽 삽입" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('smartArt')} />
         <DropButton big icon={RI.chart} label="차트" render={(close) => <>{CHARTS.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { add(makeChart(k)); close(); }} />)}</>} />

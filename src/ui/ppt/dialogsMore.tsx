@@ -19,6 +19,8 @@ import { Check, Dialog, Field, Num } from './dialogs';
 import { SMARTART_CATEGORIES, SMARTART_LAYOUT, SMARTART_STYLE, smartArtColorLabel } from './ko';
 import type { DialogKind, Ed } from './editor';
 import { GridGuidesDialog, ViewZoomDialog } from './viewDialogs';
+import { selectionUnits } from '../../domain/editOps';
+import { aspectLocked, fromCm, sizeUnit, toCm, type SizeSpec } from '../../domain/shapeOps';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
@@ -493,6 +495,47 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'thesaurus': return <ThesaurusDialog ed={ed} onClose={onClose} />;
     case 'zoom': return <ZoomDialog ed={ed} onClose={onClose} />;
     case 'audio': return <PlaybackDialog ed={ed} onClose={onClose} />;
+    case 'sizePosition': return <SizePositionDialog ed={ed} onClose={onClose} />;
     default: return null;
   }
+}
+
+/** Shape Format › 크기 ⤡: position, size, scale (%), rotation and 가로 세로 비율 고정 (DeckCraft's shape.sizePosition). */
+function SizePositionDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
+  const units = selectionUnits(ed.elements, ed.selEls.map((e) => e.id));
+  const first = units[0];
+  const one = first && first.members.length === 1 ? ed.elements.find((e) => e.id === first.members[0]) : undefined;
+  const [v, setV] = useState(() => ({
+    x: toCm(first?.box.x ?? 0), y: toCm(first?.box.y ?? 0), w: toCm(first?.box.w ?? 0), h: toCm(first?.box.h ?? 0),
+    rot: one?.rotation ?? 0, scaleW: 100, scaleH: 100, lock: one ? aspectLocked(one) : false,
+  }));
+  const [edited, setEdited] = useState<Set<string>>(new Set());
+  const set = (k: keyof typeof v, n: number | boolean) => { setV((o) => ({ ...o, [k]: n })); setEdited((o) => new Set(o).add(k)); };
+  if (!first) return <Dialog title="크기 및 위치" onClose={onClose}><p>크기를 바꿀 개체를 고르세요.</p></Dialog>;
+  const apply = () => {
+    const has = (k: string) => edited.has(k);
+    // Only what was changed is written; scale (%) is relative to the size when the dialog opened.
+    const spec: SizeSpec = {
+      ...(has('x') ? { x: fromCm(v.x) } : {}), ...(has('y') ? { y: fromCm(v.y) } : {}),
+      ...(has('w') ? { w: fromCm(v.w) } : {}), ...(has('h') ? { h: fromCm(v.h) } : {}),
+      ...(has('rot') ? { rot: v.rot } : {}), ...(has('scaleW') ? { scaleW: v.scaleW } : {}), ...(has('scaleH') ? { scaleH: v.scaleH } : {}),
+      lockAspect: v.lock,
+    };
+    ed.setElements((els) => units.reduce((acc, u) => sizeUnit(acc, u.members, spec), els));
+    onClose();
+  };
+  return (
+    <Dialog title="크기 및 위치" onClose={onClose} onOk={apply}>
+      <div className="dlg-grid">
+        <Field label="높이 (cm)"><Num value={v.h} step={0.1} min={0.01} onChange={(n) => set('h', n)} /></Field>
+        <Field label="너비 (cm)"><Num value={v.w} step={0.1} min={0.01} onChange={(n) => set('w', n)} /></Field>
+        <Field label="회전 (°)"><Num value={v.rot} step={1} onChange={(n) => set('rot', n)} disabled={!one} /></Field>
+        <Field label="높이 비율 (%)"><Num value={v.scaleH} step={5} min={1} onChange={(n) => set('scaleH', n)} /></Field>
+        <Field label="너비 비율 (%)"><Num value={v.scaleW} step={5} min={1} onChange={(n) => set('scaleW', n)} /></Field>
+        <Check label="가로 세로 비율 고정" checked={v.lock} onChange={(b) => set('lock', b)} />
+        <Field label="가로 위치 (cm)"><Num value={v.x} step={0.1} onChange={(n) => set('x', n)} /></Field>
+        <Field label="세로 위치 (cm)"><Num value={v.y} step={0.1} onChange={(n) => set('y', n)} /></Field>
+      </div>
+    </Dialog>
+  );
 }
