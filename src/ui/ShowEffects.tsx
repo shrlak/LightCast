@@ -157,7 +157,7 @@ export function AnimatedElements({ slide, elements, build, render }: { slide: Sl
     };
     tick();
     return () => cancelAnimationFrame(raf);
-  }, [key, build.step, build.startedAt, build.all]);
+  }, [key, build.step, build.startedAt, build.all, JSON.stringify(build.triggers ?? null)]);
   return (
     <>
       {elements.map((el) => (

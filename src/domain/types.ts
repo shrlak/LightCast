@@ -304,6 +304,9 @@ export interface SlideElement {
   action?: ElementAction;
   /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */
   targetSlideId?: string;
+  /** Zoom › Return to Zoom: after `zoomEndSlideId` (default the target) the show comes back to the zoom's slide. */
+  zoomReturn?: boolean;
+  zoomEndSlideId?: string;
   zoomOf?: { slide: Slide; theme: Theme; background: Background | null };
   /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it). */
   smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number } };
@@ -345,7 +348,12 @@ export interface SlideAnimation {
   start: 'click' | 'with' | 'after';
   durationMs: number;
   delayMs: number;
+  /** Timing › Repeat: times played (unset/1 = once); `REPEAT_UNTIL_CLICK` = until the next click. */
   repeat?: number;
+  /** Timing › Rewind when done playing: the object goes back to how it was before the effect. */
+  rewind?: boolean;
+  /** Trigger › On Click of: the object (id) whose click plays this effect, outside the slide's clicks. */
+  trigger?: string;
   /** Motion Paths › Custom Path: `M 0 0 L dx dy …` in slide fractions from where the object sits. */
   path?: string;
   /**
@@ -462,6 +470,12 @@ export interface Transition {
   option?: string;
   /** Transitions › Sound: an audio file from the media library played as the slide comes on. */
   sound?: string;
+  /** Sound › Loop Until Next Sound. */
+  soundLoop?: boolean;
+  /** Sound › [Stop Previous Sound]: the slide stops a sound still playing. */
+  stopSound?: boolean;
+  /** Timing › On Mouse Click; `false`: a click no longer moves to the next slide (animations still play). */
+  advanceOnClick?: boolean;
 }
 
 export interface Presentation {

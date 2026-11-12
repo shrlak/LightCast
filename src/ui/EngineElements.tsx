@@ -7,8 +7,8 @@ import { lineRuns } from '../domain/richText';
 import { runStyle as runCss } from './runStyle';
 import { useMediaUrl } from './hooks';
 import { patternPath } from '../domain/patterns';
-import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry, type TableData } from '../engine';
-import { sideOf } from '../domain/tableBorders';
+import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type CellBorder, type FillMode, type ShapeGeometry, type TableData } from '../engine';
+import { penCss, penDash, sideOf } from '../domain/tableBorders';
 
 let epoch = 0;
 onEngineReady(() => { epoch++; });
@@ -162,7 +162,7 @@ function ownBorders(t: TableData, r: number, c: number): CSSProperties {
   const side = (k: 't' | 'r' | 'b' | 'l', prop: 'borderTop' | 'borderRight' | 'borderBottom' | 'borderLeft') => {
     const b = sideOf(t, r, c, k);
     if (b === null) css[prop] = 'none';
-    else if (b) css[prop] = `${b.width}px solid ${b.color}`;
+    else if (b) css[prop] = penCss(b);
   };
   side('t', 'borderTop'); side('r', 'borderRight'); side('b', 'borderBottom'); side('l', 'borderLeft');
   return css;
@@ -177,14 +177,35 @@ export function TableElement({ el }: { el: SlideElement }) {
   return (
     <div data-table style={{ position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), fontFamily: el.fontFamily, fontSize: fs, filter: effects(el), ...effectCss(el) }}>
       {!engineReady() && <div style={{ position: 'absolute', inset: 0, outline: '2px solid #888' }} />}
-      {cells.map((c) => (
-        <div key={`${c.r}:${c.c}`} style={{
-          position: 'absolute', left: c.x, top: c.y, width: c.w, height: c.h, boxSizing: 'border-box', background: c.fill ?? undefined,
-          border: c.border ? `${c.borderWidth}px solid ${c.border}` : undefined, ...ownBorders(t, c.r, c.c), color: c.color ?? el.color ?? '#ffffff', fontWeight: c.bold ? 700 : 400,
-          display: 'flex', alignItems: 'center', justifyContent: c.align === 'center' ? 'center' : c.align === 'right' ? 'flex-end' : 'flex-start',
-          textAlign: (c.align as CSSProperties['textAlign']) ?? 'left', padding: t.margins ? `${t.margins[1]}px ${t.margins[2]}px ${t.margins[3]}px ${t.margins[0]}px` : `${fs * 0.15}px ${fs * 0.35}px`, overflow: 'hidden', whiteSpace: 'pre-wrap', lineHeight: 1.2,
-        }}>{c.text}</div>
-      ))}
+      {cells.map((c) => {
+        const own = t.rows[c.r]?.[c.c];
+        // Table Layout › Text Direction: the box's main axis turns with the text.
+        const dir = own?.dir;
+        const vertical = dir === 'vert' || dir === 'vert270';
+        const anchor = own?.anchor === 'top' ? 'flex-start' : own?.anchor === 'bottom' ? 'flex-end' : 'center';
+        const across = c.align === 'center' ? 'center' : c.align === 'right' ? 'flex-end' : 'flex-start';
+        const diag = (['dd', 'du'] as const).map((k) => own?.borders?.[k] && { k, b: own.borders[k]! }).filter((x): x is { k: 'dd' | 'du'; b: CellBorder } => !!x);
+        return (
+          <div key={`${c.r}:${c.c}`} style={{
+            position: 'absolute', left: c.x, top: c.y, width: c.w, height: c.h, boxSizing: 'border-box', background: c.fill ?? undefined,
+            border: c.border ? `${c.borderWidth}px solid ${c.border}` : undefined, ...ownBorders(t, c.r, c.c), color: c.color ?? el.color ?? '#ffffff', fontWeight: c.bold ? 700 : 400,
+            display: 'flex', flexDirection: vertical ? 'row' : 'column', justifyContent: vertical ? across : anchor, alignItems: vertical ? anchor : 'stretch',
+            textAlign: (c.align as CSSProperties['textAlign']) ?? 'left', padding: t.margins ? `${t.margins[1]}px ${t.margins[2]}px ${t.margins[3]}px ${t.margins[0]}px` : `${fs * 0.15}px ${fs * 0.35}px`, overflow: 'hidden', whiteSpace: 'pre-wrap', lineHeight: 1.2,
+            ...(t.cellBevel ? { boxShadow: 'inset 3px 3px 5px rgba(255,255,255,.45), inset -3px -3px 5px rgba(0,0,0,.35)' } : {}),
+          }}>
+            {diag.length > 0 && (
+              <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none' }} viewBox={`0 0 ${c.w} ${c.h}`} preserveAspectRatio="none">
+                {diag.map(({ k, b }) => <line key={k} x1={0} y1={k === 'dd' ? 0 : c.h} x2={c.w} y2={k === 'dd' ? c.h : 0} stroke={b.color} strokeWidth={b.width} strokeDasharray={penDash(b)} />)}
+              </svg>
+            )}
+            <span style={{
+              position: 'relative',
+              ...(vertical ? { writingMode: 'vertical-rl', transform: dir === 'vert270' ? 'rotate(180deg)' : undefined } : {}),
+              ...(dir === 'stacked' ? { wordBreak: 'break-all', width: '1.05em', alignSelf: across === 'center' ? 'center' : across } : {}),
+            }}>{c.text}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
