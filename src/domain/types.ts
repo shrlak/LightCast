@@ -1,6 +1,8 @@
 export type HAlign = 'left' | 'center' | 'right' | 'justify';
 /** Bullets or numbering in front of each line (PowerPoint's 글머리 기호 / 번호 매기기). */
-export type ListStyle = 'bullet' | 'circle' | 'square' | 'check' | 'arrow' | 'number' | 'number-paren' | 'roman' | 'alpha' | 'hangul';
+export type ListStyle = 'bullet' | 'circle' | 'square' | 'check' | 'arrow' | 'number' | 'number-paren' | 'roman' | 'alpha' | 'hangul'
+  /** DeckCraft's other bullets (□ ◆ – ★) and numbering schemes (i. a. a)). */
+  | 'box' | 'diamond' | 'dash' | 'star' | 'roman-lower' | 'alpha-lower' | 'alpha-lower-paren';
 export type VAlign = 'top' | 'middle' | 'bottom';
 
 /** Text styling, sized against the 1440x1080 (4:3) canvas. */

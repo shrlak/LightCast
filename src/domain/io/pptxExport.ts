@@ -86,13 +86,13 @@ function firstColor(b: Background | undefined | null): string {
 
 /** 취소선, 문자 간격, 강조 색, 글머리 기호 / 번호, 들여쓰기, 세로 쓰기 — in PowerPoint's terms. */
 function textOptions(f: { strike?: boolean; letterSpacing?: number; highlight?: string; list?: ListStyle; indent?: number; vertical?: boolean }) {
-  const numbered = f.list === 'number' || f.list === 'number-paren' || f.list === 'roman' || f.list === 'alpha' || f.list === 'hangul';
-  const numberType = ({ 'number-paren': 'arabicParenR', roman: 'romanUcPeriod', alpha: 'alphaUcPeriod' } as const)[f.list as 'roman'] ?? 'arabicPeriod';
+  const numbered = f.list === 'number' || f.list === 'number-paren' || f.list === 'roman' || f.list === 'alpha' || f.list === 'hangul' || f.list === 'roman-lower' || f.list === 'alpha-lower' || f.list === 'alpha-lower-paren';
+  const numberType = ({ 'number-paren': 'arabicParenR', roman: 'romanUcPeriod', alpha: 'alphaUcPeriod', 'roman-lower': 'romanLcPeriod', 'alpha-lower': 'alphaLcPeriod', 'alpha-lower-paren': 'alphaLcParenR' } as const)[f.list as 'roman'] ?? 'arabicPeriod';
   return {
     strike: f.strike ? ('sngStrike' as const) : undefined,
     charSpacing: f.letterSpacing ? f.letterSpacing * 0.5 : undefined,
     highlight: f.highlight?.replace('#', ''),
-    bullet: f.list ? (numbered ? { type: 'number' as const, style: numberType } : { characterCode: { circle: '25CB', square: '25A0', check: '2713', arrow: '27A2' }[f.list as 'circle'] ?? '2022' }) : undefined,
+    bullet: f.list ? (numbered ? { type: 'number' as const, style: numberType } : { characterCode: { circle: '25CB', square: '25A0', check: '2713', arrow: '27A2', box: '25A1', diamond: '25C6', dash: '2013', star: '2605' }[f.list as 'circle'] ?? '2022' }) : undefined,
     indentLevel: f.indent || undefined,
     vert: f.vertical ? ('eaVert' as const) : undefined,
   };

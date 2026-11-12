@@ -24,6 +24,7 @@ import { PATTERNS, patternPath } from '../../domain/patterns';
 import { slideFromLayout, withMaster } from '../../domain/master';
 import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
+import { slideTheme } from '../SlideCanvas';
 
 const blocked = (ed: Ed) => {
   if (!ed.p || !ed.slide) return ed.cmd.notify('먼저 슬라이드를 선택하세요'), true;
@@ -301,10 +302,10 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
         </Col>
       </Group>
       <Group label="글꼴" className="rb-font" launcher={t ? () => ed.setDialog('font') : undefined}>
-        {t ? <TextFormatPanel part="font" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} shortcuts /> : <span className="rb-disabled-note">텍스트 없음</span>}
+        {t ? <TextFormatPanel part="font" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} onStep={t.onStep} onDialog={(d) => ed.setDialog(d)} theme={ed.theme && ed.slide ? slideTheme(ed.theme, ed.slide).fontFamily : undefined} shortcuts /> : <span className="rb-disabled-note">텍스트 없음</span>}
       </Group>
       <Group label="단락" className="rb-para" launcher={t ? () => ed.setDialog('paragraph') : undefined}>
-        {t ? <TextFormatPanel part="paragraph" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} shortcuts={false} /> : <span className="rb-disabled-note">텍스트 없음</span>}
+        {t ? <TextFormatPanel part="paragraph" value={t.value} onChange={t.onChange} onChangeCase={t.onChangeCase} onClear={t.onClear} onStep={t.onStep} onDialog={(d) => ed.setDialog(d)} shortcuts={false} /> : <span className="rb-disabled-note">텍스트 없음</span>}
         <ConvertToSmartArt ed={ed} />
       </Group>
       <Group label="그리기">

@@ -9,7 +9,7 @@ import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ClipboardE
 import type { TextRun } from '../domain/types';
 import { insertLines, normalizeRuns, sliceLines, withBoxFormat, type RunFormat } from '../domain/richText';
 import { CLIP_TYPE, pastedLines, runsHtml } from '../domain/clipboard';
-import { stepFontSize } from '../domain/textFormat';
+import { formatSpan, stepFontSize } from '../domain/textFormat';
 import { runStyle } from './runStyle';
 
 export interface RichTextApi {
@@ -19,8 +19,10 @@ export interface RichTextApi {
   current(): RunFormat;
   /** Give the selected characters this formatting. */
   apply(patch: RunFormat): void;
-  /** Make the selected characters bigger / smaller. */
+  /** Make the selected characters bigger / smaller (each from its own size). */
   step(dir: 1 | -1): void;
+  /** The formatting of every selected piece of text (the caret's when nothing is selected), for the ribbon's mixed state. */
+  spans(): RunFormat[];
 }
 
 let active: RichTextApi | null = null;
@@ -266,11 +268,10 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
     const reformat = (fn: (r: TextRun) => RunFormat) => {
       // selectionchange arrives after the keys that moved the selection: read it now while typing here.
       if (document.activeElement === root) remember();
-      const [a, b] = sel.current;
       const cur = readLines(root);
-      const all = a === b;
-      const total = cur.reduce((n, l) => n + l.reduce((m, r) => m + r.text.length, 0), 0) + Math.max(0, cur.length - 1);
-      const next = formatRange(cur, all ? 0 : a, all ? total : b, fn);
+      // A caret inside a word formats that word; between words, the whole text (DeckCraft's format_range).
+      const [a, b] = formatSpan(cur.map((l) => l.map((r) => r.text).join('')).join('\n'), sel.current[0], sel.current[1]);
+      const next = formatRange(cur, a, b, fn);
       render(root, next);
       latest.current.onChange(next);
       root.focus();
@@ -284,6 +285,15 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         const r = runAt(readLines(root), sel.current[0]) ?? { text: '' };
         const b = latest.current.base;
         return { fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, italic: r.italic ?? b.italic, underline: r.underline, color: r.color ?? b.color, strike: r.strike, baseline: r.baseline };
+      },
+      spans: () => {
+        if (document.activeElement === root) remember();
+        const [a, b] = sel.current;
+        const b0 = latest.current.base;
+        const eff = (r: TextRun): RunFormat => ({ ...r, fontSize: r.fontSize ?? b0.fontSize, fontFamily: r.fontFamily ?? b0.fontFamily, bold: r.bold ?? b0.bold, italic: r.italic ?? b0.italic, color: r.color ?? b0.color });
+        if (a === b) return [eff(runAt(readLines(root), a) ?? { text: '' })];
+        const runs = sliceLines(readLines(root), a, b).flat().filter((r) => r.text);
+        return runs.length ? runs.map(eff) : [eff(runAt(readLines(root), a) ?? { text: '' })];
       },
       apply: (patch) => reformat(() => patch),
       step: (dir) => reformat((r) => ({ fontSize: stepFontSize(r.fontSize ?? latest.current.base.fontSize, dir) })),
@@ -332,6 +342,8 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
     // Ctrl+= subscript, Ctrl+Shift+= (Ctrl++) superscript, as in PowerPoint.
     else if (k === '=' && !e.shiftKey) api.apply({ baseline: cur.baseline === 'sub' ? undefined : 'sub' });
     else if (k === '+' || (k === '=' && e.shiftKey)) api.apply({ baseline: cur.baseline === 'super' ? undefined : 'super' });
+    // Ctrl+Space: Clear All Formatting of the selected characters (the word at the caret).
+    else if (k === ' ' && !e.shiftKey) api.apply({ fontSize: undefined, bold: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined });
     else if (k === ']' || (e.shiftKey && (k === '>' || k === '.'))) api.step(1);
     else if (k === '[' || (e.shiftKey && (k === '<' || k === ','))) api.step(-1);
     else return;
