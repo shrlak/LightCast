@@ -61,7 +61,9 @@ export type MediaFit = 'cover' | 'contain' | 'fill';
 export type Background =
   | { kind: 'color'; value: string }
   | { kind: 'gradient'; value: string }
-  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean }
+  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean; /** Format Background › Transparency, 0–1. */ transparency?: number }
+  /** Format Background › Pattern fill (domain/patterns). */
+  | { kind: 'pattern'; preset: string; fg: string; bg: string }
   /** Built-in image shipped with the app (the church's template backgrounds). */
   | { kind: 'image'; url: string; fit?: MediaFit }
   | { kind: 'camera'; deviceId: string; label: string }

@@ -24,6 +24,7 @@ export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { pictureLookCss } from './pictureStyles';
 import { formatDateField } from '../domain/insertTools';
+import { patternPath } from '../domain/patterns';
 import { atEnd, fadeGain, playStart, playVolume } from '../domain/mediaPlayback';
 import { useAutoTextBoxes, useFontEpoch } from './textBoxLayout';
 import { elementTextStyle } from '../domain/textBoxLayout';
@@ -98,6 +99,17 @@ function CameraBg({ deviceId, label, animate }: { deviceId: string; label: strin
   return <video ref={ref} className="layer media" autoPlay muted playsInline />;
 }
 
+/** Format Background › Pattern fill: the 8×8 preset tiled over the background colour. */
+function PatternBg({ bg }: { bg: Extract<Background, { kind: 'pattern' }> }) {
+  const id = `bgp-${bg.preset}`;
+  return (
+    <svg className="layer" width="100%" height="100%" preserveAspectRatio="none">
+      <defs><pattern id={id} patternUnits="userSpaceOnUse" width="16" height="16"><rect width="16" height="16" fill={bg.bg} /><path d={patternPath(bg.preset, 2)} fill={bg.fg} /></pattern></defs>
+      <rect width="100%" height="100%" fill={`url(#${id})`} />
+    </svg>
+  );
+}
+
 function BackgroundLayer({ background, animate, video, onTime }: { background: Background | null; animate: boolean; video?: CanvasProps['video']; onTime?: CanvasProps['onVideoTime'] }) {
   const url = useMediaUrl(background?.kind === 'media' ? background.mediaId : null);
   const imageSrc = background?.kind === 'image' ? assetUrl(background.url) : background?.kind === 'media' && background.mediaType === 'image' ? url : null;
@@ -108,16 +120,17 @@ function BackgroundLayer({ background, animate, video, onTime }: { background: B
     held.current = null;
     return null;
   }
-  const fit = background.kind === 'color' || background.kind === 'gradient' || background.kind === 'camera' || background.kind === 'motion' ? undefined : background.fit ?? 'cover';
+  const fit = background.kind === 'color' || background.kind === 'gradient' || background.kind === 'camera' || background.kind === 'motion' || background.kind === 'pattern' ? undefined : background.fit ?? 'cover';
   let node: ReactNode = null;
   let pending = false;
   if (background.kind === 'color') node = <div className="layer" style={{ background: background.value }} />;
+  else if (background.kind === 'pattern') node = <PatternBg bg={background} />;
   else if (background.kind === 'gradient') node = <div className="layer" style={{ backgroundImage: background.value }} />;
   else if (background.kind === 'motion') node = <MotionLayer bg={background} animate={animate} />;
   else if (background.kind === 'camera') node = <CameraBg deviceId={background.deviceId} label={background.label} animate={animate} />;
   else if (background.kind === 'image' || background.mediaType === 'image') {
     pending = !ready;
-    if (ready) node = <img className="layer media" style={{ objectFit: fit, background: background.kind === 'image' ? '#fff' : undefined }} src={ready} alt="" decoding="sync" />;
+    if (ready) node = <img className="layer media" style={{ objectFit: fit, background: background.kind === 'image' ? '#fff' : undefined, opacity: background.kind === 'media' && background.transparency ? 1 - background.transparency : undefined }} src={ready} alt="" decoding="sync" />;
   } else if (url) {
     node = animate
       ? <VideoBg url={url} fit={fit!} loop={background.loop !== false} video={video} onTime={onTime} />

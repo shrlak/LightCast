@@ -22,6 +22,7 @@ function sameBackground(a: Background | null | undefined, b: Background): boolea
   if (a.kind === 'camera') return a.deviceId === (b as typeof a).deviceId;
   if (a.kind === 'image') return a.url === (b as typeof a).url;
   if (a.kind === 'motion') return a.style === (b as typeof a).style && a.colors.join() === (b as typeof a).colors.join();
+  if (a.kind === 'pattern') return a.preset === (b as typeof a).preset && a.fg === (b as typeof a).fg && a.bg === (b as typeof a).bg;
   return a.value === (b as typeof a).value;
 }
 
