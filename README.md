@@ -1,6 +1,6 @@
 # LightCast
 
-> 📘 **처음 쓰시나요? [사용 설명서 (PDF) 다운로드](https://github.com/shrlak/freecast/raw/main/docs/LightCast-Manual.pdf)** · [미리 보기](docs/LightCast-Manual.pdf)
+> 📘 **처음 쓰시나요? [사용 설명서 (PDF) 다운로드](https://github.com/shrlak/LightCast/raw/main/docs/LightCast-Manual.pdf)** · [미리 보기](docs/LightCast-Manual.pdf)
 >
 > 설치 → 화면 보기 → 이번 주 예배 만들기 → 발표하기까지, 꼭 필요한 것만 11쪽에 담은 쉬운 안내서입니다. 맨 뒤 단축키 한 장 요약은 출력해서 컴퓨터 옆에 두세요.
 
@@ -8,7 +8,7 @@ KCCP 빛주사랑 대학청년부의 예배 프레젠테이션 앱입니다. 모
 
 ## 다운로드
 
-[**최신 버전 받기 → Releases**](https://github.com/shrlak/freecast/releases/latest)
+[**최신 버전 받기 → Releases**](https://github.com/shrlak/LightCast/releases/latest)
 
 | 컴퓨터 | 받을 파일 |
 | --- | --- |
@@ -92,6 +92,7 @@ LightCast의 편집 화면은 Microsoft PowerPoint와 같은 모양으로 동작
 - **슬라이드**: 구역 (이름 바꾸기 · 제거 · 위/아래로 이동), 슬라이드 다시 사용, 개요에서 슬라이드 만들기, 슬라이드 마스터 (배경 그래픽 숨기기), 디자인 › 글꼴
 - **슬라이드 쇼**: 쇼 설정 (반복 · 애니메이션 없이 · 화면 전환 없이 · 수동/타이밍), 재구성한 쇼, 예행 연습 (슬라이드별 시간 저장), 화면 전환 소리
 - **검토 · 보기**: 맞춤법 검사, 동의어 사전, 눈금 및 안내선
+- **v0.9.8**: Mac에서 업데이트로 받은 앱이 아직 `FreeCast.app`이라는 이름으로 남아 있으면, 처음 실행할 때 스스로 `LightCast.app`으로 이름을 바꾸고 다시 열립니다 (Finder · Launchpad · Spotlight에 LightCast로 보입니다).
 - **v0.9.7**: 시작 화면을 “빛을 비추다”로 바꿨습니다 — 어두운 예배당에서 프로젝터 빛이 열리고, 그 빛 속에 로고와 **LightCast** 이름이 비쳐 켜집니다.
 - **v0.9.6**: 프로그램 이름을 **LightCast**로 바꿨습니다 (앱 · 창 제목 · 설치 파일 · 설명서). 이미 설치된 컴퓨터도 그대로 자동 업데이트되고, 저장된 자료와 설정도 그대로 이어집니다.
 - **v0.9.5**: 시작 화면을 흰 바탕의 차분한 “화이트 미니멀” 애니메이션으로 바꿨습니다 (초록 사각형이 자라고 노란 면과 십자가가 자리 잡은 뒤 교회 이름이 나타납니다). 시작 화면에는 LightCast 이름을 쓰지 않습니다.
