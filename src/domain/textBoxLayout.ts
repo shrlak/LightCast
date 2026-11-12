@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { SlideElement } from './types';
 import { textElementBounds, type TextBounds } from './textBox';
-import { INDENT_PX, listMarkers } from './textFormat';
+import { INDENT_PX, isVerticalText, listMarkers, lineHeightCss, softToNewline, writingCss } from './textFormat';
 import { fitTextNode } from './boundedTextLayout';
 import { uniformTextBoxFont } from './textBoxFonts';
 import { lineRuns } from './richText';
@@ -15,10 +15,10 @@ export function elementTextStyle(el: SlideElement): CSSProperties {
   return {
     display: 'flex', flexDirection: 'column', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', boxSizing: 'border-box',
     fontSize: el.fontSize ?? 64, fontFamily: el.fontFamily, fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500,
-    fontStyle: el.italic ? 'italic' : undefined, lineHeight: el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25),
+    fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, el.fontSize ?? 64, el.paragraphs ? 1.2 : 1.25),
     letterSpacing: el.letterSpacing || undefined, paddingLeft: el.indent ? el.indent * INDENT_PX : undefined,
     ...(el.columns && el.columns > 1 ? { columnCount: el.columns, columnGap: '1.2em', display: 'block' } : {}),
-    ...(el.vertical ? { writingMode: 'vertical-rl' } : {}),
+    ...writingCss(el),
     // Font dialog / WordArt / Format Shape › Text Box.
     ...(el.caps === 'all' ? { textTransform: 'uppercase' } : el.caps === 'small' ? { fontVariant: 'small-caps' } : {}),
     ...(el.textOutline ? { WebkitTextStroke: `${el.textOutline.width}px ${el.textOutline.color}`, paintOrder: 'stroke fill' } : {}),
@@ -37,7 +37,7 @@ function measurementNode(el: SlideElement): HTMLDivElement {
   const node = document.createElement('div');
   applyStyle(node, elementTextStyle(el));
   Object.assign(node.style, { position: 'fixed', left: '-100000px', top: '0', visibility: 'hidden', pointerEvents: 'none',
-    width: el.vertical ? 'max-content' : `${Math.max(1, el.w)}px`, height: el.vertical ? `${Math.max(1, el.h)}px` : 'max-content', margin: '0' });
+    width: isVerticalText(el) ? 'max-content' : `${Math.max(1, el.w)}px`, height: isVerticalText(el) ? `${Math.max(1, el.h)}px` : 'max-content', margin: '0' });
   const lines = el.paragraphs?.map((p) => p.text) ?? (el.text ?? '').split('\n');
   const markers = listMarkers(lines, el.list), runs = lineRuns(el);
   lines.forEach((text, i) => {
@@ -49,9 +49,9 @@ function measurementNode(el: SlideElement): HTMLDivElement {
     if (runs[i]) for (const r of runs[i]!) {
       const span = document.createElement('span');
       applyStyle(span, { fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? 800 : 400, fontStyle: r.italic ? 'italic' : undefined });
-      span.textContent = r.text; line.append(span);
+      span.textContent = softToNewline(r.text); line.append(span);
     }
-    else line.append(document.createTextNode(text || '\u00a0'));
+    else line.append(document.createTextNode(softToNewline(text) || '\u00a0'));
     node.append(line);
   });
   document.body.append(node);

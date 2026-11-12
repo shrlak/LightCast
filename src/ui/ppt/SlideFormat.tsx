@@ -18,6 +18,7 @@ import { changeCase, clearTextFormat } from '../../domain/textFormat';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { PdfReadOnly } from '../PdfReadOnly';
 import { ProtectedMaterialNotice } from '../MaterialProtection';
+import { BackgroundPictureOptions, BackgroundSources } from './designTab';
 
 interface Props {
   state: AppState;
@@ -111,7 +112,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
       {!selected && <button title="원래 글자 크기로 상자를 늘리고, 슬라이드 안에 들어가지 않을 때만 글자를 줄입니다." onClick={() => boxMode ? upd({ elements: elements.map((e) => e.kind === 'text' ? { ...e, autoFit: true, maximizeFont: false } : e) }) : setStyle({ autoFit: true })}>넘친 내용 맞추기</button>}
       {!selected && boxMode && <button onClick={() => patchBoxes((e) => ({ fontSize: sizeOf(e), x: e.x, y: e.y, w: e.w, h: e.h }))}>글자 크기 통일</button>}
       {selected ? (
-        <ElementFormat
+        <ElementFormat themeFont={t.fontFamily}
           el={selected}
           onChange={(patch) => upd({ elements: elements.map((e) => (e.id === selected.id ? patchElement(e, patch) : e)) })}
           onDelete={() => { upd({ elements: elements.filter((e) => e.id !== selected.id) }); onSelect?.(null); }}
@@ -129,12 +130,13 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
             fontFamily: t.fontFamily, fontSize: t.fontSize, bold: t.fontWeight >= 700, italic: !!t.italic, underline: !!t.underline,
             strike: !!t.strike, shadow: t.shadow, letterSpacing: t.letterSpacing ?? 0, color: t.color, highlight: t.highlight,
             align: t.align, vAlign: t.vAlign, lineHeight: t.lineHeight, list: t.list, indent: t.indent ?? 0, columns: t.columns ?? 1,
-            vertical: !!t.vertical, autoFit: t.autoFit !== false,
+            vertical: !!t.vertical, direction: t.direction, autoFit: t.autoFit !== false,
           }}
           onChange={boxMode ? (patch) => patchBoxes((e) => elementPatch(e, patch)) : ({ bold, ...rest }) => setStyle({ ...rest, ...(bold === undefined ? {} : { fontWeight: bold ? 700 : 400 }) })}
           onChangeCase={boxMode ? (kind) => patchBoxes((e) => ({ text: changeCase(e.text ?? '', kind) })) : (kind) => upd({ text: changeCase(slide.text, kind), ...(slide.title ? { title: changeCase(slide.title, kind) } : {}), ...(slide.subtext ? { subtext: changeCase(slide.subtext, kind) } : {}) })}
           onClear={boxMode ? () => patchBoxes(clearTextFormat) : () => upd({ style: undefined, preferredFontSize: undefined })}
           shortcuts={false}
+          theme={t.fontFamily}
         />
       </Section>
 
@@ -172,9 +174,9 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
         </div>
         <div className="fmt-row">
           <label className="fmt-color grow" title="단색 배경"><span style={{ background: bgColor }} />단색<input type="color" value={hexOf(bgColor)} onChange={(e) => setBg({ kind: 'color', value: withTransparency(e.target.value, transparencyOf(bgColor)) })} /></label>
-          <button onClick={() => fileRef.current?.click()}>그림 · 동영상…</button>
           <input ref={fileRef} type="file" accept="image/*,video/*" hidden onChange={(e) => uploadBg(e.target.files?.[0])} />
         </div>
+        <BackgroundSources ed={{ dispatch, cmd: { notify: flash } as never }} setBg={setBg} onFile={() => fileRef.current?.click()} />
         {bg?.kind === 'color' && (
           <label>투명도 <span className="muted">{Math.round(transparencyOf(bgColor) * 100)}%</span><input type="range" min={0} max={100} value={Math.round(transparencyOf(bgColor) * 100)} onChange={(e) => setBg({ kind: 'color', value: withTransparency(hexOf(bgColor), Number(e.target.value) / 100) })} /></label>
         )}
@@ -207,6 +209,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
             <button className={`fmt-tog ${bg.fit === 'contain' ? 'on' : ''}`} onClick={() => setBg({ ...bg, fit: 'contain' })}>맞추기</button>
           </div>
         )}
+        {bg && (bg.kind === 'media' || bg.kind === 'image') && <BackgroundPictureOptions bg={bg} setBg={setBg} />}
         <label className="check small" title="슬라이드 마스터의 개체를 이 슬라이드에서 숨깁니다"><input type="checkbox" checked={!!slide.hideMaster} disabled={!p.master?.elements.length} onChange={(e) => upd({ hideMaster: e.target.checked || undefined, elements: withMaster({ ...slide, hideMaster: e.target.checked }, p.master?.elements ?? []).elements })} /> 배경 그래픽 숨기기</label>
         <div className="fmt-row">
           <button className="grow" disabled={!bg} onClick={() => applyToAll('background')}>모두 적용</button>

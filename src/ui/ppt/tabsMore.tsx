@@ -132,8 +132,8 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
       </Group>
       <Group label="컬러/회색조">
         <Col>
-          <Small icon="🎨" label="컬러" active={!ed.view.grayscale} onClick={() => ed.setView({ ...ed.view, grayscale: undefined })} />
-          <Small icon="◐" label="회색조" title="슬라이드를 회색조로 봅니다 (슬라이드 자체는 바뀌지 않습니다)" active={!!ed.view.grayscale} onClick={() => ed.setView({ ...ed.view, grayscale: true })} />
+          <Small icon="🎨" label="컬러" active={!ed.view.grayscale && !ed.view.gray} onClick={() => ed.setView({ ...ed.view, grayscale: undefined, gray: undefined })} />
+          <Small icon="◐" label="회색조" title="슬라이드를 회색조로 봅니다 — 편집 화면 · 미리보기 · 슬라이드 정렬 · 읽기 보기 · 인쇄 (슬라이드 자체는 바뀌지 않습니다)" active={!!ed.view.grayscale || !!ed.view.gray} onClick={() => ed.setView({ ...ed.view, grayscale: true, gray: true })} />
         </Col>
       </Group>
       <Group label="작업창">

@@ -2,15 +2,15 @@
 // playback), Home › New Slide (Reuse Slides, Slides from Outline), Slide Show (Set Up Slide Show,
 // Custom Shows), View (Guides) and Review (Thesaurus).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ElementAction, MediaPlayback, Presentation, Slide, SlideElement } from '../../domain/types';
+import type { ElementAction, MediaPlayback, Presentation, Slide } from '../../domain/types';
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
-import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
-import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
+import { CANVAS_W } from '../../domain/canvas';
 import { sections } from '../../domain/sections';
 import { withMaster } from '../../domain/master';
-import { albumSlides, readAlbum, replaceAlbum, type AlbumPicture } from '../../domain/photoAlbum';
+import { PhotoAlbumDialog } from './albumDialog';
+import { MediaPanel } from './mediaPanel';
 import { nodesFromText, smartArtElements, smartArtOwner, relayoutSmartArt, textFromNodes, type SmartArtSpec } from '../../domain/smartArt';
 import { smartArtCatalog, thesaurus } from '../../engine';
 import { SlideCanvas } from '../SlideCanvas';
@@ -22,6 +22,8 @@ import { GridGuidesDialog, ViewZoomDialog } from './viewDialogs';
 import { selectionUnits } from '../../domain/editOps';
 import { aspectLocked, fromCm, sizeUnit, toCm, type SizeSpec } from '../../domain/shapeOps';
 import { InsertDialogs } from './dialogsInsert';
+import { SlideSizeDialog, ThemeColorsDialog, ThemeFontsDialog } from './designTab';
+import { SUMMARY_TITLE, defaultSummaryStarts, sectionTargets, slideTargets, summaryInsertIndex, summaryTargets, zoomElements, type ZoomKind } from '../../domain/zoom';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
@@ -242,65 +244,6 @@ function SmartArtDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   );
 }
 
-// ── Insert › Photo Album ──────────────────────────────────────────────────────────────────────
-function PhotoAlbumDialog({ ed, onClose, edit }: { ed: Ed; onClose: () => void; edit?: boolean }) {
-  // Edit Photo Album: the album of the current slide (or the presentation's first album).
-  const albumId = edit ? (ed.slide?.album?.id ?? ed.p?.slides.find((x) => x.album)?.album?.id) : undefined;
-  const existing = albumId && ed.p ? readAlbum(ed.p.slides, albumId) : null;
-  const [pics, setPics] = useState<AlbumPicture[]>(existing?.pictures ?? []);
-  const [per, setPer] = useState<1 | 2 | 4>(existing?.options.per ?? 1);
-  const [titles, setTitles] = useState(existing?.options.titles ?? false);
-  const [captions, setCaptions] = useState(existing?.options.captions ?? false);
-  const [frame, setFrame] = useState<string>(existing?.options.frame ?? '');
-  const [at, setAt] = useState<number | null>(null);
-  const input = useRef<HTMLInputElement>(null);
-  if (edit && !existing) return <Dialog title="사진 앨범 편집" onClose={onClose}><p>이 프레젠테이션에 사진 앨범이 없습니다. 삽입 › 사진 앨범으로 먼저 만드세요.</p></Dialog>;
-  const addFiles = async (files: File[]) => {
-    const added: AlbumPicture[] = [];
-    for (const f of files) {
-      const id = uid('m');
-      await putMedia(id, f);
-      ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image' } });
-      added.push({ mediaId: id, name: f.name });
-    }
-    setPics((cur) => [...cur, ...added]);
-  };
-  const move = (d: -1 | 1) => {
-    if (at == null) return;
-    const j = at + d;
-    if (j < 0 || j >= pics.length) return;
-    const next = [...pics];
-    [next[at], next[j]] = [next[j], next[at]];
-    setPics(next);
-    setAt(j);
-  };
-  const ok = () => {
-    if (!pics.length || !ed.p) return;
-    const o = { per, frame, titles, captions };
-    if (existing && albumId) ed.updatePres({ slides: replaceAlbum(ed.p.slides, albumId, pics, o) });
-    else insertSlides(ed, albumSlides(pics, o, ed.slide?.group ?? '사진 앨범'));
-    onClose();
-  };
-  return (
-    <Dialog title={existing ? '사진 앨범 편집' : '사진 앨범'} onClose={onClose} onOk={ok} okLabel={existing ? '업데이트' : '만들기'} okDisabled={!pics.length || !ed.canEdit} wide>
-      <div className="dlg-row"><button type="button" onClick={() => input.current?.click()}>파일/디스크…</button><span>{pics.length ? `그림 ${pics.length}개` : '앨범에 넣을 그림을 고르세요'}</span></div>
-      <div className="dlg-list">{pics.map((f, i) => <button key={`${f.mediaId}-${i}`} type="button" className={at === i ? 'on' : ''} onClick={() => setAt(i)}>{i + 1}. {f.name}</button>)}</div>
-      <div className="dlg-row">
-        <button type="button" disabled={at == null || at === 0} onClick={() => move(-1)}>▲</button>
-        <button type="button" disabled={at == null || at === pics.length - 1} onClick={() => move(1)}>▼</button>
-        <button type="button" disabled={at == null} onClick={() => { if (at == null) return; setPics(pics.filter((_, j) => j !== at)); setAt(null); }}>제거</button>
-      </div>
-      <div className="dlg-grid3">
-        <Field label="그림 레이아웃"><select value={per} onChange={(e) => setPer(Number(e.target.value) as 1 | 2 | 4)}><option value={1}>그림 1개</option><option value={2}>그림 2개</option><option value={4}>그림 4개</option></select></Field>
-        <Field label="프레임 모양"><select value={frame} onChange={(e) => setFrame(e.target.value)}><option value="">사각형</option><option value="rounded">둥근 사각형</option><option value="simpleFrame">단순형 프레임, 흰색</option><option value="softEdge">부드러운 가장자리 사각형</option><option value="shadowRect">그림자 사각형</option></select></Field>
-      </div>
-      <Check label="제목 포함" checked={titles} onChange={setTitles} />
-      <Check label="모든 그림 아래에 캡션 넣기" checked={captions} onChange={setCaptions} />
-      <input ref={input} type="file" accept="image/*" multiple hidden onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
-    </Dialog>
-  );
-}
-
 // ── Insert › Action ───────────────────────────────────────────────────────────────────────────
 function ActionDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const el = ed.selEls[0];
@@ -425,56 +368,59 @@ function ThesaurusDialog({ onClose }: { ed: Ed; onClose: () => void }) {
 // ── Insert › Zoom (Summary / Section / Slide Zoom) ────────────────────────────────────────────
 function ZoomDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const p = ed.p;
-  const [mode, setMode] = useState<'slide' | 'section' | 'summary'>('slide');
+  const [mode, setMode] = useState<ZoomKind>('slide');
   const [picked, setPicked] = useState<string[]>([]);
-  // Zoom › Return to Zoom: on for section and summary zooms, off for slide zooms (as PowerPoint).
-  const [back, setBack] = useState<boolean | null>(null);
+  const [back, setBack] = useState(false);
+  // Summary Zoom starts from the first slide of every section (the boxes can be changed); Section Zoom from none.
+  const [summary, setSummary] = useState<string[] | null>(null);
   if (!p || !ed.theme) return null;
   const theme = ed.theme;
-  const returns = back ?? mode !== 'slide';
   const secs = sections(p.slides);
-  const zoomEl = (target: Slide, box: { x: number; y: number; w: number; h: number }): SlideElement => ({
-    id: uid('el'), kind: 'zoom', ...box, targetSlideId: target.id, name: `확대/축소: ${target.title || target.group}`,
-    zoomOf: { slide: target, theme, background: resolveBackground(target, p) },
-    ...(returns ? { zoomReturn: true, zoomEndSlideId: endOf(target) } : {}),
-  });
-  // A section zoom returns after the section's last slide; the others after the slide itself.
-  const endOf = (target: Slide) => {
-    if (mode !== 'section') return target.id;
-    const at = p.slides.findIndex((x) => x.id === target.id);
-    let last = at;
-    while (last + 1 < p.slides.length && p.slides[last + 1].group === target.group) last++;
-    return p.slides[last].id;
-  };
-  const grid = (targets: Slide[]) => {
-    const n = targets.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
-    const cw = (CANVAS_W - 160) / cols, ch = (CANVAS_H - 260) / rows;
-    const w = Math.min(cw - 30, (ch - 30) * (CANVAS_W / CANVAS_H)), h = w * (CANVAS_H / CANVAS_W);
-    return targets.map((t, i) => zoomEl(t, { x: 80 + (i % cols) * cw + (cw - w) / 2, y: 200 + Math.floor(i / cols) * ch + (ch - h) / 2, w, h }));
-  };
+  const starts = summary ?? defaultSummaryStarts(p.slides);
+  const choose = (m: ZoomKind) => { setMode(m); setPicked([]); setBack(m !== 'slide'); };
+  const toggle = (list: string[], id: string, on: boolean) => (on ? [...list, id] : list.filter((x) => x !== id));
+  const snap = (s: Slide) => ({ slide: s, theme, background: resolveBackground(s, p) });
+  const targets = mode === 'summary' ? summaryTargets(p.slides, starts) : mode === 'section' ? sectionTargets(p.slides, picked) : slideTargets(p.slides, picked);
   const ok = () => {
+    if (!targets.length) return;
+    const els = zoomElements(mode, targets, back, snap);
     if (mode === 'summary') {
-      const targets = secs.map((s) => p.slides[s.start]);
-      insertSlides(ed, [{ id: uid('s'), group: '요약', text: '', elements: [{ id: uid('el'), kind: 'text', text: '요약', x: 80, y: 50, w: CANVAS_W - 160, h: 120, fontSize: 72, bold: true, color: '#ffffff', align: 'center' }, ...grid(targets)] }]);
+      // A new slide with the title and the tiles, before the section that holds the first part (the title is a text shape: song decks re-centre text boxes).
+      const at = summaryInsertIndex(p.slides, targets);
+      const slide: Slide = { id: uid('s'), group: SUMMARY_TITLE, text: '', background: { kind: 'color', value: '#000000' }, lyricBody: true, elements: [{ id: uid('el'), kind: 'shape', shape: 'rect', fill: 'transparent', strokeWidth: 0, text: SUMMARY_TITLE, x: 80, y: 50, w: CANVAS_W - 160, h: 120, fontSize: 72, bold: true, color: '#ffffff', align: 'center' }, ...els] };
+      const slides = [...p.slides];
+      slides.splice(at, 0, p.master?.elements.length ? withMaster(slide, p.master.elements) : slide);
+      ed.updatePres({ slides, ...(p.arrangementId ? { arrangementId: null } : {}) });
+      ed.cmd.setSlideId(slide.id);
     } else {
-      const targets = mode === 'section' ? picked.map((name) => p.slides[secs.find((s) => s.name === name)?.start ?? -1]).filter(Boolean) : picked.map((id) => p.slides.find((s) => s.id === id)).filter((s): s is Slide => !!s);
-      const els = grid(targets);
       ed.setElements((cur) => [...cur, ...els]);
       ed.setSel(els.map((e) => e.id));
     }
     onClose();
   };
   return (
-    <Dialog title="확대/축소 삽입" onClose={onClose} onOk={ok} okLabel="삽입" okDisabled={!ed.canEdit || (mode !== 'summary' && !picked.length)} wide>
+    <Dialog title="확대/축소 삽입" onClose={onClose} onOk={ok} okLabel="삽입" okDisabled={!ed.canEdit || !targets.length} wide>
       <div className="dlg-tabs">
-        {([['slide', '슬라이드 확대/축소'], ['section', '구역 확대/축소'], ['summary', '요약 확대/축소']] as const).map(([m, l]) => <button key={m} type="button" className={mode === m ? 'on' : ''} onClick={() => { setMode(m); setPicked([]); }}>{l}</button>)}
+        {([['slide', '슬라이드 확대/축소'], ['section', '구역 확대/축소'], ['summary', '요약 확대/축소']] as const).map(([m, l]) => <button key={m} type="button" className={mode === m ? 'on' : ''} onClick={() => choose(m)}>{l}</button>)}
       </div>
-      <Check label="확대/축소로 돌아가기" checked={returns} onChange={setBack} />
-      {mode === 'summary' && <p className="dlg-note">각 구역의 첫 슬라이드로 가는 확대/축소가 담긴 요약 슬라이드를 현재 슬라이드 다음에 만듭니다 (구역 {secs.length}개).</p>}
-      {mode === 'section' && <div className="dlg-list">{secs.map((s) => <Check key={s.name + s.start} label={`${s.name} (${s.count}장)`} checked={picked.includes(s.name)} onChange={(on) => setPicked(on ? [...picked, s.name] : picked.filter((x) => x !== s.name))} />)}</div>}
-      {mode === 'slide' && (
-        <div className="reuse-grid">{p.slides.map((s, i) => <button key={s.id} type="button" className={`reuse-cell ${picked.includes(s.id) ? 'on' : ''}`} onClick={() => setPicked(picked.includes(s.id) ? picked.filter((x) => x !== s.id) : [...picked, s.id])}>{thumb(ed, s)}<span>{i + 1}</span></button>)}</div>
+      {mode === 'summary' && (
+        <>
+          <p className="dlg-note">요약 슬라이드에 넣을 슬라이드를 고릅니다. 고른 슬라이드마다 다음에 고른 슬라이드 앞까지가 한 부분이고, 요약 슬라이드는 첫 부분의 구역 앞에 만들어집니다.</p>
+          <div className="dlg-list zoom-tree">
+            {secs.map((sec) => (
+              <div key={sec.name + sec.start} className="zoom-sec">
+                <b>{sec.name}</b>
+                {p.slides.slice(sec.start, sec.start + sec.count).map((s, k) => <Check key={s.id} label={`${sec.start + k + 1}. ${(s.title || s.text || s.group || '').split('\n')[0].slice(0, 40)}`} checked={starts.includes(s.id)} onChange={(on) => setSummary(toggle(starts, s.id, on))} />)}
+              </div>
+            ))}
+          </div>
+        </>
       )}
+      {mode === 'section' && <div className="dlg-list">{secs.map((s) => <Check key={s.name + s.start} label={`${s.name} (${s.count}장)`} checked={picked.includes(p.slides[s.start].id)} onChange={(on) => setPicked(toggle(picked, p.slides[s.start].id, on))} />)}</div>}
+      {mode === 'slide' && (
+        <div className="reuse-grid">{p.slides.map((s, i) => <button key={s.id} type="button" className={`reuse-cell ${picked.includes(s.id) ? 'on' : ''}`} onClick={() => setPicked(toggle(picked, s.id, !picked.includes(s.id)))}>{thumb(ed, s)}<span>{i + 1}</span></button>)}</div>
+      )}
+      <Check label="확대/축소로 돌아가기 (대상 슬라이드나 구역이 끝나면 이 슬라이드로 돌아옵니다)" checked={back} onChange={setBack} />
     </Dialog>
   );
 }
@@ -489,11 +435,12 @@ function PlaybackDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const ok = () => {
     const clean = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined && x !== false && x !== 0)) as MediaPlayback;
     if (v.volume === 0) clean.volume = 0;
+    if (!clean.bookmarks?.length) delete clean.bookmarks;
     ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, playback: Object.keys(clean).length ? clean : undefined } : e)));
     onClose();
   };
   return (
-    <Dialog title={audio ? '오디오 재생' : '비디오 재생'} onClose={onClose} onOk={ok} okDisabled={!ed.canEdit}>
+    <Dialog title={audio ? '오디오 재생' : '비디오 재생'} onClose={onClose} onOk={ok} okDisabled={!ed.canEdit} wide>
       <Field label="시작"><select value={v.autoplay ? 'auto' : 'click'} onChange={(e) => set({ autoplay: e.target.value === 'auto' || undefined })}><option value="click">클릭할 때</option><option value="auto">자동 실행</option></select></Field>
       <div className="dlg-grid3">
         <Field label="볼륨"><select value={v.muted ? 'mute' : String(v.volume ?? 1)} onChange={(e) => set(e.target.value === 'mute' ? { muted: true } : { muted: undefined, volume: Number(e.target.value) })}><option value="0.25">낮게</option><option value="0.6">중간</option><option value="1">높게</option><option value="mute">음소거</option></select></Field>
@@ -515,6 +462,8 @@ function PlaybackDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           : <Check label="전체 화면 재생" checked={!!v.fullScreen} onChange={(on) => set({ fullScreen: on || undefined })} />}
       </div>
       {!audio && <Field label="포스터 프레임 (초 — 재생 전 보여 줄 장면)"><Num value={v.poster ?? 0} min={0} step={0.5} onChange={(n) => set({ poster: n || undefined })} /></Field>}
+      <MediaPanel el={el} v={v} set={set} />
+      {audio && <Check label="쇼 동안 숨기기" checked={!!v.hideDuringShow} onChange={(on) => set({ hideDuringShow: on || undefined })} />}
     </Dialog>
   );
 }
@@ -525,8 +474,8 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'setupShow': return <SetupShowDialog ed={ed} onClose={onClose} />;
     case 'customShows': return <CustomShowsDialog ed={ed} onClose={onClose} />;
     case 'smartArt': return <SmartArtDialog ed={ed} onClose={onClose} />;
-    case 'photoAlbum': return <PhotoAlbumDialog ed={ed} onClose={onClose} />;
-    case 'albumEdit': return <PhotoAlbumDialog ed={ed} onClose={onClose} edit />;
+    case 'photoAlbum': return <PhotoAlbumDialog ed={ed} onClose={onClose} onInsert={(add) => insertSlides(ed, add)} />;
+    case 'albumEdit': return <PhotoAlbumDialog ed={ed} onClose={onClose} edit onInsert={(add) => insertSlides(ed, add)} />;
     case 'action': return <ActionDialog ed={ed} onClose={onClose} />;
     case 'reuse': return <ReuseDialog ed={ed} onClose={onClose} />;
     case 'outline': return <OutlineDialog ed={ed} onClose={onClose} />;
@@ -536,6 +485,9 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'zoom': return <ZoomDialog ed={ed} onClose={onClose} />;
     case 'audio': return <PlaybackDialog ed={ed} onClose={onClose} />;
     case 'sizePosition': return <SizePositionDialog ed={ed} onClose={onClose} />;
+    case 'themeColors': return <ThemeColorsDialog ed={ed} onClose={onClose} />;
+    case 'themeFonts': return <ThemeFontsDialog ed={ed} onClose={onClose} />;
+    case 'slideSize': return <SlideSizeDialog onClose={onClose} />;
     default: return <InsertDialogs ed={ed} kind={kind} onClose={onClose} />;
   }
 }

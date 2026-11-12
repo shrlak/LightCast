@@ -1,4 +1,7 @@
-export type HAlign = 'left' | 'center' | 'right' | 'justify';
+/** 양쪽 맞춤 (justify) also comes in 균등 분할 (distributed: the last line is spread too) and 양쪽 맞춤 (낮음) (justLow). */
+export type HAlign = 'left' | 'center' | 'right' | 'justify' | 'distributed' | 'justLow';
+/** 텍스트 방향 beyond 가로 (and `vertical`, 세로 쓰기): the pptx `vert` / `vert270` / `wordArtVert`. */
+export type TextDirection = 'rotate90' | 'rotate270' | 'stacked';
 /** Bullets or numbering in front of each line (PowerPoint's 글머리 기호 / 번호 매기기). */
 export type ListStyle = 'bullet' | 'circle' | 'square' | 'check' | 'arrow' | 'number' | 'number-paren' | 'roman' | 'alpha' | 'hangul'
   /** DeckCraft's other bullets (□ ◆ – ★) and numbering schemes (i. a. a)). */
@@ -28,6 +31,8 @@ export interface Theme {
   autoFit?: boolean;
   /** Prefer unwrapped lyric lines: widen the box, wrapping only if the slide width is exhausted. */
   noWrap?: boolean;
+  /** Hyperlink colour of text links (by the text colour: PowerPoint's blue, lighter on dark). */
+  linkColor?: string;
   /** Text effects. */
   strokeColor?: string;
   strokeWidth?: number;
@@ -48,13 +53,15 @@ export interface Theme {
   columns?: number;
   /** Vertical text (세로 쓰기). */
   vertical?: boolean;
+  /** Home › 텍스트 방향: all text turned 90° / 270°, or stacked upright. */
+  direction?: TextDirection;
 }
 
 /** Per-slide text formatting that overrides the presentation's theme for that slide only. */
 export type SlideStyle = Partial<Pick<Theme,
   'fontFamily' | 'fontSize' | 'fontWeight' | 'color' | 'align' | 'vAlign' | 'lineHeight' | 'shadow' | 'uppercase' |
   'subColor' | 'strokeColor' | 'strokeWidth' | 'italic' | 'underline' | 'padding' | 'strike' | 'letterSpacing' | 'highlight' |
-  'list' | 'indent' | 'columns' | 'vertical' | 'autoFit' | 'glowColor'>>;
+  'list' | 'indent' | 'columns' | 'vertical' | 'direction' | 'autoFit' | 'glowColor'>>;
 
 export type MediaType = 'image' | 'video' | 'audio';
 /** 'fill' stretches to the box (how PowerPoint draws a picture in its frame). */
@@ -63,14 +70,27 @@ export type MediaFit = 'cover' | 'contain' | 'fill';
 export type Background =
   | { kind: 'color'; value: string }
   | { kind: 'gradient'; value: string }
-  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean; /** Format Background › Transparency, 0–1. */ transparency?: number }
+  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean; /** Format Background › Transparency, 0–1. */ transparency?: number; pic?: BackgroundPicture }
   /** Format Background › Pattern fill (domain/patterns). */
   | { kind: 'pattern'; preset: string; fg: string; bg: string }
   /** Built-in image shipped with the app (the church's template backgrounds). */
-  | { kind: 'image'; url: string; fit?: MediaFit }
+  | { kind: 'image'; url: string; fit?: MediaFit; pic?: BackgroundPicture }
   | { kind: 'camera'; deviceId: string; label: string }
   /** Generated moving background (aurora, waves, stars…); drawn live, no file needed. */
   | { kind: 'motion'; style: MotionStyle; colors: string[]; speed?: number };
+
+/** Format Background › Picture fill options (see pictureBackground.ts). */
+export interface BackgroundPicture {
+  /** Tile the picture as a texture instead of stretching it to the slide. */
+  tile?: boolean;
+  /** Tile scale in % (default 100) and offset in canvas pixels. */
+  scaleX?: number; scaleY?: number; offsetX?: number; offsetY?: number;
+  mirror?: 'none' | 'x' | 'y' | 'xy';
+  /** Where the tiling starts (default tl, top left). */
+  align?: 'tl' | 't' | 'tr' | 'l' | 'ctr' | 'r' | 'bl' | 'b' | 'br';
+  /** 0–100 %. */
+  transparency?: number;
+}
 
 export type MotionStyle = 'aurora' | 'waves' | 'stars' | 'rays' | 'embers' | 'bokeh';
 
@@ -111,7 +131,33 @@ export interface MediaMeta {
 
 /** 'table', 'chart', 'icon' and 'ink' are drawn by the Rust engine (src/engine), as are preset shapes. */
 export type ElementKind = 'text' | 'image' | 'shape' | 'video' | 'camera' | 'qr' | 'table' | 'chart' | 'icon' | 'ink' | 'audio' | 'zoom';
-export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot' | 'lgDash' | 'sysDash' | 'sysDot';
+export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot' | 'lgDash' | 'sysDash' | 'sysDot' | 'lgDashDot' | 'lgDashDotDot' | 'sysDashDot' | 'sysDashDotDot';
+/** Shape Outline: line end cap, corner join and compound (multi-line) type, as DeckCraft's shape.line takes them. */
+export type LineCap = 'flat' | 'round' | 'square';
+export type LineJoin = 'round' | 'bevel' | 'miter';
+export type CompoundLine = 'single' | 'double' | 'thickThin' | 'thinThick' | 'triple';
+/** One stop of a gradient fill: position 0–100 (%), colour, transparency 0–1 of just this stop. */
+export interface GradientStop { pos: number; color: string; transparency?: number }
+/**
+ * Format Shape › 3-D Format beyond the tilt (DeckCraft three_d.rs): lengths in points, `material` and
+ * `lighting` are the file format's preset names. The top bevel preset is `SlideElement.bevelKind`.
+ */
+export interface Format3d {
+  depth?: number;
+  depthColor?: string;
+  contour?: number;
+  contourColor?: string;
+  material?: string;
+  lighting?: string;
+  /** Light rig direction: tl t tr l r bl b br. */
+  lightDir?: string;
+  /** Top bevel size (points). */
+  bevelW?: number;
+  bevelH?: number;
+  bevelBottom?: string;
+  bevelBottomW?: number;
+  bevelBottomH?: number;
+}
 /** Shape Outline › Arrows: the arrowhead drawn at a line's end (DeckCraft's LineEnd kinds). */
 export type ArrowKind = 'triangle' | 'stealth' | 'diamond' | 'oval' | 'arrow';
 
@@ -131,6 +177,8 @@ export interface TextRun {
   fontFamily?: string;
   /** Highlighter colour behind the run. */
   highlight?: string;
+  /** Insert › Link on these characters: opened by a click in a slide show. */
+  link?: string;
 }
 
 /** What clicking an object does in a slide show (Insert › Action). */
@@ -166,6 +214,8 @@ export interface MediaPlayback {
   acrossSlides?: boolean;
   /** Play full screen: a video fills the slide while it plays. */
   fullScreen?: boolean;
+  /** Bookmarks on the clip (name, seconds), in time order: the playback preview jumps to them. */
+  bookmarks?: { name: string; t: number }[];
 }
 
 /** Picture Format adjustments; the shown picture is made from `original` by the engine. */
@@ -249,6 +299,9 @@ export interface SlideElement {
   indent?: number;
   columns?: number;
   vertical?: boolean;
+  direction?: TextDirection;
+  /** 줄 간격 고정 / 최소 (points × 2 = canvas px): replaces the `lineHeight` multiple while set. */
+  lineExact?: { mode: 'exact' | 'min'; px: number };
   /** Text-box purpose, retained when editing or filling a template. */
   role?: 'prayer' | 'lyrics';
   /**
@@ -262,6 +315,15 @@ export interface SlideElement {
   /** Outline width in canvas pixels (default 4 when `stroke` is set). */
   strokeWidth?: number;
   dash?: DashStyle;
+  cap?: LineCap;
+  join?: LineJoin;
+  compound?: CompoundLine;
+  /** Fill transparency 0–1 (separate from the object's `opacity`, which also fades the outline and text). */
+  fillTransparency?: number;
+  /** Gradient fill with more than two stops / per-stop transparency; `gradient` keeps the first and last colour. */
+  gradientStops?: GradientStop[];
+  /** Format Shape › 3-D Format: depth, contour, material, lighting, bevel sizes. */
+  format3d?: Format3d;
   /** Two-colour gradient fill, drawn at `gradientAngle` degrees (0 = left to right, 90 = top to bottom). */
   gradient?: [string, string];
   gradientAngle?: number;
@@ -282,13 +344,15 @@ export interface SlideElement {
   flipV?: boolean;
   /** Objects with the same group id are selected, moved and sized together (Arrange › Group). */
   groupId?: string;
+  /** Selection pane name of the group (kept on its members). */
+  groupName?: string;
   /** Review › Language: the proofing language (BCP-47), and "do not check spelling". */
   lang?: string;
   noProof?: boolean;
   /** The group this object was in before Ungroup (Arrange › Regroup puts it back). */
   prevGroupId?: string;
   /** A layout placeholder: shows a prompt in the editor while empty (Slide Master › Insert Placeholder). */
-  placeholder?: 'title' | 'body' | 'text' | 'picture';
+  placeholder?: 'title' | 'body' | 'text' | 'picture' | 'content' | 'chart' | 'table' | 'media' | 'date' | 'footer' | 'slideNumber';
   /** Name shown in the Selection pane. */
   name?: string;
   /** Hidden in the Selection pane: kept on the slide, not drawn. */
@@ -347,9 +411,8 @@ export interface SlideElement {
   action?: ElementAction;
   /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */
   targetSlideId?: string;
-  /** Zoom › Return to Zoom: after `zoomEndSlideId` (default the target) the show comes back to the zoom's slide. */
-  zoomReturn?: boolean;
-  zoomEndSlideId?: string;
+  /** Return to Zoom: the slide after which the slide show comes back to this zoom's slide (the target slide, or its section's last). */
+  zoomReturn?: string;
   zoomOf?: { slide: Slide; theme: Theme; background: Background | null };
   /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it); `rtl`: Right to Left. */
   smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number }; rtl?: boolean };
@@ -464,7 +527,7 @@ export interface Slide {
   lang?: string;
   noProof?: boolean;
   /** Insert › Photo Album: the album this slide belongs to (Edit Photo Album rebuilds it). */
-  album?: { id: string; per: 1 | 2 | 4; frame: string; titles: boolean; captions: boolean };
+  album?: { id: string; per: 1 | 2 | 4; frame: string; titles: boolean; captions: boolean; fit?: boolean; gray?: boolean };
   /** The Slide Master layout this slide was made from. */
   layoutId?: string;
   /** Character formatting of the slide's own text, one list of runs per line (ignored for a line they no longer spell). */
@@ -572,8 +635,10 @@ export interface Presentation {
   timeline?: Timeline;
   /** Design › Variants › Colors: the engine colour scheme tables, charts and the colour picker use. */
   colorScheme?: string;
+  /** Design › Fonts: the heading / body fonts (Create New Theme Fonts); the faces are PowerPoint font names. */
+  fontScheme?: { name: string; major: string; minor: string };
   /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
-  master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[] };
+  master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[]; /** Master › Preserve: kept even when no slide uses it. */ preserve?: boolean };
   /** Slide Show › Set Up Slide Show. */
   showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean };
   /** Slide Show › Custom Slide Show: named lists of slides. */

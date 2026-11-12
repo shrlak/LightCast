@@ -6,10 +6,11 @@
 // characters through `activeTextEditor` (the selection is remembered when focus moves to a ribbon
 // control, such as the font size box).
 import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ClipboardEvent as RClipboardEvent, type FormEvent, type KeyboardEvent as RKeyboardEvent, type MouseEvent as RMouseEvent } from 'react';
-import type { ListStyle, TextRun } from '../domain/types';
+import type { ListStyle, SlideElement, TextRun } from '../domain/types';
 import { insertLines, normalizeRuns, sliceLines, withBoxFormat, type RunFormat } from '../domain/richText';
 import { CLIP_TYPE, pastedLines, runsHtml } from '../domain/clipboard';
 import { formatSpan, stepFontSize } from '../domain/textFormat';
+import { applyFormat, armedPainter, finishPainter, heldFormat, holdFormat, runFormatOf, textPart, type Painted } from '../domain/formatPainter';
 import { runStyle } from './runStyle';
 import { deleteWord, paraDown, paraUp, paragraphRange, toOffset, toPos, wordMove, wordRange, type Pos } from '../domain/textEditing';
 import { autoCorrectAt, autoCorrectPrefs, smartQuote } from '../domain/autoCorrect';
@@ -25,6 +26,13 @@ export interface RichTextApi {
   step(dir: 1 | -1): void;
   /** The formatting of every selected piece of text (the caret's when nothing is selected), for the ribbon's mixed state. */
   spans(): RunFormat[];
+  /** Insert › Link: the address on the characters at the start of the selection, and putting one on the selected characters (none removes it). */
+  currentLink(): string | undefined;
+  link(url: string | undefined): void;
+  /** 서식 복사: the formatting at the start of the selection (the whole box's when nothing is selected). */
+  pick(): Painted;
+  /** 서식 붙여넣기: replace the formatting of the selected characters (of the whole box when nothing is selected). */
+  drop(p: Painted): void;
 }
 
 let active: RichTextApi | null = null;
@@ -58,15 +66,35 @@ function render(root: HTMLElement, lines: TextRun[][]) {
       if (Object.keys(fmt).length) span.dataset.run = JSON.stringify(fmt);
       const css = runStyle(r);
       for (const [k, v] of Object.entries(css)) if (v !== undefined) (span.style as unknown as Record<string, string>)[k] = typeof v === 'number' && k === 'fontSize' ? `${v}px` : String(v);
-      span.textContent = r.text;
+      // A soft line break (\v in the text) is a <br data-soft>: one character of the model, not a new block.
+      r.text.split('\u000b').forEach((piece, i) => {
+        if (i) span.append(softBreak());
+        if (piece) span.append(document.createTextNode(piece));
+      });
       block.append(span);
     }
+    // A line ending in a soft break needs something after it for the empty line to show.
+    if (endsWithSoft(block)) block.append(document.createElement('br'));
     if (!block.childNodes.length) block.append(document.createElement('br'));
     root.append(block);
   }
 }
 
 const BLOCK = new Set(['DIV', 'P', 'LI']);
+
+const isSoft = (n: Node | null): n is HTMLBRElement => (n as HTMLElement | null)?.tagName === 'BR' && !!(n as HTMLElement).dataset.soft;
+const softBreak = () => { const br = document.createElement('br'); br.dataset.soft = '1'; return br; };
+
+/** The last real thing in a node (empty text nodes, which splitting text leaves behind, do not count). */
+function lastLeaf(n: Node): Node | null {
+  for (let c = n.lastChild; c; c = c.previousSibling) {
+    if (c.nodeType === Node.TEXT_NODE && !(c as Text).data) continue;
+    return lastLeaf(c) ?? c;
+  }
+  return null;
+}
+/** Does the block's last character come from a soft line break? */
+const endsWithSoft = (block: Node) => isSoft(lastLeaf(block));
 
 /** The editor's DOM → lines of runs (whatever structure the browser made while typing). */
 export function readLines(root: HTMLElement): TextRun[][] {
@@ -94,6 +122,7 @@ export function readLines(root: HTMLElement): TextRun[][] {
         return;
       }
       const el = child as HTMLElement;
+      if (isSoft(el)) { lines[lines.length - 1].push({ text: '\u000b', ...fmtOf(el) }); return; }
       if (el.tagName === 'BR') {
         // A <br> ending a block is only the browser holding an empty line open.
         const last = i === node.childNodes.length - 1 && BLOCK.has((node as HTMLElement).tagName ?? '');
@@ -113,16 +142,18 @@ export function readLines(root: HTMLElement): TextRun[][] {
   return lines.map(normalizeRuns);
 }
 
-/** Text nodes with the character offset (lines joined by \n) each starts at. */
-function textMap(root: HTMLElement): { node: Text; start: number }[] {
-  const out: { node: Text; start: number }[] = [];
+/** What the model counts as characters in the DOM: text nodes and soft breaks, with the offset (lines joined by \n) each starts at. */
+interface Piece { node: Node; start: number; len: number }
+function textMap(root: HTMLElement): Piece[] {
+  const out: Piece[] = [];
   let at = 0;
   root.childNodes.forEach((block, li) => {
     if (li > 0) at += 1;
-    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
-    for (let n = walker.nextNode() as Text | null; n; n = walker.nextNode() as Text | null) {
-      out.push({ node: n, start: at });
-      at += n.data.length;
+    const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, { acceptNode: (n) => (n.nodeType === Node.TEXT_NODE || isSoft(n) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP) });
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const len = n.nodeType === Node.TEXT_NODE ? (n as Text).data.length : 1;
+      out.push({ node: n, start: at, len });
+      at += len;
     }
   });
   return out;
@@ -134,7 +165,7 @@ function offsetOf(root: HTMLElement, node: Node, offset: number): number {
     const hit = map.find((m) => m.node === node);
     if (hit) return hit.start + offset;
   }
-  // An element boundary: the first text at or after it.
+  // An element boundary: the first text (or soft break) at or after it.
   const marker = node.nodeType === Node.TEXT_NODE ? node : node.childNodes[offset] ?? null;
   if (marker) {
     for (const m of map) {
@@ -147,22 +178,28 @@ function offsetOf(root: HTMLElement, node: Node, offset: number): number {
   if (block) {
     const inBlock = map.filter((m) => block.contains(m.node));
     const last = inBlock[inBlock.length - 1];
-    if (last) return last.start + last.node.data.length;
+    if (last) return last.start + last.len;
     const before = map.filter((m) => block.compareDocumentPosition(m.node) & Node.DOCUMENT_POSITION_PRECEDING);
     const idx = [...root.childNodes].indexOf(block as ChildNode);
-    return before.length ? before[before.length - 1].start + before[before.length - 1].node.data.length + 1 : idx;
+    return before.length ? before[before.length - 1].start + before[before.length - 1].len + 1 : idx;
   }
   const last = map[map.length - 1];
-  return last ? last.start + last.node.data.length : 0;
+  return last ? last.start + last.len : 0;
 }
 
 function pointAt(root: HTMLElement, offset: number): [Node, number] {
   const map = textMap(root);
-  for (const m of map) if (offset <= m.start + m.node.data.length && offset >= m.start) return [m.node, offset - m.start];
+  for (const m of map) {
+    if (offset > m.start + m.len || offset < m.start) continue;
+    if (m.node.nodeType === Node.TEXT_NODE) return [m.node, offset - m.start];
+    // A soft break: before it, or after it (the next place in its parent).
+    const parent = m.node.parentNode!, i = [...parent.childNodes].indexOf(m.node as ChildNode);
+    return [parent, i + (offset - m.start)];
+  }
   // Empty line or end: put the caret in the block holding that line.
   let at = 0;
   for (const block of root.childNodes) {
-    const len = block.textContent?.length ?? 0;
+    const len = textMap(root).filter((m) => block.contains(m.node)).reduce((n, m) => n + m.len, 0);
     if (offset <= at + len) return [block, 0];
     at += len + 1;
   }
@@ -270,14 +307,18 @@ interface Props {
   control?: { current: EditorControl | null };
   /** AutoFormat's automatic list: make the box a list (undefined: take it off); false when the box can't. */
   onAutoList?: (list: ListStyle | undefined) => boolean;
+  /** Shift+Enter makes a soft line break (text boxes; the slide's own lyric text keeps one line per paragraph). */
+  softBreaks?: boolean;
+  /** 서식 복사 inside a box: its own formatting, and a way to change the box's (applied with the next commit of the text). */
+  painter?: { source: () => Painted; setBox: (fn: (e: SlideElement) => SlideElement) => void };
 }
 
 /** The editable text box. Mounted for one typing session. */
-export function RichTextEditor({ lines, base, style, onChange, onDone, plain, lang, noProof, start, standby, control, onAutoList }: Props) {
+export function RichTextEditor({ lines, base, style, onChange, onDone, plain, lang, noProof, start, standby, control, onAutoList, painter, softBreaks }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const sel = useRef<[number, number]>([0, 0]);
-  const latest = useRef({ onChange, onDone, base, onAutoList });
-  latest.current = { onChange, onDone, base, onAutoList };
+  const latest = useRef({ onChange, onDone, base, onAutoList, painter });
+  latest.current = { onChange, onDone, base, onAutoList, painter };
   /** Our own edits (AutoCorrect, word deletion) are not typing: their input events are not corrected again. */
   const busy = useRef(false);
   /** The list AutoFormat just started (Backspace right after puts the typed lead back), and the text it left. */
@@ -359,6 +400,37 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
       },
       apply: (patch) => reformat(() => patch),
       step: (dir) => reformat((r) => ({ fontSize: stepFontSize(r.fontSize ?? latest.current.base.fontSize, dir) })),
+      currentLink: () => {
+        if (document.activeElement === root) remember();
+        return runAt(readLines(root), sel.current[0])?.link;
+      },
+      link: (url) => { if (sel.current[0] !== sel.current[1]) reformat(() => ({ link: url })); },
+      pick: () => {
+        if (document.activeElement === root) remember();
+        const own = latest.current.painter?.source() ?? {};
+        const r = runAt(readLines(root), sel.current[0]) ?? { text: '' };
+        const b = latest.current.base;
+        // What the characters look like where the selection starts: their own formatting over the box's.
+        const text = { ...own.text, fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, italic: r.italic ?? b.italic, underline: r.underline ?? b.underline, strike: r.strike ?? b.strike, color: r.color ?? b.color, fontFamily: r.fontFamily ?? b.fontFamily, highlight: r.highlight ?? b.highlight };
+        return { text, baseline: r.baseline, para: own.para };
+      },
+      drop: (p) => {
+        if (document.activeElement === root) remember();
+        const [a, b] = sel.current;
+        const cur = readLines(root);
+        const total = cur.reduce((n, l) => n + l.reduce((m, r) => m + r.text.length, 0), 0) + Math.max(0, cur.length - 1);
+        const painterApi = latest.current.painter;
+        if (a === b) {
+          // Nothing selected: the whole box takes it, as DeckCraft does when the selection is not a range.
+          painterApi?.setBox((e) => applyFormat(e, textPart(p)));
+          reformat(() => ({ fontSize: undefined, bold: undefined, italic: undefined, underline: undefined, strike: undefined, color: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined }));
+          return;
+        }
+        // Characters take the character formatting; the paragraph formatting only when the selection covers every paragraph.
+        if (a <= 0 && b >= total && p.para) painterApi?.setBox((e) => applyFormat(e, { para: p.para }));
+        const fmt = runFormatOf(p);
+        reformat((r) => ({ ...Object.fromEntries(Object.keys(r).filter((k) => k !== 'text' && k !== 'link').map((k) => [k, undefined])), ...fmt }));
+      },
     };
     if (!plain) active = api;
     notify();
@@ -545,6 +617,25 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         return;
       }
     }
+    // Shift+Enter: a soft line break (\v) inside the paragraph, not a new one.
+    if (softBreaks && e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.nativeEvent.isComposing) {
+      e.preventDefault();
+      const s = window.getSelection(), root = ref.current!;
+      if (!s?.rangeCount || !root.contains(s.anchorNode)) return;
+      const range = s.getRangeAt(0);
+      range.deleteContents();
+      const soft = softBreak();
+      range.insertNode(soft);
+      // At the end of a block the browser needs a second <br> to show the empty line the caret is on.
+      const block = [...root.childNodes].find((b) => b.contains(soft)) as HTMLElement | undefined;
+      if (block && endsWithSoft(block)) block.append(document.createElement('br'));
+      range.setStartAfter(soft);
+      range.collapse(true);
+      s.removeAllRanges();
+      s.addRange(range);
+      onChange(readLines(root));
+      return;
+    }
     if (textKey(e)) return;
     // Tab types a tab (it goes to the box's next tab stop) instead of leaving the box.
     if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) { e.preventDefault(); document.execCommand('insertText', false, '\t'); return; }
@@ -553,6 +644,9 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
     const k = e.key.toLowerCase();
     const api = active;
     if (!api) return;
+    // 서식 복사 / 붙여넣기 (Ctrl+Shift+C / V); without anything copied Ctrl+Shift+V stays the plain-text paste.
+    if (e.shiftKey && k === 'c') { holdFormat(api.pick()); e.preventDefault(); return; }
+    if (e.shiftKey && k === 'v' && heldFormat()) { api.drop(heldFormat()!); finishPainter(); e.preventDefault(); return; }
     const cur = api.current();
     if (k === 'b') api.apply({ bold: !cur.bold });
     else if (k === 'i') api.apply({ italic: !cur.italic });
@@ -614,11 +708,17 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         notify();
       }}
       onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={() => {
+        // The painter armed from the ribbon: selecting characters puts its formatting on them.
+        const a = armedPainter(), api = active;
+        if (!a || !api || plain || !heldFormat()) return;
+        setTimeout(() => { if (api.hasSelection()) { api.drop(heldFormat()!); finishPainter(); } }, 0);
+      }}
       onBlur={() => {
         // Focus moving to a ribbon or Format pane control keeps the session (and selection) alive.
         setTimeout(() => {
           const f = document.activeElement as HTMLElement | null;
-          if (f && (f === ref.current || f.closest('.ribbon, .ppt-format, .ppt-menu, .rb-menu, .ce-rich, .ppt-dialog'))) return;
+          if (f && (f === ref.current || f.closest('.ribbon, .ppt-format, .ppt-menu, .rb-menu, .ce-rich, .ppt-dialog, .name-dialog'))) return;
           if (!ref.current?.isConnected) return;
           latest.current.onDone();
         }, 0);

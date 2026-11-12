@@ -3,21 +3,24 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import type { ElementAction, Slide, SlideElement } from '../../domain/types';
 import { CANVAS_W } from '../../domain/canvas';
-import { actionAt, hoverAt, lastViewed } from '../../domain/showActions';
+import { actionAt, hoverAt, lastViewed, runLinkAt } from '../../domain/showActions';
 import { playMedia } from './mediaControl';
+import { returnAfter, type ZoomReturn } from '../../domain/zoom';
 export { actionAt };
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
 import { findText } from '../../engine';
 import { findItems, parseFindKey, replaceMatches } from '../../domain/findReplace';
 import { SlideCanvas } from '../SlideCanvas';
-import { printHtml } from '../printHtml';
 import { clickTrigger, triggerObjects, type LiveBuild } from '../../domain/animations';
 import type { Ed } from './editor';
 import { ACCEPT } from './commands';
 import { RI } from './ribbonParts';
 import { TRANSITION } from './ko';
-import { PrintRun, PropertiesForm, type PrintMode } from './printing';
+import { PropertiesForm } from './printing';
+import { PrintPanel } from './printPanel';
+import { InfoStats } from './infoPanel';
+import { ExportPanel } from './exportPanel';
 
 // ── Find and replace ──────────────────────────────────────────────────────────────────────────
 // What is searched and how a replacement keeps the formatting: domain/findReplace (DeckCraft text.find /
@@ -160,6 +163,7 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
   const [build, setBuild] = useState<LiveBuild | null>(null);
   const [ended, setEnded] = useState(false);
   const times = useRef<Record<string, number>>({});
+  const zoomBack = useRef<ZoomReturn | null>(null);
   const shownAt = useRef(Date.now());
   const [now, setNow] = useState(Date.now());
   const slide = pages[i]?.slide ?? null;
@@ -182,26 +186,22 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     if (custom) { const back = custom.back; setCustom(null); setI(back); return; }
     if (rehearse) setEnded(true); else onClose();
   };
-  // Insert › Zoom › Return to Zoom: after the zoomed-to slide (or section) the show comes back here.
-  const zoomBack = useRef<{ from: number; endId: string } | null>(null);
   const goTo = (n: number) => { if (n === i) return; record(); if (n >= pages.length) return finish(); history.current.push(i); setI(Math.max(0, n)); };
-  const forward = () => {
-    const z = zoomBack.current;
-    if (z && slide?.id === z.endId) { zoomBack.current = null; return goTo(z.from); }
-    goTo(i + 1);
-  };
   /** Next: the next build, else the next slide (a mouse click only when the slide allows it). */
   const next = async (mouse = false) => {
     const { advanceBuild } = await import('../../domain/animations');
     const b = slide && !ed.p?.showSetup?.noAnimation ? advanceBuild(slide, build ?? undefined, Date.now()) : null;
-    if (b) setBuild(b);
-    else if (!(mouse && transition?.advanceOnClick === false)) forward();
+    if (b) { setBuild(b); return; }
+    if (mouse && transition?.advanceOnClick === false) return;
+    const back = returnAfter(zoomBack.current, slide?.id);
+    if (back !== null) { zoomBack.current = null; goTo(back); } else goTo(i + 1);
   };
   const prev = () => goTo(i - 1);
   const act = (el: SlideElement, over?: ElementAction) => {
     if (!over && el.kind === 'zoom' && el.targetSlideId) {
       const n = pages.findIndex((x) => x.slide.id === el.targetSlideId);
-      if (n >= 0) { zoomBack.current = el.zoomReturn ? { from: i, endId: el.zoomEndSlideId ?? el.targetSlideId } : null; goTo(n); }
+      // Return to Zoom: going on past the target (or its section's last slide) comes back to this slide.
+      if (n >= 0) { zoomBack.current = el.zoomReturn ? { from: i, after: el.zoomReturn } : null; goTo(n); }
       return;
     }
     const a = over ?? el.action ?? (el.href ? { kind: 'url' as const, url: el.href } : null);
@@ -234,6 +234,8 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     }
   };
   const onStageClick = (e: MouseEvent<HTMLDivElement>) => {
+    const link = runLinkAt(e.target);
+    if (link) { window.open(link, '_blank', 'noopener'); return; }
     const r = stage.current?.querySelector('.slide-canvas, .canvas, div')?.getBoundingClientRect() ?? stage.current?.getBoundingClientRect();
     if (r && r.width) {
       const k = CANVAS_W / r.width;
@@ -332,20 +334,10 @@ function Card({ icon, title, text, onClick, disabled }: { icon: ReactNode; title
 
 export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [page, setPage] = useState<Page>('home');
-  const [printing, setPrinting] = useState<PrintMode | null>(null);
-  const [toPdf, setToPdf] = useState(false);
-  const startPrint = (mode: PrintMode, pdf = false) => { setToPdf(pdf); setPrinting(mode); };
   const { cmd, p, state } = ed;
   const lib = state.library;
   const run = (fn: () => void) => { fn(); onClose(); };
   const recent = [...lib.presentations].filter((x) => !x.online).sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0)).slice(0, 12);
-  const printOutline = () => {
-    if (!p) return;
-    const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;');
-    printHtml(`<html><head><meta charset="utf-8"><title>${esc(p.title)}</title><style>body{font-family:sans-serif;padding:24px}h1{font-size:20px}.s{border:1px solid #999;margin:10px 0;padding:10px;page-break-inside:avoid}.n{color:#777;font-size:12px}pre{white-space:pre-wrap;font:inherit;margin:4px 0}</style></head><body><h1>${esc(p.title)}</h1>${
-      p.slides.map((s, i) => `<div class="s"><div class="n">슬라이드 ${i + 1}</div>${s.title ? `<b>${esc(s.title)}</b>` : ''}<pre>${esc([s.text, ...(s.elements ?? []).map((e) => e.text ?? '')].filter(Boolean).join('\n'))}</pre>${s.notes ? `<div class="n">노트: ${esc(s.notes)}</div>` : ''}</div>`).join('')
-    }</body></html>`);
-  };
   const nav: [Page, string][] = [['home', '홈'], ['open', '열기'], ['info', '정보'], ['save', '저장'], ['print', '인쇄'], ['export', '내보내기']];
   return (
     <div className="backstage" role="dialog" aria-label="파일">
@@ -391,7 +383,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             {p ? (
               <div className="bs-info">
                 <h2>{p.title}</h2>
-                <p>슬라이드 {p.slides.length}장 · 애니메이션 {p.slides.reduce((n, s) => n + (s.animations?.length ?? 0), 0)}개 · 메모 {p.slides.reduce((n, s) => n + (s.comments?.length ?? 0), 0)}개{p.folder ? ` · 폴더 ${p.folder}` : ''}</p>
+                <InfoStats ed={ed} />
                 <div className="bs-cards">
                   <Card icon="🔒" title={p.protected ? '자료 보호 해제' : '프레젠테이션 보호'} text="실수로 바꾸거나 지우지 않게" onClick={() => run(() => ed.dispatch({ type: 'presentation/protect', id: p.id, on: !p.protected }))} />
                   <Card icon="🕘" title="복원 지점" text="자동 저장된 때로 되돌리기" onClick={() => run(() => cmd.open('restore'))} />
@@ -418,24 +410,16 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         {page === 'print' && (
           <>
             <h1>인쇄</h1>
-            <div className="bs-cards">
-              <Card icon="🖨" title="전체 페이지 슬라이드" text="한 페이지에 슬라이드 한 장" onClick={() => startPrint('slides')} />
-              <Card icon="▥" title={`유인물 (${p?.handoutMaster?.perPage ?? 3}슬라이드)`} text="유인물 마스터 설정대로" onClick={() => startPrint('handout')} />
-              <Card icon="▦" title="슬라이드 노트" text="슬라이드와 발표자 노트" onClick={() => startPrint('notes')} />
-              <Card icon="☰" title="개요 인쇄" text="슬라이드마다 텍스트와 노트" onClick={printOutline} />
-              <Card icon="⚙" title="유인물 마스터…" onClick={() => run(() => ed.setDialog('handoutMaster'))} />
-              <Card icon="🎼" title="코드 · 키 악보 인쇄" text="밴드용" onClick={() => run(() => cmd.open('chords'))} />
-            </div>
+            <PrintPanel ed={ed} onMaster={() => run(() => ed.setDialog('handoutMaster'))} onChords={() => run(() => cmd.open('chords'))} />
           </>
         )}
         {page === 'export' && (
           <>
             <h1>내보내기</h1>
+            <ExportPanel ed={ed} onPdf={() => setPage('print')} />
+            <h2>다른 형식</h2>
             <div className="bs-cards">
               <Card icon="📊" title="PowerPoint 프레젠테이션" text=".pptx" onClick={() => run(cmd.exportPlaylistPptx)} />
-              <Card icon="📄" title="PDF · 슬라이드" text="슬라이드 한 장이 한 페이지, 글자는 그대로 선택 가능" disabled={!p} onClick={() => startPrint('slides', true)} />
-              <Card icon="📄" title={`PDF · 유인물 (${p?.handoutMaster?.perPage ?? 3}슬라이드)`} text="유인물 마스터 설정대로" disabled={!p} onClick={() => startPrint('handout', true)} />
-              <Card icon="📄" title="PDF · 슬라이드 노트" text="슬라이드와 발표자 노트" disabled={!p} onClick={() => startPrint('notes', true)} />
               <Card icon="📈" title={`찬양 사용 CSV (${lib.usage.length})`} onClick={() => run(cmd.exportUsage)} />
               <Card icon="©" title="저작권(CCLI) 보고" onClick={() => run(() => cmd.open('ccli'))} />
               <Card icon="🧹" title="발표 기록 지우기" onClick={() => run(cmd.clearUsage)} />
@@ -443,7 +427,6 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           </>
         )}
       </main>
-      {printing && p && <PrintRun ed={ed} mode={printing} pdf={toPdf} onDone={() => setPrinting(null)} />}
     </div>
   );
 }

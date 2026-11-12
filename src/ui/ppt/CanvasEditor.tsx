@@ -11,19 +11,21 @@ import { uid } from '../../domain/lyrics';
 import { autoFitMode, lineReduction, newTextBox, resizedTextBox } from '../../domain/textFit';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
+import { alignCss, directionId, isVerticalText, lineHeightCss, writingCss } from '../../domain/textFormat';
+import { linkColorFor } from '../runStyle';
+import { copyFormat, finishPainter, heldFormat, holdFormat } from '../../domain/formatPainter';
 import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
 import {
-  boxOf, cloneElements, deleteSelection, duplicateSelection, expandSelection, groupSelection, inkToShape, makeInk, makeShape, nudgeSelection,
+  makeTable, boxOf, cloneElements, deleteSelection, duplicateSelection, enterGroup, enteredGroups, expandSelection, groupSelection, leaveGroups, pruneEntered, inkToShape, makeInk, makeShape, nudgeSelection,
   orderSelection, pasteStyle, selectionUnits, ungroupSelection, type CopiedStyle,
   lineBox, makeFreeform, pathShapeOf, routeConnectors,
 } from '../../domain/editOps';
-import { layoutTable } from '../../engine';
-import { drawLine, eraseLine } from '../../domain/tableBorders';
 import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, insertPoint, moveAnchor, nearestOnPath, setHandle, openPath, parsePath, setPointType, setSegmentType, shiftPath, writePath, type Seg } from '../../domain/pathEdit';
 import { DEFAULT_GRID_PX, dragGuidePos, dropGuide, gridStep, guideAt, guideCount, guideLabel, type GuideAxis } from '../../domain/guides';
 import { boundsOf, hitBox, marqueeIds, resizeBox, rotateBoxes, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
 import { aspectLocked, clickBox, constrain45, cycleSelection, drawBox, duplicateOffset, FINE_NUDGE, freeformPath, lineEnds, moveLineEnd, movableIds, NUDGE, resizeFlip, scribbleCloses, selectAllIds, type LastDuplicate, type Pt } from '../../domain/shapeOps';
 import { adjOf, geometryOf, isLinePreset, isLineShape, presetOf } from '../EngineElements';
+import { drawTableLine, eraseTableLine } from '../../domain/drawTable';
 import { RichTextEditor, type EditStart, type EditorControl } from '../RichTextEditor';
 import { Ruler } from './Ruler';
 import { clipboardToElements, copyObjectsToClipboard, lastCopiedObjects, sourceOf } from './pasteObjects';
@@ -49,8 +51,12 @@ export type CanvasTool =
   | { kind: 'crop'; id: string }
   /** Shape Format › Edit Shape › Edit Points. */
   | { kind: 'points'; id: string }
-  /** Table Design › Draw Table (drag to split a cell) / Eraser (click a line between cells). */
-  | { kind: 'tableDraw'; id: string; erase?: boolean }
+  /**
+   * Insert › Table › Draw Table / Table Design › Draw Table: a drag inside a table draws a line that splits the cells
+   * it crosses, a drag elsewhere draws a new one-cell table; Eraser: a click on a line merges the cells either side.
+   * `id` pins the tool to one table; without it any table under the pointer counts.
+   */
+  | { kind: 'tableDraw'; id?: string; erase?: boolean }
   /** Picture Format › Color › Set Transparent Color: the next click on the picture picks the colour. */
   | { kind: 'eyedrop'; id: string; onPick: (fx: number, fy: number) => void }
   /** Animations › Motion Paths › Custom Path for object `id`: drawn like Freeform: Shape (`add`: Add Animation). */
@@ -71,10 +77,12 @@ export interface ViewOptions {
   smartGuides?: boolean;
   /** View › Color/Grayscale › 회색조: the editor shows the slides in grey (the slides are unchanged). */
   grayscale?: boolean;
+  /** 회색조: slide pictures everywhere (editor, thumbnails, sorter, reading view, print) in grayscale. */
+  gray?: boolean;
 }
 
 type Drag =
-  | { mode: 'move'; ids: string[]; startX: number; startY: number; orig: Map<string, Box>; moved: boolean; copy: boolean; clickedText: string | null }
+  | { mode: 'move'; ids: string[]; startX: number; startY: number; orig: Map<string, Box>; moved: boolean; copy: boolean; clickedText: string | null; enter?: { group: string; hit: string } }
   | { mode: 'resize'; ids: string[]; handle: Handle; startX: number; startY: number; unit: EBox; orig: Map<string, Box & { rot: number }>; moved: boolean }
   | { mode: 'rotate'; id: string; ids: string[]; unit: EBox; moved: boolean }
   | { mode: 'lineEnd'; id: string; end: 0 | 1; moved: boolean; glue?: { id: string; site: number } | null }
@@ -84,7 +92,8 @@ type Drag =
   | { mode: 'ink'; points: [number, number][] }
   | { mode: 'point'; id: string; seg: number; startX: number; startY: number; moved: boolean; base?: string }
   | { mode: 'ctrl'; id: string; seg: number; which: 0 | 1; startX: number; startY: number; moved: boolean }
-  | { mode: 'tdraw'; id: string; r: number; c: number; cx: number; cy: number; cw: number; ch: number; x0: number; y0: number }
+  | { mode: 'tdraw'; id: string; x0: number; y0: number }
+  | { mode: 'tnew'; x0: number; y0: number }
   | { mode: 'guide'; axis: GuideAxis; index: number };
 
 interface Props {
@@ -207,7 +216,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const [pointPreview, setPointPreview] = useState<{ id: string; path: string } | null>(null);
   /** Edit Points: the anchor picked (its Bézier handles show) and the right-click menu. */
   const [ptSel, setPtSel] = useState<number | null>(null);
-  const [tablePreview, setTablePreview] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [tablePreview, setTablePreview] = useState<{ x0: number; y0: number; x1: number; y1: number; frame?: boolean } | null>(null);
   const [ptMenu, setPtMenu] = useState<{ x: number; y: number; seg: number; onSegment: boolean } | null>(null);
   const editing = session?.slideId === identity && (session.id === SLIDE_TEXT || elements.some((el) => el.id === session.id)) ? session.id : null;
   const defaultTextBox: Box = { x: theme.padding, y: theme.padding, w: CANVAS_W - theme.padding * 2, h: CANVAS_H - theme.padding * 2 };
@@ -238,11 +247,13 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   }, [identity, editing, theme.padding, theme.fontSize, theme.align, theme.vAlign, width, readOnly]);
 
   // A different slide: stop typing.
-  useEffect(() => { setSession(null); setPreview(null); }, [identity]);
+  useEffect(() => { setSession(null); setPreview(null); leaveGroups(); }, [identity]);
   // The last keystroke belongs to the old slide, even if it is switched or closed immediately.
   useEffect(() => flushText, [identity, flushText]);
 
   const hasSlideText = !!(slide.text.trim() || slide.title || slide.subtext);
+  // A group entered by a second click stays entered only while one of its members is selected.
+  pruneEntered(elements, selected);
   const sel = expandSelection(elements, selected.filter((id) => id !== SLIDE_TEXT));
   const units = selectionUnits(elements, sel);
   const elOf = (id: string) => elements.find((e) => e.id === id);
@@ -339,11 +350,15 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         return;
       }
       const el = latestEls.current.find((e) => e.id === id);
-      if (el) latestBody.current.onChange({ elements: latestEls.current.map((e) => (e.id === id ? { ...e, ...withRichLines(e, lines) } : e)) });
+      // A format painted onto the box while typing (Ctrl+Shift+V) lands with the text, from the same slide.
+      const box = boxPatch.current;
+      boxPatch.current = [];
+      if (el) latestBody.current.onChange({ elements: latestEls.current.map((e) => (e.id === id ? box.reduce((cur, fn) => fn(cur), { ...e, ...withRichLines(e, lines) }) : e)) });
     };
     commitTimer.current = window.setTimeout(flushText, 250);
   };
   const latestEls = useRef(elements); latestEls.current = elements;
+  const boxPatch = useRef<((e: SlideElement) => SlideElement)[]>([]);
 
   // ── Pointer ─────────────────────────────────────────────────────────────────────────────────
   const pointer = (e: { clientX: number; clientY: number }): [number, number] => {
@@ -443,25 +458,18 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       onToolDone?.();
     }
     if (tool?.kind === 'tableDraw') {
-      const el = elOf(tool.id);
-      if (!el?.table) { onToolDone?.(); return; }
-      const lx = x - el.x, ly = y - el.y;
-      const cells = layoutTable(el.table, el.w, el.h);
-      const cell = cells.find((c) => lx >= c.x - 6 && lx <= c.x + c.w + 6 && ly >= c.y - 6 && ly <= c.y + c.h + 6);
-      if (!cell) { onToolDone?.(); return; }
+      // The table under the pointer (the front-most one; with a pinned table, only that one).
+      const slop = tool.erase ? 10 / k : 0;
+      const el = [...visible].reverse().find((t) => t.kind === 'table' && t.table && (!tool.id || t.id === tool.id) && x >= t.x - slop && x <= t.x + t.w + slop && y >= t.y - slop && y <= t.y + t.h + slop);
       if (tool.erase) {
-        // The line nearest the click: the cell's right or bottom edge (or the neighbour's).
-        const tol = 10 / k;
-        const near = cells.flatMap((c) => [
-          { c, side: 'r' as const, d: Math.abs(lx - (c.x + c.w)) + (ly < c.y || ly > c.y + c.h ? 1e9 : 0) },
-          { c, side: 'b' as const, d: Math.abs(ly - (c.y + c.h)) + (lx < c.x || lx > c.x + c.w ? 1e9 : 0) },
-        ]).filter((h) => h.d < tol).sort((a, b) => a.d - b.d)[0];
-        const next = near && eraseLine(el.table, near.c.r, near.c.c, near.side);
-        if (next) setElements(elements.map((e) => (e.id === el.id ? { ...e, table: next } : e)));
+        // Click a line between two cells: they become one. Elsewhere does nothing.
+        const next = el?.table && eraseTableLine(el.table, el.w, el.h, [x - el.x, y - el.y], 10 / k);
+        if (el && next) setElements(elements.map((e) => (e.id === el.id ? { ...e, table: next } : e)));
         return;
       }
-      drag.current = { mode: 'tdraw', id: el.id, r: cell.r, c: cell.c, cx: cell.x, cy: cell.y, cw: cell.w, ch: cell.h, x0: lx, y0: ly };
-      setTablePreview({ x0: x, y0: y, x1: x, y1: y });
+      if (el?.table) drag.current = { mode: 'tdraw', id: el.id, x0: x - el.x, y0: y - el.y };
+      else drag.current = { mode: 'tnew', x0: x, y0: y };
+      setTablePreview({ x0: x, y0: y, x1: x, y1: y, frame: !el });
       return;
     }
     if (tool?.kind === 'pen') { drag.current = { mode: 'ink', points: [[x, y]] }; setInkPath([[x, y]]); return; }
@@ -499,6 +507,14 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     let next = selected.filter((id) => id !== SLIDE_TEXT);
     const already = sel.includes(hit);
+    const hitGroup = elOf(hit)?.groupId;
+    const inGroup = !!hitGroup && enteredGroups().has(hitGroup);
+    // Clicking outside the group entered with a second click leaves it.
+    if (!inGroup && !(e.shiftKey || e.ctrlKey || e.metaKey)) leaveGroups();
+    // A click (not a drag) on a member of the selected group selects just that member; the drag still moves the group.
+    const groupMembers = hitGroup ? elements.filter((x) => x.groupId === hitGroup).map((x) => x.id) : [];
+    const enter = already && !inGroup && !(e.shiftKey || e.ctrlKey || e.metaKey) && !!hitGroup && sel.length === groupMembers.length && groupMembers.every((id) => sel.includes(id))
+      ? { group: hitGroup!, hit } : undefined;
     if (e.shiftKey || e.ctrlKey || e.metaKey) {
       const group = expandSelection(elements, [hit]);
       next = already ? next.filter((id) => !group.includes(id)) : [...next, hit];
@@ -513,7 +529,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const ids = movableIds(elements, all);
     const el = elOf(hit);
     drag.current = {
-      mode: 'move', ids, startX: x, startY: y, moved: false, copy: false,
+      mode: 'move', ids, startX: x, startY: y, moved: false, copy: false, enter,
       orig: new Map(ids.map((id) => { const o = elOf(id)!; return [id, { x: o.x, y: o.y, w: o.w, h: o.h }]; })),
       clickedText: already && all.length === 1 && (el?.kind === 'text' || (el?.kind === 'shape' && !!el.text)) ? hit : el?.kind === 'text' && all.length === 1 && !el.groupId ? hit : null,
     };
@@ -620,7 +636,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       setInkPath([...d.points]);
       return;
     }
-    if (d.mode === 'tdraw') {
+    if (d.mode === 'tdraw' || d.mode === 'tnew') {
       setTablePreview((p) => (p ? { ...p, x1: x, y1: y } : p));
       return;
     }
@@ -753,19 +769,26 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       onSelect(d.add ? [...new Set([...selected.filter((s) => s !== SLIDE_TEXT), ...ids])] : ids);
       return;
     }
+    if (d.mode === 'tnew') {
+      // Draw Table outside any table: the dragged rectangle becomes a table of one cell, to divide with the pencil.
+      setTablePreview(null);
+      const [x, y] = pointer(e);
+      const [w, h] = [Math.abs(x - d.x0), Math.abs(y - d.y0)];
+      const made = w >= 16 && h >= 16 ? makeTable(1, 1) : null;
+      if (made) {
+        const el = { ...made, x: Math.round(Math.min(x, d.x0)), y: Math.round(Math.min(y, d.y0)), w: Math.round(w), h: Math.round(h) };
+        setElements([...elements, el]);
+        onSelect([el.id]);
+      }
+      return;
+    }
     if (d.mode === 'tdraw') {
       setTablePreview(null);
       const el = elOf(d.id);
       if (!el?.table) return;
       const [x, y] = pointer(e);
-      const lx = x - el.x, ly = y - el.y;
-      const dx = Math.abs(lx - d.x0), dy = Math.abs(ly - d.y0);
-      if (Math.max(dx, dy) < 12) return;
-      // A mostly vertical stroke splits the cell into columns where it was drawn, a horizontal one into rows.
-      const next = dy > dx
-        ? drawLine(el.table, d.r, d.c, 'v', ((d.x0 + lx) / 2 - d.cx) / d.cw)
-        : drawLine(el.table, d.r, d.c, 'h', ((d.y0 + ly) / 2 - d.cy) / d.ch);
-      if (next) setElements(elements.map((e) => (e.id === el.id ? { ...e, table: next } : e)));
+      const next = drawTableLine(el.table, el.w, el.h, [d.x0, d.y0], [x - el.x, y - el.y]);
+      if (next) setElements(elements.map((e2) => (e2.id === el.id ? { ...e2, table: next } : e2)));
       return;
     }
     if (d.mode === 'point' || d.mode === 'ctrl') {
@@ -837,6 +860,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     if (d.mode === 'move') {
       if (!d.moved) {
+        if (d.enter && !(e.shiftKey || e.ctrlKey || e.metaKey)) { enterGroup(d.enter.group); onSelect([d.enter.hit]); return; }
         // A click on text (no drag) puts the cursor in it, as in PowerPoint.
         if (d.clickedText && !(e.shiftKey || e.ctrlKey || e.metaKey)) startEditing(d.clickedText, { start: { point: [e.clientX, e.clientY] } });
         return;
@@ -940,8 +964,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
     const handled = () => { e.preventDefault(); e.stopPropagation(); };
+    // 서식 복사 (Ctrl+Shift+C) and 서식 붙여넣기 (Ctrl+Shift+V) on the selected objects.
+    if (mod && e.shiftKey && key === 'c' && sel.length) { const src = elOf(sel[0]); if (src) holdFormat(copyFormat(src)); return handled(); }
+    if (mod && e.shiftKey && key === 'v' && heldFormat() && sel.length) { setElements(pasteStyle(elements, sel, heldFormat()!)); finishPainter(); return handled(); }
     // Select All leaves hidden and locked objects out (DeckCraft's edit.selectAll).
-    if (mod && key === 'a' && !e.shiftKey) { onSelect(selectAllIds(elements)); return handled(); }
+    if (mod && key === 'a' && !e.shiftKey) { leaveGroups(); onSelect(selectAllIds(elements)); return handled(); }
     // Tab / Shift+Tab: the next / previous object, a group once; from nothing, the first / last.
     if (key === 'tab' && !mod) { const next = cycleSelection(elements, sel, !e.shiftKey); if (next) onSelect([next]); return handled(); }
     if (!sel.length) {
@@ -949,7 +976,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       return;
     }
     if (mod && key === 'g' && !e.shiftKey) { setElements(groupSelection(elements, sel)); return handled(); }
-    if (mod && key === 'g' && e.shiftKey) { setElements(ungroupSelection(elements, sel)); return handled(); }
+    if (mod && key === 'g' && e.shiftKey) { setElements(ungroupSelection(elements, sel)); leaveGroups(); return handled(); }
     if (mod && key === 'd') {
       // Duplicating the last copies again repeats how far they were moved (DeckCraft #966).
       const r = duplicateSelection(elements, sel, duplicateOffset(elements, sel, lastDup.current));
@@ -1024,7 +1051,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
           <div className="ce-edit-box" style={{ left: textBox.x, top: textBox.y, width: textBox.w, minHeight: textBox.h, justifyContent: theme.vAlign === 'top' ? 'flex-start' : theme.vAlign === 'bottom' ? 'flex-end' : 'center' }}>
             <RichTextEditor key={`${identity}:slide`} lines={lines} lang={slide.lang} noProof={slide.noProof} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color, fontFamily: theme.fontFamily }}
-              style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, textAlign: theme.align, lineHeight: theme.lineHeight }}
+              style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, ...alignCss(theme.align), lineHeight: theme.lineHeight, ['--link-color' as string]: linkColorFor(theme.color, theme.linkColor) }}
               start={session?.start} standby={session?.standby} control={editorControl}
               onChange={(l) => typed(SLIDE_TEXT, l)} onDone={stopEditing} />
           </div>
@@ -1041,20 +1068,25 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       const tr = geometryOf(editEl)?.textRect;
       if (tr) area = { x: editEl.x + tr[0], y: editEl.y + tr[1], w: tr[2], h: tr[3] };
     }
-    const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: editEl.lineHeight ?? 1.2, whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const };
+    const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: lineHeightCss(editEl, base.fontSize, 1.2), whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const, ...writingCss(editEl) };
     const { display: _d, flexDirection: _f, ...rest } = textStyle;
     // Shrink text on overflow: the text being typed shows at the box's fontScale too.
     const shrink = editEl.kind === 'text' && editEl.autoFit === 'shrink' && editEl.fontScale && editEl.fontScale < 1 ? editEl.fontScale : 0;
     const shrinkStyle = shrink ? { zoom: shrink, lineHeight: (editEl.lineHeight ?? (editEl.paragraphs ? 1.2 : 1.25)) * (1 - lineReduction(shrink)) } : {};
+    // Vertical text runs down the box: it needs the box's height as its line length, and sits where the anchor puts it across.
+    const vert = isVerticalText(editEl);
+    const ltrBlocks = directionId(editEl) === 'rotate270';
+    const across = editEl.vAlign === 'top' ? (ltrBlocks ? 'flex-start' : 'flex-end') : editEl.vAlign === 'bottom' ? (ltrBlocks ? 'flex-end' : 'flex-start') : 'center';
     return (
       <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
         <div className="ce-edit-box" style={{
-          left: area.x, top: area.y, width: area.w, minHeight: area.h,
+          left: area.x, top: area.y, width: area.w, ...(vert ? { height: area.h } : { minHeight: area.h }),
           transform: editEl.rotation ? `rotate(${editEl.rotation}deg)` : undefined, transformOrigin: `${editEl.x + editEl.w / 2 - area.x}px ${editEl.y + editEl.h / 2 - area.y}px`,
           justifyContent: editEl.vAlign === 'top' ? 'flex-start' : editEl.vAlign === 'bottom' ? 'flex-end' : 'center',
         }}>
-          <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof}
-            style={{ ...rest, ...shrinkStyle, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+          <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof} softBreaks
+            painter={{ source: () => { const { object: _o, ...own } = copyFormat(latestEls.current.find((x) => x.id === editEl.id) ?? editEl); return own; }, setBox: (fn) => { boxPatch.current.push(fn); } }}
+            style={{ ...rest, ...shrinkStyle, ...(vert ? { height: '100%', width: 'max-content', maxWidth: '100%', alignSelf: across } : {}), tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, ...alignCss(editEl.align ?? 'center'), ['--link-color' as string]: linkColorFor(editEl.color), textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
             start={session?.start} standby={session?.standby} control={editorControl} onAutoList={onAutoList(editEl.id)}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>
@@ -1095,6 +1127,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         {view?.grid && gridStep(gridPx, k) && <div className="ce-grid" style={{ backgroundSize: `${gridPx * k}px ${gridPx * k}px` }} />}
         {view?.guides && !guideCount(customGuides) && <><div className="ce-guide ce-guide-v ce-fixed" style={{ left: (CANVAS_W / 2) * k }} /><div className="ce-guide ce-guide-h ce-fixed" style={{ top: (CANVAS_H / 2) * k }} /></>}
         {hasSlideText && !editing && <div className={`ce-box slide-text ${selected.includes(SLIDE_TEXT) ? 'on' : ''}`} style={at(textBox)} />}
+        {[...enteredGroups()].map((g) => {
+          // The group a member is picked inside of, drawn dashed; it follows its members as they move or size.
+          const b = boundsOf(elements.filter((x) => x.groupId === g).map((x) => boxOf(shownEl(x))));
+          return b ? <div key={`grp${g}`} className="ce-outline group-open" style={at(b)} /> : null;
+        })}
         {visible.map((raw) => {
           const el = shownEl(raw);
           const on = sel.includes(el.id);
@@ -1176,7 +1213,9 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         })()}
         {tablePreview && (
           <svg className="ce-handles-svg" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
-            <line x1={tablePreview.x0} y1={tablePreview.y0} x2={tablePreview.x1} y2={tablePreview.y1} stroke="#0078d4" strokeWidth={2 / k} strokeDasharray={`${6 / k} ${4 / k}`} />
+            {tablePreview.frame
+              ? <rect x={Math.min(tablePreview.x0, tablePreview.x1)} y={Math.min(tablePreview.y0, tablePreview.y1)} width={Math.abs(tablePreview.x1 - tablePreview.x0)} height={Math.abs(tablePreview.y1 - tablePreview.y0)} fill="none" stroke="#fde718" strokeWidth={2 / k} strokeDasharray={`${6 / k} ${4 / k}`} />
+              : <line x1={tablePreview.x0} y1={tablePreview.y0} x2={tablePreview.x1} y2={tablePreview.y1} stroke="#fde718" strokeWidth={3 / k} strokeDasharray={`${6 / k} ${4 / k}`} />}
           </svg>
         )}
         {customGuides?.v.map((x, i) => <div key={`cgv${i}`} className={`ce-guide ce-guide-v ce-user ${guideDrag?.axis === 'v' && guideDrag.index === i ? 'dragging' : ''}`} style={{ left: (guideDrag?.axis === 'v' && guideDrag.index === i ? guideDrag.pos : x) * k }} />)}
@@ -1200,7 +1239,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
 /** What a new line takes from Set as Default Shape: its outline, not the fill. */
 function lineLook(d: Partial<SlideElement>): Partial<SlideElement> {
   const out: Partial<SlideElement> = {};
-  for (const k of ['stroke', 'strokeWidth', 'dash', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'opacity'] as const) {
+  for (const k of ['stroke', 'strokeWidth', 'dash', 'cap', 'join', 'compound', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'opacity'] as const) {
     if (d[k] !== undefined) (out as Record<string, unknown>)[k] = d[k];
   }
   return out;
