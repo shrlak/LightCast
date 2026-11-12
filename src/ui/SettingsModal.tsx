@@ -190,7 +190,7 @@ function WebRemote({ relayConnected }: { relayConnected: boolean }) {
   return (
     <>
       <Card title={<><span className={`dot ${relayConnected ? 'ok' : ''}`} /> {relayConnected ? '리모컨 서버 연결됨' : '리모컨 서버 꺼짐'}</>}
-        hint={relayConnected ? '같은 Wi-Fi의 휴대폰 · 태블릿에서 아래 주소를 여세요.' : 'npm run dev 또는 npm start로 FreeCast를 시작하면 켜집니다.'}>
+        hint={relayConnected ? '같은 Wi-Fi의 휴대폰 · 태블릿에서 아래 주소를 여세요.' : 'npm run dev 또는 npm start로 LightCast를 시작하면 켜집니다.'}>
         <label className="stack small">리모컨<code className="selectable">{base}?view=remote</code></label>
         <label className="stack small">출력 화면<code className="selectable">{base}?view=output</code></label>
         <p className="hint">PIN이 필요하면 <code>FREECAST_REMOTE_PIN</code>을 설정하세요.</p>
@@ -203,13 +203,13 @@ function DevicesPage({ mixer, onMixer }: { mixer: X32Settings; onMixer: (s: X32S
   return (
     <>
       <X32SettingsCard settings={mixer} onChange={onMixer} />
-      <Card title="찬양 · 성경 서버" hint="찬양 라이브러리(library.json)와 성경(bible-text/*.json)을 FreeCast를 켤 때마다 이 주소에서 읽습니다.">
+      <Card title="찬양 · 성경 서버" hint="찬양 라이브러리(library.json)와 성경(bible-text/*.json)을 LightCast를 켤 때마다 이 주소에서 읽습니다.">
         <form className="row gap-xs wrap" onSubmit={(e) => {
           e.preventDefault();
           const v = (new FormData(e.currentTarget).get('server') as string) ?? '';
           try {
             setContentServer(v === DEFAULT_SERVER ? null : v);
-            if (confirm('저장했습니다. 지금 FreeCast를 다시 불러와 적용할까요?')) location.reload();
+            if (confirm('저장했습니다. 지금 LightCast를 다시 불러와 적용할까요?')) location.reload();
           } catch (err) {
             alert((err as Error).message);
           }

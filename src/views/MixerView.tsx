@@ -9,7 +9,7 @@ import { MixerPanel } from '../ui/MixerPanel';
 export function MixerView() {
   const [onTop, setOnTop] = useState<boolean | null>(null);
   useEffect(() => {
-    document.title = 'FreeCast — X32 믹서';
+    document.title = 'LightCast — X32 믹서';
     desktop?.setOnTop?.().then(setOnTop, () => setOnTop(null));
   }, []);
   return (

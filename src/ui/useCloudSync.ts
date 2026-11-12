@@ -272,7 +272,7 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
     await saveBase(empty).catch(() => notifyRef.current('서버 자료 삭제는 완료했지만 이 기기의 동기화 기록을 저장하지 못했습니다. 다시 로그인해 주세요.'));
     setStatus((s) => ({ ...s, state: 'synced', message: null, lastSync: Date.now() }));
     await refreshStorage();
-    notifyRef.current('서버의 FreeCast 자료와 미디어를 모두 삭제했습니다.');
+    notifyRef.current('서버의 LightCast 자료와 미디어를 모두 삭제했습니다.');
     return result.deleted;
   };
 

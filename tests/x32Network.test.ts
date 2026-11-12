@@ -38,7 +38,7 @@ describe('OSC for the X32', () => {
     expect(parseOsc(Buffer.from([1, 2, 3]))).toBeNull();
   });
 
-  it('only lets FreeCast change mutes, faders and scenes', () => {
+  it('only lets LightCast change mutes, faders and scenes', () => {
     expect(checkSet('/ch/05/mix/on', 0)).toBe(0);
     expect(checkSet('/ch/32/mix/fader', 1)).toEqual({ f: 1 });
     expect(checkSet('/dca/8/on', 1)).toBe(1);
@@ -53,7 +53,7 @@ describe('OSC for the X32', () => {
     expect(checkSet('/ch/05/mix/on', Number.NaN)).toBeNull();
   });
 
-  it('lets FreeCast work a strip like the console: gain, low cut, gate, compressor, EQ, pan, sends', () => {
+  it('lets LightCast work a strip like the console: gain, low cut, gate, compressor, EQ, pan, sends', () => {
     expect(checkSet('/ch/05/preamp/trim', 0.5)).toEqual({ f: 0.5 });
     expect(checkSet('/ch/05/preamp/hpon', 1)).toBe(1);
     expect(checkSet('/ch/05/preamp/hpf', 0.3)).toEqual({ f: 0.3 });

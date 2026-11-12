@@ -53,7 +53,7 @@ export function AiUsage({ onClose }: { onClose: () => void }) {
         <div className="wizard-body stack">
           <p className="hint">
             AI는 교회 Cloudflare Worker에 저장된 Gemini · OpenRouter 키로 작동합니다 (주일예배 생성기와 같은 키). 그래서 어느 컴퓨터에서든 키를 따로 넣지 않아도 되고,
-            사용량도 FreeCast와 주일예배 생성기를 합쳐서 셉니다. 무료 한도는 매일 새로 시작합니다.
+            사용량도 LightCast와 주일예배 생성기를 합쳐서 셉니다. 무료 한도는 매일 새로 시작합니다.
           </p>
           {data?.ownKeys && <p className="warn">이 컴퓨터는 설정에서 자체 API 키를 쓰고 있어서, 여기서 쓴 양은 아래 숫자에 들어가지 않습니다.</p>}
           {error && <p className="warn">{error}</p>}

@@ -1,12 +1,12 @@
-// Self-updating for the FreeCast desktop app.
+// Self-updating for the LightCast desktop app.
 // - Windows: electron-updater (NSIS) downloads in the background and installs when the app quits.
 // - macOS: Apple's updater only works for apps signed with a paid Developer ID, so unsigned builds
 //   download the new release .zip and swap the app bundle with a small script — when the app quits,
 //   or right away (with a relaunch) if the operator clicks the notice.
 // Nothing restarts on its own: an update never interrupts a running service.
-// FreeCast looks for a new release on its own shortly after launch, every 30 minutes while it is
+// LightCast looks for a new release on its own shortly after launch, every 30 minutes while it is
 // open and when the computer wakes from sleep, so a new version on GitHub reaches every installed copy.
-// "Check for Updates…" in the menu still checks by hand at any time. When FreeCast is closed it looks
+// "Check for Updates…" in the menu still checks by hand at any time. When LightCast is closed it looks
 // once more and, if there is a new version, downloads it before it quits, so it is installed then.
 import { app, BrowserWindow, Notification, powerMonitor, shell } from 'electron';
 import { spawn, execFile } from 'node:child_process';
@@ -56,7 +56,7 @@ const client = (url) => (url.startsWith('http:') && process.env.FREECAST_UPDATE_
 
 function getJson(url) {
   return new Promise((resolve, reject) => {
-    client(url).get(url, { headers: { 'user-agent': 'FreeCast-Updater', accept: 'application/vnd.github+json' } }, (res) => {
+    client(url).get(url, { headers: { 'user-agent': 'LightCast-Updater', accept: 'application/vnd.github+json' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) return resolve(getJson(res.headers.location));
       let body = '';
       res.on('data', (c) => (body += c));
@@ -67,7 +67,7 @@ function getJson(url) {
 
 function download(url, dest, onProgress) {
   return new Promise((resolve, reject) => {
-    client(url).get(url, { headers: { 'user-agent': 'FreeCast-Updater', accept: 'application/octet-stream' } }, (res) => {
+    client(url).get(url, { headers: { 'user-agent': 'LightCast-Updater', accept: 'application/octet-stream' } }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) return resolve(download(res.headers.location, dest, onProgress));
       if (res.statusCode !== 200) return reject(new Error(`Download failed (${res.statusCode})`));
       const total = Number(res.headers['content-length']) || 0;
@@ -84,7 +84,7 @@ function download(url, dest, onProgress) {
   });
 }
 
-/** The running .app bundle (…/FreeCast.app). */
+/** The running .app bundle (…/LightCast.app). */
 const currentBundle = () => path.resolve(process.execPath, '..', '..', '..');
 
 async function checkMac() {
@@ -97,15 +97,15 @@ async function checkMac() {
   if (!asset) return set({ status: 'error', error: `No macOS (${arch}) download in release ${version}` });
   if (macUpdate?.version === version) return set({ status: 'ready', version });
   set({ status: 'downloading', version, progress: 0 });
-  notify('FreeCast 업데이트', `새 버전 ${version}을(를) 내려받는 중입니다…`);
+  notify('LightCast 업데이트', `새 버전 ${version}을(를) 내려받는 중입니다…`);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'freecast-update-'));
   const zip = await download(asset.browser_download_url, path.join(dir, asset.name), (p) => set({ progress: Math.round(p * 100) }));
   await new Promise((resolve, reject) => execFile('/usr/bin/ditto', ['-x', '-k', zip, dir], (e) => (e ? reject(e) : resolve())));
   const appDir = fs.readdirSync(dir).find((n) => n.endsWith('.app'));
-  if (!appDir) throw new Error('The update archive has no FreeCast.app');
+  if (!appDir) throw new Error('The update archive has no LightCast.app');
   macUpdate = { version, appPath: path.join(dir, appDir) };
   set({ status: 'ready', version, progress: 100 });
-  notify('FreeCast 업데이트 준비됨', `버전 ${version} — 앱을 종료하면 자동으로 설치됩니다. 지금 설치하려면 클릭하세요.`, () => installUpdate());
+  notify('LightCast 업데이트 준비됨', `버전 ${version} — 앱을 종료하면 자동으로 설치됩니다. 지금 설치하려면 클릭하세요.`, () => installUpdate());
   if (process.env.FREECAST_UPDATE_AUTOINSTALL === '1') installUpdate();
 }
 
@@ -147,12 +147,12 @@ function setupWindows() {
   autoUpdater.on('update-not-available', () => set({ status: 'none', version: app.getVersion() }));
   autoUpdater.on('update-available', (info) => {
     set({ status: 'downloading', version: info.version, progress: 0 });
-    notify('FreeCast 업데이트', `새 버전 ${info.version}을(를) 내려받는 중입니다…`);
+    notify('LightCast 업데이트', `새 버전 ${info.version}을(를) 내려받는 중입니다…`);
   });
   autoUpdater.on('download-progress', (p) => set({ progress: Math.round(p.percent) }));
   autoUpdater.on('update-downloaded', (info) => {
     set({ status: 'ready', version: info.version, progress: 100 });
-    notify('FreeCast 업데이트 준비됨', `버전 ${info.version} — 앱을 종료하면 자동으로 설치됩니다. 지금 설치하려면 클릭하세요.`, () => installUpdate());
+    notify('LightCast 업데이트 준비됨', `버전 ${info.version} — 앱을 종료하면 자동으로 설치됩니다. 지금 설치하려면 클릭하세요.`, () => installUpdate());
   });
   autoUpdater.on('error', (e) => set({ status: 'error', error: e?.message ?? String(e) }));
 }
@@ -181,32 +181,32 @@ export function installUpdate() {
 
 export const updateState = () => state;
 
-/** How often an open FreeCast looks for a new release. */
+/** How often an open LightCast looks for a new release. */
 export const CHECK_EVERY_MS = 30 * 60 * 1000;
 
-/** How long closing FreeCast may wait for the last check (and its download) before it quits anyway. */
+/** How long closing LightCast may wait for the last check (and its download) before it quits anyway. */
 const QUIT_CHECK_MS = 20_000;
 const QUIT_DOWNLOAD_MS = 3 * 60 * 1000;
 let quitCheck = 'idle'; // 'idle' | 'running' | 'done'
 
-/** True while FreeCast is looking for an update on its way out (the app is still needed then). */
+/** True while LightCast is looking for an update on its way out (the app is still needed then). */
 export const holdingQuit = () => quitCheck === 'running';
 
-/** The small window that says what closing FreeCast is waiting for. */
+/** The small window that says what closing LightCast is waiting for. */
 function quitWindow() {
   const win = new BrowserWindow({ width: 440, height: 150, frame: false, resizable: false, alwaysOnTop: true, show: false, backgroundColor: '#ffffff',
     webPreferences: { contextIsolation: true, sandbox: true } });
   const html = `<!doctype html><meta charset="utf-8"><body style="margin:0;font:15px -apple-system,'Segoe UI','Malgun Gothic',sans-serif;display:grid;place-items:center;height:100vh;background:#fff;color:#252423">
-<div style="text-align:center;padding:0 24px"><b style="font-size:16px">FreeCast를 닫는 중</b><p id="m" style="margin:10px 0 0">새 버전이 있는지 확인하는 중…</p></div></body>`;
+<div style="text-align:center;padding:0 24px"><b style="font-size:16px">LightCast를 닫는 중</b><p id="m" style="margin:10px 0 0">새 버전이 있는지 확인하는 중…</p></div></body>`;
   win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
   win.once('ready-to-show', () => win.show());
   return win;
 }
 
 /**
- * Closing FreeCast: look for a new release one last time, and download it if there is one, so it is
- * installed as FreeCast quits (Windows: electron-updater on quit; macOS: the will-quit swap).
- * Offline, or when it takes too long, FreeCast simply quits; the next launch checks again.
+ * Closing LightCast: look for a new release one last time, and download it if there is one, so it is
+ * installed as LightCast quits (Windows: electron-updater on quit; macOS: the will-quit swap).
+ * Offline, or when it takes too long, LightCast simply quits; the next launch checks again.
  */
 async function checkOnQuit() {
   quitCheck = 'running';
@@ -238,10 +238,10 @@ export function startUpdater({ publishConfig, sendToRenderer }) {
   send = sendToRenderer;
   if (!app.isPackaged || !publish) return;
   if (process.platform !== 'darwin') setupWindows();
-  // macOS: a downloaded update installs itself when FreeCast quits (Windows does this in electron-updater).
+  // macOS: a downloaded update installs itself when LightCast quits (Windows does this in electron-updater).
   else app.on('will-quit', () => state.status === 'ready' && installMac(false));
 
-  // Closing FreeCast checks once more first (an update already downloaded just installs).
+  // Closing LightCast checks once more first (an update already downloaded just installs).
   app.prependListener('before-quit', (e) => {
     if (quitCheck !== 'idle' || state.status === 'ready') return;
     e.preventDefault();

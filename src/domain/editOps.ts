@@ -1,7 +1,7 @@
 // What the PowerPoint commands do to a slide's objects: Arrange (order, align, distribute, group,
 // rotate, flip), clipboard, duplicate, nudge, Format Painter, and the objects Insert makes. The
 // geometry of every one of them is worked out by the Rust engine (src/engine); these functions
-// apply its answers to FreeCast's slide objects.
+// apply its answers to LightCast's slide objects.
 import type { Slide, SlideAnimation, SlideElement } from './types';
 import { CANVAS_H, CANVAS_W } from './canvas';
 import { uid } from './lyrics';

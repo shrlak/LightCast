@@ -54,6 +54,6 @@ export function controlMiddleware(wss) {
     const command = toCommand(parts, url.searchParams);
     if (!command) return send(res, 400, { error: `Unknown command: ${parts.join('/')}` });
     const ok = wss.toHost(command);
-    send(res, ok ? 200 : 503, ok ? { ok: true, command } : { error: 'The FreeCast console is not open' });
+    send(res, ok ? 200 : 503, ok ? { ok: true, command } : { error: 'The LightCast console is not open' });
   };
 }

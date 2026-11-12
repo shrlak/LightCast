@@ -62,7 +62,7 @@ export function PastorStage({ live, info, current, canControl, ready, connection
   const [options, setOptions] = useState(loadPastorOptions);
   const [drawer, setDrawer] = useState<DrawerName>(null);
   useWakeLock();
-  useEffect(() => { document.title = 'FreeCast — 무대'; }, []);
+  useEffect(() => { document.title = 'LightCast — 무대'; }, []);
   const set = (patch: Partial<PastorOptions>) => setOptions((o) => {
     const next = { ...o, ...patch };
     savePastorOptions(next);

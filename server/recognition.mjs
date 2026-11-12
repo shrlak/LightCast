@@ -44,7 +44,7 @@ export function recognitionTarget(route, search, cfg = aiConfig()) {
   if (route === 'openrouter' && cfg.openrouterKey) {
     return {
       url: OPENROUTER_ENDPOINT,
-      headers: { Authorization: `Bearer ${cfg.openrouterKey}`, 'HTTP-Referer': 'https://shrlak.github.io/ppt/', 'X-OpenRouter-Title': 'FreeCast' },
+      headers: { Authorization: `Bearer ${cfg.openrouterKey}`, 'HTTP-Referer': 'https://shrlak.github.io/ppt/', 'X-OpenRouter-Title': 'LightCast' },
     };
   }
   return { url: `${cfg.proxyUrl}/${route}${search}`, headers: { Origin: cfg.proxyOrigin } };

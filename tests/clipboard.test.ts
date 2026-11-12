@@ -122,7 +122,7 @@ describe('PowerPoint clipboard (GVML) → objects', () => {
   });
 });
 
-describe('FreeCast objects on the system clipboard', () => {
+describe('LightCast objects on the system clipboard', () => {
   const els: SlideElement[] = [
     { id: 'e1', kind: 'text', x: 33, y: 44, w: 500, h: 120, text: '주 하나님\nHoly', fontSize: 72, fontFamily: officeFont('맑은 고딕'), color: '#fde718', bold: true, runs: [[{ text: '주 ' }, { text: '하나님', color: '#1f8a52', italic: true }], [{ text: 'Holy' }]] },
     { id: 'e2', kind: 'shape', shape: 'star5', x: 900, y: 600, w: 200, h: 200, fill: '#1f8a52', rotation: 15 },
@@ -146,7 +146,7 @@ describe('FreeCast objects on the system clipboard', () => {
     expect(html).toContain('color:#1f8a52');
     expect(html).toContain('font-style:italic');
     expect(objectsText(els)).toBe('주 하나님\nHoly');
-    // …and FreeCast reads its own HTML back as the same formatted lines.
+    // …and LightCast reads its own HTML back as the same formatted lines.
     const lines = htmlToLines(html.replace(/data-freecast-objects="[^"]*"/, ''));
     expect(lines.map((l) => l.runs.map((r) => r.text).join(''))).toEqual(['주 하나님', 'Holy']);
     expect(lines[0].runs[1]).toMatchObject({ text: '하나님', color: '#1f8a52', italic: true, bold: true, fontSize: 72 });
@@ -232,7 +232,7 @@ describe('copying and pasting part of a text box', () => {
 import { pastedLines, runsHtml } from '../src/domain/clipboard';
 
 describe('pasting into a text box', () => {
-  it('takes FreeCast’s own copied runs exactly', () => {
+  it('takes LightCast’s own copied runs exactly', () => {
     const lines = [[{ text: '할렐루야', fontSize: 64, color: '#fde718', fontFamily: 'Georgia, serif' }], [{ text: 'amen', italic: true }]];
     expect(pastedLines(runsHtml(lines))).toEqual(lines);
   });

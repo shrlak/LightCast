@@ -50,7 +50,7 @@ export function AccountModal({ cloud, onClose, onActivity, onSync }: { cloud: Cl
               {done && <p role="status">{done}</p>}
               <CloudStoragePanel cloud={cloud} />
               <h3>현재 기기</h3>
-              <p className="small">{device.platform}{device.computerName ? ` · ${device.computerName}` : ''}{device.appVersion ? ` · FreeCast ${device.appVersion}` : ''}<br />기기 ID: {device.id}</p>
+              <p className="small">{device.platform}{device.computerName ? ` · ${device.computerName}` : ''}{device.appVersion ? ` · LightCast ${device.appVersion}` : ''}<br />기기 ID: {device.id}</p>
               <DeviceProfileFields cloud={cloud} />
               {error && <p role="alert">{error}</p>}
               <p className="hint">입력하면 자동으로 저장됩니다. 이 설정은 이 기기에만 적용됩니다. 브라우저별로 별도 기기로 등록되며, 이름은 이후 사용기록에 적용됩니다.</p>

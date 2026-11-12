@@ -11,7 +11,7 @@ async function files(p: Presentation) {
   return JSZip.loadAsync(await pptx.write({ outputType: 'nodebuffer' }) as Buffer);
 }
 
-describe('PPTX export of PowerPoint objects made in FreeCast', () => {
+describe('PPTX export of PowerPoint objects made in LightCast', () => {
   const table = makeTable(2, 3)!;
   table.table!.rows[0][0].text = '시간';
   const deck: Presentation = {

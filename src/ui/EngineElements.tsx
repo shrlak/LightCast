@@ -85,7 +85,7 @@ export function ShapeElement({ el }: { el: SlideElement }) {
   const imageUrl = useMediaUrl(el.fillImage);
   const fill = el.fillImage && imageUrl ? `url(#i${gid})` : el.pattern ? `url(#p${gid})` : el.gradient ? `url(#g${gid})` : el.fill ?? '#ffffff';
   if (!g) {
-    // Engine not loaded: the plain box or circle FreeCast always drew.
+    // Engine not loaded: the plain box or circle LightCast always drew.
     return <div style={{ ...box, background: el.gradient ? `linear-gradient(${(el.gradientAngle ?? 90) + 90}deg, ${el.gradient[0]}, ${el.gradient[1]})` : el.fill ?? '#ffffff', borderRadius: el.ellipse || el.shape === 'ellipse' ? '50%' : el.radius ?? 0, border: el.stroke ? `${sw}px solid ${el.stroke}` : undefined }} />;
   }
   const a = ((el.gradientAngle ?? 90) * Math.PI) / 180;

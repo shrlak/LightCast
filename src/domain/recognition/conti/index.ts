@@ -55,7 +55,7 @@ export interface ContiReading {
 export interface ReadContiOptions {
   presentations: Presentation[];
   linesPerSlide: number;
-  /** FreeCast's 공동체 고백송 setting; the shared (site) setting is used while it is the default. */
+  /** LightCast's 공동체 고백송 setting; the shared (site) setting is used while it is the default. */
   confessionSong: string;
   notify: (message: string) => void;
   progress: (message: string) => void;
@@ -75,7 +75,7 @@ export function parseContiDate(text: string | undefined): ContiReading['date'] {
   return undefined;
 }
 
-/** A recognized song as FreeCast's song draft: parts, 진행 (when it names a part), key, pages. */
+/** A recognized song as LightCast's song draft: parts, 진행 (when it names a part), key, pages. */
 export function songToDraft(song: Song): SongDraft {
   const progression = song.order.some((token) => token !== 'I') ? [...song.order] : undefined;
   const pages = song.pageIndex != null ? [song.pageIndex, ...(song.extraPages ?? [])] : undefined;

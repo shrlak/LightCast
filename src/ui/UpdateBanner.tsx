@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { desktop, type UpdateState } from '../domain/desktop';
 
 /**
- * Update notice (desktop app), on screen over the console: FreeCast looks for a new release every
+ * Update notice (desktop app), on screen over the console: LightCast looks for a new release every
  * 30 minutes while it is open, and as soon as one is found this says so ("새 버전 … 내려받는 중"),
  * then offers to restart once it is ready. "숨기기" hides it only for that version and step: it comes
  * back when the download is ready or a newer version turns up. Nothing restarts by itself.
@@ -21,7 +21,7 @@ export function UpdateBanner() {
   if (st.status === 'downloading') {
     return (
       <div className="update-banner" role="status">
-        <span><strong>🔔 새 버전 FreeCast {st.version}이(가) 있습니다.</strong> 내려받는 중… {st.progress}%</span>
+        <span><strong>🔔 새 버전 LightCast {st.version}이(가) 있습니다.</strong> 내려받는 중… {st.progress}%</span>
         <progress max={100} value={st.progress} />
         <button className="mini-btn" onClick={() => setHiddenFor(key)}>숨기기</button>
       </div>
@@ -29,7 +29,7 @@ export function UpdateBanner() {
   }
   return (
     <div className="update-banner ready" role="alert">
-      <span><strong>✅ FreeCast {st.version} 업데이트가 준비되었습니다.</strong></span>
+      <span><strong>✅ LightCast {st.version} 업데이트가 준비되었습니다.</strong></span>
       <button className="primary" onClick={() => desktop!.installUpdate()}>지금 재시작하여 업데이트</button>
       <button onClick={() => setHiddenFor(key)}>나중에 (종료할 때 설치)</button>
     </div>

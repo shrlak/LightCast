@@ -18,7 +18,7 @@ import { withStableIds } from '../stableIds';
 const PLACEHOLDER_SLIDES = { front: 'front_prayer', back: 'back_confession' } as const;
 
 const isPlaceholder = (p: Presentation, kind: 'front' | 'back') => p.slides.some((s) => s.id === PLACEHOLDER_SLIDES[kind]);
-/** Built from the templates by FreeCast (every slide sits on a baked template background). */
+/** Built from the templates by LightCast (every slide sits on a baked template background). */
 const fromTemplates = (p: Presentation, kind: 'front' | 'back') =>
   p.templateKey?.startsWith(`${kind}:`) || (p.slides.length > 0 && p.slides.every((s) => s.background?.kind === 'media' && s.background.mediaId.startsWith('tpl-')));
 

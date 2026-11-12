@@ -103,7 +103,7 @@ export function useServiceUploads(library: Library, dispatch: Dispatch<Action>, 
         // The lyrics theme follows the church template — unless the operator has changed it since.
         const theme = themeWithFingerprint(templateLyricsTheme(t));
         const have = lib.current.themes.find((x) => x.id === theme.id);
-        // (A theme from before fingerprints was written by FreeCast alone, so it counts as untouched.)
+        // (A theme from before fingerprints was written by LightCast alone, so it counts as untouched.)
         const untouched = !have || !have.generated || have.generated === themeWithFingerprint(have).generated;
         if (untouched && have?.generated !== theme.generated) dispatch({ type: 'theme/upsert', theme });
         setTemplates('ok');

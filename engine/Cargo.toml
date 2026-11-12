@@ -1,6 +1,6 @@
-# FreeCast's PowerPoint engine, compiled to WebAssembly (see README.md).
+# LightCast's PowerPoint engine, compiled to WebAssembly (see README.md).
 #
-# `freecast-engine` is FreeCast's own crate; `deckcraft/*` are DeckCraft's geometry, colour, model and
+# `freecast-engine` is LightCast's own crate; `deckcraft/*` are DeckCraft's geometry, colour, model and
 # slide-show timing crates (https://github.com/storytold/deckcraft, MIT OR Apache-2.0), vendored
 # unchanged so their own manifests (which read the workspace keys below) build as they are.
 [workspace]

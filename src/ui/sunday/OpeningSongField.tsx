@@ -27,7 +27,7 @@ const host = (url: string) => {
 };
 
 /**
- * 기도회 찬양: the song before the 기도회 (Front · 기도제목). Type the title and FreeCast searches
+ * 기도회 찬양: the song before the 기도회 (Front · 기도제목). Type the title and LightCast searches
  * "<제목> ppt", downloads the best-matching PowerPoint and keeps only the sheet music on white.
  */
 export function OpeningSongField({ title, setTitle, deck, setDeck, presentations, theme, addMedia, create, notify }: Props) {

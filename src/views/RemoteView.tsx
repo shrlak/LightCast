@@ -73,7 +73,7 @@ export function RemoteView() {
     if (m.type === 'error') setError(String(m.error));
   });
   useEffect(() => {
-    document.title = 'FreeCast Remote';
+    document.title = 'LightCast Remote';
   }, []);
   // Do not carry an old host/controller state over a disconnected relay session.
   useEffect(() => { if (!connected) { setHostConnected(false); setControl(null); } }, [connected]);
@@ -81,7 +81,7 @@ export function RemoteView() {
   const ready = connected && hostConnected;
   const embedded = window.self !== window.top;
   const cmd = (command: Record<string, unknown>) => { if (ready && control?.canControl) send({ type: 'command', command }); };
-  const connectionLabel = status === 'offline' ? '인터넷 연결 끊김 · 네트워크를 확인하세요' : status === 'reconnecting' ? '연결 끊김 · 자동 재연결 중…' : !connected ? '연결 중…' : !hostConnected ? '서버 연결됨 · 컴퓨터에서 FreeCast를 열어 주세요' : '컴퓨터 연결됨';
+  const connectionLabel = status === 'offline' ? '인터넷 연결 끊김 · 네트워크를 확인하세요' : status === 'reconnecting' ? '연결 끊김 · 자동 재연결 중…' : !connected ? '연결 중…' : !hostConnected ? '서버 연결됨 · 컴퓨터에서 LightCast를 열어 주세요' : '컴퓨터 연결됨';
 
   const all = info?.all ?? info?.upcoming ?? [];
   const slides = slideTab === 'all' ? all : info?.upcoming ?? [];
@@ -107,8 +107,8 @@ export function RemoteView() {
     };
     return (
       <div className="remote-root remote-pin">
-        <h3>FreeCast Remote</h3>
-        <p>{pin ? `${error}. Enter the PIN shown in FreeCast on the computer.` : 'Enter the PIN shown in FreeCast on the computer.'}</p>
+        <h3>LightCast Remote</h3>
+        <p>{pin ? `${error}. Enter the PIN shown in LightCast on the computer.` : 'Enter the PIN shown in LightCast on the computer.'}</p>
         <input id="remote-pin" inputMode="numeric" autoFocus placeholder="PIN" defaultValue={pin} onKeyDown={(e) => {
           if (e.key === 'Enter') submit((e.target as HTMLInputElement).value.trim());
         }} />
@@ -120,7 +120,7 @@ export function RemoteView() {
   return (
     <div className={`remote-root remote-console${embedded ? ' remote-embedded' : ''}`}>
       <header className="remote-head">
-        <strong>FreeCast</strong>
+        <strong>LightCast</strong>
         <span className="muted small truncate">{live?.title ?? 'Nothing live'}</span>
         {!embedded && <button className="remote-appearance-toggle" aria-label={appearance === 'dark' ? '밝은 화면으로 전환' : '어두운 화면으로 전환'} onClick={() => {
           const next = appearance === 'dark' ? 'light' : 'dark';

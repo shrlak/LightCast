@@ -1,4 +1,4 @@
-// Permanent installable FreeCast Remote. Deploy with remote-web-app.js and remote-icon.js.
+// Permanent installable LightCast Remote. Deploy with remote-web-app.js and remote-icon.js.
 // This handler runs before the church Worker's API Origin checks.
 //
 // One-time setup (Cloudflare dashboard, free plan):
@@ -11,7 +11,7 @@
 //        if (link) return link;
 //
 // Phones install https://<worker>/freecast/remote/ on their home screen. Saved per-computer
-// links pair that device without navigating away from the permanent origin. FreeCast (PUT) updates it every time its tunnel connects; <secret>
+// links pair that device without navigating away from the permanent origin. LightCast (PUT) updates it every time its tunnel connects; <secret>
 // is stored only as a hash, so nobody else can re-point or remove the link.
 
 import { handleRemoteWebApp } from './remote-web-app.js';
@@ -35,7 +35,7 @@ export async function handleRemoteLink(request, env) {
 
   if (request.method === 'GET') {
     const rec = await env.REMOTE_LINKS.get(key, 'json');
-    if (!rec) return new Response('이 링크는 더 이상 사용할 수 없습니다. FreeCast에서 새 링크를 확인하세요.', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    if (!rec) return new Response('이 링크는 더 이상 사용할 수 없습니다. LightCast에서 새 링크를 확인하세요.', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
     return new Response(null, { status: 302, headers: { location: `/freecast/${rec.kind === 'team' ? 'team' : 'remote'}/#${m[1]}`, 'cache-control': 'no-store', 'referrer-policy': 'no-referrer' } });
   }
 

@@ -1,5 +1,5 @@
 // Reading the shared proxy's learning endpoints (shrlak/ppt src/lib/learning/learningClient.ts;
-// FreeCast only reads — training uploads and the correction model stay on the site).
+// LightCast only reads — training uploads and the correction model stay on the site).
 //
 // Every call here is best-effort. Recognition has always worked with no proxy
 // at all, and learning must not change that: a failed fetch means the pipeline

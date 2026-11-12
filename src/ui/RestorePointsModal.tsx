@@ -38,7 +38,7 @@ export function RestorePointsModal({ library, onRestore, onClose, notify }: {
           <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
         </header>
         <div className="wizard-body stack">
-          <p className="hint">FreeCast가 10분마다(바뀐 경우) 라이브러리를 자동 저장해 둡니다. 수정 후 동기화가 시작될 때마다 변경된 상태를 저장하고, 자료 가져오기 전·발표 시작 전에도 저장하며 최근 30개까지 보관합니다.</p>
+          <p className="hint">LightCast가 10분마다(바뀐 경우) 라이브러리를 자동 저장해 둡니다. 수정 후 동기화가 시작될 때마다 변경된 상태를 저장하고, 자료 가져오기 전·발표 시작 전에도 저장하며 최근 30개까지 보관합니다.</p>
           <button onClick={saveNow}>지금 저장</button>
           {points === null ? <p className="muted">불러오는 중…</p> : !points.length ? <p className="muted">아직 복원 지점이 없습니다</p> : (
             <ul className="restore-list">

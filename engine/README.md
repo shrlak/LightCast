@@ -1,6 +1,6 @@
-# FreeCast PowerPoint engine (Rust → WebAssembly)
+# LightCast PowerPoint engine (Rust → WebAssembly)
 
-What PowerPoint *does* in FreeCast runs here, in Rust, compiled to WebAssembly and loaded by the app
+What PowerPoint *does* in LightCast runs here, in Rust, compiled to WebAssembly and loaded by the app
 (`src/engine/`):
 
 | Op group | What it does |
@@ -24,7 +24,7 @@ npm run engine
 ```
 
 That runs `cargo build --release --target wasm32-unknown-unknown -p freecast-engine` and copies the
-module to `src/engine/freecast_engine.wasm`, which is committed so FreeCast still builds on a machine
+module to `src/engine/freecast_engine.wasm`, which is committed so LightCast still builds on a machine
 without Rust. CI and the release workflow rebuild it from this source. Rust tests:
 
 ```bash
@@ -46,4 +46,4 @@ memory (`fc_reserve`), handled by `fc_call`, and answered as `{"ok": ...}` or `{
 - `freecast-engine/src/icon_data.rs` holds Lucide icon paths as DeckCraft ships them (Lucide 1.56.0,
   commit `440a1e1dfb1e712505308da46bead3c28b1f1398`), ISC License, © 2026 Lucide Icons and Contributors;
   the Feather-derived icons are MIT, © 2013-present Cole Bemis. Licence texts: `freecast-engine/LICENSE-ICONS`.
-- `freecast-engine` itself is FreeCast's code, under the same MIT OR Apache-2.0 terms.
+- `freecast-engine` itself is LightCast's code, under the same MIT OR Apache-2.0 terms.

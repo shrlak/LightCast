@@ -105,7 +105,7 @@ async function callModel(attempt, system, parts) {
   }
   const json = cfg.openrouterKey
     ? await post(OPENROUTER_ENDPOINT, openrouterBody(attempt.model, system, parts), {
-        Authorization: `Bearer ${cfg.openrouterKey}`, 'HTTP-Referer': 'https://shrlak.github.io/ppt/', 'X-OpenRouter-Title': 'FreeCast',
+        Authorization: `Bearer ${cfg.openrouterKey}`, 'HTTP-Referer': 'https://shrlak.github.io/ppt/', 'X-OpenRouter-Title': 'LightCast',
       })
     : await post(`${cfg.proxyUrl}/openrouter`, openrouterBody(attempt.model, system, parts), { Origin: cfg.proxyOrigin });
   const content = json?.choices?.[0]?.message?.content;

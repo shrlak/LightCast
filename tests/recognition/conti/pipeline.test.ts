@@ -1,5 +1,5 @@
 // The 콘티 pipeline glue ported from the ppt site's LyricsGenerator (domain/recognition/conti):
-// models and the web are mocked, so this pins down what FreeCast does with their answers.
+// models and the web are mocked, so this pins down what LightCast does with their answers.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ContiDocument } from '../../../src/domain/recognition/utils/contiPdf';
 import type { ContiInfo, LibraryEntry } from '../../../src/domain/recognition/utils/types';

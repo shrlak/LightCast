@@ -1,5 +1,5 @@
 // 기도회 찬양: the one song sung every week before the 기도회 (ahead of the Front / 기도제목 slides).
-// The operator types its title; FreeCast searches "<제목> ppt" on the internet (server/songPpt.mjs),
+// The operator types its title; LightCast searches "<제목> ppt" on the internet (server/songPpt.mjs),
 // downloads the best-matching PowerPoint, and keeps only its sheet music — the pictures of the score
 // and lyrics — drawn on a plain white slide. The PPT's background, decorations, logos and buttons
 // are left out.

@@ -1,5 +1,5 @@
 // Pure 찬양 라이브러리 matching from shrlak/ppt (src/lib/storage/library.ts). The site's own
-// localStorage copy and sync queue are left out: FreeCast's library is its presentations plus the
+// localStorage copy and sync queue are left out: LightCast's library is its presentations plus the
 // shared library (online.ts), which the pipeline is handed as LibraryEntry[].
 import type {
   LibraryEntry,

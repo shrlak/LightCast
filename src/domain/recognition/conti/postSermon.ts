@@ -1,5 +1,5 @@
 // Which song is sung after the sermon, from shrlak/ppt src/lib/utils/announcement.ts — the part
-// that applies without a pasted 카톡 공지 (FreeCast reads the 콘티 alone here).
+// that applies without a pasted 카톡 공지 (LightCast reads the 콘티 alone here).
 import type { ContiSongEntry } from '../utils/types';
 import { normalizeTitle } from '../storage/library';
 import { isTitleSlip, titleSimilarity } from '../utils/contiAlignment';

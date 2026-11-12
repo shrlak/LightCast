@@ -40,7 +40,7 @@ async function call<T>(path: string, init: RequestInit & { token?: string } = {}
   try {
     res = await fetch(`/api/cloud/${path}`, { ...init, headers });
   } catch {
-    throw Object.assign(new Error('FreeCast 서버에 연결할 수 없습니다.'), { network: true });
+    throw Object.assign(new Error('LightCast 서버에 연결할 수 없습니다.'), { network: true });
   }
   if (res.status === 204) return { status: 204, data: null as T };
   const type = res.headers.get('content-type') ?? '';

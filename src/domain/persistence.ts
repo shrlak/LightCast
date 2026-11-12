@@ -15,7 +15,7 @@ function isObj(v: unknown): v is Record<string, unknown> {
 
 /**
  * Validate data from storage or an imported file and fill in anything an older
- * version did not have. Returns null when it is not a FreeCast library.
+ * version did not have. Returns null when it is not a LightCast library.
  */
 /** The presentations without their own transitions (nor their slides'). */
 export function clearTransitions(list: Library['presentations']): Library['presentations'] {
@@ -25,7 +25,7 @@ export function clearTransitions(list: Library['presentations']): Library['prese
   });
 }
 
-/** Step types older versions saved that FreeCast no longer runs (OBS scenes, stream, recording). */
+/** Step types older versions saved that LightCast no longer runs (OBS scenes, stream, recording). */
 const RETIRED_STEPS = new Set(['obs']);
 const keepStep = (s: unknown) => !(isObj(s) && RETIRED_STEPS.has(s.type as string));
 /** The OBS lyrics overlay screen older versions created (kept if it was renamed, i.e. set up on purpose). */
@@ -100,7 +100,7 @@ export function normalizeLibrary(value: unknown): Library | null {
 }
 
 /**
- * Slides made when FreeCast was 16:9 (1920 wide) → the 4:3 canvas: objects keep their place
+ * Slides made when LightCast was 16:9 (1920 wide) → the 4:3 canvas: objects keep their place
  * relative to the centre, the way the wider background is trimmed at both sides. An object that
  * would end up off the slide is pulled back so at least part of it stays visible.
  */

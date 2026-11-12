@@ -1,5 +1,5 @@
 // Internet access for the phone/tablet remote: a public https address that reaches this computer's
-// FreeCast server from any network. It runs Cloudflare's free "quick tunnel" (cloudflared: no
+// LightCast server from any network. It runs Cloudflare's free "quick tunnel" (cloudflared: no
 // account, no time limit), downloaded once into the app's data folder. Everything arriving through
 // the tunnel is treated as "public" (see isPublicHost) and limited to the remote.
 import { spawn } from 'node:child_process';
@@ -153,7 +153,7 @@ export function startTunnel(port, onChange, { dir, ensureBinary = ensureCloudfla
       try {
         const response = await fetchFn(pending + '/?view=remote', { cache: 'no-store', redirect: 'manual', signal: controller.signal });
         const body = await response.text();
-        // An answer from Cloudflare that is not FreeCast (e.g. 530: the tunnel is gone) is a real failure.
+        // An answer from Cloudflare that is not LightCast (e.g. 530: the tunnel is gone) is a real failure.
         healthy = response.ok && /id=["']root["']/.test(body);
       } catch {
         // This computer could not reach its own public address at all. That is often this computer's

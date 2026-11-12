@@ -127,7 +127,7 @@ const fontFace = (t: Theme) => pptxFont(t.fontFamily);
 
 /*
  * What keeps the exported slides looking like the screen:
- * - No inner margin: a FreeCast box is already the text area (importing a PowerPoint deck takes
+ * - No inner margin: a LightCast box is already the text area (importing a PowerPoint deck takes
  *   its margins off), so PowerPoint's default 0.1" / 0.05" would make lines wrap sooner and spill.
  * - Line spacing as exact points (font size × the screen's line height): PowerPoint's "multiple"
  *   counts in the font's own line height, which differs by font (and by the Korean fallback font).

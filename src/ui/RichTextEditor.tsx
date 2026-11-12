@@ -357,7 +357,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         const data = e.clipboardData;
         const text = data.getData('text/plain').replace(/\r\n?/g, '\n');
         // The slide's own text keeps one style per line: plain text only. Elsewhere the formatting comes
-        // along (FreeCast's own runs exactly, PowerPoint / Word / web text as it was); Ctrl+Shift+V
+        // along (LightCast's own runs exactly, PowerPoint / Word / web text as it was); Ctrl+Shift+V
         // gives the browser's plain text.
         const lines = plain ? null : pastedLines(data.getData('text/html'), data.getData(CLIP_TYPE));
         if (!lines) { document.execCommand('insertText', false, text); return; }

@@ -18,7 +18,7 @@ export function StageView() {
   const now = useNow(250);
   const id = new URLSearchParams(location.search).get('layout') ?? 'lyrics';
   useEffect(() => {
-    document.title = 'FreeCast — Stage';
+    document.title = 'LightCast — Stage';
   }, []);
 
   const layouts = (live as { stageLayouts?: StageLayout[] } | null)?.stageLayouts ?? DEFAULT_STAGE_LAYOUTS;

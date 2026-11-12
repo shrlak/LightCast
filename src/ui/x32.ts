@@ -17,7 +17,7 @@ type Event =
   | { type: 'value'; address: string; value: number | string };
 
 /**
- * The console's view of the X32. Browsers cannot speak OSC, so the FreeCast server on this computer
+ * The console's view of the X32. Browsers cannot speak OSC, so the LightCast server on this computer
  * talks to the mixer and streams what it hears here (desktop app and `npm start` only).
  */
 class X32Hub {
@@ -53,7 +53,7 @@ class X32Hub {
   private async post<T>(route: string, body?: unknown): Promise<T> {
     const res = await fetch(`/api/x32/${route}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) });
     const data = await res.json().catch(() => ({}));
-    if (res.status === 404 || res.status === 405) throw Object.assign(new Error('X32 연결은 FreeCast 데스크톱 앱에서 됩니다.'), { unavailable: true });
+    if (res.status === 404 || res.status === 405) throw Object.assign(new Error('X32 연결은 LightCast 데스크톱 앱에서 됩니다.'), { unavailable: true });
     if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
     return data as T;
   }

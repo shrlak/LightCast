@@ -31,7 +31,7 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
   useEffect(() => { if (!(TABS as readonly string[]).includes(tab) && !ctx.includes(tab as ContextTab)) setTab('홈'); }, [ctx.join(), tab]);
   const pick = (t: Tab) => { if (collapsed) setPeek(t !== tab || !peek); setTab(t); };
   const busy = cmd.service.busy;
-  const title = p ? `${p.title} - FreeCast` : 'FreeCast';
+  const title = p ? `${p.title} - LightCast` : 'LightCast';
   const showBody = !collapsed || peek;
   return (
     <div className="ribbon pp" onMouseLeave={() => collapsed && setPeek(false)}>

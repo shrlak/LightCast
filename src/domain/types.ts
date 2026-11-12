@@ -5,7 +5,7 @@ export type VAlign = 'top' | 'middle' | 'bottom';
 
 /** Text styling, sized against the 1440x1080 (4:3) canvas. */
 export interface Theme {
-  /** Set on a theme FreeCast generated from a church template: a fingerprint of what it generated. */
+  /** Set on a theme LightCast generated from a church template: a fingerprint of what it generated. */
   generated?: string;
   id: string;
   name: string;
@@ -450,7 +450,7 @@ export interface SongMeta {
 }
 
 /**
- * 'cut' | 'fade' | 'slide' | 'zoom' are FreeCast's own (CSS); `fx:<id>` is one of the engine's
+ * 'cut' | 'fade' | 'slide' | 'zoom' are LightCast's own (CSS); `fx:<id>` is one of the engine's
  * PowerPoint transitions (fx:push, fx:wipe, fx:split, fx:blinds, fx:clock…), drawn frame by frame.
  */
 export type TransitionKind = 'cut' | 'fade' | 'slide' | 'zoom' | `fx:${string}`;
@@ -472,7 +472,7 @@ export interface Presentation {
   protected?: boolean;
   /** A newer explicit protection change wins during device sync; old clients cannot silently unlock. */
   protectionChangedAt?: number;
-  /** Which church template (and 고백송) this deck was last built from; set on decks FreeCast keeps in sync. */
+  /** Which church template (and 고백송) this deck was last built from; set on decks LightCast keeps in sync. */
   templateKey?: string;
   /** A song's lyrics by part as written (blank lines kept) and its 진행 — what the song editor edits. */
   songSource?: { sections: { label: string; lines: string[] }[]; order?: string[] };

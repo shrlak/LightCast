@@ -1,6 +1,6 @@
-// Home › Clipboard with PowerPoint's fidelity. Copied FreeCast objects go on the system clipboard as
+// Home › Clipboard with PowerPoint's fidelity. Copied LightCast objects go on the system clipboard as
 // a payload inside the HTML (and a private type), so they paste back — in this window, another
-// FreeCast window or after a restart — at the same place with every property. The same HTML carries
+// LightCast window or after a restart — at the same place with every property. The same HTML carries
 // the text with its fonts, sizes and colours, so Word / PowerPoint / a browser get formatted text.
 // Pasting from elsewhere reads the HTML the other program wrote: positioned boxes (PowerPoint)
 // become text boxes where they were; formatted text keeps its font, size, colour and emphasis.
@@ -14,7 +14,7 @@ import { decodeEntities, parseMarkup, textOf, type MNode } from './io/markup';
 export const CLIP_TYPE = 'application/x-freecast-objects';
 const ATTR = 'data-freecast-objects';
 
-/** A picture's bytes travel with the objects (for a FreeCast that does not have it yet). */
+/** A picture's bytes travel with the objects (for a LightCast that does not have it yet). */
 export interface ClipMedia { name: string; type: string; data: string }
 export interface ClipPayload { v: 1; elements: SlideElement[]; media?: Record<string, ClipMedia> }
 
@@ -39,7 +39,7 @@ export function decodePayload(s: string | null | undefined): ClipPayload | null 
   return null;
 }
 
-/** The FreeCast objects carried by a clipboard's HTML, if it came from FreeCast. */
+/** The LightCast objects carried by a clipboard's HTML, if it came from LightCast. */
 export function payloadFromHtml(html: string | null | undefined): ClipPayload | null {
   if (!html || !html.includes(ATTR)) return null;
   const m = new RegExp(`${ATTR}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(html);
@@ -320,14 +320,14 @@ export function htmlToElements(html: string, slideW = 1440, slideH = 1080): { el
 
 const RUNS_ATTR = 'data-freecast-runs';
 
-/** HTML for characters copied from a text box: exact runs for FreeCast, formatted text for others. */
+/** HTML for characters copied from a text box: exact runs for LightCast, formatted text for others. */
 export function runsHtml(lines: TextRun[][], align?: HAlign): string {
   const payload = toB64(JSON.stringify(lines));
   const body = lines.map((l) => `<p style="margin:0;text-align:${align ?? 'left'}">${l.map((r) => `<span style="${esc(runCss(r, {} as SlideElement))}">${esc(r.text)}</span>`).join('') || '<br>'}</p>`).join('');
   return `<meta charset="utf-8"><div ${RUNS_ATTR}="${payload}">${body}</div>`;
 }
 
-/** Pasted HTML → formatted lines: FreeCast's own copied runs exactly, a FreeCast text object's text, else the HTML's formatting. */
+/** Pasted HTML → formatted lines: LightCast's own copied runs exactly, a LightCast text object's text, else the HTML's formatting. */
 export function pastedLines(html: string | null | undefined, custom?: string | null): TextRun[][] | null {
   if (html?.includes(RUNS_ATTR)) {
     const m = new RegExp(`${RUNS_ATTR}\\s*=\\s*"([^"]*)"`).exec(html);

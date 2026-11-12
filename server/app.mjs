@@ -1,4 +1,4 @@
-// The FreeCast server: built app + AI endpoints + remote-control relay.
+// The LightCast server: built app + AI endpoints + remote-control relay.
 // Used by `npm start` (server/serve.mjs) and by the desktop app (electron/main.mjs).
 import http from 'node:http';
 import fs from 'node:fs';

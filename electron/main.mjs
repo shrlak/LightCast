@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-// FreeCast desktop app: runs the FreeCast server inside the app and shows the console,
+// LightCast desktop app: runs the LightCast server inside the app and shows the console,
 // audience outputs and stage displays as native windows placed on your displays.
 import { app, BrowserWindow, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, session, shell, dialog } from 'electron';
 import fs from 'node:fs';
@@ -20,6 +20,12 @@ const appRoot = path.resolve(here, '..');
 // Fixed port: the console's saved library lives in browser storage tied to this address.
 const PORT = 47317;
 const SMOKE = process.env.FREECAST_SMOKE;
+
+// The app was called FreeCast before LightCast. Its data (the saved library in browser storage,
+// settings, remote-link keys) lives in a folder named after the app, so keep using that folder:
+// renaming it would leave every installed copy with an empty library. Must run before anything
+// reads the path (the single-instance lock included).
+app.setPath('userData', path.join(app.getPath('appData'), 'FreeCast'));
 
 if (!app.requestSingleInstanceLock()) app.quit();
 
@@ -219,7 +225,7 @@ function openView(url, displayId, present = false) {
   if (!win || win.isDestroyed()) {
     // Born on its display already covering it: no window appears first and then grows.
     win = new BrowserWindow({
-      width: 960, height: 540, title: 'FreeCast', backgroundColor: '#000000', autoHideMenuBar: true, icon: APP_ICON,
+      width: 960, height: 540, title: 'LightCast', backgroundColor: '#000000', autoHideMenuBar: true, icon: APP_ICON,
       ...(display ? { ...display.bounds, fullscreen: !isMac } : {}),
       show: false, webPreferences,
     });
@@ -260,7 +266,7 @@ function openMixer() {
     return mixerWindow;
   }
   const win = new BrowserWindow({
-    width: 1280, height: 660, minWidth: 480, minHeight: 360, title: 'FreeCast — X32 믹서', backgroundColor: '#1c1e23',
+    width: 1280, height: 660, minWidth: 480, minHeight: 360, title: 'LightCast — X32 믹서', backgroundColor: '#1c1e23',
     autoHideMenuBar: true, icon: APP_ICON, alwaysOnTop: true, show: false, webPreferences,
   });
   win.setAlwaysOnTop(true, 'floating');
@@ -313,7 +319,7 @@ function buildMenu() {
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 1440, height: 900, minWidth: 1000, minHeight: 640, title: 'FreeCast', icon: APP_ICON,
+    width: 1440, height: 900, minWidth: 1000, minHeight: 640, title: 'LightCast', icon: APP_ICON,
     backgroundColor: '#0b0d12', show: false, webPreferences,
   });
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -501,8 +507,8 @@ app.whenReady().then(async () => {
     syncTunnel();
   } catch (err) {
     splashWindow?.destroy();
-    dialog.showErrorBox('FreeCast could not start', err.code === 'EADDRINUSE'
-      ? `Port ${PORT} is already in use. Close the other program using it (or another FreeCast) and try again.`
+    dialog.showErrorBox('LightCast could not start', err.code === 'EADDRINUSE'
+      ? `Port ${PORT} is already in use. Close the other program using it (or another LightCast) and try again.`
       : String(err.message ?? err));
     app.exit(1);
     return;
@@ -525,7 +531,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => {
-  // Closing FreeCast first looks for an update (updater.mjs); the server is stopped when it really quits.
+  // Closing LightCast first looks for an update (updater.mjs); the server is stopped when it really quits.
   if (holdingQuit()) return;
   tunnel?.stop();
   running?.close();

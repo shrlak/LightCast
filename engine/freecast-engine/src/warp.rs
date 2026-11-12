@@ -1,6 +1,6 @@
 //! WordArt › Text Effects › Transform (DeckCraft's 40 `prstTxWarp` presets, with guide curves
 //! fitted to PowerPoint's) and Shape Format › Edit Shape › Smooth Corners (DeckCraft's squircle).
-//! The guides go to FreeCast as polylines; the app lays its glyphs along them.
+//! The guides go to LightCast as polylines; the app lays its glyphs along them.
 
 use deckcraft_geom::squircle;
 use deckcraft_geom::warp::{self, Band, Guide, LineAnchor};

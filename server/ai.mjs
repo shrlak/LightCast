@@ -1,4 +1,4 @@
-// AI endpoints for FreeCast. The browser never sees an API key: requests go to this local
+// AI endpoints for LightCast. The browser never sees an API key: requests go to this local
 // server, which asks the church's Gemini / OpenRouter model pool (see aiProviders.mjs).
 import { z } from 'zod';
 import { aiConfig, askJson, attempts, setAiConfigProvider } from './aiProviders.mjs';

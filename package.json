@@ -1,7 +1,7 @@
 {
   "name": "freecast",
   "private": true,
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "Free presentation software for worship and live events",
   "type": "module",
   "scripts": {
@@ -44,14 +44,14 @@
     "vite": "^8.3.4",
     "vitest": "^5.0.5"
   },
-  "productName": "FreeCast",
+  "productName": "LightCast",
   "author": {
-    "name": "FreeCast"
+    "name": "LightCast"
   },
   "main": "electron/main.mjs",
   "build": {
     "appId": "app.freecast.desktop",
-    "productName": "FreeCast",
+    "productName": "LightCast",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -84,12 +84,12 @@
       "identity": "-",
       "hardenedRuntime": false,
       "extendInfo": {
-        "NSCameraUsageDescription": "FreeCast shows live camera feeds as slide backgrounds.",
-        "NSLocalNetworkUsageDescription": "FreeCast lets phones on your network act as remotes and stage displays, and connects to your Behringer X32 mixer over Wi-Fi."
+        "NSCameraUsageDescription": "LightCast shows live camera feeds as slide backgrounds.",
+        "NSLocalNetworkUsageDescription": "LightCast lets phones on your network act as remotes and stage displays, and connects to your Behringer X32 mixer over Wi-Fi."
       }
     },
     "dmg": {
-      "title": "FreeCast"
+      "title": "LightCast"
     },
     "win": {
       "target": [
@@ -105,7 +105,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "shortcutName": "FreeCast"
+      "shortcutName": "LightCast"
     },
     "linux": {
       "target": [

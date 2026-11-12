@@ -1,6 +1,6 @@
 // Pictures and videos the remote needs to draw slides like the computer does. They live in the
 // console's browser storage, so the console hands the ones in use to this server (PUT) and
-// remotes fetch them (GET). Kept in memory only, capped, and gone when FreeCast quits.
+// remotes fetch them (GET). Kept in memory only, capped, and gone when LightCast quits.
 const MAX_FILE = 60 * 1024 * 1024;
 const MAX_TOTAL = 300 * 1024 * 1024;
 const files = new Map(); // id -> { type, buf }  (insertion order = age)

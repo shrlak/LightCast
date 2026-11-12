@@ -1,5 +1,5 @@
 // Copy and paste of slide objects through the system clipboard (Ctrl+C / Ctrl+V on the slide and
-// Home › Clipboard). FreeCast objects keep every property and their place; PowerPoint's copied shapes
+// Home › Clipboard). LightCast objects keep every property and their place; PowerPoint's copied shapes
 // are read from its own clipboard format in the desktop app (exact positions, fonts and colours) or
 // from the HTML it writes; other programs' formatted text keeps its formatting.
 import type { MediaMeta, SlideElement, TextRun } from '../../domain/types';
@@ -23,7 +23,7 @@ export const lastCopiedObjects = () => lastCopied;
 const mediaIdsOf = (els: SlideElement[]) => [...new Set(els.flatMap((e) => [e.mediaId, e.fillImage].filter((x): x is string => !!x)))];
 const blobToDataUrl = (b: Blob) => new Promise<string>((res, rej) => { const r = new FileReader(); r.onload = () => res(String(r.result)); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
 
-/** Pictures the objects use, as data (so another FreeCast without them can paste them), up to 12 MB. */
+/** Pictures the objects use, as data (so another LightCast without them can paste them), up to 12 MB. */
 async function mediaOf(els: SlideElement[], names: (id: string) => string | undefined): Promise<Record<string, ClipMedia>> {
   const out: Record<string, ClipMedia> = {};
   let total = 0;
@@ -123,8 +123,8 @@ async function fromPowerPoint(): Promise<PasteResult | null> {
   return { elements: r.elements, media, from: 'powerpoint' };
 }
 
-/** FreeCast objects, with any picture this FreeCast does not have restored from the clipboard. */
-async function fromFreeCast(p: ClipPayload, existing: SlideElement[]): Promise<PasteResult> {
+/** LightCast objects, with any picture this LightCast does not have restored from the clipboard. */
+async function fromLightCast(p: ClipPayload, existing: SlideElement[]): Promise<PasteResult> {
   const media: MediaMeta[] = [];
   for (const id of mediaIdsOf(p.elements)) {
     const have = await getMedia(id).catch(() => undefined);
@@ -150,7 +150,7 @@ export async function clipboardToElements(src: ClipSource, existing: SlideElemen
     const t = text?.trim() || (own ? objectsText(own.elements) : '');
     return t ? { elements: [{ id: uid('el'), kind: 'text', text: t, x: 220, y: 340, w: 1000, h: 400, fontSize: 56, color: '#ffffff', align: 'left' }], media: [], from: 'text' } : null;
   }
-  if (own) result = await fromFreeCast(own, existing);
+  if (own) result = await fromLightCast(own, existing);
   if (!result && desktop?.readOfficeClipboard) result = await fromPowerPoint();
   if (!result && src.html) {
     const { elements, images } = htmlToElements(src.html);

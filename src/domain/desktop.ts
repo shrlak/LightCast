@@ -1,4 +1,4 @@
-/** Present only inside the FreeCast desktop app (see electron/preload.cjs). */
+/** Present only inside the LightCast desktop app (see electron/preload.cjs). */
 export interface DesktopDisplay {
   id: number;
   label: string;
@@ -28,7 +28,7 @@ export interface UpdateState {
   version: string | null;
   progress: number;
   error: string | null;
-  /** When FreeCast last looked for a new release (ms since epoch). */
+  /** When LightCast last looked for a new release (ms since epoch). */
   checkedAt?: number | null;
 }
 
