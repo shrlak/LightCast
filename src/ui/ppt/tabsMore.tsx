@@ -1,4 +1,4 @@
-// 슬라이드 쇼 · 검토 · 보기 tabs, and FreeCast's own 예배 · 도구 tabs (like an add-in's tabs).
+// 슬라이드 쇼 · 검토 · 보기 tabs, and LightCast's own 예배 · 도구 tabs (like an add-in's tabs).
 import { useRef, useState, type MouseEvent } from 'react';
 import { openOutput } from '../outputWindows';
 import { openMixerWindow } from '../MixerPanel';

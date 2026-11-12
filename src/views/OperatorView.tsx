@@ -331,7 +331,7 @@ export function OperatorView() {
     if (remotes > 0) sendMediaToRemotes(mediaIdsFor({ live: state.live }));
   }, [remotes, state.live]);
 
-  // The X32 link lives in the FreeCast server; the console only says which mixer to talk to.
+  // The X32 link lives in the LightCast server; the console only says which mixer to talk to.
   const mixerIp = mixer.on && mixer.ip ? mixer.ip : null;
   useEffect(() => {
     if (!mixerIp && x32.state.status === 'off') return;
@@ -461,7 +461,7 @@ export function OperatorView() {
         if (confirm('Replace your current library with this backup? (You can undo with ⌘Z.)')) dispatch({ type: 'library/replace', library: lib });
       } else if (kind === 'library') {
         const lib = normalizeLibrary(JSON.parse(await files[0].text()));
-        if (!lib) throw new Error('Not a FreeCast library file');
+        if (!lib) throw new Error('Not a LightCast library file');
         if (confirm('Replace your current library with this file? (You can undo with ⌘Z.)')) dispatch({ type: 'library/replace', library: lib });
       } else if (kind === 'lyrics') {
         const created: Presentation[] = [];

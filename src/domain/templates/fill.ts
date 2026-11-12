@@ -138,7 +138,7 @@ export const prayerSlide = (tpl: ServiceTemplates): Slide => fillSlide(tpl.praye
 /** The church's closing deck, as it is (fresh copies). */
 export const backSlides = (tpl: ServiceTemplates): Slide[] => (tpl.back ?? []).map((s) => fillSlide(s, (t) => t));
 
-/** FreeCast's built-in placeholder Back deck, which the church deck replaces in the library. */
+/** LightCast's built-in placeholder Back deck, which the church deck replaces in the library. */
 export const isPlaceholderBack = (p: Presentation | undefined) => !!p && p.slides.some((s) => s.id === 'back_confession');
 
 /**
@@ -158,7 +158,7 @@ export function announcementSlides(tpl: ServiceTemplates, items: Announcement[])
   ];
 }
 
-/** The lyric text box of the template's lyric slide, as a FreeCast theme (lyrics stay plain slide text). */
+/** The lyric text box of the template's lyric slide, as a LightCast theme (lyrics stay plain slide text). */
 export function templateLyricsTheme(tpl: ServiceTemplates): Theme {
   const [lyrics] = [...texts(tpl.songLyrics)].sort((a, b) => area(b) - area(a));
   const p = lyrics?.paragraphs?.find((x) => x.text.trim());
@@ -241,7 +241,7 @@ export function songInTemplate(song: Presentation, tpl: ServiceTemplates, folder
 
 /** Is this presentation a song (lyrics by part), as opposed to an announcement or a scripture deck? */
 export function isSong(p: Presentation): boolean {
-  // A song laid out by FreeCast (lyricsLayout) counts wherever it sits — a copy made for a service in an
+  // A song laid out by LightCast (lyricsLayout) counts wherever it sits — a copy made for a service in an
   // earlier version, in the old look, is brought into the template design (and gets its title slide) too.
   const looksLikeSong = p.online || p.folder === 'Songs' || p.themeId === TEMPLATE_LYRICS_THEME || !!p.lyricsLayout;
   // Retreat songs come pre-laid-out as "Slide 1, 2…" in the retreat design and are left as they are.

@@ -33,9 +33,9 @@ export function useDesktopInfo(): DesktopSettingsState | null {
 export function DesktopUpdate({ info }: { info: DesktopInfo }) {
   return (
     <section className="settings-card">
-      <h4>소프트웨어 업데이트 <span className="muted small">현재 FreeCast {info.version}</span></h4>
+      <h4>소프트웨어 업데이트 <span className="muted small">현재 LightCast {info.version}</span></h4>
       <UpdateCheck />
-      <p className="hint">FreeCast는 macOS(또는 Windows)가 업데이트된 뒤 처음 켤 때 새 버전을 확인하고, 앱을 종료할 때 설치합니다. 예배 중에는 저절로 재시작하지 않습니다.</p>
+      <p className="hint">LightCast는 macOS(또는 Windows)가 업데이트된 뒤 처음 켤 때 새 버전을 확인하고, 앱을 종료할 때 설치합니다. 예배 중에는 저절로 재시작하지 않습니다.</p>
     </section>
   );
 }
@@ -128,7 +128,7 @@ export function DesktopRemote({ info, refresh }: DesktopSettingsState) {
         <label className="settings-switch">
           <span>
             <b>어디서나 리모컨 (인터넷)</b>
-            <small className="muted">다른 Wi-Fi나 휴대폰 데이터로도 FreeCast를 조작합니다.</small>
+            <small className="muted">다른 Wi-Fi나 휴대폰 데이터로도 LightCast를 조작합니다.</small>
           </span>
           <input type="checkbox" checked={info.internet.on} disabled={busy} onChange={(e) => toggle(() => desktop!.setInternetRemote(e.target.checked))} />
         </label>
@@ -137,13 +137,13 @@ export function DesktopRemote({ info, refresh }: DesktopSettingsState) {
       </section>
 
       <section className="settings-card">
-        <h4>FreeCast Remote 웹앱</h4>
+        <h4>LightCast Remote 웹앱</h4>
         <code className="small selectable">{info.internet.webAppUrl ?? `${info.ai.proxyUrl.replace(/\/+$/, '')}/freecast/remote/`}</code>
         <p className="hint">Windows·Mac 어느 컴퓨터를 사용하든 웹앱 주소는 같습니다. iPhone Safari에서 열고 공유 → 홈 화면에 추가를 선택하세요.</p>
         {!info.internet.on && <p className="hint">이 컴퓨터를 연결하려면 위의 <b>어디서나 리모컨</b>을 켜세요.</p>}
         {info.internet.on && info.internet.linkStatus === 'ok' && info.internet.link && (
           <div className="settings-pair">
-            <img src={qrDataUrl(info.internet.pairingUrl ?? info.internet.link)} alt="FreeCast Remote 컴퓨터 연결 QR 코드" width={150} height={150} />
+            <img src={qrDataUrl(info.internet.pairingUrl ?? info.internet.link)} alt="LightCast Remote 컴퓨터 연결 QR 코드" width={150} height={150} />
             <div className="stack grow">
               <b>이 컴퓨터 연결</b>
               <p className="hint">QR 코드를 한 번 스캔하면 이 컴퓨터가 웹앱에 저장됩니다. 이후 고정 웹앱 주소에서 저장한 컴퓨터를 선택하세요.</p>

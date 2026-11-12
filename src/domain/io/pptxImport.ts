@@ -31,7 +31,7 @@ function slideNumber(path: string): number {
 
 /**
  * Read a .pptx: per slide, its title, body text, speaker notes and biggest image.
- * Layout and animation are not kept — FreeCast re-renders the text with its own theme.
+ * Layout and animation are not kept — LightCast re-renders the text with its own theme.
  */
 export async function importPptx(file: Blob): Promise<ImportedSlide[]> {
   const zip = await JSZip.loadAsync(await file.arrayBuffer());

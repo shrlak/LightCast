@@ -1,4 +1,4 @@
-// Bridge between the FreeCast console page and the desktop app (no Node access in the page).
+// Bridge between the LightCast console page and the desktop app (no Node access in the page).
 const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('freecastDesktop', {

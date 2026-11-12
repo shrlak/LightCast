@@ -8,7 +8,7 @@ const port = Number(process.env.PORT) || 4317;
 
 try {
   await startServer({ root, port, host: '0.0.0.0' });
-  console.log(`FreeCast running:\n  Console: http://localhost:${port}`);
+  console.log(`LightCast running:\n  Console: http://localhost:${port}`);
   for (const ip of lanAddresses()) console.log(`  Remote:  http://${ip}:${port}/?view=remote   Stage: http://${ip}:${port}/?view=stage`);
 } catch (err) {
   console.error(err.message);

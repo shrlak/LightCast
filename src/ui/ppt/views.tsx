@@ -379,7 +379,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         {page === 'save' && (
           <>
             <h1>저장</h1>
-            <p className="bs-note">FreeCast는 바꾸는 즉시 이 컴퓨터에 저장하고, 로그인하면 클라우드에도 동기화합니다.</p>
+            <p className="bs-note">LightCast는 바꾸는 즉시 이 컴퓨터에 저장하고, 로그인하면 클라우드에도 동기화합니다.</p>
             <div className="bs-cards">
               <Card icon={RI.paste} title="PowerPoint 파일로 저장 (.pptx)" text="지금 재생목록을 MMDD.pptx로" onClick={() => run(cmd.exportPlaylistPptx)} />
               <Card icon="🗜" title="전체 백업 저장 (.zip)" text="라이브러리와 미디어 전부" onClick={() => run(cmd.exportBackup)} />

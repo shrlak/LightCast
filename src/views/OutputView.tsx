@@ -19,7 +19,7 @@ export function OutputView() {
   const screen = live?.screens.find((s) => s.id === screenId) ?? live?.screens[0];
 
   useEffect(() => {
-    document.title = `FreeCast — ${screen?.name ?? 'Output'}`;
+    document.title = `LightCast — ${screen?.name ?? 'Output'}`;
     document.body.classList.toggle('transparent', screen?.key === 'transparent');
   }, [screen?.name, screen?.key]);
 
@@ -60,7 +60,7 @@ export function OutputView() {
     };
   }, []);
 
-  if (!live) return <div className="output-root waiting">Waiting for the FreeCast console…</div>;
+  if (!live) return <div className="output-root waiting">Waiting for the LightCast console…</div>;
   const bg = screen?.key === 'transparent' ? 'transparent' : screen?.key === 'green' ? '#00b140' : '#000';
   const edge = screen?.edge && screen.edge.part !== 'none' ? screen.edge : null;
   if (edge) {

@@ -4,7 +4,7 @@ import { useX32, x32 } from './x32';
 
 const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 
-/** ⚙ 설정 → 장비 · 연결: connect FreeCast to a Behringer X32 over Wi-Fi, to operate the mixer. */
+/** ⚙ 설정 → 장비 · 연결: connect LightCast to a Behringer X32 over Wi-Fi, to operate the mixer. */
 export function X32SettingsCard({ settings, onChange }: { settings: X32Settings; onChange: (s: X32Settings) => void }) {
   const mixer = useX32();
   const [ip, setIp] = useState(settings.ip);
@@ -35,7 +35,7 @@ export function X32SettingsCard({ settings, onChange }: { settings: X32Settings;
   };
 
   const on = settings.on && !!settings.ip;
-  const label = mixer.status === 'unavailable' ? 'X32 연결은 FreeCast 데스크톱 앱에서 됩니다.'
+  const label = mixer.status === 'unavailable' ? 'X32 연결은 LightCast 데스크톱 앱에서 됩니다.'
     : !on ? '연결 안 함'
     : mixer.status === 'connected' ? `X32 연결됨 · ${mixer.ip}${mixer.name ? ` · ${mixer.name}` : ''}${mixer.model ? ` (${mixer.model})` : ''}`
     : mixer.status === 'lost' ? `X32 응답 없음 · ${mixer.ip ?? settings.ip} — 같은 Wi-Fi인지, X32가 켜져 있는지 확인하세요. 계속 다시 시도합니다.`
@@ -44,7 +44,7 @@ export function X32SettingsCard({ settings, onChange }: { settings: X32Settings;
   return (
     <section className="settings-card">
       <h4>Behringer X32 믹서 (Wi-Fi)</h4>
-      <p className="hint">FreeCast에서 믹서를 조작합니다 — 뮤트 · 페이더 · 장면 불러오기. 라이브 패널의 <b>Mixer</b> 탭에서 직접 조작하고, 매크로와 슬라이드 동작에도 넣을 수 있습니다 (예: 설교 슬라이드에서 설교자 마이크 켜기).</p>
+      <p className="hint">LightCast에서 믹서를 조작합니다 — 뮤트 · 페이더 · 장면 불러오기. 라이브 패널의 <b>Mixer</b> 탭에서 직접 조작하고, 매크로와 슬라이드 동작에도 넣을 수 있습니다 (예: 설교 슬라이드에서 설교자 마이크 켜기).</p>
       <p className="row gap-xs small"><span className={`dot ${on && mixer.status === 'connected' ? 'on' : ''}`} /><span className={on && (mixer.status === 'lost' || mixer.status === 'unavailable') ? 'warn' : ''}>{label}</span></p>
       <form className="row gap-xs wrap" onSubmit={(e) => { e.preventDefault(); connectTo(ip); }}>
         <input className="grow" inputMode="decimal" aria-label="X32 IP 주소" placeholder="X32 IP 주소 (예: 192.168.0.64)" value={ip} onChange={(e) => setIp(e.target.value)} />

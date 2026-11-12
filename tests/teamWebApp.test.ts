@@ -24,9 +24,9 @@ describe('separate permanent team web app', () => {
     expect(teamWebAppAddress(origin)).toBe(origin + root);
     expect(teamPairingAddress(origin, teamId)).toBe(origin + root + '#' + teamId);
     const page = await handleRemoteWebApp(req(root), {});
-    expect(page.status).toBe(200); expect(await page.text()).toContain('FreeCast 무대팀');
+    expect(page.status).toBe(200); expect(await page.text()).toContain('LightCast 무대팀');
     const manifest = await (await handleRemoteWebApp(req(root + 'manifest.webmanifest', { cookie }), {})).json();
-    expect(manifest).toMatchObject({ id: root, name: 'FreeCast 무대팀', start_url: root + '#' + teamId, scope: root, display: 'standalone' });
+    expect(manifest).toMatchObject({ id: root, name: 'LightCast 무대팀', start_url: root + '#' + teamId, scope: root, display: 'standalone' });
     const script = await (await handleRemoteWebApp(req(root + 'launcher.js'), {})).text();
     expect(() => new vm.Script(script)).not.toThrow();
     expect(script).toContain('freecast.team.computers'); expect(script).toContain('app?view=team'); expect(script).not.toContain('app?view=remote');

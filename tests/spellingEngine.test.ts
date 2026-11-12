@@ -84,14 +84,14 @@ describe('Spelling over a presentation', () => {
       { id: 'b', kind: 'text', text: 'I recieve 되요 grace', x: 0, y: 0, w: 1, h: 1 },
       { id: 'q', kind: 'text', text: 'recieve 안되요', noProof: true, x: 0, y: 0, w: 1, h: 1 },
       { id: 'f', kind: 'text', text: 'bonjour mon ami', lang: 'fr-FR', x: 0, y: 0, w: 1, h: 1 },
-      { id: 'k', kind: 'text', text: 'FreeCast를 써서 Psalms를 띄워요', x: 0, y: 0, w: 1, h: 1 },
+      { id: 'k', kind: 'text', text: 'LightCast를 써서 Psalms를 띄워요', x: 0, y: 0, w: 1, h: 1 },
     ] }),
     s('b', { text: '그건 안되요. 몇일이 지나도', lang: 'ko-KR', notes: 'teh 설겆이' }),
   ]);
   const check = (w: string, lang?: string) => isMisspelled(w, lang, undefined);
   const hits = misspellings(deck, check);
   it('finds English and Korean misspellings in reading order, skipping noProof text', () => {
-    expect(hits.map((h) => `${h.slideId}:${h.field}:${h.word}`)).toEqual(['a:title:되요', 'a:el:recieve', 'a:el:되요', 'a:el:FreeCast', 'b:text:안되요', 'b:text:몇일', 'b:notes:teh', 'b:notes:설겆이']);
+    expect(hits.map((h) => `${h.slideId}:${h.field}:${h.word}`)).toEqual(['a:title:되요', 'a:el:recieve', 'a:el:되요', 'a:el:LightCast', 'b:text:안되요', 'b:text:몇일', 'b:notes:teh', 'b:notes:설겆이']);
     expect(hits.find((h) => h.word === '안되요')?.suggestions).toEqual(['안 돼요']);
   });
   it('suggests from the dictionary, the rule, or nothing', () => {

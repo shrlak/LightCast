@@ -255,7 +255,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
   const sel = ed.selEls.map((e) => e.id);
   const paste = (mode: PasteMode = 'source') => void (async () => {
     if (blocked(ed)) return;
-    // The system clipboard (FreeCast, PowerPoint, other programs); this window's last copy if it cannot be read.
+    // The system clipboard (LightCast, PowerPoint, other programs); this window's last copy if it cannot be read.
     const src = await readSystemClipboard();
     const last = objectClipboard();
     const r = src ? await clipboardToElements(src, ed.elements, mode) : last.length ? await clipboardToElements({ custom: JSON.stringify(last), images: [] }, ed.elements, mode) : null;

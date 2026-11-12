@@ -20,7 +20,7 @@ export function sendDmx(universe: number, channels: Record<string, number>) {
   }).catch(() => undefined);
 }
 
-/** Change the X32 through the FreeCast server (quietly does nothing when the mixer is not connected). */
+/** Change the X32 through the LightCast server (quietly does nothing when the mixer is not connected). */
 export function sendX32(step: Extract<MacroStep, { type: 'x32' }>) {
   const msg = x32Message(step);
   if (!msg) return Promise.resolve();

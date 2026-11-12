@@ -9,7 +9,7 @@ import { normalizeLibrary } from '../src/domain/persistence';
 import type { Presentation, Slide, SlideElement } from '../src/domain/types';
 
 const box = (id: string, text: string, y: number, h = 100): SlideElement => ({ id, kind: 'text', text, x: 120, y, w: 1200, h, fontSize: 32 });
-// (The heading sits where FreeCast places it: 120 / 100, fixed.)
+// (The heading sits where LightCast places it: 120 / 100, fixed.)
 const deck = (): Presentation => ({ id: 'ads', title: '광고', themeId: 'theme_classic', slides: [{ id: 'ad', group: '광고', text: '', elements: [{ ...box('heading', '광고\nAnnouncements', 100, 85), x: 120, w: 1244, autoFit: false }, box('title', '1. 새가족 환영', 236), box('body', '환영합니다', 339, 600)] }] });
 
 describe('initial maximum text size', () => {

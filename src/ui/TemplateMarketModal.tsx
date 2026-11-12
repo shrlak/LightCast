@@ -23,7 +23,7 @@ export function TemplateMarketModal({ library, dispatch, notify, onClose }: { li
     if (!f) return;
     try {
       const pack = parseTemplatePack(JSON.parse(await f.text()));
-      if (!pack) return notify('FreeCast 템플릿 파일이 아닙니다');
+      if (!pack) return notify('LightCast 템플릿 파일이 아닙니다');
       const { presentations, themes } = importTemplatePack(library, pack);
       for (const theme of themes) dispatch({ type: 'theme/upsert', theme });
       dispatch({ type: 'presentation/createMany', presentations });

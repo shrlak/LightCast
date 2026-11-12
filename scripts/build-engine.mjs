@@ -1,6 +1,6 @@
 // Builds the Rust PowerPoint engine (engine/) to WebAssembly and puts it where the app loads it
 // from: src/engine/freecast_engine.wasm. That file is committed, so a machine without Rust still
-// builds FreeCast; CI and the release workflow rebuild it from source.
+// builds LightCast; CI and the release workflow rebuild it from source.
 //
 //   npm run engine           build (needs cargo and the wasm32-unknown-unknown target)
 //   npm run engine -- --if-available   build when cargo is there, else keep the committed file

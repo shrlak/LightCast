@@ -1,6 +1,6 @@
-// Behringer X32 / M32 mixer control: which strips FreeCast can operate, their OSC addresses, every
+// Behringer X32 / M32 mixer control: which strips LightCast can operate, their OSC addresses, every
 // processing parameter (gain, low cut, gate, compressor, EQ, pan, sends) with the console's own units,
-// and the X32 steps of macros and slide actions. The FreeCast server (server/x32.mjs) talks to the
+// and the X32 steps of macros and slide actions. The LightCast server (server/x32.mjs) talks to the
 // mixer; this file is the shared vocabulary.
 import type { MacroStep } from './types';
 
@@ -275,6 +275,6 @@ export function saveX32Settings(s: X32Settings) {
   try {
     localStorage.setItem(KEY, JSON.stringify(s));
   } catch {
-    /* storage full or blocked: the setting lasts until FreeCast is closed */
+    /* storage full or blocked: the setting lasts until LightCast is closed */
   }
 }

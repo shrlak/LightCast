@@ -1,10 +1,10 @@
 // Turns a slide read by the PPTX renderer (pptxRender.ts, from the shrlak/ppt program) into a
-// FreeCast slide where every part can be edited: the slide background (colour / background
+// LightCast slide where every part can be edited: the slide background (colour / background
 // picture) becomes the slide's background image (bake.ts), and each picture (logos, photos), each
 // filled box and each text box becomes its own object at the same place and size, in the same
 // order — so all of it can be moved, resized, restyled or deleted in the slide editor.
 //
-// FreeCast slides are 4:3 like the church decks, so those fill the canvas exactly; a deck of
+// LightCast slides are 4:3 like the church decks, so those fill the canvas exactly; a deck of
 // another shape (16:9 sermon slides) is centred with black bars.
 import type { ElementParagraph, HAlign, Slide, SlideElement, VAlign } from '../types';
 import { clearRunFormat } from '../richText';
@@ -79,7 +79,7 @@ export function textElement(shape: RenderedTextShape, f: Frame): SlideElement {
 export const pictureKey = (p: RenderedPictureShape) => `${p.imageUrl}|${p.crop ? [p.crop.l, p.crop.t, p.crop.r, p.crop.b].join(',') : ''}`;
 
 /**
- * A rendered slide → FreeCast slide, given the media id of its baked background and of each
+ * A rendered slide → LightCast slide, given the media id of its baked background and of each
  * picture (by pictureKey). A picture without a media id is left out.
  */
 export function slideFromRendered(rs: RenderedSlide, backgroundMediaId: string, group: string, pictures: Map<string, string> = new Map()): Slide {

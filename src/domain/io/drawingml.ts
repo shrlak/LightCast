@@ -1,8 +1,8 @@
 // PowerPoint's own clipboard copy of shapes (the "Art::GVML ClipFormat" part, a small Office package
-// whose drawing is DrawingML in a locked canvas) and DrawingML shape trees in general → FreeCast
+// whose drawing is DrawingML in a locked canvas) and DrawingML shape trees in general → LightCast
 // objects at the same place, size, rotation, fill, outline, font, size, colour and paragraph format.
 // Positions are kept in physical units: 1 canvas px = 6350 EMU (the 4:3 slide is 10 in × 7.5 in at
-// 1440 × 1080 px), so 1 pt of type is 2 canvas px, as everywhere else in FreeCast.
+// 1440 × 1080 px), so 1 pt of type is 2 canvas px, as everywhere else in LightCast.
 import JSZip from 'jszip';
 import type { DashStyle, ElementParagraph, HAlign, ListStyle, SlideElement, TextRun } from '../types';
 import { uid } from '../lyrics';
@@ -175,7 +175,7 @@ const RUN_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'strike', 'baseline
 
 /** Paragraphs → the element's text, its own formatting (that of most of its text) and runs for the rest. */
 export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Partial<SlideElement> {
-  // A soft line break (<a:br/>) is a new line of the same paragraph; FreeCast keeps lines.
+  // A soft line break (<a:br/>) is a new line of the same paragraph; LightCast keeps lines.
   const lines: { runs: Run[]; p: Para }[] = [];
   for (const p of paras) {
     let cur: Run[] = [];
@@ -249,7 +249,7 @@ const LINE_STYLE_W = [6350, 12700, 19050];
 
 export interface DmlContext {
   theme: DmlTheme;
-  /** A picture's relationship id → the FreeCast media id it was stored under. */
+  /** A picture's relationship id → the LightCast media id it was stored under. */
   media?: (rId: string) => string | undefined;
 }
 
@@ -395,7 +395,7 @@ function walk(container: MNode, place: Map2, ctx: DmlContext, out: SlideElement[
 }
 
 /**
- * A DrawingML drawing (a GVML locked canvas, or a slide's <p:spTree>) → FreeCast objects. The locked
+ * A DrawingML drawing (a GVML locked canvas, or a slide's <p:spTree>) → LightCast objects. The locked
  * canvas's own group transform is ignored: its children keep their slide positions.
  */
 export function drawingToElements(xml: string, ctx: DmlContext): SlideElement[] {

@@ -37,7 +37,7 @@ const OFFICE_ALIAS: Record<string, string> = {
 };
 
 /**
- * A typeface named by PowerPoint / Word / a web page → the CSS font stack FreeCast stores: one of the
+ * A typeface named by PowerPoint / Word / a web page → the CSS font stack LightCast stores: one of the
  * editor's own fonts when it is one of them, else that face with the Korean fallbacks after it.
  */
 export function officeFont(name: string): string {

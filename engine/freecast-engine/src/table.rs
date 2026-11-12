@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use crate::color::{hex, scheme_named};
 use crate::{Res, fin, to_value};
 
-/// FreeCast's table (what a `table` object on a slide keeps).
+/// LightCast's table (what a `table` object on a slide keeps).
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct TableIn {
@@ -54,7 +54,7 @@ pub struct CellIn {
     pub bold: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub align: Option<String>,
-    /// Table Design › Borders drawn on this cell's sides (FreeCast draws them; kept through edits).
+    /// Table Design › Borders drawn on this cell's sides (LightCast draws them; kept through edits).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub borders: Option<serde_json::Value>,
 }
@@ -71,7 +71,7 @@ pub fn styles() -> Res {
 const MARK: char = '\u{1}';
 const END: char = '\u{2}';
 
-/// FreeCast's table → DeckCraft's, each cell's text tagged with where it came from.
+/// LightCast's table → DeckCraft's, each cell's text tagged with where it came from.
 fn to_dc(t: &TableIn) -> Table {
     let nc = t.rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
     let cols: Vec<f64> = (0..nc).map(|c| t.cols.get(c).map(|v| fin(*v, 1.0).max(0.01)).unwrap_or(1.0)).collect();

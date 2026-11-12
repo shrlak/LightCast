@@ -71,7 +71,7 @@ export function SyncStatusModal({ cloud, library, dispatch, onClose, onAccount, 
             </div>
           </div>
 
-          {state === 'offline' && <p>인터넷이 없어도 FreeCast의 모든 기능을 그대로 쓸 수 있습니다. 고친 내용은 이 컴퓨터에 먼저 저장되고, 연결되면 <b>자동으로</b> 올라갑니다 (예배 중에는 건드리지 않습니다).</p>}
+          {state === 'offline' && <p>인터넷이 없어도 LightCast의 모든 기능을 그대로 쓸 수 있습니다. 고친 내용은 이 컴퓨터에 먼저 저장되고, 연결되면 <b>자동으로</b> 올라갑니다 (예배 중에는 건드리지 않습니다).</p>}
           {state === 'error' && <p role="alert">동기화 오류: {status.message} — 이 컴퓨터의 내용은 그대로 안전합니다. 잠시 뒤 자동으로 다시 시도합니다.</p>}
           {state === 'syncing' && status.message && <p className="muted small">{status.message}</p>}
           {!status.session && <button className="primary" onClick={onAccount}>로그인 · 계정 만들기</button>}

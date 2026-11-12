@@ -18,9 +18,9 @@ export async function exportBackup(lib: Library): Promise<Blob> {
 export async function importBackup(file: Blob, protectedIds = new Set<string>()): Promise<Library> {
   const zip = await JSZip.loadAsync(await file.arrayBuffer());
   const libFile = zip.file('library.json');
-  if (!libFile) throw new Error('Not a FreeCast backup (library.json missing)');
+  if (!libFile) throw new Error('Not a LightCast backup (library.json missing)');
   const lib = normalizeLibrary(JSON.parse(await libFile.async('string')));
-  if (!lib) throw new Error('library.json is not a FreeCast library');
+  if (!lib) throw new Error('library.json is not a LightCast library');
   for (const path of Object.keys(zip.files)) {
     const m = /^media\/([\w-]+)$/.exec(path);
     if (m && !protectedIds.has(m[1])) await putMedia(m[1], await zip.file(path)!.async('blob'));

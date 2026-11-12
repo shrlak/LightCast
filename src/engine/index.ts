@@ -1,4 +1,4 @@
-// FreeCast's PowerPoint engine: Rust compiled to WebAssembly (engine/ — DeckCraft's geometry, colour,
+// LightCast's PowerPoint engine: Rust compiled to WebAssembly (engine/ — DeckCraft's geometry, colour,
 // model and slide-show timing crates behind a small JSON interface). This file loads the module and
 // gives the rest of the app typed calls. Every call is synchronous once the module is loaded; before
 // that (or if it failed to load) calls return null and the caller draws a plain fallback.
@@ -42,7 +42,7 @@ export async function initEngine(bytes: BufferSource): Promise<boolean> {
     attach(await WebAssembly.instantiate(module, {}));
     return true;
   } catch (e) {
-    console.error('FreeCast engine failed to load', e);
+    console.error('LightCast engine failed to load', e);
     exports = null;
     return false;
   }
@@ -50,7 +50,7 @@ export async function initEngine(bytes: BufferSource): Promise<boolean> {
 
 /** Load once from a URL (see load.ts). */
 export function loadEngineFrom(url: string): Promise<boolean> {
-  loading ??= fetch(url).then((r) => r.arrayBuffer()).then(initEngine).catch((e) => { console.error('FreeCast engine failed to load', e); return false; });
+  loading ??= fetch(url).then((r) => r.arrayBuffer()).then(initEngine).catch((e) => { console.error('LightCast engine failed to load', e); return false; });
   return loading;
 }
 

@@ -5,7 +5,7 @@ import type { WarpBand } from '../engine';
 
 type P = [number, number];
 
-/** Older FreeCast warp names → DeckCraft / PowerPoint presets. */
+/** Older LightCast warp names → DeckCraft / PowerPoint presets. */
 export const LEGACY_WARP: Record<string, string> = { archUp: 'textArchUp', archDown: 'textArchDown', wave: 'textWave1', slantUp: 'textSlantUp', slantDown: 'textSlantDown' };
 export const warpPreset = (w: string) => LEGACY_WARP[w] ?? w;
 

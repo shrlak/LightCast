@@ -33,9 +33,9 @@ export function CloudClearPanel({ cloud }: { cloud: CloudSync }) {
   };
   return <section className="cloud-clear" aria-label="서버 전체 자료 삭제">
     <h3>서버 자료 삭제</h3>
-    {done && <p role="status">서버의 FreeCast 자료를 모두 삭제했습니다.</p>}
+    {done && <p role="status">서버의 LightCast 자료를 모두 삭제했습니다.</p>}
     {!open ? <button className="danger" onClick={() => { setDone(false); setOpen(true); }}>서버 전체 자료 삭제…</button> : <form onSubmit={submit} className="stack">
-      <p role="alert">이 서버를 사용하는 모든 사용자의 FreeCast 재생목록·찬양·미디어·휴지통을 영구 삭제합니다. 보호된 자료도 포함하며 실행 취소할 수 없습니다.</p>
+      <p role="alert">이 서버를 사용하는 모든 사용자의 LightCast 재생목록·찬양·미디어·휴지통을 영구 삭제합니다. 보호된 자료도 포함하며 실행 취소할 수 없습니다.</p>
       <p className="hint">공용 찬양/PPT 사이트 자료, 로그인 계정과 서버 설정은 유지합니다. 다른 기기는 다시 로그인해야 하며, 예전 동기화로 삭제한 파일이 다시 올라오지 않게 처리합니다.</p>
       {preview ? <>
         <p>삭제할 서버: <b>{preview.server}</b></p>

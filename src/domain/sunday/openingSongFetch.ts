@@ -16,7 +16,7 @@ async function json<T>(res: Response): Promise<T> {
 /** PowerPoint files on the internet for this song, best match first. */
 export async function searchSongPpt(title: string): Promise<SongPptCandidate[]> {
   const res = await fetch(`/api/song-ppt/search?title=${encodeURIComponent(title)}`).catch(() => {
-    throw new Error('FreeCast 서버에 연결할 수 없습니다 — 데스크톱 앱(또는 npm start)에서 사용해 주세요');
+    throw new Error('LightCast 서버에 연결할 수 없습니다 — 데스크톱 앱(또는 npm start)에서 사용해 주세요');
   });
   return (await json<{ candidates: SongPptCandidate[] }>(res)).candidates;
 }

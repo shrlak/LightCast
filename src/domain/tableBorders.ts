@@ -1,5 +1,5 @@
 // Table Design › Draw Borders (DeckCraft table.borders, table.drawLine, table.eraseLine) and Table
-// Layout › Cell Margins, on FreeCast's table (src/engine TableData).
+// Layout › Cell Margins, on LightCast's table (src/engine TableData).
 import { editTable, type CellBorder, type CellBorders, type TableData } from '../engine';
 
 export type BorderMode = 'all' | 'outside' | 'inside' | 'top' | 'bottom' | 'left' | 'right' | 'insideH' | 'insideV' | 'none';

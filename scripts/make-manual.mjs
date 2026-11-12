@@ -1,4 +1,4 @@
-// Builds docs/FreeCast-Manual.pdf from docs/manual/manual.html.
+// Builds docs/LightCast-Manual.pdf from docs/manual/manual.html.
 // Needs Chromium through Playwright (`npx playwright install chromium` once if it is missing).
 // Usage: node scripts/make-manual.mjs
 import { createRequire } from 'node:module';
@@ -10,7 +10,7 @@ const { chromium } = require('playwright');
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const source = path.join(root, 'docs', 'manual', 'manual.html');
-const target = path.join(root, 'docs', 'FreeCast-Manual.pdf');
+const target = path.join(root, 'docs', 'LightCast-Manual.pdf');
 
 const browser = await chromium.launch();
 const page = await browser.newPage();

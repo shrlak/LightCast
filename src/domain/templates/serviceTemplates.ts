@@ -1,12 +1,12 @@
 // The 주일예배 designs, read from the same .pptx templates the shrlak/ppt program builds its
 // deck from, fetched from the online content server each session:
 //   front-slides.pptx     → Front (기도 준비, welcome + date, 신앙고백) — the church's own copy
-//                           bundled with FreeCast (public/templates/) wins over the server's
+//                           bundled with LightCast (public/templates/) wins over the server's
 //   service-template.pptx → 기도 (slide 17), 광고 title (32) and 광고 item (33)
 //   template.pptx         → song title slide (1) and lyric slide (2)
 //   bible-template.pptx   → 성경 말씀 title (1), verse slide (2), 설교 title (3)
 //   back-slides.pptx      → Back / End, all of it (공동체 고백송, 송별, 헌금, 축복송 …) — the church's
-//                           own copy bundled with FreeCast, else the published ppt site
+//                           own copy bundled with LightCast, else the published ppt site
 import type { Slide } from '../types';
 import { renderPptxSlides, revokeRenderedSlides, type RenderedSlide } from '../io/pptxRender';
 import { getMedia, putMedia } from '../media';
@@ -74,7 +74,7 @@ async function pictureBlob(p: RenderedPictureShape): Promise<Blob | null> {
 }
 
 /**
- * Render slides of a .pptx into FreeCast slides with every part editable. Each slide's
+ * Render slides of a .pptx into LightCast slides with every part editable. Each slide's
  * background is baked and stored under `mediaId(index)`; each distinct picture is stored once
  * under `pictureId(n)`. Ids already in the media store are reused without drawing again.
  */
@@ -119,7 +119,7 @@ export async function pptxSlides(
   }
 }
 
-/** Decks the church gave FreeCast directly, served with the app (they win over the content server). */
+/** Decks the church gave LightCast directly, served with the app (they win over the content server). */
 const BUNDLED: Record<string, string> = { 'front-slides.pptx': 'templates/front-slides.pptx', 'back-slides.pptx': 'templates/back-slides.pptx' };
 
 async function fetchDeck(name: string, ...fallbacks: string[]): Promise<{ data: ArrayBuffer; key: string }> {

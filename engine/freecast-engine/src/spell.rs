@@ -1,6 +1,6 @@
 //! From DeckCraft (`crates/engine/src/spell.rs`, MIT OR Apache-2.0): the Hunspell-format
 //! dictionary (parse, add_word, check, suggest, word_chars) unchanged; DeckCraft's search of the
-//! system's dictionary folders and its user-dictionary file are left out — FreeCast hands the
+//! system's dictionary folders and its user-dictionary file are left out — LightCast hands the
 //! engine the `.aff`/`.dic` texts it ships (public/dict) and keeps the user's words itself.
 //!
 //! Spell checking with Hunspell-format dictionaries (`xx_YY.aff` + `xx_YY.dic`).
@@ -12,7 +12,7 @@
 //! and end flags, `COMPOUNDMIN`). `ICONV`/`OCONV`, compound rules and morphology are not read;
 //! words they would accept are reported as misspelt.
 //!
-//! Engine ops (FreeCast): `spell.load`, `spell.loaded`, `spell.check`, `spell.suggest` and
+//! Engine ops (LightCast): `spell.load`, `spell.loaded`, `spell.check`, `spell.suggest` and
 //! `spell.addWord` — see [`load`] and below.
 
 use std::cell::RefCell;
@@ -519,7 +519,7 @@ const MAX_SUGGEST_CHARS: usize = 64;
 /// Longest word `Dictionary::check` checks, as Hunspell's word length limit.
 const MAX_CHECK_CHARS: usize = 100;
 
-// ── FreeCast: dictionaries by language, loaded from the app's own files ──────────────────────
+// ── LightCast: dictionaries by language, loaded from the app's own files ──────────────────────
 
 /// A dictionary and the letters its words are made of: a word with any other letter (Hangul
 /// against en_US) is another language's, and is not judged by it.

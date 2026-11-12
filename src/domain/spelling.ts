@@ -43,7 +43,7 @@ export function wordsIn(text: string): { word: string; start: number }[] {
 const HANGUL = /[ᄀ-ᇿ㄰-㆏가-힣]/;
 const LATIN = /^[\p{Script=Latin}\p{M}'’]+$/u;
 
-/** The non-Hangul parts of a word ("FreeCast를" → "FreeCast"): Korean particles attach to English words. */
+/** The non-Hangul parts of a word ("LightCast를" → "LightCast"): Korean particles attach to English words. */
 function foreignParts(word: string, start: number): { word: string; start: number }[] {
   if (!HANGUL.test(word)) return [{ word, start }];
   const out: { word: string; start: number }[] = [];
@@ -253,7 +253,7 @@ export function addToDictionary(word: string) {
   const d = userDictionary();
   d.add(word.toLowerCase());
   try { localStorage.setItem(KEY, JSON.stringify([...d])); } catch { /* storage unavailable */ }
-  // The engine's dictionaries learn it too (as typed, so "FreeCast" passes, and lower-case).
+  // The engine's dictionaries learn it too (as typed, so "LightCast" passes, and lower-case).
   for (const lang of installed) { spellAddWord(lang, word); spellAddWord(lang, word.toLowerCase()); }
   verdicts.clear();
 }

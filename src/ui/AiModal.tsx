@@ -65,7 +65,7 @@ export function AiModal({ onClose, onCreate }: Props) {
             <div className="stack">
               {EXAMPLES.map((ex) => <button key={ex} className="example" onClick={() => setPrompt(ex)}>{ex}</button>)}
             </div>
-            <p className="hint">Also in FreeCast: ✨ Translate on any presentation (adds English lines), and AI reading of 콘티 PDFs and 카톡 공지 in the 주일예배 builder.</p>
+            <p className="hint">Also in LightCast: ✨ Translate on any presentation (adds English lines), and AI reading of 콘티 PDFs and 카톡 공지 in the 주일예배 builder.</p>
             {error && <div className="warn">{error}</div>}
           </div>
           <div className="editor-col preview-col">

@@ -47,7 +47,7 @@ export function buildTemplatePack(lib: Library, presentationIds: string[], name:
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 
-/** Validate a file someone else made; null when it is not a FreeCast template pack. */
+/** Validate a file someone else made; null when it is not a LightCast template pack. */
 export function parseTemplatePack(value: unknown): TemplatePack | null {
   if (!isObj(value) || value.kind !== PACK_KIND || value.version !== 1) return null;
   const { presentations, themes } = value;

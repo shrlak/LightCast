@@ -114,8 +114,8 @@ export function MixerPanel() {
   if (mixer.status !== 'connected') {
     return (
       <div className="stack x32-offline">
-        <p className="muted small">{mixer.status === 'unavailable' ? 'X32 믹서 조작은 FreeCast 데스크톱 앱에서 됩니다.' : mixer.status === 'off' ? 'X32 믹서가 연결되어 있지 않습니다.' : mixer.status === 'lost' ? `X32 응답 없음 · ${mixer.ip ?? ''} — 다시 연결하는 중…` : 'X32에 연결하는 중…'}</p>
-        <p className="hint">FreeCast 콘솔의 ⚙ 설정 → 장비 · 연결 → Behringer X32 믹서에서 연결하세요.</p>
+        <p className="muted small">{mixer.status === 'unavailable' ? 'X32 믹서 조작은 LightCast 데스크톱 앱에서 됩니다.' : mixer.status === 'off' ? 'X32 믹서가 연결되어 있지 않습니다.' : mixer.status === 'lost' ? `X32 응답 없음 · ${mixer.ip ?? ''} — 다시 연결하는 중…` : 'X32에 연결하는 중…'}</p>
+        <p className="hint">LightCast 콘솔의 ⚙ 설정 → 장비 · 연결 → Behringer X32 믹서에서 연결하세요.</p>
       </div>
     );
   }

@@ -44,7 +44,7 @@ pub fn catalog() -> Res {
         .collect())
 }
 
-/// One effect of FreeCast's animation list (the Animation Pane's order).
+/// One effect of LightCast's animation list (the Animation Pane's order).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnimIn {

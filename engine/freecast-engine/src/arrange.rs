@@ -1,6 +1,6 @@
 //! Home › Arrange and Shape Format › Arrange: align, distribute, bring forward / send backward,
 //! rotate and flip. The ordering rules are DeckCraft's (`engine/src/cmd/arrange.rs`); the rest works
-//! on FreeCast's boxes (canvas pixels).
+//! on LightCast's boxes (canvas pixels).
 
 use deckcraft_geom::{Point, Vec2};
 use serde::Deserialize;

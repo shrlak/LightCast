@@ -1,6 +1,6 @@
 //! SmartArt from DeckCraft (`crates/engine/src/cmd/smartart/`, MIT OR Apache-2.0): its layout
 //! files are used unchanged; this module gives them the names they import from DeckCraft's
-//! `cmd::smartart` and turns the shapes they lay out into FreeCast objects.
+//! `cmd::smartart` and turns the shapes they lay out into LightCast objects.
 
 pub use deckcraft_color::SchemeSlot;
 pub use deckcraft_geom::Xfrm;

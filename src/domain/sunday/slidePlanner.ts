@@ -1,5 +1,5 @@
 // How a song's lyrics become slides — ported from the shrlak/ppt program (src/lib/utils/slidePlanner.ts)
-// so FreeCast lays songs out exactly as the church's PPT does (see 1018.pptx):
+// so LightCast lays songs out exactly as the church's PPT does (see 1018.pptx):
 //
 //   · a title slide, then each part exactly ONCE, in the order the 진행 (progression) first names it —
 //     repeats are not expanded; the operator jumps back live;

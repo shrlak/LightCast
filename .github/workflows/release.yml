@@ -1,5 +1,5 @@
 # Builds the macOS (.dmg/.zip) and Windows (.exe) installers in the cloud and publishes them to the
-# GitHub Release for the version in package.json. Installed copies of FreeCast check these releases
+# GitHub Release for the version in package.json. Installed copies of LightCast check these releases
 # and update themselves.
 #
 # It runs by itself when a push to main changes the version in package.json (i.e. when a release PR is
@@ -51,7 +51,7 @@ jobs:
           if gh release view "$v" >/dev/null 2>&1; then
             echo "release $v already exists"
           else
-            gh release create "$v" --verify-tag --title "${v#v}" --notes "FreeCast ${v#v}"
+            gh release create "$v" --verify-tag --title "${v#v}" --notes "LightCast ${v#v}"
           fi
 
   build:
@@ -91,13 +91,13 @@ jobs:
         run: |
           set -e
           found=0
-          for app in release/mac*/FreeCast.app; do
+          for app in release/mac*/LightCast.app; do
             found=1
             echo "== $app"
             codesign --verify --deep --strict --verbose=2 "$app"
             codesign -dv "$app" 2>&1 | tee /dev/stderr | grep -Eq 'Signature=adhoc|Authority='
           done
-          [ "$found" = 1 ] || { echo "::error::no FreeCast.app was built"; exit 1; }
+          [ "$found" = 1 ] || { echo "::error::no LightCast.app was built"; exit 1; }
       - name: Upload to the release
         shell: bash
         env:
@@ -107,7 +107,7 @@ jobs:
           update="${{ matrix.os == 'macos-latest' && 'latest-mac.yml' || 'latest.yml' }}"
           [ -f "release/$update" ] || { echo "::error::release/$update was not built"; exit 1; }
           # Asset names as electron-builder's own publisher gave them and as latest*.yml refer to them:
-          # spaces become hyphens ("FreeCast Setup 1.2.3.exe" -> "FreeCast-Setup-1.2.3.exe"); `gh` would turn them into dots.
+          # spaces become hyphens ("LightCast Setup 1.2.3.exe" -> "LightCast-Setup-1.2.3.exe"); `gh` would turn them into dots.
           mkdir upload
           find release -maxdepth 1 -type f \( -name '*.dmg' -o -name '*.zip' -o -name '*.exe' -o -name '*.blockmap' -o -name 'latest*.yml' \) | while IFS= read -r f; do
             cp "$f" "upload/$(basename "$f" | tr ' ' '-')"
@@ -130,7 +130,7 @@ jobs:
           assets="$(gh release view "v$v" --json assets --jq '.assets[].name')"
           echo "$assets"
           missing=0
-          for f in "FreeCast-$v-arm64.dmg" "FreeCast-$v.dmg" "FreeCast-Setup-$v.exe" latest.yml latest-mac.yml; do
+          for f in "LightCast-$v-arm64.dmg" "LightCast-$v.dmg" "LightCast-Setup-$v.exe" latest.yml latest-mac.yml; do
             echo "$assets" | grep -qxF "$f" || { echo "::error::Release v$v is missing $f"; missing=1; }
           done
           exit $missing

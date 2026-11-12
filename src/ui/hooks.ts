@@ -76,7 +76,7 @@ export function relayUrl(): string {
 }
 
 /**
- * A WebSocket to the FreeCast relay that reconnects on its own.
+ * A WebSocket to the LightCast relay that reconnects on its own.
  * Returns a send function; `onMessage` receives parsed JSON.
  * `address` connects to another computer's relay instead of this one's (a standby watching the main computer).
  */

@@ -1,6 +1,6 @@
 //! Insert › SmartArt: DeckCraft's 45 SmartArt layouts (lists, processes, cycles, hierarchies,
 //! pyramids, matrices, Venn, target, funnel, gear, timeline, org charts…) with its SmartArt Styles
-//! and Change Colors, laid out by DeckCraft's own layout code and handed to FreeCast as plain
+//! and Change Colors, laid out by DeckCraft's own layout code and handed to LightCast as plain
 //! shapes (preset or custom outline, fill, line, text and the nodes each shape shows).
 
 use deckcraft_color::{ColorScheme, Rgba, SchemeSlot};
@@ -73,7 +73,7 @@ fn line_of(l: Option<&Line>, s: &ColorScheme) -> (Option<String>, f64) {
     }
 }
 
-/// One laid-out shape as a FreeCast object description.
+/// One laid-out shape as a LightCast object description.
 fn shape_json(sh: &Shape, nodes: &[usize], s: &ColorScheme) -> Value {
     let x = sh.xfrm.unwrap_or(Xfrm::new(0.0, 0.0, 10.0, 10.0));
     let (fill, gradient) = fill_of(sh.fill.as_ref(), s);
@@ -136,7 +136,7 @@ pub fn layout(r: LayoutReq) -> Res {
         .collect();
     crate::smartart::nodes::normalize(&mut nodes);
     let d = Diagram { kind: r.kind.clone(), nodes, style: r.style.clone(), colors: r.colors.clone(), ..Default::default() };
-    // Layout works in points; FreeCast's canvas has two pixels per point.
+    // Layout works in points; LightCast's canvas has two pixels per point.
     let area = Xfrm::new(fin(r.x, 0.0) / 2.0, fin(r.y, 0.0) / 2.0, fin(r.w, 400.0).max(10.0) / 2.0, fin(r.h, 300.0).max(10.0) / 2.0);
     let items = crate::smartart::items(&d, area);
     let shapes: Vec<Value> = items

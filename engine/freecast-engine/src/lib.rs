@@ -1,6 +1,6 @@
-//! FreeCast's PowerPoint engine.
+//! LightCast's PowerPoint engine.
 //!
-//! FreeCast draws slides in the browser (React), but what PowerPoint *does* — the geometry of its
+//! LightCast draws slides in the browser (React), but what PowerPoint *does* — the geometry of its
 //! preset shapes and their yellow adjust handles, Arrange (align, distribute, order, rotate, flip),
 //! the slide-show timing of animations and the frames of slide transitions, table styles, charts,
 //! the theme colour picker, find and replace, the spelling dictionary — runs here, in Rust, compiled to WebAssembly.

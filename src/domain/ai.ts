@@ -23,7 +23,7 @@ async function post<T>(name: string, body: unknown): Promise<T> {
   try {
     res = await fetch(`/api/ai/${name}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   } catch {
-    throw new Error('Cannot reach the FreeCast server (AI needs `npm run dev` or `npm start`).');
+    throw new Error('Cannot reach the LightCast server (AI needs `npm run dev` or `npm start`).');
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error ?? `AI request failed (${res.status})`);

@@ -1,4 +1,4 @@
-// Behringer X32 / M32 over the network (OSC on UDP 10023): FreeCast operates the mixer over Wi-Fi like
+// Behringer X32 / M32 over the network (OSC on UDP 10023): LightCast operates the mixer over Wi-Fi like
 // the console itself — faders, mutes, pan, gain, low cut, gate, compressor, EQ, monitor sends and scene
 // recall — by hand from the Mixer, or from macros and slide actions.
 // On connecting it reads names, mutes, faders and scene names, and /xremote keeps them in step with
@@ -79,7 +79,7 @@ const STRIPS = [
   ...range(1, 16).map((n) => `bus/${two(n)}`), ...range(1, 6).map((n) => `mtx/${two(n)}`), 'main/st', 'main/m',
 ];
 /**
- * What FreeCast reads on connecting: every strip's name, mute, fader and pan, DCAs, scene names and the
+ * What LightCast reads on connecting: every strip's name, mute, fader and pan, DCAs, scene names and the
  * current scene. A strip's processing (gain, low cut, gate, compressor, EQ, sends) is read when its
  * editor opens (see read), and /xremote keeps everything current afterwards.
  */
@@ -93,7 +93,7 @@ export const SNAPSHOT = [
 const STRIP = '(?:ch\\/(?:0[1-9]|[12]\\d|3[0-2])|auxin\\/0[1-8]|fxrtn\\/0[1-8]|bus\\/(?:0[1-9]|1[0-6])|mtx\\/0[1-6]|main\\/(?:st|m))';
 const SEND = '(?:0[1-9]|1[0-6])';
 /**
- * Everything FreeCast may change, as [pattern, kind]: 'f' = float 0–1 (faders, knobs; the X32 maps it to
+ * Everything LightCast may change, as [pattern, kind]: 'f' = float 0–1 (faders, knobs; the X32 maps it to
  * dB, Hz, ms…), a number = whole value 0…n (switches and choices). Phantom power, routing, inputs and
  * setup are deliberately not here.
  */
@@ -114,7 +114,7 @@ const READABLE = [
 ];
 
 /**
- * The OSC argument for a change FreeCast may make (mute 1 = on / 0 = muted, faders and knobs 0–1,
+ * The OSC argument for a change LightCast may make (mute 1 = on / 0 = muted, faders and knobs 0–1,
  * choices 0…n, scene recall 0–99), or null when it is refused.
  */
 export function checkSet(address, value) {
@@ -125,7 +125,7 @@ export function checkSet(address, value) {
   return Number.isInteger(value) && value >= 0 && value <= rule[1] ? value : null;
 }
 
-/** Whether FreeCast may ask the mixer for this value. */
+/** Whether LightCast may ask the mixer for this value. */
 export const checkRead = (address) => typeof address === 'string' && (SETTABLE.some(([re]) => re.test(address)) || READABLE.some((re) => re.test(address)));
 
 /** The X32 link: one at a time, renewed every few seconds, reported to every open console. */
@@ -273,7 +273,7 @@ export async function x32Middleware(req, res, next) {
     res.writeHead(status, { 'content-type': 'application/json' });
     res.end(JSON.stringify(body));
   };
-  if (!LOOPBACK.has(req.socket.remoteAddress ?? '')) return reply(403, { error: 'X32는 FreeCast를 실행한 컴퓨터에서만 연결할 수 있습니다.' });
+  if (!LOOPBACK.has(req.socket.remoteAddress ?? '')) return reply(403, { error: 'X32는 LightCast를 실행한 컴퓨터에서만 연결할 수 있습니다.' });
   if (req.headers['sec-fetch-site'] === 'cross-site') return reply(403, { error: 'Cross-site requests are not allowed' });
   const route = req.url.split('?')[0].slice('/api/x32/'.length);
   if (route === 'events' && req.method === 'GET') {
