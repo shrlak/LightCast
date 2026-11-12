@@ -27,7 +27,31 @@ const SMOKE = process.env.FREECAST_SMOKE;
 // reads the path (the single-instance lock included).
 app.setPath('userData', path.join(app.getPath('appData'), 'FreeCast'));
 
-if (!app.requestSingleInstanceLock()) app.quit();
+/**
+ * macOS: an install that updated itself from FreeCast still sits in /Applications/FreeCast.app
+ * (the updater replaces the bundle in place), so Finder, Launchpad and Spotlight keep showing the
+ * old name. Rename the bundle to LightCast.app once and start again from there. Nothing happens when
+ * the folder is not writable, LightCast.app already exists, or the app runs unpackaged.
+ */
+function renameOldMacBundle() {
+  if (process.platform !== 'darwin' || !app.isPackaged) return false;
+  const bundle = path.resolve(process.execPath, '..', '..', '..');
+  if (path.basename(bundle) !== 'FreeCast.app') return false;
+  const target = path.join(path.dirname(bundle), 'LightCast.app');
+  if (fs.existsSync(target)) return false;
+  try {
+    fs.renameSync(bundle, target);
+  } catch {
+    return false;
+  }
+  // The running process still points into the old path: start again from the renamed bundle.
+  app.relaunch({ execPath: path.join(target, path.relative(bundle, process.execPath)), args: process.argv.slice(1) });
+  app.exit(0);
+  return true;
+}
+const relaunching = renameOldMacBundle();
+
+if (!relaunching && !app.requestSingleInstanceLock()) app.quit();
 
 // ---------- settings ----------
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
@@ -492,6 +516,7 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+  if (relaunching) return;
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(APP_ICON);
   if (!SMOKE) showSplash();
   loadSettings();

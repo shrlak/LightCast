@@ -127,13 +127,16 @@ function installMac(relaunch = true) {
     return;
   }
   macInstalling = true;
+  // A copy still called FreeCast.app (from before the rename) is installed as LightCast.app.
+  const dest = path.basename(target) === 'FreeCast.app' && !fs.existsSync(path.join(path.dirname(target), 'LightCast.app'))
+    ? path.join(path.dirname(target), 'LightCast.app') : target;
   const script = path.join(os.tmpdir(), `freecast-update-${Date.now()}.sh`);
   fs.writeFileSync(script, `#!/bin/sh
 while kill -0 ${process.pid} 2>/dev/null; do sleep 0.3; done
 rm -rf "${target}.old"
-mv "${target}" "${target}.old" && /usr/bin/ditto "${macUpdate.appPath}" "${target}" && rm -rf "${target}.old" || mv "${target}.old" "${target}"
-/usr/bin/xattr -dr com.apple.quarantine "${target}" 2>/dev/null
-${relaunch ? `open "${target}"` : ''}
+mv "${target}" "${target}.old" && /usr/bin/ditto "${macUpdate.appPath}" "${dest}" && rm -rf "${target}.old" || mv "${target}.old" "${target}"
+/usr/bin/xattr -dr com.apple.quarantine "${dest}" 2>/dev/null
+${relaunch ? `open "${dest}"` : ''}
 rm -f "$0"
 `, { mode: 0o755 });
   spawn('/bin/sh', [script], { detached: true, stdio: 'ignore' }).unref();
