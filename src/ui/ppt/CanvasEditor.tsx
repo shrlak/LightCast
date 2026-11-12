@@ -1,4 +1,5 @@
 import { isFrontSlide } from '../../domain/frontLayout';
+import { actionButtonAction } from '../../domain/insertTools';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as RClipboardEvent, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent } from 'react';
 import type { Background, BackgroundEffect, Slide, SlideElement, TextRun, Theme } from '../../domain/types';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
@@ -606,7 +607,10 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
       // A click without a drag puts a default-sized shape there.
       const el = r.w < 6 && r.h < 6 ? (() => { const m = makeShape(tool.name); return { ...m, x: Math.round(d.x0 - m.w / 2), y: Math.round(d.y0 - m.h / 2) }; })() : makeShape(tool.name, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
-      const styled = el.kind === 'shape' && defaultShape ? { ...el, ...defaultShape } : el;
+      const withDefault = el.kind === 'shape' && defaultShape ? { ...el, ...defaultShape } : el;
+      // An action button carries its action as it is drawn (DeckCraft insert.actionButton).
+      const act = actionButtonAction(withDefault.shape);
+      const styled = act ? { ...withDefault, action: act } : withDefault;
       setElements([...elements, styled]);
       onSelect([styled.id]);
       onToolDone?.();

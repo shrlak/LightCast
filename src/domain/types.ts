@@ -440,6 +440,8 @@ export interface Slide {
 export interface SlideFooter {
   /** true: today's date; a string: that fixed text. */
   date?: boolean | string;
+  /** Header & Footer › Don't show on title slide. */
+  hideOnTitle?: boolean;
   /** Date & Time format of an updating date (insertTools DATE_FORMATS id); the locale date when absent. */
   dateFormat?: string;
   slideNumber?: boolean;

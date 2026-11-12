@@ -23,6 +23,7 @@ import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effe
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { pictureLookCss } from './pictureStyles';
+import { formatDateField } from '../domain/insertTools';
 import { atEnd, fadeGain, playStart, playVolume } from '../domain/mediaPlayback';
 import { useAutoTextBoxes, useFontEpoch } from './textBoxLayout';
 import { elementTextStyle } from '../domain/textBoxLayout';
@@ -130,7 +131,7 @@ function BackgroundLayer({ background, animate, video, onTime }: { background: B
 /** Timers available to dynamic text ({timer:Name}) inside slides. */
 const TimersContext = createContext<Timer[]>([]);
 
-const TOKEN = /\{(time|date|slide|timer:[^}]+)\}/;
+const TOKEN = /\{(time|date|date:[a-z]+\d+|slide|timer:[^}]+)\}/;
 
 /** Replace {time}, {date} and {timer:Name} with live values. */
 function DynamicText({ text }: { text: string }) {
@@ -140,6 +141,7 @@ function DynamicText({ text }: { text: string }) {
   const out = text.replace(new RegExp(TOKEN.source, 'g'), (_, tok: string) => {
     if (tok === 'time') return new Date(now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     if (tok === 'date') return new Date(now).toLocaleDateString();
+    if (tok.startsWith('date:')) return formatDateField(tok.slice(5), new Date(now));
     if (tok === 'slide') return String(slideNumber ?? '#');
     const name = tok.slice(6).trim().toLowerCase();
     const t = timers.find((x) => x.name.toLowerCase() === name || x.id === name);
@@ -224,7 +226,10 @@ function FooterLayer({ slide, theme }: { slide: Slide; theme: Theme }) {
   const n = useContext(SlideNumberContext);
   const f = slide.footer;
   if (!f || (!f.date && !f.slideNumber && !f.text)) return null;
-  const date = f.date === true ? new Date().toLocaleDateString('ko-KR') : typeof f.date === 'string' ? f.date : '';
+  // Header & Footer › Don't show on title slide.
+  // (the title slide is the first one, where a deck's title sits)
+  if (f.hideOnTitle && n === 1) return null;
+  const date = f.date === true ? (f.dateFormat ? formatDateField(f.dateFormat, new Date()) : new Date().toLocaleDateString('ko-KR')) : typeof f.date === 'string' ? f.date : '';
   const style: CSSProperties = { position: 'absolute', bottom: 28, fontSize: 30, color: theme.color, opacity: 0.85, fontFamily: theme.fontFamily, whiteSpace: 'nowrap' };
   return (
     <div className="footer-layer">

@@ -44,9 +44,10 @@ function HeaderFooterDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [dateText, setDateText] = useState(typeof f.date === 'string' ? f.date : new Date().toLocaleDateString());
   const [number, setNumber] = useState(!!f.slideNumber);
   const [footer, setFooter] = useState(!!f.text);
+  const [hideTitle, setHideTitle] = useState(!!f.hideOnTitle);
   const [text, setText] = useState(f.text ?? '');
   const value = () => {
-    const v = { ...(date ? { date: fixed ? dateText : true } : {}), ...(number ? { slideNumber: true } : {}), ...(footer && text.trim() ? { text: text.trim() } : {}) };
+    const v = { ...(date ? { date: fixed ? dateText : true } : {}), ...(number ? { slideNumber: true } : {}), ...(footer && text.trim() ? { text: text.trim() } : {}), ...(hideTitle ? { hideOnTitle: true } : {}) };
     return Object.keys(v).length ? v : undefined;
   };
   const apply = (all: boolean) => {
@@ -70,6 +71,7 @@ function HeaderFooterDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         <Check label="슬라이드 번호" checked={number} onChange={setNumber} />
         <Check label="바닥글" checked={footer} onChange={setFooter} />
         <div className="dlg-indent"><input disabled={!footer} value={text} placeholder="바닥글 텍스트" onChange={(e) => setText(e.target.value)} /></div>
+        <Check label="제목 슬라이드에는 표시 안 함" checked={hideTitle} onChange={setHideTitle} />
       </fieldset>
       <div className="ppt-dialog-buttons">
         <button type="button" disabled={!ed.slide || !ed.canEdit} onClick={() => apply(false)}>적용</button>
@@ -299,28 +301,47 @@ function PhotoAlbumDialog({ ed, onClose, edit }: { ed: Ed; onClose: () => void; 
 // ── Insert › Action ───────────────────────────────────────────────────────────────────────────
 function ActionDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const el = ed.selEls[0];
-  const a = el?.action ?? (el?.href ? { kind: 'url' as const, url: el.href } : undefined);
-  const [kind, setKind] = useState<ElementAction['kind'] | 'none'>(a?.kind ?? 'none');
-  const [slideId, setSlideId] = useState(a?.slideId ?? ed.p?.slides[0]?.id ?? '');
-  const [url, setUrl] = useState(a?.url ?? 'https://');
+  const [on, setOn] = useState<'click' | 'hover'>('click');
+  const initial = (w: 'click' | 'hover'): ElementAction | undefined => (w === 'hover' ? el?.hoverAction : el?.action ?? (el?.href ? { kind: 'url' as const, url: el.href } : undefined));
+  const [acts, setActs] = useState<Record<'click' | 'hover', ElementAction | undefined>>({ click: initial('click'), hover: initial('hover') });
+  const [tip, setTip] = useState(el?.tooltip ?? '');
+  const shows = ed.p?.customShows ?? [];
   if (!el || !ed.p) return <Dialog title="실행 설정" onClose={onClose}><p>동작을 지정할 개체를 고르세요.</p></Dialog>;
+  const a = acts[on];
+  const kind = a?.kind ?? 'none';
+  const put = (next: ElementAction | undefined) => setActs({ ...acts, [on]: next });
+  const pick = (k: string) => {
+    if (k === 'none') return put(undefined);
+    if (k === 'slide') return put({ kind: 'slide', slideId: a?.slideId ?? ed.p!.slides[0]?.id });
+    if (k === 'url') return put({ kind: 'url', url: a?.url ?? 'https://' });
+    if (k === 'customShow') return put({ kind: 'customShow', show: a?.show ?? shows[0]?.id });
+    put({ kind: k as ElementAction['kind'] });
+  };
   const ok = () => {
-    const action: ElementAction | undefined = kind === 'none' ? undefined : kind === 'slide' ? { kind, slideId } : kind === 'url' ? { kind, url: url.trim() } : { kind };
-    ed.setElements((els) => els.map((e) => (ed.selEls.some((s) => s.id === e.id) ? { ...e, action, href: undefined } : e)));
+    const clean = (x: ElementAction | undefined) => (x?.kind === 'url' ? { ...x, url: x.url?.trim() } : x?.kind === 'customShow' && !x.show ? undefined : x);
+    ed.setElements((els) => els.map((e) => (ed.selEls.some((s) => s.id === e.id) ? { ...e, action: clean(acts.click), hoverAction: clean(acts.hover), tooltip: tip.trim() || undefined, href: undefined } : e)));
     onClose();
   };
   return (
     <Dialog title="실행 설정" onClose={onClose} onOk={ok} okDisabled={!ed.canEdit}>
-      <b>마우스를 클릭할 때</b>
-      <label className="rb-check"><input type="radio" checked={kind === 'none'} onChange={() => setKind('none')} /> 없음</label>
-      <label className="rb-check"><input type="radio" checked={kind !== 'none'} onChange={() => setKind('next')} /> 하이퍼링크:</label>
-      <select disabled={kind === 'none'} value={kind === 'none' ? 'next' : kind} onChange={(e) => setKind(e.target.value as ElementAction['kind'])}>
+      <div className="dlg-row">
+        <button type="button" className={on === 'click' ? 'primary' : ''} onClick={() => setOn('click')}>마우스를 클릭할 때</button>
+        <button type="button" className={on === 'hover' ? 'primary' : ''} onClick={() => setOn('hover')}>마우스를 가져갈 때</button>
+      </div>
+      <label className="rb-check"><input type="radio" checked={kind === 'none'} onChange={() => pick('none')} /> 없음</label>
+      <label className="rb-check"><input type="radio" checked={kind !== 'none'} onChange={() => pick('next')} /> 하이퍼링크:</label>
+      <select disabled={kind === 'none'} value={kind === 'none' ? 'next' : kind} onChange={(e) => pick(e.target.value)}>
         <option value="next">다음 슬라이드</option><option value="prev">이전 슬라이드</option><option value="first">첫째 슬라이드</option><option value="last">마지막 슬라이드</option>
-        <option value="end">쇼 마침</option><option value="slide">슬라이드…</option><option value="url">URL…</option>
+        <option value="lastViewed">마지막으로 본 슬라이드</option><option value="end">쇼 마침</option><option value="customShow">재구성한 쇼…</option>
+        <option value="slide">슬라이드…</option><option value="url">URL…</option><option value="playMedia">미디어 재생</option>
       </select>
-      {kind === 'slide' && <select value={slideId} onChange={(e) => setSlideId(e.target.value)}>{ed.p.slides.map((s, i) => <option key={s.id} value={s.id}>{i + 1}. {(s.title || s.text.split('\n')[0] || s.group).slice(0, 40)}</option>)}</select>}
-      {kind === 'url' && <input value={url} onChange={(e) => setUrl(e.target.value)} />}
-      <p className="dlg-note">슬라이드 쇼(읽기용 보기)에서 개체를 클릭하면 실행됩니다.</p>
+      {kind === 'slide' && <select value={a?.slideId} onChange={(e) => put({ kind: 'slide', slideId: e.target.value })}>{ed.p.slides.map((s, i) => <option key={s.id} value={s.id}>{i + 1}. {(s.title || s.text.split('\n')[0] || s.group).slice(0, 40)}</option>)}</select>}
+      {kind === 'url' && <input value={a?.url ?? ''} onChange={(e) => put({ kind: 'url', url: e.target.value })} />}
+      {kind === 'customShow' && (shows.length
+        ? <select value={a?.show} onChange={(e) => put({ kind: 'customShow', show: e.target.value })}>{shows.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        : <p className="dlg-note">재구성한 쇼가 없습니다. 슬라이드 쇼 › 재구성한 쇼에서 먼저 만드세요.</p>)}
+      <Field label="화면 설명"><input value={tip} onChange={(e) => setTip(e.target.value)} /></Field>
+      <p className="dlg-note">슬라이드 쇼(읽기용 보기)에서 개체를 클릭하거나 마우스를 가져가면 실행됩니다.</p>
     </Dialog>
   );
 }

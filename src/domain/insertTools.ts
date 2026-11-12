@@ -60,10 +60,13 @@ export function prettyEquation(s: string): string {
     const c = cs[i];
     if (c === '^') {
       // Digits run on; a letter or sign takes one character.
-      while (i + 1 < cs.length && /[A-Za-z0-9+-]/.test(cs[i + 1])) {
+      // (DeckCraft also raises a '+' that follows the digits, turning a^2+b^2 into a²⁺b²; only a sign right after ^ is an exponent sign here.)
+      let first = true;
+      while (i + 1 < cs.length && (first ? /[A-Za-z0-9+-]/ : /[0-9]/).test(cs[i + 1])) {
         const n = cs[++i];
         out += SUP[n] ?? n;
         if (!/[0-9]/.test(n)) break;
+        first = false;
       }
     } else out += c === '*' ? '·' : c;
   }
