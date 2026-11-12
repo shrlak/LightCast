@@ -10,7 +10,7 @@ import { REPEAT_UNTIL_CLICK, canBuildByParagraph, paintAnimations, slideTimeline
 import { elementName } from './panes';
 import type { Ed } from './editor';
 import { useEffect, useRef, useState } from 'react';
-import { withMaster } from '../../domain/master';
+import { backgroundStyle, withMaster } from '../../domain/master';
 import { FONT_OPTIONS } from '../../domain/fonts';
 import { customSchemeName, readThemeFile } from '../../domain/io/themeFile';
 import { putMedia } from '../../domain/media';
@@ -132,6 +132,20 @@ export function DesignTab({ ed }: { ed: Ed }) {
             <MenuItem label="와이드스크린 (16:9)" disabled hint="교회 프로젝터에 맞춘 4:3 고정" onClick={close} />
           </>
         )} />
+        <DropButton big icon={RI.background} label="배경 스타일" title="테마 색으로 만든 12가지 배경" disabled={!p || !ed.canEdit} wide render={(close) => {
+          const cols = (schemes.find((s) => s.name === (p?.colorScheme ?? schemes[0]?.name)) ?? schemes[0])?.colors ?? [];
+          return (
+            <>
+              <div className="bgstyle-grid">
+                {Array.from({ length: 12 }, (_, k) => k + 1).map((n) => {
+                  const bg = backgroundStyle(n, cols);
+                  return bg && <button key={n} type="button" className="rb-swatch" title={`배경 스타일 ${n}`} onClick={() => { applyBackground(bg); close(); }}><span className="rb-swatch-fill" style={swatchStyle(bg)} /></button>;
+                })}
+              </div>
+              <MenuItem label="배경 지우기" onClick={() => { applyBackground(undefined); close(); }} />
+            </>
+          );
+        }} />
         <Big icon={RI.background} label="배경 서식" title="이 슬라이드만의 배경 — 오른쪽 서식 창" disabled={!ed.slide} onClick={() => { ed.setSel([]); ed.setPane('format'); }} />
         <label className="rb-check" title="슬라이드 마스터의 개체를 이 슬라이드에서 숨깁니다"><input type="checkbox" disabled={!ed.slide || !ed.canEdit || !ed.p?.master?.elements.length} checked={!!ed.slide?.hideMaster}
           onChange={(e) => { if (ed.slide) ed.updateSlide({ hideMaster: e.target.checked || undefined, elements: withMaster({ ...ed.slide, hideMaster: e.target.checked }, ed.p?.master?.elements ?? []).elements }); }} /> 배경 그래픽 숨기기</label>

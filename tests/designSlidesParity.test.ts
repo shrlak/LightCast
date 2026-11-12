@@ -5,6 +5,7 @@ import { REPEAT_UNTIL_CLICK, advanceBuild, animSpec, animationBadges, buildState
 import { BUILTIN_SOUNDS, soundSamples, wavBytes } from '../src/domain/transitionSounds';
 import { applyBorders, editCells, penDash, setTrackSize } from '../src/domain/tableBorders';
 import { newTable } from '../src/engine';
+import { applyLayout, backgroundStyle, resetSlide } from '../src/domain/master';
 import { addNode, demoteNode, editSmartArt, moveNode, promoteNode, smartArtElements } from '../src/domain/smartArt';
 
 const box = (id: string, more: Partial<SlideElement> = {}): SlideElement => ({ id, kind: 'shape', shape: 'rect', x: 100, y: 100, w: 200, h: 100, ...more } as SlideElement);
@@ -115,6 +116,34 @@ describe('Table Design / Layout', () => {
     const ins = editTable(t, 'insertRowAbove', 0, 0)!;
     expect(ins.rows[2][1].anchor).toBe('bottom');
     expect(ins.rows[2][1].dir).toBe('vert270');
+  });
+});
+
+describe('Layout, Reset and Background Styles', () => {
+  const layout = { id: 'ly', name: 'L', elements: [box('lt', { placeholder: 'title', x: 5, y: 5 }), box('lb', { placeholder: 'body', x: 7, y: 9 })] };
+  it('moves placeholders onto a layout keeping their text, dropping empty leftovers', () => {
+    const slide: Slide = { id: 's', group: 'G', text: '', elements: [
+      box('t', { placeholder: 'title', text: 'Hello', x: 1 }), box('pic', { placeholder: 'picture' }), box('free', { text: 'x' }),
+    ] };
+    const out = applyLayout(slide, layout);
+    const [title, body, ...rest] = out.elements!;
+    expect(title).toMatchObject({ id: 't', text: 'Hello', x: 5, placeholder: 'title' });
+    expect(body).toMatchObject({ placeholder: 'body', x: 7 });
+    expect(rest.map((e) => e.id)).toEqual(['free']);
+    expect(out.layoutId).toBe('ly');
+  });
+  it('reset restores the layout box and clears the slide background', () => {
+    const slide: Slide = { id: 's', group: 'G', text: '', layoutId: 'ly', background: { kind: 'color', value: '#fff' }, elements: [box('t', { placeholder: 'title', text: 'Hi', x: 900 })] };
+    const out = resetSlide(slide, [layout]);
+    expect(out.background).toBeUndefined();
+    expect(out.elements![0]).toMatchObject({ id: 't', text: 'Hi', x: 5 });
+  });
+  it('gives the twelve background styles: three fills in four scheme colours', () => {
+    const cols = ['#000001', '#ffffff', '#222222', '#eeeeee'];
+    expect(backgroundStyle(1, cols)).toEqual({ kind: 'color', value: '#ffffff' });
+    expect(backgroundStyle(4, cols)).toEqual({ kind: 'color', value: '#000001' });
+    expect(backgroundStyle(5, cols)!.kind).toBe('gradient');
+    expect(backgroundStyle(13, cols)).toBeNull();
   });
 });
 
