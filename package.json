@@ -11,7 +11,6 @@
     "app": "npm run build && electron .",
     "dist:mac": "npm run build && electron-builder --mac --publish never",
     "dist:win": "npm run build && electron-builder --win --publish never",
-    "dist:linux": "npm run build && electron-builder --linux --publish never",
     "dist": "npm run build && electron-builder --publish never",
     "icon": "node scripts/make-icon.mjs",
     "engine": "node scripts/build-engine.mjs",
@@ -111,15 +110,9 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb",
-        "rpm",
-        "tar.gz"
+        "AppImage"
       ],
-      "category": "Office",
-      "maintainer": "LightCast <lightcast@users.noreply.github.com>",
-      "synopsis": "Free presentation software for worship and live events",
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "category": "AudioVideo"
     },
     "publish": [
       {
