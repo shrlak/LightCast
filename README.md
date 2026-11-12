@@ -1,6 +1,6 @@
 # LightCast
 
-> 📘 **처음 쓰시나요? [사용 설명서 (PDF) 다운로드](https://github.com/shrlak/freecast/raw/main/docs/LightCast-Manual.pdf)** · [미리 보기](docs/LightCast-Manual.pdf)
+> 📘 **처음 쓰시나요? [사용 설명서 (PDF) 다운로드](https://github.com/shrlak/LightCast/raw/main/docs/LightCast-Manual.pdf)** · [미리 보기](docs/LightCast-Manual.pdf)
 >
 > 설치 → 화면 보기 → 이번 주 예배 만들기 → 발표하기까지, 꼭 필요한 것만 11쪽에 담은 쉬운 안내서입니다. 맨 뒤 단축키 한 장 요약은 출력해서 컴퓨터 옆에 두세요.
 
@@ -8,7 +8,7 @@ KCCP 빛주사랑 대학청년부의 예배 프레젠테이션 앱입니다. 모
 
 ## 다운로드
 
-[**최신 버전 받기 → Releases**](https://github.com/shrlak/freecast/releases/latest)
+[**최신 버전 받기 → Releases**](https://github.com/shrlak/LightCast/releases/latest)
 
 | 컴퓨터 | 받을 파일 |
 | --- | --- |

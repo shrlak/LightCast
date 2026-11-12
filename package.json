@@ -117,7 +117,7 @@
       {
         "provider": "github",
         "owner": "shrlak",
-        "repo": "freecast",
+        "repo": "LightCast",
         "releaseType": "release"
       }
     ]
