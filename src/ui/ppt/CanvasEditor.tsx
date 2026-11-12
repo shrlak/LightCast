@@ -11,6 +11,9 @@ import { uid } from '../../domain/lyrics';
 import { autoFitMode, lineReduction, newTextBox, resizedTextBox } from '../../domain/textFit';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
+import { alignCss, directionId, isVerticalText, lineHeightCss, writingCss } from '../../domain/textFormat';
+import { linkColorFor } from '../runStyle';
+import { copyFormat, finishPainter, heldFormat, holdFormat } from '../../domain/formatPainter';
 import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
 import {
   makeTable, boxOf, cloneElements, deleteSelection, duplicateSelection, enterGroup, enteredGroups, expandSelection, groupSelection, leaveGroups, pruneEntered, inkToShape, makeInk, makeShape, nudgeSelection,
@@ -347,11 +350,15 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         return;
       }
       const el = latestEls.current.find((e) => e.id === id);
-      if (el) latestBody.current.onChange({ elements: latestEls.current.map((e) => (e.id === id ? { ...e, ...withRichLines(e, lines) } : e)) });
+      // A format painted onto the box while typing (Ctrl+Shift+V) lands with the text, from the same slide.
+      const box = boxPatch.current;
+      boxPatch.current = [];
+      if (el) latestBody.current.onChange({ elements: latestEls.current.map((e) => (e.id === id ? box.reduce((cur, fn) => fn(cur), { ...e, ...withRichLines(e, lines) }) : e)) });
     };
     commitTimer.current = window.setTimeout(flushText, 250);
   };
   const latestEls = useRef(elements); latestEls.current = elements;
+  const boxPatch = useRef<((e: SlideElement) => SlideElement)[]>([]);
 
   // ── Pointer ─────────────────────────────────────────────────────────────────────────────────
   const pointer = (e: { clientX: number; clientY: number }): [number, number] => {
@@ -957,6 +964,9 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
     const handled = () => { e.preventDefault(); e.stopPropagation(); };
+    // 서식 복사 (Ctrl+Shift+C) and 서식 붙여넣기 (Ctrl+Shift+V) on the selected objects.
+    if (mod && e.shiftKey && key === 'c' && sel.length) { const src = elOf(sel[0]); if (src) holdFormat(copyFormat(src)); return handled(); }
+    if (mod && e.shiftKey && key === 'v' && heldFormat() && sel.length) { setElements(pasteStyle(elements, sel, heldFormat()!)); finishPainter(); return handled(); }
     // Select All leaves hidden and locked objects out (DeckCraft's edit.selectAll).
     if (mod && key === 'a' && !e.shiftKey) { leaveGroups(); onSelect(selectAllIds(elements)); return handled(); }
     // Tab / Shift+Tab: the next / previous object, a group once; from nothing, the first / last.
@@ -1041,7 +1051,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
           <div className="ce-edit-box" style={{ left: textBox.x, top: textBox.y, width: textBox.w, minHeight: textBox.h, justifyContent: theme.vAlign === 'top' ? 'flex-start' : theme.vAlign === 'bottom' ? 'flex-end' : 'center' }}>
             <RichTextEditor key={`${identity}:slide`} lines={lines} lang={slide.lang} noProof={slide.noProof} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color, fontFamily: theme.fontFamily }}
-              style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, textAlign: theme.align, lineHeight: theme.lineHeight }}
+              style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, ...alignCss(theme.align), lineHeight: theme.lineHeight, ['--link-color' as string]: linkColorFor(theme.color, theme.linkColor) }}
               start={session?.start} standby={session?.standby} control={editorControl}
               onChange={(l) => typed(SLIDE_TEXT, l)} onDone={stopEditing} />
           </div>
@@ -1058,20 +1068,25 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       const tr = geometryOf(editEl)?.textRect;
       if (tr) area = { x: editEl.x + tr[0], y: editEl.y + tr[1], w: tr[2], h: tr[3] };
     }
-    const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: editEl.lineHeight ?? 1.2, whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const };
+    const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: lineHeightCss(editEl, base.fontSize, 1.2), whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const, ...writingCss(editEl) };
     const { display: _d, flexDirection: _f, ...rest } = textStyle;
     // Shrink text on overflow: the text being typed shows at the box's fontScale too.
     const shrink = editEl.kind === 'text' && editEl.autoFit === 'shrink' && editEl.fontScale && editEl.fontScale < 1 ? editEl.fontScale : 0;
     const shrinkStyle = shrink ? { zoom: shrink, lineHeight: (editEl.lineHeight ?? (editEl.paragraphs ? 1.2 : 1.25)) * (1 - lineReduction(shrink)) } : {};
+    // Vertical text runs down the box: it needs the box's height as its line length, and sits where the anchor puts it across.
+    const vert = isVerticalText(editEl);
+    const ltrBlocks = directionId(editEl) === 'rotate270';
+    const across = editEl.vAlign === 'top' ? (ltrBlocks ? 'flex-start' : 'flex-end') : editEl.vAlign === 'bottom' ? (ltrBlocks ? 'flex-end' : 'flex-start') : 'center';
     return (
       <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
         <div className="ce-edit-box" style={{
-          left: area.x, top: area.y, width: area.w, minHeight: area.h,
+          left: area.x, top: area.y, width: area.w, ...(vert ? { height: area.h } : { minHeight: area.h }),
           transform: editEl.rotation ? `rotate(${editEl.rotation}deg)` : undefined, transformOrigin: `${editEl.x + editEl.w / 2 - area.x}px ${editEl.y + editEl.h / 2 - area.y}px`,
           justifyContent: editEl.vAlign === 'top' ? 'flex-start' : editEl.vAlign === 'bottom' ? 'flex-end' : 'center',
         }}>
-          <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof}
-            style={{ ...rest, ...shrinkStyle, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+          <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof} softBreaks
+            painter={{ source: () => { const { object: _o, ...own } = copyFormat(latestEls.current.find((x) => x.id === editEl.id) ?? editEl); return own; }, setBox: (fn) => { boxPatch.current.push(fn); } }}
+            style={{ ...rest, ...shrinkStyle, ...(vert ? { height: '100%', width: 'max-content', maxWidth: '100%', alignSelf: across } : {}), tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, ...alignCss(editEl.align ?? 'center'), ['--link-color' as string]: linkColorFor(editEl.color), textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
             start={session?.start} standby={session?.standby} control={editorControl} onAutoList={onAutoList(editEl.id)}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>

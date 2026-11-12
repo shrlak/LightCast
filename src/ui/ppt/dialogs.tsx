@@ -154,6 +154,9 @@ function ParagraphDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [before, setBefore] = useState(pt(e?.spaceBefore));
   const [after, setAfter] = useState(pt(e?.spaceAfter));
   const [line, setLine] = useState(Math.round(((v?.lineHeight ?? SINGLE_SPACING) / SINGLE_SPACING) * 100) / 100);
+  // 줄 간격: 배수 is a multiple of single spacing; 최소 / 고정 are points (DeckCraft's "multiple" / "exactly").
+  const [lineKind, setLineKind] = useState<'multiple' | 'min' | 'exact'>(e?.lineExact ? e.lineExact.mode === 'min' ? 'min' : 'exact' : 'multiple');
+  const [lineAt, setLineAt] = useState(e?.lineExact ? e.lineExact.px / 2 : 18);
   const [rtl, setRtl] = useState(!!e?.rtl);
   const [vAlign, setVAlign] = useState(v?.vAlign ?? 'middle');
   const m = e?.margins ?? [14, 7, 14, 7];
@@ -167,15 +170,18 @@ function ParagraphDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
     const lineHeight = Math.round(line * SINGLE_SPACING * 100) / 100;
     // Switching the reading direction mirrors left / right alignment (DeckCraft format.rtl).
     const mirrored = rtl !== !!e?.rtl && (align === 'left' || align === 'right') ? (align === 'left' ? 'right' : 'left') : align;
-    t.onChange({ align: mirrored, indent: level, lineHeight, vAlign, columns });
+    const common = { align: mirrored, indent: level, lineHeight, vAlign, columns };
+    // One patch for the boxes: two setElements calls in a row would each start from the same slide, the second undoing the first.
     if (boxes) {
       t.patchEach(() => ({
+        ...common,
         ...(fit !== 'legacy' ? { autoFit: autoFitValue(fit), fontScale: undefined } : {}),
+        lineExact: lineKind === 'multiple' ? undefined : { mode: lineKind, px: Math.max(1, lineAt) * 2 },
         firstIndent: special === 'none' ? undefined : (special === 'first' ? 1 : -1) * by * 2,
         spaceBefore: before ? before * 2 : undefined, spaceAfter: after ? after * 2 : undefined, rtl: rtl || undefined,
         margins: margins.map((x) => Math.max(0, x * 2)) as [number, number, number, number], wrap: wrap ? undefined : false,
       }));
-    }
+    } else t.onChange(common);
     onClose();
   };
   const setMargin = (i: number, n: number) => setMargins((cur) => cur.map((x, j) => (j === i ? n : x)) as [number, number, number, number]);
@@ -186,7 +192,7 @@ function ParagraphDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         <div className="dlg-grid3">
           <Field label="맞춤">
             <select value={align} onChange={(ev) => setAlign(ev.target.value as typeof align)}>
-              <option value="left">왼쪽</option><option value="center">가운데</option><option value="right">오른쪽</option><option value="justify">양쪽</option>
+              <option value="left">왼쪽</option><option value="center">가운데</option><option value="right">오른쪽</option><option value="justify">양쪽 맞춤</option><option value="justLow">양쪽 맞춤 (낮음)</option><option value="distributed">균등 분할</option>
             </select>
           </Field>
           <Field label="텍스트 방향">
@@ -209,7 +215,21 @@ function ParagraphDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         <div className="dlg-grid3">
           <Field label="단락 앞 (pt)"><Num value={before} min={0} max={400} step={6} disabled={!boxes} onChange={setBefore} /></Field>
           <Field label="단락 뒤 (pt)"><Num value={after} min={0} max={400} step={6} disabled={!boxes} onChange={setAfter} /></Field>
-          <Field label="줄 간격 (배수)"><Num value={line} min={0.5} max={5} step={0.05} onChange={setLine} /></Field>
+          <Field label="줄 간격">
+            <select value={lineKind === 'multiple' ? (line === 1 ? 'single' : line === 1.5 ? 'x1.5' : line === 2 ? 'double' : 'multiple') : lineKind} disabled={!boxes && lineKind === 'multiple' ? false : !boxes}
+              onChange={(ev) => {
+                const k = ev.target.value;
+                if (k === 'single' || k === 'x1.5' || k === 'double') { setLineKind('multiple'); setLine(k === 'single' ? 1 : k === 'x1.5' ? 1.5 : 2); }
+                else if (k === 'multiple') setLineKind('multiple');
+                else setLineKind(k as 'min' | 'exact');
+              }}>
+              <option value="single">1줄</option><option value="x1.5">1.5줄</option><option value="double">2줄</option>
+              <option value="min" disabled={!boxes}>최소</option><option value="exact" disabled={!boxes}>고정</option><option value="multiple">배수</option>
+            </select>
+          </Field>
+          {lineKind === 'multiple'
+            ? <Field label="값 (배수)"><Num value={line} min={0.5} max={5} step={0.05} onChange={setLine} /></Field>
+            : <Field label="값 (pt)"><Num value={lineAt} min={1} max={792} step={1} onChange={setLineAt} /></Field>}
         </div>
       </fieldset>
       {boxes && (

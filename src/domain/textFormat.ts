@@ -1,6 +1,7 @@
 // PowerPoint's text commands (홈 → 글꼴 / 단락) as plain functions: bullets and numbering,
 // 대/소문자 바꾸기, font size steps and line spacing.
-import type { ListStyle, SlideElement, TextRun } from './types';
+import type { CSSProperties } from 'react';
+import type { HAlign, ListStyle, SlideElement, TextDirection, TextRun } from './types';
 
 /** One indent level (단락 → 들여쓰기 늘리기), in canvas pixels. */
 export const INDENT_PX = 60;
@@ -149,3 +150,61 @@ export function clearTextFormat(el: SlideElement): Partial<SlideElement> {
     ...(el.paragraphs ? { paragraphs: el.paragraphs.map(({ runs: _r, fontSize: _s, bold: _b, italic: _i, color: _c, ...p }) => p) } : {}),
   };
 }
+
+/** The menu 텍스트 방향, in PowerPoint's Korean names; `vert` is the attribute value the pptx file uses. */
+export const TEXT_DIRECTIONS = [
+  { id: 'horz', label: '가로', vert: 'horz' },
+  { id: 'rotate90', label: '모든 텍스트를 90° 회전', vert: 'vert' },
+  { id: 'rotate270', label: '모든 텍스트를 270° 회전', vert: 'vert270' },
+  { id: 'stacked', label: '세로 (스택형)', vert: 'wordArtVert' },
+  { id: 'eaVert', label: '세로 쓰기 (한글)', vert: 'eaVert' },
+] as const;
+export type DirectionId = (typeof TEXT_DIRECTIONS)[number]['id'];
+
+/** Which menu entry a box's `vertical` / `direction` stand for. */
+export const directionId = (f: { vertical?: boolean; direction?: TextDirection }): DirectionId => f.direction ?? (f.vertical ? 'eaVert' : 'horz');
+/** The box fields for a menu entry (the other one is cleared). */
+export const directionPatch = (id: DirectionId): { vertical: boolean | undefined; direction: TextDirection | undefined } => ({
+  vertical: id === 'eaVert' ? true : undefined, direction: id === 'rotate90' || id === 'rotate270' || id === 'stacked' ? id : undefined,
+});
+export const isVerticalText = (f: { vertical?: boolean; direction?: TextDirection }) => directionId(f) !== 'horz';
+/** The pptx `bodyPr vert` value (undefined: horizontal). */
+export const pptxVert = (f: { vertical?: boolean; direction?: TextDirection }) => TEXT_DIRECTIONS.find((d) => d.id === directionId(f) && d.id !== 'horz')?.vert;
+/** pptx `vert` → the fields it stands for (mongolianVert / wordArtVertRtl are the nearest of ours). */
+export function fromPptxVert(vert: string | undefined): { vertical?: true; direction?: TextDirection } {
+  switch (vert) {
+    case 'eaVert': return { vertical: true };
+    case 'vert': case 'mongolianVert': return { direction: 'rotate90' };
+    case 'vert270': return { direction: 'rotate270' };
+    case 'wordArtVert': case 'wordArtVertRtl': return { direction: 'stacked' };
+    default: return {};
+  }
+}
+/** CSS for 텍스트 방향: 90° is vertical-rl with every glyph turned, 270° its mirror (sideways-lr), stacked keeps glyphs upright. */
+export function writingCss(f: { vertical?: boolean; direction?: TextDirection }): CSSProperties {
+  switch (directionId(f)) {
+    case 'rotate90': return { writingMode: 'vertical-rl', textOrientation: 'sideways' };
+    case 'rotate270': return { writingMode: 'sideways-lr' as CSSProperties['writingMode'] };
+    case 'stacked': return { writingMode: 'vertical-rl', textOrientation: 'upright' };
+    case 'eaVert': return { writingMode: 'vertical-rl' };
+    default: return {};
+  }
+}
+
+/** 줄 간격 고정 / 최소: the line-height CSS of a box. `size` is the box's own font size (canvas px). */
+export function lineHeightCss(f: { lineHeight?: number; lineExact?: { mode: 'exact' | 'min'; px: number } }, size: number, fallback: number): CSSProperties['lineHeight'] {
+  const x = f.lineExact;
+  if (!x) return f.lineHeight ?? fallback;
+  // 최소: never tighter than single spacing of the text itself (CSS has no min line-height).
+  return x.mode === 'exact' ? `${x.px}px` : `${Math.max(x.px, size * SINGLE_SPACING)}px`;
+}
+
+/** CSS for 맞춤: 균등 분할 spreads the last line too, 양쪽 맞춤 (낮음) is justify with the last line left. */
+export function alignCss(align: HAlign | undefined): Pick<CSSProperties, 'textAlign' | 'textAlignLast'> {
+  if (align === 'distributed') return { textAlign: 'justify', textAlignLast: 'justify' };
+  if (align === 'justLow') return { textAlign: 'justify' };
+  return { textAlign: align };
+}
+
+/** What a soft line break (Shift+Enter, \v) draws as inside a pre-wrap box: a line break within the paragraph. */
+export const softToNewline = (text: string) => (text.includes('\u000b') ? text.replace(/\u000b/g, '\n') : text);

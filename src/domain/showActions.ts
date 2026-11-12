@@ -21,6 +21,10 @@ export function hoverAt(slide: Slide | null | undefined, x: number, y: number): 
   return els.find((e) => !e.hidden && (e.hoverAction || e.tooltip) && x >= e.x && x <= e.x + e.w && y >= e.y && y <= e.y + Math.max(e.h, 1)) ?? null;
 }
 
+/** The address of a link inside text (Insert › Link on characters) under a click, if the click is on one. */
+export const runLinkAt = (target: EventTarget | null): string | null =>
+  (target as Element | null)?.closest?.('[data-link]')?.getAttribute('data-link') ?? null;
+
 /** Where a show goes back to for "last slide viewed": the most recent other page in `history`. */
 export function lastViewed(history: number[], current: number): number | null {
   for (let k = history.length - 1; k >= 0; k--) if (history[k] !== current) return history[k];

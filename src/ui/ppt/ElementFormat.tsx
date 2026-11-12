@@ -71,14 +71,14 @@ export const textValue = (el: SlideElement): TextFormatValue => ({
   fontFamily: el.fontFamily, fontSize: sizeOf(el), bold: !!el.bold, italic: !!el.italic, underline: !!el.underline, strike: !!el.strike,
   shadow: !!el.shadow, letterSpacing: el.letterSpacing ?? 0, color: (el.paragraphs?.find((p) => p.text.trim())?.color ?? el.color ?? '#ffffff').slice(0, 7),
   highlight: el.highlight, align: el.align ?? 'center', vAlign: el.vAlign ?? 'middle', lineHeight: el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25),
-  list: el.list, indent: el.indent ?? 0, columns: el.columns ?? 1, vertical: !!el.vertical, autoFit: el.autoFit !== false,
+  list: el.list, indent: el.indent ?? 0, columns: el.columns ?? 1, vertical: !!el.vertical, direction: el.direction, autoFit: el.autoFit !== false,
 });
 
 /** A chosen size applies equally to every paragraph in this box. */
 export const elementPatch = (_el: SlideElement, { fontSize, ...rest }: Partial<TextFormatValue>): Partial<SlideElement> =>
   ({ ...rest, ...(fontSize === undefined ? {} : { fontSize }) });
 
-export const CLEAR_TEXT_FORMAT: Partial<SlideElement> = { bold: false, italic: false, underline: undefined, strike: undefined, shadow: false, letterSpacing: undefined, highlight: undefined, list: undefined, indent: undefined, columns: undefined, vertical: undefined, lineHeight: undefined };
+export const CLEAR_TEXT_FORMAT: Partial<SlideElement> = { bold: false, italic: false, underline: undefined, strike: undefined, shadow: false, letterSpacing: undefined, highlight: undefined, list: undefined, indent: undefined, columns: undefined, vertical: undefined, direction: undefined, lineHeight: undefined, lineExact: undefined };
 
 const FIT_LABELS: [Exclude<ReturnType<typeof autoFitMode>, 'legacy'>, string][] = [['none', '자동 맞춤 안 함'], ['shrink', '넘치면 텍스트 크기 조정'], ['resize', '도형을 텍스트 크기에 맞춤']];
 

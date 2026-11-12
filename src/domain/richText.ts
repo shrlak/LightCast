@@ -4,7 +4,7 @@
 // unchanged; runs that no longer spell that text (it was retyped somewhere else) are ignored.
 import type { ElementParagraph, Slide, SlideElement, TextRun } from './types';
 
-const FORMAT_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'color', 'strike', 'baseline', 'fontFamily', 'highlight'] as const;
+const FORMAT_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'color', 'strike', 'baseline', 'fontFamily', 'highlight', 'link'] as const;
 export type RunFormat = Pick<TextRun, (typeof FORMAT_KEYS)[number]>;
 
 const sameFormat = (a: TextRun, b: TextRun) => FORMAT_KEYS.every((k) => a[k] === b[k]);

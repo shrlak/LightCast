@@ -1,7 +1,8 @@
 import PptxGenJS from 'pptxgenjs';
-import type { Background, Library, ListStyle, Playlist, Presentation, SlideElement, Theme } from '../types';
+import type { Background, HAlign, Library, ListStyle, Playlist, Presentation, SlideElement, TextDirection, Theme } from '../types';
 import { iconCatalog, layoutTable } from '../../engine';
 import { lineRuns } from '../richText';
+import { pptxVert } from '../textFormat';
 import { sequence } from '../arrangement';
 import { getMedia } from '../media';
 import { qrDataUrl } from './qr';
@@ -63,7 +64,7 @@ async function addShapeElement(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideEle
     list.push({ marker, name: el.name, fill: fillXml(el, blip?.id), ln: lnXml(el), sp3d: scene3dXml(el), blip });
     shapePatches.set(pptx, list);
   }
-  if (el.text) s.addText(el.text, { ...opts, shape: name, fontSize: (el.fontSize ?? 40) * 0.5, color: hex(el.color), bold: el.bold, italic: el.italic, align: el.align ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fontFace: el.fontFamily ? pptxFont(el.fontFamily) : undefined });
+  if (el.text) s.addText(el.text, { ...opts, shape: name, fontSize: (el.fontSize ?? 40) * 0.5, color: hex(el.color), bold: el.bold, italic: el.italic, align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fontFace: el.fontFamily ? pptxFont(el.fontFamily) : undefined });
   else s.addShape(name, opts);
 }
 
@@ -111,8 +112,11 @@ function firstColor(b: Background | undefined | null): string {
   return '000000';
 }
 
+/** pptxgenjs writes left / center / right / justify only: 균등 분할 and 양쪽 맞춤 (낮음) leave as 양쪽 맞춤. */
+const pptxAlign = (a: HAlign | undefined): 'left' | 'center' | 'right' | 'justify' | undefined => (a === 'distributed' || a === 'justLow' ? 'justify' : a);
+
 /** 취소선, 문자 간격, 강조 색, 글머리 기호 / 번호, 들여쓰기, 세로 쓰기 — in PowerPoint's terms. */
-function textOptions(f: { strike?: boolean; letterSpacing?: number; highlight?: string; list?: ListStyle; indent?: number; vertical?: boolean }) {
+function textOptions(f: { strike?: boolean; letterSpacing?: number; highlight?: string; list?: ListStyle; indent?: number; vertical?: boolean; direction?: TextDirection }) {
   const numbered = f.list === 'number' || f.list === 'number-paren' || f.list === 'roman' || f.list === 'alpha' || f.list === 'hangul' || f.list === 'roman-lower' || f.list === 'alpha-lower' || f.list === 'alpha-lower-paren';
   const numberType = ({ 'number-paren': 'arabicParenR', roman: 'romanUcPeriod', alpha: 'alphaUcPeriod', 'roman-lower': 'romanLcPeriod', 'alpha-lower': 'alphaLcPeriod', 'alpha-lower-paren': 'alphaLcParenR' } as const)[f.list as 'roman'] ?? 'arabicPeriod';
   return {
@@ -121,7 +125,7 @@ function textOptions(f: { strike?: boolean; letterSpacing?: number; highlight?: 
     highlight: f.highlight?.replace('#', ''),
     bullet: f.list ? (numbered ? { type: 'number' as const, style: numberType } : { characterCode: { circle: '25CB', square: '25A0', check: '2713', arrow: '27A2', box: '25A1', diamond: '25C6', dash: '2013', star: '2605' }[f.list as 'circle'] ?? '2022' }) : undefined,
     indentLevel: f.indent || undefined,
-    vert: f.vertical ? ('eaVert' as const) : undefined,
+    vert: pptxVert(f) as 'eaVert' | 'vert' | 'vert270' | 'wordArtVert' | undefined,
   };
 }
 
@@ -209,7 +213,7 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
       fontFace: fontFace(theme), fontSize: theme.fontSize * 0.5, color, italic: theme.italic, underline: theme.underline ? { style: 'sng' } : undefined,
       ...textOptions(theme),
       margin: NO_MARGIN, lang: langOf(`${slide.title ?? ''}${slide.text}${slide.subtext ?? ''}`),
-      align: theme.align, valign,
+      align: pptxAlign(theme.align), valign,
       shadow: theme.shadow ? { type: 'outer', blur: 6, offset: 2, angle: 45, color: '000000', opacity: 0.6 } : undefined,
       fit: undefined,
     });
@@ -222,15 +226,17 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
         // The screen's line height for this box (as elementTextStyle draws it). A paragraph's last
         // line break shows no extra line on screen, so it adds none here either.
         const lh = el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25);
+        // 줄 간격 고정 / 최소 are points already: spcPts for 고정, a multiple of the size at least that tall for 최소.
+        const exactPts = (size: number) => (el.lineExact ? Math.round(Math.max(el.lineExact.px * 0.5, el.lineExact.mode === 'min' ? linePts(size, 1.2) : 0) * 10) / 10 : linePts(size, lh));
         // Characters formatted on their own (size, bold, italic, underline, colour) keep it.
         const runs = lineRuns(el);
-        const richLines = runs.some(Boolean) ? (el.paragraphs?.map((x) => x.text) ?? el.text.split('\n')) : null;
+        const richLines = runs.some(Boolean) || el.text.includes('\u000b') ? (el.paragraphs?.map((x) => x.text) ?? el.text.split('\n')) : null;
         const rich: PptxGenJS.TextProps[] | null = richLines && richLines.flatMap((line, i) => {
           const parts = runs[i] ?? [{ text: line || ' ' }];
-          return parts.map((r, k) => ({ text: r.text, options: { fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: r.bold ?? el.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), fontFace: r.fontFamily ? pptxFont(r.fontFamily) : undefined, highlight: r.highlight?.replace('#', ''), strike: r.strike ? ('sngStrike' as const) : undefined, superscript: r.baseline === 'super' || undefined, subscript: r.baseline === 'sub' || undefined, breakLine: k === parts.length - 1 && i < richLines.length - 1 } }));
+          return parts.flatMap((r, k) => r.text.split('\u000b').map((piece, j) => ({ text: piece, options: { ...(j > 0 ? { softBreakBefore: true } : {}), ...(r.link ? { hyperlink: { url: r.link } } : {}), fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: r.bold ?? el.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), fontFace: r.fontFamily ? pptxFont(r.fontFamily) : undefined, highlight: r.highlight?.replace('#', ''), strike: r.strike ? ('sngStrike' as const) : undefined, superscript: r.baseline === 'super' || undefined, subscript: r.baseline === 'sub' || undefined, breakLine: k === parts.length - 1 && i < richLines.length - 1 && j === r.text.split('\u000b').length - 1 } })));
         });
-        const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: linePts(p.fontSize ?? el.fontSize ?? 64, lh), bold: p.bold ?? el.bold, italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: p.align ?? el.align, breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
-        s.addText(content, { ...box, fontFace: pptxFont(el.fontFamily ?? baseTheme.fontFamily), lineSpacing: el.paragraphs?.length ? undefined : linePts(el.fontSize ?? 64, lh), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: el.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el), align: el.align ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
+        const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: exactPts(p.fontSize ?? el.fontSize ?? 64), bold: p.bold ?? el.bold, italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: pptxAlign(p.align ?? el.align), breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
+        s.addText(content, { ...box, fontFace: pptxFont(el.fontFamily ?? baseTheme.fontFamily), lineSpacing: el.paragraphs?.length ? undefined : exactPts(el.fontSize ?? 64), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: el.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el), align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
       } else if (el.kind === 'image' && el.mediaId) {
         const data = await dataUrl(el.mediaId);
         if (data) s.addImage({ ...box, data, sizing: { type: el.fit === 'cover' ? 'cover' : 'contain', w: box.w, h: box.h } });

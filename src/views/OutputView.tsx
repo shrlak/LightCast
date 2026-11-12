@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { actionAt, actionOf, hoverActionOf, hoverAt, type ShowAction } from '../domain/showActions';
+import { actionAt, actionOf, hoverActionOf, hoverAt, runLinkAt, type ShowAction } from '../domain/showActions';
 import type { SlideElement } from '../domain/types';
 import { SlideCanvas } from '../ui/SlideCanvas';
 import { CANVAS_W } from '../domain/canvas';
@@ -57,6 +57,8 @@ export function OutputView() {
     // A click on an object with an action (Action Settings, a link, a slide zoom) does it, as in
     // PowerPoint's slide show; clicks elsewhere are left alone (double-click is full screen).
     const onClick = (e: MouseEvent) => {
+      const link = runLinkAt(e.target);
+      if (link) { window.open(link, '_blank', 'noopener'); return; }
       const at = pointAt(e);
       if (!at) return;
       const el = actionAt(latest.current?.slide, at.x, at.y);

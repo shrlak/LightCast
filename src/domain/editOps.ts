@@ -6,6 +6,7 @@ import type { Slide, SlideAnimation, SlideElement } from './types';
 import { CANVAS_H, CANVAS_W } from './canvas';
 import { uid } from './lyrics';
 import { DUPLICATE_OFFSET, freeformPath, movableIds } from './shapeOps';
+import { copyFormat, paintElements, type CopiedStyle } from './formatPainter';
 import {
   connectShapes, mergeShapes, type MergeMode, type PathShape,
   alignBoxes, boundsOf, distributeBoxes, flipBoxes, newTable, orderIds, recognizeInk, rotateBoxes, shapeCatalog, smoothInk,
@@ -198,30 +199,11 @@ export function duplicateSelection(els: Elements, sel: string[], offset: [number
   return { elements: [...els, ...copies], ids: copies.map((c) => c.id), pairs: sources.map((e, i) => [e.id, copies[i].id]) };
 }
 
-/** The look Format Painter (서식 복사) carries from one object to another. */
-const STYLE_KEYS = [
-  'fill', 'stroke', 'strokeWidth', 'dash', 'cap', 'join', 'compound', 'gradient', 'gradientAngle', 'gradientStops', 'fillTransparency', 'format3d', 'dropShadow', 'glow', 'opacity',
-  'fontFamily', 'fontSize', 'color', 'bold', 'italic', 'underline', 'strike', 'shadow', 'align', 'vAlign', 'letterSpacing', 'lineHeight', 'highlight',
-] as const;
-export type CopiedStyle = Partial<Pick<SlideElement, (typeof STYLE_KEYS)[number]>>;
-export function copyStyle(el: SlideElement): CopiedStyle {
-  const out: Record<string, unknown> = {};
-  for (const k of STYLE_KEYS) out[k] = el[k];
-  return out as CopiedStyle;
-}
+/** The look Format Painter (서식 복사) carries from one object to another (see formatPainter). */
+export type { CopiedStyle } from './formatPainter';
+export const copyStyle = copyFormat;
 export function pasteStyle(els: Elements, sel: string[], style: CopiedStyle): Elements {
-  const ids = expandSelection(els, sel);
-  return els.map((e) => {
-    if (!ids.includes(e.id)) return e;
-    const textOnly = e.kind === 'text';
-    const patch: Record<string, unknown> = {};
-    for (const k of STYLE_KEYS) {
-      // A text box takes the text look only; its transparent frame stays.
-      if (textOnly && ['fill', 'stroke', 'strokeWidth', 'dash', 'cap', 'join', 'compound', 'gradient', 'gradientAngle', 'gradientStops', 'fillTransparency', 'format3d'].includes(k)) continue;
-      if (style[k] !== undefined) patch[k] = style[k];
-    }
-    return { ...e, ...patch, ...(patch.fontSize !== undefined ? { paragraphs: e.paragraphs?.map((p) => ({ ...p, fontSize: undefined })) } : {}) };
-  });
+  return paintElements(els, expandSelection(els, sel), style);
 }
 
 // ── Insert ────────────────────────────────────────────────────────────────────────────────────
