@@ -99,7 +99,7 @@ const colorIn = (n: MNode | null | undefined, theme: DmlTheme, ph?: string) => (
 // ── Text ────────────────────────────────────────────────────────────────────────────────────────
 
 const ALIGN: Record<string, HAlign> = { l: 'left', ctr: 'center', r: 'right', just: 'justify', dist: 'justify' };
-const AUTONUM: Record<string, ListStyle> = { arabicPeriod: 'number', arabicParenR: 'number-paren', arabicParenBoth: 'number-paren', romanUcPeriod: 'roman', romanLcPeriod: 'roman', alphaLcPeriod: 'alpha', alphaUcPeriod: 'alpha', alphaLcParenR: 'alpha', hangulGanadaPeriod: 'hangul', ganada: 'hangul' };
+const AUTONUM: Record<string, ListStyle> = { arabicPeriod: 'number', arabicParenR: 'number-paren', arabicParenBoth: 'number-paren', romanUcPeriod: 'roman', romanLcPeriod: 'roman-lower', alphaLcPeriod: 'alpha-lower', alphaUcPeriod: 'alpha', alphaLcParenR: 'alpha-lower-paren', hangulGanadaPeriod: 'hangul', ganada: 'hangul' };
 const EAST_ASIAN = /[ᄀ-ᇿ　-鿿가-힯豈-﫿＀-￯]/;
 
 interface TextDefaults { size: number; color?: string; font: 'minor' | 'major'; bold?: boolean; italic?: boolean }

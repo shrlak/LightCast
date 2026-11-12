@@ -10,8 +10,8 @@ const toPt = (px: number) => Math.round((px / 2) * 10) / 10;
  * Font size, as PowerPoint's size box: shows points, type any size and press Enter, or pick one
  * of PowerPoint's sizes from the list.
  */
-export function FontSize({ value, onChange, min = 1, max = 400 }: { value: number; onChange: (px: number) => void; min?: number; max?: number }) {
-  const shown = toPt(value);
+export function FontSize({ value, onChange, blank, min = 1, max = 4000 }: { value: number; onChange: (px: number) => void; /** Mixed sizes: an empty box (PowerPoint). */ blank?: boolean; min?: number; max?: number }) {
+  const shown = blank ? '' : toPt(value);
   const [text, setText] = useState(String(shown));
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLSpanElement>(null);
@@ -25,15 +25,15 @@ export function FontSize({ value, onChange, min = 1, max = 400 }: { value: numbe
     return () => window.removeEventListener('pointerdown', off);
   }, [open]);
   const set = (pt: number) => {
-    if (!Number.isFinite(pt) || pt <= 0) return setText(String(shown));
+    if (!Number.isFinite(pt) || pt <= 0 || (blank && String(pt) === '')) return setText(String(shown));
     onChange(Math.min(max, Math.max(min, pt)) * 2);
   };
   return (
     <span ref={ref} className="font-size ppt-drop" title="글꼴 크기">
       <input className="fs-input" inputMode="decimal" value={text} aria-label="글꼴 크기"
-        onChange={(e) => setText(e.target.value)} onBlur={() => set(Number(text))} onFocus={(e) => e.target.select()}
+        onChange={(e) => setText(e.target.value)} onBlur={() => { if (text !== String(shown)) set(Number(text)); }} onFocus={(e) => e.target.select()}
         onKeyDown={(e) => {
-          if (e.key === 'Enter') set(Number(text));
+          if (e.key === 'Enter' && text.trim()) set(Number(text));
           if (e.key === 'Escape') setText(String(shown));
         }} />
       <button type="button" className="ppt-btn ppt-caret-btn" aria-label="글꼴 크기 목록" onClick={() => setOpen(!open)}>{Icon.caret}</button>

@@ -160,7 +160,8 @@ export function patchElement(el: SlideElement, patch: Partial<SlideElement>): Sl
   // A new text size leaves the box as it is (like PowerPoint's "Do not autofit"): it neither scales
   // with the font nor grows to fit it afterwards. Text bigger than the box shows past its edge.
   const was = el.fontSize ?? el.paragraphs?.find((p) => p.text.trim())?.fontSize;
-  if (el.kind === 'text' && patch.fontSize !== undefined && patch.fontSize !== was && patch.autoFit === undefined) next.autoFit = false;
+  // PowerPoint's own autofit modes ('shrink', 'resize') keep fitting the new size.
+  if (el.kind === 'text' && (el.autoFit === undefined || el.autoFit === true) && patch.fontSize !== undefined && patch.fontSize !== was && patch.autoFit === undefined) next.autoFit = false;
   // Formatting chosen for the whole box replaces the same formatting on parts of its text.
   const runKeys = (['fontSize', 'bold', 'italic', 'underline', 'color'] as const).filter((k) => k in patch);
   if (runKeys.length) next = clearRunFormat(next, runKeys);

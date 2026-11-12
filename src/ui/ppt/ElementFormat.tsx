@@ -4,7 +4,8 @@ import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { TextFormatPanel, type TextFormatValue } from './TextFormatPanel';
-import { changeCase } from '../../domain/textFormat';
+import { changeCase, clearTextFormat } from '../../domain/textFormat';
+import { autoFitMode, autoFitValue } from '../../domain/textFit';
 import { AutoTextarea } from '../AutoTextarea';
 import type { ChartData as ChartModel, TableData } from '../../engine';
 
@@ -78,6 +79,26 @@ export const elementPatch = (_el: SlideElement, { fontSize, ...rest }: Partial<T
 
 export const CLEAR_TEXT_FORMAT: Partial<SlideElement> = { bold: false, italic: false, underline: undefined, strike: undefined, shadow: false, letterSpacing: undefined, highlight: undefined, list: undefined, indent: undefined, columns: undefined, vertical: undefined, lineHeight: undefined };
 
+const FIT_LABELS: [Exclude<ReturnType<typeof autoFitMode>, 'legacy'>, string][] = [['none', '자동 맞춤 안 함'], ['shrink', '넘치면 텍스트 크기 조정'], ['resize', '도형을 텍스트 크기에 맞춤']];
+
+/**
+ * Format Shape › 텍스트 옵션 › 텍스트 상자: PowerPoint's three autofit choices and 도형의 텍스트 배치
+ * (DeckCraft format.autofit / format.wrap). A template box LightCast fits itself shows none chosen.
+ */
+export function AutoFitOptions({ el, onChange }: { el: SlideElement; onChange: (p: Partial<SlideElement>) => void }) {
+  const mode = autoFitMode(el);
+  return (
+    <fieldset className="dlg-set autofit-options">
+      <legend>텍스트 상자</legend>
+      {FIT_LABELS.map(([m, label]) => (
+        <label key={m} className="rb-check"><input type="radio" name={`autofit-${el.id}`} checked={mode === m} onChange={() => onChange({ autoFit: autoFitValue(m), fontScale: undefined, maximizeFont: false, preferredFontSize: undefined })} /> {label}</label>
+      ))}
+      {mode === 'legacy' && <div className="muted small">LightCast 자동 맞춤 (슬라이드 안에서 상자를 늘림)</div>}
+      <label className="rb-check"><input type="checkbox" checked={el.wrap !== false} onChange={(e) => onChange({ wrap: e.target.checked ? undefined : false })} /> 도형의 텍스트 배치</label>
+    </fieldset>
+  );
+}
+
 /**
  * Settings of the object selected on the slide, in the right-hand panel: its text, font, size,
  * colours, alignment, position and size, order on the slide — changes show at once.
@@ -125,8 +146,10 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
             value={textValue(el)}
             onChange={(patch) => onChange(elementPatch(el, patch))}
             onChangeCase={(kind) => onChange({ text: changeCase(el.text ?? '', kind) })}
-            onClear={() => onChange(CLEAR_TEXT_FORMAT)}
+            onClear={() => onChange(clearTextFormat(el))}
+            autoFitOption={false}
           />
+          <AutoFitOptions el={el} onChange={onChange} />
         </>
       )}
 

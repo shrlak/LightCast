@@ -5,6 +5,8 @@ import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { SlideCanvas, slideTheme } from '../SlideCanvas';
 import { useWidth } from '../hooks';
 import { useAutoTextBoxes } from '../textBoxLayout';
+import { uid } from '../../domain/lyrics';
+import { autoFitMode, lineReduction, newTextBox, resizedTextBox } from '../../domain/textFit';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
 import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
@@ -238,9 +240,17 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     setSession({ slideId: identity, id });
     onSelect([id]);
   };
+  /** A text box just drawn: left empty, it goes away when typing ends, as in PowerPoint. */
+  const freshBox = useRef<string | null>(null);
   const stopEditing = () => {
     flushText();
     setSession(null);
+    const fresh = freshBox.current;
+    freshBox.current = null;
+    if (fresh) setTimeout(() => {
+      const el = latestEls.current.find((e) => e.id === fresh);
+      if (el && el.kind === 'text' && !(el.text ?? '').trim()) latestBody.current.onChange({ elements: latestEls.current.filter((e) => e.id !== fresh) });
+    }, 0);
   };
   // Picking a drawing tool (text box, shape, pen…) ends typing, as in PowerPoint.
   const toolKind = tool?.kind;
@@ -604,13 +614,15 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     if (d.mode === 'draw' && tool?.kind === 'shape') {
       const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
-      // A click without a drag puts a default-sized shape there.
-      const el = r.w < 6 && r.h < 6 ? (() => { const m = makeShape(tool.name); return { ...m, x: Math.round(d.x0 - m.w / 2), y: Math.round(d.y0 - m.h / 2) }; })() : makeShape(tool.name, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
+      // Text box: a click starts a box at that point that grows with the text; a drag sets its width (DeckCraft insert.textBox).
+      const el = tool.name === 'textBox' ? (r.w < 6 ? newTextBox(uid('el'), { x: d.x0, y: d.y0 }) : newTextBox(uid('el'), r, r))
+        // A click without a drag puts a default-sized shape there.
+        : r.w < 6 && r.h < 6 ? (() => { const m = makeShape(tool.name); return { ...m, x: Math.round(d.x0 - m.w / 2), y: Math.round(d.y0 - m.h / 2) }; })() : makeShape(tool.name, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
       const styled = el.kind === 'shape' && defaultShape ? { ...el, ...defaultShape } : el;
       setElements([...elements, styled]);
       onSelect([styled.id]);
       onToolDone?.();
-      if (styled.kind === 'text') setSession({ slideId: identity, id: styled.id });
+      if (styled.kind === 'text') { freshBox.current = styled.id; setSession({ slideId: identity, id: styled.id }); }
       return;
     }
     if (d.mode === 'ink' && tool?.kind === 'pen') {
@@ -643,8 +655,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       if (!b) return el;
       const cropped = tool?.kind === 'crop' && tool.id === el.id && cropDraft.current ? { crop: cropDraft.current, fit: 'fill' as const } : {};
       const next = { ...el, x: b.x, y: b.y, w: b.w, h: b.h, ...(b.rot !== undefined ? { rotation: b.rot || undefined } : {}), ...(b.adj ? { adj: b.adj } : {}), ...cropped };
-      // A text box sized by hand keeps that size, as PowerPoint's "Do not autofit".
-      return d.mode === 'resize' && el.kind === 'text' ? { ...next, autoFit: false } : next;
+      // A text box sized by hand: PowerPoint keeps its autofit (wrapping turns on with a new width); LightCast's own fitted boxes keep the size.
+      return d.mode === 'resize' && el.kind === 'text' && d.ids.length === 1 ? { ...next, ...resizedTextBox(el, b) } : d.mode === 'resize' && el.kind === 'text' && autoFitMode(el) === 'legacy' ? { ...next, autoFit: false } : next;
     }));
   };
 
@@ -802,6 +814,9 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: editEl.lineHeight ?? 1.2, whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const };
     const { display: _d, flexDirection: _f, ...rest } = textStyle;
+    // Shrink text on overflow: the text being typed shows at the box's fontScale too.
+    const shrink = editEl.kind === 'text' && editEl.autoFit === 'shrink' && editEl.fontScale && editEl.fontScale < 1 ? editEl.fontScale : 0;
+    const shrinkStyle = shrink ? { zoom: shrink, lineHeight: (editEl.lineHeight ?? (editEl.paragraphs ? 1.2 : 1.25)) * (1 - lineReduction(shrink)) } : {};
     return (
       <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
         <div className="ce-edit-box" style={{
@@ -810,7 +825,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
           justifyContent: editEl.vAlign === 'top' ? 'flex-start' : editEl.vAlign === 'bottom' ? 'flex-end' : 'center',
         }}>
           <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof}
-            style={{ ...rest, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+            style={{ ...rest, ...shrinkStyle, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>
       </div>

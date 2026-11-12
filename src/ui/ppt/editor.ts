@@ -10,8 +10,9 @@ import { expandSelection } from '../../domain/editOps';
 import { patchElement } from '../../domain/templates/convert';
 import { slideTheme } from '../SlideCanvas';
 import { activeTextEditor, onTextSelection } from '../RichTextEditor';
-import { changeCase, type CaseKind } from '../../domain/textFormat';
-import { sizeOf, textValue, CLEAR_TEXT_FORMAT } from './ElementFormat';
+import type { RunFormat } from '../../domain/richText';
+import { changeCase, clearTextFormat, mixedState, stepElementFont, stepFontSize, textSpans, type CaseKind } from '../../domain/textFormat';
+import { sizeOf, textValue } from './ElementFormat';
 import type { TextFormatValue } from './TextFormatPanel';
 
 export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'designer' | 'spelling' | 'revisions' | null;
@@ -67,7 +68,14 @@ export const selectedEls = (els: SlideElement[], sel: string[]) => {
   return els.filter((e) => ids.includes(e.id));
 };
 
-const RUN_KEYS = new Set(['fontSize', 'bold', 'italic', 'underline', 'color', 'strike']);
+const RUN_KEYS = new Set(['fontSize', 'bold', 'italic', 'underline', 'color', 'strike', 'fontFamily', 'highlight']);
+
+/** A ribbon change as character formatting for the selected characters (false / empty clears it). */
+function runPatch(patch: Partial<TextFormatValue>): RunFormat {
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(patch)) if (RUN_KEYS.has(k)) out[k] = (patch as Record<string, unknown>)[k] || undefined;
+  return out as RunFormat;
+}
 
 let tick = 0;
 onTextSelection(() => { tick++; });
@@ -84,11 +92,28 @@ export interface TextTarget {
   onChange: (p: Partial<TextFormatValue>) => void;
   onChangeCase: (k: CaseKind) => void;
   onClear: () => void;
+  /** 글꼴 크기 크게 / 작게: every selected character steps from its own size. */
+  onStep: (dir: 1 | -1) => void;
   label: string;
   /** The text boxes being formatted (none: the slide's own text). */
   els: SlideElement[];
   /** Patch each of those boxes. */
   patchEach: (fn: (e: SlideElement) => Partial<SlideElement>) => void;
+}
+
+/** Clear All Formatting on selected characters: their own formatting goes, the box's shows. */
+const CLEAR_RUN = { fontSize: undefined, bold: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined };
+
+/** The size of text with none of its own in this object (as the slide editor draws it). */
+const baseSize = (e: SlideElement) => (e.kind === 'shape' ? 40 : e.kind === 'table' ? 32 : 64);
+
+/**
+ * One grow / shrink step for a whole box: every run from its own size. A LightCast-fitted box (the
+ * templates' growing boxes) keeps its box as a typed size would; PowerPoint's autofit modes keep fitting.
+ */
+function stepped(e: SlideElement, dir: 1 | -1): SlideElement {
+  const legacy = e.kind === 'text' && (e.autoFit === undefined || e.autoFit === true);
+  return { ...e, ...stepElementFont(e, dir, baseSize(e)), maximizeFont: false, preferredFontSize: undefined, ...(legacy ? { autoFit: false } : {}) };
 }
 
 export function textTarget(ed: Ed): TextTarget | null {
@@ -103,24 +128,36 @@ export function textTarget(ed: Ed): TextTarget | null {
     const first = texty[0];
     const base = textValue(first);
     let value = base;
-    if (editor && editor.hasSelection()) {
+    // Typing in the box: the ribbon shows and sets the characters at the caret (the word it is in) or selected.
+    const typing = !!editor;
+    if (editor && typing) {
       const c = editor.current();
       value = { ...base, fontSize: c.fontSize ?? base.fontSize, bold: !!c.bold, italic: !!c.italic, underline: !!c.underline, strike: !!c.strike, color: (c.color ?? base.color).slice(0, 7) };
     }
+    // PowerPoint's mixed state: a blank size box / font name when the selection mixes them.
+    const mixed = mixedState(editor && typing ? editor.spans().map((r) => ({ fontSize: r.fontSize, fontFamily: r.fontFamily })) : texty.flatMap((e) => textSpans(e, baseSize(e))));
+    value = { ...value, sizeMixed: mixed.fontSize === null, fontMixed: mixed.fontFamily === null };
     return {
       value,
       label: texty.length > 1 ? `개체 ${texty.length}개` : first.kind === 'text' ? '텍스트 상자' : '도형',
       onChange: (patch) => {
         const keys = Object.keys(patch);
         // Part of the text selected: the size, weight, slant, underline or colour go to those characters only.
-        if (editor && editor.hasSelection() && keys.every((k) => RUN_KEYS.has(k))) {
-          editor.apply({ ...(patch.fontSize !== undefined ? { fontSize: patch.fontSize } : {}), ...(patch.bold !== undefined ? { bold: patch.bold } : {}), ...(patch.italic !== undefined ? { italic: patch.italic } : {}), ...(patch.underline !== undefined ? { underline: patch.underline || undefined } : {}), ...(patch.color !== undefined ? { color: patch.color } : {}), ...(patch.strike !== undefined ? { strike: patch.strike || undefined } : {}) });
+        if (editor && keys.every((k) => RUN_KEYS.has(k))) {
+          editor.apply(runPatch(patch));
           return;
         }
         patchEls(() => toEl(patch));
       },
+      onStep: (dir) => {
+        if (editor) return editor.step(dir);
+        ed.setElements((els) => els.map((e) => (texty.some((t) => t.id === e.id) ? stepped(e, dir) : e)));
+      },
       onChangeCase: (k) => patchEls((e) => ({ text: changeCase(e.text ?? '', k) })),
-      onClear: () => patchEls(() => CLEAR_TEXT_FORMAT),
+      onClear: () => {
+        if (editor) return editor.apply(CLEAR_RUN);
+        patchEls(clearTextFormat);
+      },
       els: texty,
       patchEach: patchEls,
     };
@@ -137,10 +174,11 @@ export function textTarget(ed: Ed): TextTarget | null {
   if (!slide.text.trim() && !slide.title && !slide.subtext && boxes.length) {
     const patchAll = (fn: (e: SlideElement) => Partial<SlideElement>) => ed.setElements((els) => els.map((e) => (e.kind === 'text' ? patchElement(e, fn(e)) : e)));
     return {
-      value: textValue(boxes[0]), label: '모든 텍스트 상자',
+      value: (() => { const m = mixedState(boxes.flatMap((e) => textSpans(e))); return { ...textValue(boxes[0]), sizeMixed: m.fontSize === null, fontMixed: m.fontFamily === null }; })(), label: '모든 텍스트 상자',
       onChange: (patch) => patchAll(() => toEl(patch)),
+      onStep: (dir) => ed.setElements((els) => els.map((e) => (e.kind === 'text' ? stepped(e, dir) : e))),
       onChangeCase: (k) => patchAll((e) => ({ text: changeCase(e.text ?? '', k) })),
-      onClear: () => patchAll(() => CLEAR_TEXT_FORMAT),
+      onClear: () => patchAll(clearTextFormat),
       els: boxes,
       patchEach: patchAll,
     };
@@ -159,14 +197,18 @@ export function textTarget(ed: Ed): TextTarget | null {
     value: cur ? { ...slideValue, fontSize: cur.fontSize ?? slideValue.fontSize, bold: !!cur.bold, italic: !!cur.italic, underline: !!cur.underline, strike: !!cur.strike, color: (cur.color ?? slideValue.color).slice(0, 7) } : slideValue,
     onChange: (patch) => {
       if (runSel && editor && Object.keys(patch).every((k) => RUN_KEYS.has(k))) {
-        editor.apply({ ...(patch.fontSize !== undefined ? { fontSize: patch.fontSize } : {}), ...(patch.bold !== undefined ? { bold: patch.bold } : {}), ...(patch.italic !== undefined ? { italic: patch.italic } : {}), ...(patch.underline !== undefined ? { underline: patch.underline || undefined } : {}), ...(patch.color !== undefined ? { color: patch.color } : {}), ...(patch.strike !== undefined ? { strike: patch.strike || undefined } : {}) });
+        editor.apply(runPatch(patch));
         return;
       }
       const { bold, ...rest } = patch;
       setStyle({ ...rest, ...(bold === undefined ? {} : { fontWeight: bold ? 700 : 400 }) });
     },
+    onStep: (dir) => {
+      if (runSel && editor) return editor.step(dir);
+      setStyle({ fontSize: stepFontSize(slideValue.fontSize, dir) });
+    },
     onChangeCase: (k) => ed.updateSlide({ text: changeCase(slide.text, k), textRuns: undefined, ...(slide.title ? { title: changeCase(slide.title, k) } : {}), ...(slide.subtext ? { subtext: changeCase(slide.subtext, k) } : {}) }),
-    onClear: () => ed.updateSlide({ style: undefined, preferredFontSize: undefined, textRuns: undefined }),
+    onClear: () => (runSel && editor ? editor.apply(CLEAR_RUN) : ed.updateSlide({ style: undefined, preferredFontSize: undefined, textRuns: undefined })),
     els: [],
     patchEach: () => {},
   };
