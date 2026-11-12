@@ -12,6 +12,7 @@ import type { Ed } from './editor';
 import { commentCount, deleteComments } from '../../domain/comments';
 import { setCommentFocus, stepComment } from './panes';
 import { acceptAllRevisions, endCompare, useCompare } from './reviewPanes';
+import { showGuides } from './viewDialogs';
 import { Big, Col, DropButton, Group, MenuItem, RI, Small } from './ribbonParts';
 
 export function SlideShowTab({ ed }: { ed: Ed }) {
@@ -97,7 +98,7 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
   );
 }
 
-const ZOOMS = [33, 50, 66, 75, 100, 150, 200, 300, 400];
+const ZOOMS = [400, 200, 150, 100, 75, 66, 50, 33];
 
 export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () => void; onReading: () => void }) {
   const { cmd } = ed;
@@ -107,6 +108,7 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
         <Big icon={RI.normalView} label="기본" active={cmd.view === 'normal'} onClick={() => cmd.setView('normal')} />
         <Big icon={RI.outlineView} label="개요 보기" active={cmd.view === 'outline'} onClick={onOutline} />
         <Big icon={RI.sorterView} label="여러 슬라이드" active={cmd.view === 'sorter'} onClick={() => cmd.setView('sorter')} />
+        <Big icon="🗒" label="슬라이드 노트" title="슬라이드와 노트를 한 페이지로 보고 노트를 편집합니다" active={cmd.view === 'notesPage'} disabled={!ed.p} onClick={() => cmd.setView(cmd.view === 'notesPage' ? 'normal' : 'notesPage')} />
         <Big icon={RI.readingView} label="읽기용 보기" onClick={onReading} />
       </Group>
       <Group label="마스터 보기">
@@ -118,14 +120,20 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
         <Col>
           <label className="rb-check"><input type="checkbox" checked={!!ed.view.grid} onChange={(e) => ed.setView({ ...ed.view, grid: e.target.checked })} /> 눈금선</label>
           <label className="rb-check"><input type="checkbox" checked={!!ed.view.ruler} onChange={(e) => ed.setView({ ...ed.view, ruler: e.target.checked })} /> 눈금자</label>
-          <label className="rb-check"><input type="checkbox" checked={!!ed.view.guides} onChange={(e) => ed.setView({ ...ed.view, guides: e.target.checked })} /> 안내선</label>
+          <label className="rb-check"><input type="checkbox" checked={!!ed.view.guides} onChange={(e) => showGuides(ed, e.target.checked)} /> 안내선</label>
           <label className="rb-check"><input type="checkbox" checked={ed.notesOpen} onChange={(e) => ed.setNotesOpen(e.target.checked)} /> 슬라이드 노트</label>
         </Col>
         <Small icon="⌗" label="눈금 및 안내선…" onClick={() => ed.setDialog('guides')} />
       </Group>
       <Group label="확대/축소">
-        <DropButton big icon={RI.zoom} label="확대/축소" render={(close) => <>{ZOOMS.map((z) => <MenuItem key={z} label={`${z}%`} on={ed.zoom === z / 100} onClick={() => { ed.setZoom(z / 100); close(); }} />)}<MenuItem label="창에 맞춤" on={ed.zoom === null} onClick={() => { ed.setZoom(null); close(); }} /></>} />
+        <DropButton big split icon={RI.zoom} label="확대/축소" title="확대/축소…" onMain={() => ed.setDialog('viewZoom')} render={(close) => <>{ZOOMS.map((z) => <MenuItem key={z} label={`${z}%`} on={ed.zoom === z / 100} onClick={() => { ed.setZoom(z / 100); close(); }} />)}<MenuItem label="창에 맞춤" on={ed.zoom === null} onClick={() => { ed.setZoom(null); close(); }} /><MenuItem label="확대/축소…" onClick={() => { ed.setDialog('viewZoom'); close(); }} /></>} />
         <Big icon={RI.fit} label="창에 맞춤" active={ed.zoom === null} onClick={() => ed.setZoom(null)} />
+      </Group>
+      <Group label="컬러/회색조">
+        <Col>
+          <Small icon="🎨" label="컬러" active={!ed.view.grayscale} onClick={() => ed.setView({ ...ed.view, grayscale: undefined })} />
+          <Small icon="◐" label="회색조" title="슬라이드를 회색조로 봅니다 (슬라이드 자체는 바뀌지 않습니다)" active={!!ed.view.grayscale} onClick={() => ed.setView({ ...ed.view, grayscale: true })} />
+        </Col>
       </Group>
       <Group label="작업창">
         <Col>

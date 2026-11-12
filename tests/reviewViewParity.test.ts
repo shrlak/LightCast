@@ -132,3 +132,68 @@ describe('Compare › Accept All (DeckCraft review.accept {all})', () => {
     expect(out.map((x) => [x.id, x.text])).toEqual([['b', 'new']]);
   });
 });
+
+import { addGuide, clampGuide, defaultGuides, dragGuidePos, dropGuide, gridStep, guideAt, MAX_GUIDES, parseGridSpacing } from '../src/domain/guides';
+import { clampZoom, parseSlideRange, zoomStep } from '../src/domain/viewOptions';
+
+describe('Guides (DeckCraft guide.add / move / delete, pointer drag)', () => {
+  it('defaults are the two centre guides', () => {
+    expect(defaultGuides()).toEqual({ v: [720], h: [540] });
+  });
+  it('adds at the centre, kept on the slide, up to the limit', () => {
+    expect(addGuide(undefined, 'h')).toEqual({ v: [], h: [540] });
+    expect(addGuide(undefined, 'v', 5000)).toEqual({ v: [1440], h: [] });
+    expect(clampGuide('h', -3)).toBe(0);
+    const full = { v: Array.from({ length: MAX_GUIDES }, (_, i) => i), h: [] };
+    expect(addGuide(full, 'v')).toBeNull();
+  });
+  it('picks the nearest guide within the tolerance', () => {
+    const g = { v: [300, 310], h: [200] };
+    expect(guideAt(g, 308, 50, 4)).toEqual({ axis: 'v', index: 1 });
+    expect(guideAt(g, 50, 202, 4)).toEqual({ axis: 'h', index: 0 });
+    expect(guideAt(g, 50, 50, 4)).toBeNull();
+  });
+  it('drags on whole points; dropped off the slide deletes it', () => {
+    expect(dragGuidePos(700.9)).toBe(700);
+    expect(dragGuidePos(701.2)).toBe(702);
+    expect(dragGuidePos(701.2, false)).toBe(701.2);
+    const g = { v: [300], h: [540] };
+    expect(dropGuide(g, 'v', 0, 700)).toEqual({ v: [700], h: [540] });
+    expect(dropGuide(g, 'v', 0, -40)).toEqual({ v: [], h: [540] });
+    expect(dropGuide(g, 'h', 0, 1100)).toEqual({ v: [300], h: [] });
+    expect(dropGuide(g, 'h', 3, 10)).toBe(g);
+  });
+});
+
+describe('Grid options (DeckCraft view.gridOptions)', () => {
+  it('spacing 1–288 pt, else an error', () => {
+    expect(parseGridSpacing('72')).toEqual({ px: 144 });
+    expect(parseGridSpacing('6pt')).toEqual({ px: 12 });
+    for (const bad of ['0', '289', 'x', '']) expect('error' in parseGridSpacing(bad)).toBe(true);
+  });
+  it('a grid too dense to see is not drawn', () => {
+    expect(gridStep(12, 0.2)).toBeNull();
+    expect(gridStep(30, 0.5)).toBe(15);
+  });
+});
+
+describe('Zoom and print range', () => {
+  it('zoom steps and limits', () => {
+    expect(zoomStep(1, true)).toBe(1.25);
+    expect(zoomStep(1, false)).toBe(0.75);
+    expect(zoomStep(0.6, true)).toBe(0.66);
+    expect(zoomStep(4, true)).toBe(4);
+    expect(zoomStep(0.1, false)).toBe(0.1);
+    expect(clampZoom(1000)).toBe(4);
+    expect(clampZoom(5)).toBe(0.1);
+  });
+  it('slide ranges as DeckCraft parse_slide_range', () => {
+    expect(parseSlideRange('1-3, 5', 6)).toEqual({ slides: [0, 1, 2, 4] });
+    expect(parseSlideRange('3-1;2', 6)).toEqual({ slides: [0, 1, 2] });
+    expect('error' in parseSlideRange('7', 6)).toBe(true);
+    expect('error' in parseSlideRange('0', 6)).toBe(true);
+    expect('error' in parseSlideRange('a-b', 6)).toBe(true);
+    expect('error' in parseSlideRange('', 6)).toBe(true);
+    expect('error' in parseSlideRange('1-2-3', 6)).toBe(true);
+  });
+});

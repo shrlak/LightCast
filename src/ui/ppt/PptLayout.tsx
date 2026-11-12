@@ -45,7 +45,8 @@ function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
   });
 }
 import { withMaster } from '../../domain/master';
-import { Backstage, FindReplaceDialog, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
+import { Backstage, FindReplaceDialog, NotesPageView, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
+import { zoomStep } from '../../domain/viewOptions';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
 
 /** Status bar lock: a closed padlock when locked; the shackle swung open outward when unlocked. */
@@ -79,7 +80,9 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   /** Objects selected on the slide. */
   const [sel, setSel] = useState<string[]>([]);
   const [tool, setTool] = useState<CanvasTool | null>(null);
-  const [view, setView] = useState<ViewOptions>({});
+  // View › Show options (ruler, grid, guides, grid options, 회색조) are remembered on this computer, as PowerPoint does.
+  const [view, setViewState] = useState<ViewOptions>(() => { try { return JSON.parse(localStorage.getItem('fc.pptView') ?? '{}') as ViewOptions; } catch { return {}; } });
+  const setView = (v: ViewOptions) => { setViewState(v); try { localStorage.setItem('fc.pptView', JSON.stringify(v)); } catch { /* storage unavailable */ } };
   const [pane, setPane] = useState<TaskPane>(null);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
@@ -351,10 +354,10 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
         <button type="button" className={cmd.view === 'presenter' ? 'on' : ''} title="슬라이드 쇼 (발표자 보기)" onClick={() => cmd.startShow(true)}>▶</button>
       </span>
       <span className="pp-zoom">
-        <button type="button" title="축소" onClick={() => setZoom(Math.max(0.1, Math.round((shownZoom - 0.1) * 10) / 10))}>−</button>
+        <button type="button" title="축소" onClick={() => setZoom(zoomStep(shownZoom, false))}>−</button>
         <input type="range" min={10} max={400} value={Math.round(shownZoom * 100)} onChange={(e) => setZoom(Number(e.target.value) / 100)} aria-label="확대/축소" />
-        <button type="button" title="확대" onClick={() => setZoom(Math.min(4, Math.round((shownZoom + 0.1) * 10) / 10))}>+</button>
-        <button type="button" className="pp-zoom-pct" title="확대/축소" onClick={() => setZoom(1)}>{Math.round(shownZoom * 100)}%</button>
+        <button type="button" title="확대" onClick={() => setZoom(zoomStep(shownZoom, true))}>+</button>
+        <button type="button" className="pp-zoom-pct" title="확대/축소…" onClick={() => setDialog('viewZoom')}>{Math.round(shownZoom * 100)}%</button>
         <button type="button" className={`pp-fit ${zoom === null ? 'on' : ''}`} title="현재 창 크기에 맞춤" onClick={() => setZoom(null)}>⤢</button>
       </span>
     </footer>
@@ -386,7 +389,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
       }} />}
       <Ribbon ed={ed} actions={actions} />
       <div className="ppt-body">
-        <aside className="ppt-left">
+        <aside className={`ppt-left ${view.grayscale ? 'grayscale' : ''}`}>
           <div className="ppt-left-tabs">
             <button type="button" className={leftTab === 'slides' ? 'on' : ''} onClick={() => setLeftTab('slides')}>{cmd.view === 'outline' ? '개요' : '슬라이드'}</button>
             <button type="button" className={leftTab === 'library' ? 'on' : ''} onClick={() => { setLeftTab('library'); setFindTick((n) => n + 1); }} title="라이브러리 · 재생목록">라이브러리</button>
@@ -409,14 +412,16 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
 
         {cmd.view === 'sorter' ? (
           <div className="ppt-sorter"><SlideSorter ed={ed} /></div>
+        ) : cmd.view === 'notesPage' ? (
+          <main className="ppt-center"><NotesPageView ed={ed} grayscale={view.grayscale} onNotes={(notes) => p && slide && dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch: { notes } })} /></main>
         ) : (
           <main className="ppt-center">
             <div className={`ppt-stage ${zoom !== null ? 'zoomed' : ''}`} ref={stageRef}>
               {p && slide ? (
-                <div className="ppt-canvas" style={zoom !== null ? { width: ACTUAL_W * zoom } : undefined}
+                <div className={`ppt-canvas ${view.grayscale ? 'grayscale' : ''}`} style={zoom !== null ? { width: ACTUAL_W * zoom } : undefined}
                   onContextMenu={(e) => { if (!ed.selEls.length) return; e.preventDefault(); setObjMenu(new DOMRect(e.clientX, e.clientY, 0, 0)); }}>
                   <CanvasEditor key={`${p.id}:${selected?.key}`} readOnly={p.protected} slide={slide} theme={theme} background={background} bgEffect={p.bgEffect}
-                    selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)} view={view} badges={badges} defaultShape={p.defaultShape} customGuides={view.guides ? p.guides : undefined}
+                    selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)} view={view} badges={badges} defaultShape={p.defaultShape} customGuides={view.guides ? p.guides : undefined} onGuidesChange={p.protected ? undefined : (g) => ed.updatePres({ guides: g.v.length || g.h.length ? g : undefined })}
                     pickPicture={() => pickPictureFile(dispatch)} motionPaths onAddMedia={(m) => dispatch({ type: 'media/add', media: m })}
                     onLockedDelete={cmd.locked && state.live.slide?.id === slide.id ? () => cmd.notify(LOCK_MSG) : undefined}
                     onChange={(patch) => dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch })} />

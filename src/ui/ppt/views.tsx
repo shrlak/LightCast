@@ -390,3 +390,22 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
     </div>
   );
 }
+
+// ── Notes Page view ───────────────────────────────────────────────────────────────────────────
+/** View › 슬라이드 노트 (DeckCraft view.notesPage): the slide on a page with its notes under it, to edit. */
+export function NotesPageView({ ed, grayscale, onNotes }: { ed: Ed; grayscale?: boolean; onNotes: (notes: string | undefined) => void }) {
+  const p = ed.p, s = ed.slide;
+  if (!p || !s || !ed.theme) return <div className="ppt-empty"><p>프레젠테이션을 고르세요.</p></div>;
+  const m = p.notesMaster;
+  const n = p.slides.indexOf(s) + 1;
+  return (
+    <div className="notes-page-view">
+      <div className={`notes-page ${grayscale ? 'grayscale' : ''}`}>
+        <div className="notes-page-head"><span>{m?.header}</span><span>{m?.date ? new Date().toLocaleDateString() : ''}</span></div>
+        <div className="notes-page-slide"><SlideCanvas slide={s} theme={ed.theme} background={resolveBackground(s, p)} /></div>
+        <textarea className="notes-page-text" disabled={!ed.canEdit} placeholder="텍스트를 입력하십시오" value={s.notes ?? ''} onChange={(e) => onNotes(e.target.value || undefined)} />
+        <div className="notes-page-foot"><span>{m?.footer}</span><span>{m?.pageNumber !== false ? n : ''}</span></div>
+      </div>
+    </div>
+  );
+}

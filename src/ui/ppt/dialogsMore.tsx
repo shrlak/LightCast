@@ -18,6 +18,7 @@ import { activeTextEditor } from '../RichTextEditor';
 import { Check, Dialog, Field, Num } from './dialogs';
 import { SMARTART_CATEGORIES, SMARTART_LAYOUT, SMARTART_STYLE, smartArtColorLabel } from './ko';
 import type { DialogKind, Ed } from './editor';
+import { GridGuidesDialog, ViewZoomDialog } from './viewDialogs';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
@@ -374,31 +375,6 @@ function OutlineDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
 }
 
 // ── View › Guides ─────────────────────────────────────────────────────────────────────────────
-function GuidesDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
-  const g = ed.p?.guides ?? { v: [], h: [] };
-  const set = (next: { v: number[]; h: number[] }) => ed.updatePres({ guides: next.v.length || next.h.length ? next : undefined });
-  const row = (axis: 'v' | 'h') => (
-    <fieldset className="dlg-set">
-      <legend>{axis === 'v' ? '세로 안내선 (왼쪽에서, pt)' : '가로 안내선 (위에서, pt)'}</legend>
-      {g[axis].map((x, i) => (
-        <div key={i} className="dlg-row">
-          <Num value={x / 2} min={0} max={(axis === 'v' ? CANVAS_W : CANVAS_H) / 2} onChange={(n) => set({ ...g, [axis]: g[axis].map((y, j) => (j === i ? Math.round(n * 2) : y)) })} />
-          <button type="button" onClick={() => set({ ...g, [axis]: g[axis].filter((_, j) => j !== i) })}>삭제</button>
-        </div>
-      ))}
-      <button type="button" disabled={!ed.p || !!ed.p.protected} onClick={() => { set({ ...g, [axis]: [...g[axis], (axis === 'v' ? CANVAS_W : CANVAS_H) / 2] }); if (!ed.view.guides) ed.setView({ ...ed.view, guides: true }); }}>＋ {axis === 'v' ? '세로' : '가로'} 안내선 추가</button>
-    </fieldset>
-  );
-  return (
-    <Dialog title="눈금 및 안내선" onClose={onClose}>
-      <Check label="화면에 그리기 안내선 표시" checked={!!ed.view.guides} onChange={(on) => ed.setView({ ...ed.view, guides: on })} />
-      <Check label="눈금 표시" checked={!!ed.view.grid} onChange={(on) => ed.setView({ ...ed.view, grid: on })} />
-      {row('v')}
-      {row('h')}
-    </Dialog>
-  );
-}
-
 // ── Review › Thesaurus ────────────────────────────────────────────────────────────────────────
 function ThesaurusDialog({ onClose }: { ed: Ed; onClose: () => void }) {
   const [word, setWord] = useState(() => window.getSelection()?.toString().trim().split(/\s+/)[0] ?? '');
@@ -512,7 +488,8 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'action': return <ActionDialog ed={ed} onClose={onClose} />;
     case 'reuse': return <ReuseDialog ed={ed} onClose={onClose} />;
     case 'outline': return <OutlineDialog ed={ed} onClose={onClose} />;
-    case 'guides': return <GuidesDialog ed={ed} onClose={onClose} />;
+    case 'guides': return <GridGuidesDialog ed={ed} onClose={onClose} />;
+    case 'viewZoom': return <ViewZoomDialog ed={ed} onClose={onClose} />;
     case 'thesaurus': return <ThesaurusDialog ed={ed} onClose={onClose} />;
     case 'zoom': return <ZoomDialog ed={ed} onClose={onClose} />;
     case 'audio': return <PlaybackDialog ed={ed} onClose={onClose} />;
