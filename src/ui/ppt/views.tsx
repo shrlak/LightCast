@@ -326,13 +326,15 @@ export function PlayPreview({ ed, what, onDone }: { ed: Ed; what: 'transition' |
 // ── File (backstage) ──────────────────────────────────────────────────────────────────────────
 type Page = 'home' | 'open' | 'info' | 'save' | 'print' | 'export';
 
-function Card({ icon, title, text, onClick }: { icon: ReactNode; title: string; text?: string; onClick: () => void }) {
-  return <button type="button" className="bs-card" onClick={onClick}><span className="bs-card-icon">{icon}</span><b>{title}</b>{text && <small>{text}</small>}</button>;
+function Card({ icon, title, text, onClick, disabled }: { icon: ReactNode; title: string; text?: string; onClick: () => void; disabled?: boolean }) {
+  return <button type="button" className="bs-card" disabled={disabled} onClick={onClick}><span className="bs-card-icon">{icon}</span><b>{title}</b>{text && <small>{text}</small>}</button>;
 }
 
 export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [page, setPage] = useState<Page>('home');
   const [printing, setPrinting] = useState<PrintMode | null>(null);
+  const [toPdf, setToPdf] = useState(false);
+  const startPrint = (mode: PrintMode, pdf = false) => { setToPdf(pdf); setPrinting(mode); };
   const { cmd, p, state } = ed;
   const lib = state.library;
   const run = (fn: () => void) => { fn(); onClose(); };
@@ -417,9 +419,9 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <>
             <h1>인쇄</h1>
             <div className="bs-cards">
-              <Card icon="🖨" title="전체 페이지 슬라이드" text="한 페이지에 슬라이드 한 장" onClick={() => setPrinting('slides')} />
-              <Card icon="▥" title={`유인물 (${p?.handoutMaster?.perPage ?? 3}슬라이드)`} text="유인물 마스터 설정대로" onClick={() => setPrinting('handout')} />
-              <Card icon="▦" title="슬라이드 노트" text="슬라이드와 발표자 노트" onClick={() => setPrinting('notes')} />
+              <Card icon="🖨" title="전체 페이지 슬라이드" text="한 페이지에 슬라이드 한 장" onClick={() => startPrint('slides')} />
+              <Card icon="▥" title={`유인물 (${p?.handoutMaster?.perPage ?? 3}슬라이드)`} text="유인물 마스터 설정대로" onClick={() => startPrint('handout')} />
+              <Card icon="▦" title="슬라이드 노트" text="슬라이드와 발표자 노트" onClick={() => startPrint('notes')} />
               <Card icon="☰" title="개요 인쇄" text="슬라이드마다 텍스트와 노트" onClick={printOutline} />
               <Card icon="⚙" title="유인물 마스터…" onClick={() => run(() => ed.setDialog('handoutMaster'))} />
               <Card icon="🎼" title="코드 · 키 악보 인쇄" text="밴드용" onClick={() => run(() => cmd.open('chords'))} />
@@ -431,6 +433,9 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             <h1>내보내기</h1>
             <div className="bs-cards">
               <Card icon="📊" title="PowerPoint 프레젠테이션" text=".pptx" onClick={() => run(cmd.exportPlaylistPptx)} />
+              <Card icon="📄" title="PDF · 슬라이드" text="슬라이드 한 장이 한 페이지, 글자는 그대로 선택 가능" disabled={!p} onClick={() => startPrint('slides', true)} />
+              <Card icon="📄" title={`PDF · 유인물 (${p?.handoutMaster?.perPage ?? 3}슬라이드)`} text="유인물 마스터 설정대로" disabled={!p} onClick={() => startPrint('handout', true)} />
+              <Card icon="📄" title="PDF · 슬라이드 노트" text="슬라이드와 발표자 노트" disabled={!p} onClick={() => startPrint('notes', true)} />
               <Card icon="📈" title={`찬양 사용 CSV (${lib.usage.length})`} onClick={() => run(cmd.exportUsage)} />
               <Card icon="©" title="저작권(CCLI) 보고" onClick={() => run(() => cmd.open('ccli'))} />
               <Card icon="🧹" title="발표 기록 지우기" onClick={() => run(cmd.clearUsage)} />
@@ -438,7 +443,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           </>
         )}
       </main>
-      {printing && p && <PrintRun ed={ed} mode={printing} onDone={() => setPrinting(null)} />}
+      {printing && p && <PrintRun ed={ed} mode={printing} pdf={toPdf} onDone={() => setPrinting(null)} />}
     </div>
   );
 }
