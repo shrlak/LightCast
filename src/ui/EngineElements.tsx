@@ -190,6 +190,7 @@ function ownBorders(t: TableData, r: number, c: number): CSSProperties {
   return css;
 }
 
+
 export function TableElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
   const t = el.table;

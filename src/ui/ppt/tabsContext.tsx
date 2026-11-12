@@ -485,10 +485,11 @@ export function TableDesignTab({ ed }: { ed: Ed }) {
             {([['solid', '실선'], ['dash', '파선'], ['dot', '점선'], ['dashDot', '파선-점선'], ['longDash', '긴 파선']] as const).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select></label>
           <label className="rb-field">펜 두께 <select value={pen.width} onChange={(e) => setPen({ ...pen, width: Number(e.target.value) })}>{[1, 1.5, 2, 3, 4.5, 6, 9, 12].map((w) => <option key={w} value={w}>{w / 2} pt</option>)}</select></label>
+          <label className="rb-field">펜 스타일 <select value={pen.dash ?? ''} onChange={(e) => setPen({ ...pen, dash: (e.target.value || undefined) as CellBorder['dash'] })}><option value="">실선</option><option value="dashed">파선</option><option value="dotted">점선</option><option value="double">이중선</option></select></label>
           <label className="rb-field">펜 색 <input type="color" value={pen.color} onChange={(e) => setPen({ ...pen, color: e.target.value })} /></label>
         </Col>
-        <Big icon="✎" label="표 그리기" title="셀 안을 끌어 선을 그리면 셀이 나뉩니다" active={ed.tool?.kind === 'tableDraw' && !ed.tool.erase} onClick={() => ed.setTool(ed.tool?.kind === 'tableDraw' && !ed.tool.erase ? null : { kind: 'tableDraw', id: el.id })} />
-        <Big icon="⌫" label="지우개" title="셀 사이의 선을 클릭하면 두 셀이 합쳐집니다" active={ed.tool?.kind === 'tableDraw' && !!ed.tool.erase} onClick={() => ed.setTool(ed.tool?.kind === 'tableDraw' && ed.tool.erase ? null : { kind: 'tableDraw', id: el.id, erase: true })} />
+        <Big icon="✎" label="표 그리기" title="표 안을 끌어 선을 그리면 지나는 셀이 나뉩니다 (표 밖을 끌면 새 표). Esc로 끝" active={ed.tool?.kind === 'tableDraw' && !ed.tool.erase} onClick={() => ed.setTool(ed.tool?.kind === 'tableDraw' && !ed.tool.erase ? null : { kind: 'tableDraw' })} />
+        <Big icon="⌫" label="지우개" title="셀 사이의 선을 클릭하면 두 셀이 합쳐집니다" active={ed.tool?.kind === 'tableDraw' && !!ed.tool.erase} onClick={() => ed.setTool(ed.tool?.kind === 'tableDraw' && ed.tool.erase ? null : { kind: 'tableDraw', erase: true })} />
       </Group>
     </>
   );

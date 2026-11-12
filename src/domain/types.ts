@@ -340,7 +340,7 @@ export interface SlideElement {
   /** The group this object was in before Ungroup (Arrange › Regroup puts it back). */
   prevGroupId?: string;
   /** A layout placeholder: shows a prompt in the editor while empty (Slide Master › Insert Placeholder). */
-  placeholder?: 'title' | 'body' | 'text' | 'picture';
+  placeholder?: 'title' | 'body' | 'text' | 'picture' | 'content' | 'chart' | 'table' | 'media' | 'date' | 'footer' | 'slideNumber';
   /** Name shown in the Selection pane. */
   name?: string;
   /** Hidden in the Selection pane: kept on the slide, not drawn. */
@@ -399,9 +399,8 @@ export interface SlideElement {
   action?: ElementAction;
   /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */
   targetSlideId?: string;
-  /** Zoom › Return to Zoom: after `zoomEndSlideId` (default the target) the show comes back to the zoom's slide. */
-  zoomReturn?: boolean;
-  zoomEndSlideId?: string;
+  /** Return to Zoom: the slide after which the slide show comes back to this zoom's slide (the target slide, or its section's last). */
+  zoomReturn?: string;
   zoomOf?: { slide: Slide; theme: Theme; background: Background | null };
   /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it); `rtl`: Right to Left. */
   smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number }; rtl?: boolean };
@@ -627,7 +626,7 @@ export interface Presentation {
   /** Design › Fonts: the heading / body fonts (Create New Theme Fonts); the faces are PowerPoint font names. */
   fontScheme?: { name: string; major: string; minor: string };
   /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
-  master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[] };
+  master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[]; /** Master › Preserve: kept even when no slide uses it. */ preserve?: boolean };
   /** Slide Show › Set Up Slide Show. */
   showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean };
   /** Slide Show › Custom Slide Show: named lists of slides. */
