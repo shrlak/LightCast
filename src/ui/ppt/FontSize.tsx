@@ -33,6 +33,8 @@ export function FontSize({ value, onChange, blank, min = 1, max = 4000 }: { valu
       <input className="fs-input" inputMode="decimal" value={text} aria-label="글꼴 크기"
         onChange={(e) => setText(e.target.value)} onBlur={() => { if (text !== String(shown)) set(Number(text)); }} onFocus={(e) => e.target.select()}
         onKeyDown={(e) => {
+          // Enter hands the focus back to the text being typed in: without preventDefault its newline would replace the selected text there.
+          if (e.key === 'Enter') e.preventDefault();
           if (e.key === 'Enter' && text.trim()) set(Number(text));
           if (e.key === 'Escape') setText(String(shown));
         }} />

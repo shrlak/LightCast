@@ -1,3 +1,5 @@
+import { activeTextEditor } from '../RichTextEditor';
+import { copyFormat, finishPainter, heldFormat, holdFormat } from '../../domain/formatPainter';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } from 'react';
 import type { Action, AppState } from '../../domain/reducer';
 import type { Slide, SlideElement } from '../../domain/types';
@@ -22,9 +24,10 @@ import { SUNDAY_STEPS } from '../../domain/sunday/wizardSteps';
 import { AddToPlaylistMenu } from '../AddToPlaylist';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { animationBadges } from '../../domain/animations';
-import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, ungroupSelection } from '../../domain/editOps';
+import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, pasteStyle, ungroupSelection } from '../../domain/editOps';
 import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AnimationPane, CommentsPane, SelectionPane } from './panes';
+import { DesignerPane } from './designTab';
 import { Dialogs } from './dialogs';
 import { RevisionsPane, SpellingPane } from './reviewPanes';
 import { uid as newId } from '../../domain/lyrics';
@@ -84,6 +87,10 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [view, setViewState] = useState<ViewOptions>(() => { try { return JSON.parse(localStorage.getItem('fc.pptView') ?? '{}') as ViewOptions; } catch { return {}; } });
   const setView = (v: ViewOptions) => { setViewState(v); try { localStorage.setItem('fc.pptView', JSON.stringify(v)); } catch { /* storage unavailable */ } };
   const [pane, setPane] = useState<TaskPane>(null);
+  useEffect(() => {
+    document.body.classList.toggle('gray-view', !!view.gray);
+    return () => document.body.classList.remove('gray-view');
+  }, [view.gray]);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);
@@ -92,7 +99,8 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [find, setFind] = useState<null | 'find' | 'replace'>(null);
   const [preview, setPreview] = useState<null | 'transition' | 'animation'>(null);
   const [reading, setReading] = useState<false | { ids?: string[]; rehearse?: boolean }>(false);
-  const [linking, setLinking] = useState(false);
+  /** Insert › Link: on the selected objects, or on the characters selected in the text being typed. */
+  const [linking, setLinking] = useState<false | 'object' | 'text'>(false);
   const [commentDraft, setCommentDraft] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string; seq: number } | null>(null);
   const [objMenu, setObjMenu] = useState<DOMRect | null>(null);
@@ -227,6 +235,14 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
         const k = e.key.toLowerCase();
         if (k === 'm') { e.preventDefault(); addSlideAfter(); return; }
         if (k === 'h') { e.preventDefault(); setFind('replace'); return; }
+        // 서식 복사 / 붙여넣기 on the selected objects, when the canvas itself has no focus (after Esc from typing).
+        if (e.shiftKey && (k === 'c' || k === 'v') && ed.selEls.length && ed.canEdit) {
+          if (k === 'c') holdFormat(copyFormat(ed.selEls[0]));
+          else if (heldFormat()) { const held = heldFormat()!; ed.setElements((els) => pasteStyle(els, selIds, held)); finishPainter(); }
+          else return;
+          e.preventDefault();
+          return;
+        }
       }
       if (e.key === 'Escape' && tool) { setTool(null); return; }
       if (typing || !paneSlides.length || backstage || reading) return;
@@ -328,7 +344,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     onBackstage: () => setBackstage(true),
     onFind: () => setFind('find'),
     onReplace: () => setFind('replace'),
-    onLink: () => setLinking(true),
+    onLink: () => setLinking(activeTextEditor()?.hasSelection() ? 'text' : 'object'),
     onComment: () => { setPane('comments'); setCommentDraft(true); },
     onPreview: (w: 'transition' | 'animation') => setPreview(w),
     onOutline: () => cmd.setView(cmd.view === 'outline' ? 'normal' : 'outline'),
@@ -383,8 +399,13 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
         dispatch({ type: 'presentation/update', id: target.id, patch: target.arrangementId ? { slides, arrangementId: null } : { slides } });
         setMulti([]);
       }} />}
-      {linking && <NameDialog title="링크 삽입 — 주소" initialValue={ed.selEls[0]?.href ?? 'https://'} onClose={() => setLinking(false)} onSave={(href) => {
+      {linking && <NameDialog title={linking === 'text' ? '링크 삽입 — 선택한 글자' : '링크 삽입 — 주소'} initialValue={(linking === 'text' ? activeTextEditor()?.currentLink() : ed.selEls[0]?.href) ?? 'https://'} onClose={() => setLinking(false)} onSave={(href) => {
         const v = href.trim();
+        if (linking === 'text') {
+          activeTextEditor()?.link(v && v !== 'https://' ? v : undefined);
+          setLinking(false);
+          return;
+        }
         ed.setElements((els) => els.map((e) => (selIds.includes(e.id) ? { ...e, href: v && v !== 'https://' ? v : undefined } : e)));
         setLinking(false);
       }} />}
@@ -473,6 +494,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
             )}
             {pane === 'animation' && <AnimationPane ed={ed} onPlay={() => setPreview('animation')} />}
             {pane === 'selection' && <SelectionPane ed={ed} />}
+            {pane === 'designer' && <DesignerPane ed={ed} />}
             {pane === 'spelling' && <SpellingPane ed={ed} />}
             {pane === 'revisions' && <RevisionsPane ed={ed} />}
             {pane === 'comments' && <CommentsPane ed={ed} draftOpen={commentDraft} onDraftDone={() => setCommentDraft(false)} />}
@@ -509,7 +531,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
           <MenuItem label="맨 앞으로 가져오기" onClick={() => { ed.setElements((els) => orderSelection(els, selIds, 'front')); setObjMenu(null); }} />
           <MenuItem label="맨 뒤로 보내기" onClick={() => { ed.setElements((els) => orderSelection(els, selIds, 'back')); setObjMenu(null); }} />
           <MenuSep />
-          <MenuItem label="링크" onClick={() => { setLinking(true); setObjMenu(null); }} />
+          <MenuItem label="링크" onClick={() => { setLinking(activeTextEditor()?.hasSelection() ? 'text' : 'object'); setObjMenu(null); }} />
           <MenuItem label="애니메이션 창" onClick={() => { setPane('animation'); setObjMenu(null); }} />
           <MenuItem label="개체 서식…" onClick={() => { setPane('format'); setObjMenu(null); }} />
           <MenuSep />

@@ -1,13 +1,13 @@
 import { isFrontSlide } from '../domain/frontLayout';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
+import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextDirection, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
 import { morphFrame, smooth } from '../domain/morph';
 import { DEFAULT_TAB, decimalAt, layoutTabLine, splitRunsAtTabs } from '../domain/tabStops';
-import { PLACEHOLDER_PROMPT } from '../domain/master';
+import { FRAME_PLACEHOLDERS, PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
-import { INDENT_PX, listMarkers } from '../domain/textFormat';
+import { INDENT_PX, alignCss, lineHeightCss, listMarkers, writingCss } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
 import { qrDataUrl } from '../domain/io/qr';
@@ -18,6 +18,7 @@ import { MotionLayer } from './MotionLayer';
 import { AnimatedElements, FxTransition, ParagraphBuild } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
 import { shapeGeometry } from '../engine';
+import { pictureOpacity, tileLayout } from '../domain/pictureBackground';
 import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform, useEngineEpoch } from './EngineElements';
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
@@ -111,6 +112,46 @@ function PatternBg({ bg }: { bg: Extract<Background, { kind: 'pattern' }> }) {
   );
 }
 
+/** Format Background › Tile picture as texture: the picture repeated at its scale and offset, optionally mirrored. */
+function TiledPicture({ src, pic }: { src: string; pic: NonNullable<Extract<Background, { kind: 'media' }>['pic']> }) {
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+  const lay = nat ? tileLayout(pic, nat) : null;
+  const [cell, setCell] = useState<string | null>(null);
+  const mx = lay?.mirrorX, my = lay?.mirrorY;
+  useEffect(() => {
+    let alive = true;
+    const img = new Image();
+    img.onload = () => { if (alive) setNat({ w: img.naturalWidth, h: img.naturalHeight }); };
+    img.src = src;
+    return () => { alive = false; };
+  }, [src]);
+  // A mirrored tile is the picture and its reflection drawn into one cell, which then repeats.
+  useEffect(() => {
+    if (!nat || (!mx && !my)) { setCell(null); return; }
+    const sx = (pic.scaleX ?? 100) / 100, sy = (pic.scaleY ?? 100) / 100;
+    const w = Math.max(1, Math.round(nat.w * sx)), h = Math.max(1, Math.round(nat.h * sy));
+    if ((mx ? 2 * w : w) * (my ? 2 * h : h) > 64e6) { setCell(null); return; }
+    let alive = true;
+    const img = new Image();
+    img.onload = () => {
+      if (!alive) return;
+      const c = document.createElement('canvas');
+      c.width = mx ? 2 * w : w; c.height = my ? 2 * h : h;
+      const g = c.getContext('2d');
+      if (!g) return;
+      for (const fx of mx ? [0, 1] : [0]) for (const fy of my ? [0, 1] : [0]) {
+        g.save(); g.translate(fx ? 2 * w : 0, fy ? 2 * h : 0); g.scale(fx ? -1 : 1, fy ? -1 : 1);
+        g.drawImage(img, 0, 0, w, h); g.restore();
+      }
+      setCell(c.toDataURL('image/jpeg', 0.92));
+    };
+    img.src = src;
+    return () => { alive = false; };
+  }, [nat, mx, my, src, pic.scaleX, pic.scaleY]);
+  if (!lay) return null;
+  return <div className="layer" style={{ backgroundImage: `url("${cell ?? src}")`, backgroundSize: `${lay.cellW}px ${lay.cellH}px`, backgroundPosition: lay.position, backgroundRepeat: 'repeat', opacity: pictureOpacity(pic) }} />;
+}
+
 function BackgroundLayer({ background, animate, video, onTime }: { background: Background | null; animate: boolean; video?: CanvasProps['video']; onTime?: CanvasProps['onVideoTime'] }) {
   const url = useMediaUrl(background?.kind === 'media' ? background.mediaId : null);
   const imageSrc = background?.kind === 'image' ? assetUrl(background.url) : background?.kind === 'media' && background.mediaType === 'image' ? url : null;
@@ -131,7 +172,7 @@ function BackgroundLayer({ background, animate, video, onTime }: { background: B
   else if (background.kind === 'camera') node = <CameraBg deviceId={background.deviceId} label={background.label} animate={animate} />;
   else if (background.kind === 'image' || background.mediaType === 'image') {
     pending = !ready;
-    if (ready) node = <img className="layer media" style={{ objectFit: fit, background: background.kind === 'image' ? '#fff' : undefined, opacity: background.kind === 'media' && background.transparency ? 1 - background.transparency : undefined }} src={ready} alt="" decoding="sync" />;
+    if (ready) node = background.pic?.tile ? <TiledPicture src={ready} pic={background.pic} /> : <img className="layer media" style={{ objectFit: fit, background: background.kind === 'image' ? '#fff' : undefined, opacity: background.kind === 'media' && background.transparency ? 1 - background.transparency : background.pic?.transparency ? pictureOpacity(background.pic) : undefined }} src={ready} alt="" decoding="sync" />;
   } else if (url) {
     node = animate
       ? <VideoBg url={url} fit={fit!} loop={background.loop !== false} video={video} onTime={onTime} />
@@ -183,7 +224,7 @@ export function textStyle(theme: Theme): CSSProperties {
     fontSize: theme.fontSize,
     fontWeight: theme.fontWeight,
     color: theme.color,
-    textAlign: theme.align,
+    ...alignCss(theme.align),
     lineHeight: theme.lineHeight,
     textTransform: theme.uppercase ? 'uppercase' : 'none',
     fontStyle: theme.italic ? 'italic' : undefined,
@@ -199,9 +240,9 @@ export function textStyle(theme: Theme): CSSProperties {
 const decoration = (f: { underline?: boolean; strike?: boolean }) => [f.underline && 'underline', f.strike && 'line-through'].filter(Boolean).join(' ') || undefined;
 
 /** 단 (columns) and 텍스트 방향 (vertical text). */
-const columnsAndDirection = (f: { columns?: number; vertical?: boolean }): CSSProperties => ({
+const columnsAndDirection = (f: { columns?: number; vertical?: boolean; direction?: TextDirection }): CSSProperties => ({
   ...(f.columns && f.columns > 1 ? { columnCount: f.columns, columnGap: '1.2em', display: 'block' } : {}),
-  ...(f.vertical ? { writingMode: 'vertical-rl' } : {}),
+  ...writingCss(f),
 });
 
 /** A line with its bullet / number and its highlight. */
@@ -221,7 +262,7 @@ function Lines({ text, list, highlight, runs }: { text: string; list?: ListStyle
         const content = bold ? bold[1] : line;
         // Runs only stand for a line they still spell once chords are taken out.
         const own = runs?.[i] && runs[i]!.map((r) => r.text).join('') === line ? runs[i] : null;
-        const body = own ? own.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
+        const body = own ? own.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
         return <div key={i}><ListLine marker={markers[i]} highlight={line.trim() ? highlight : undefined}>{bold ? <strong style={{ fontWeight: 800 }}>{body}</strong> : body}</ListLine></div>;
       })}
     </>
@@ -229,7 +270,7 @@ function Lines({ text, list, highlight, runs }: { text: string; list?: ListStyle
 }
 
 const V_ALIGN = { top: 'flex-start', middle: 'center', bottom: 'flex-end' } as const;
-const H_ALIGN = { left: 'flex-start', center: 'center', right: 'flex-end', justify: 'stretch' } as const;
+const H_ALIGN = { left: 'flex-start', center: 'center', right: 'flex-end', justify: 'stretch', distributed: 'stretch', justLow: 'stretch' } as const;
 
 /** Drawn for a slide show (output, reading view) rather than in the editor: media play by their settings. */
 export const ShowContext = createContext(false);
@@ -335,6 +376,16 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
   const full = live && playing && pb.fullScreen ? { left: 0, top: 0, width: CANVAS_W, height: CANVAS_H, transform: 'none', zIndex: 5, background: '#000' } : {};
   const hidden = live && !playing && pb.hideDuringShow ? { visibility: 'hidden' as const } : {};
   const faded = gain < 1 ? { opacity: ((style.opacity as number | undefined) ?? 1) * gain } : {};
+  // Insert › Action › Play Media: a click (or pointing) at the object in the output window starts and pauses it.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const v = ref.current;
+      if (!v || (e as CustomEvent<{ id?: string }>).detail?.id !== el.id) return;
+      if (v.paused) v.play().catch(() => undefined); else v.pause();
+    };
+    window.addEventListener('lightcast:media', on);
+    return () => window.removeEventListener('lightcast:media', on);
+  }, [el.id]);
   // Output windows play without sound unless the video's sound is turned on (the room hears one copy).
   return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover', ...faded, ...full, ...hidden }} muted={live && pb.muted !== false} playsInline preload="metadata" />;
 }
@@ -350,11 +401,11 @@ export function ElementView({ el }: { el: SlideElement }) {
   const show = useContext(ShowContext);
   if (el.hidden) return null;
   // An empty layout placeholder: its prompt while editing, nothing in the slide show.
-  if (el.placeholder && (el.placeholder === 'picture' || !el.text)) {
+  if (el.placeholder && (el.placeholder in FRAME_PLACEHOLDERS || !el.text)) {
     if (show) return null;
     return (
-      <div className={`placeholder-prompt ${el.placeholder}`} style={{ ...box, fontSize: el.placeholder === 'title' ? Math.min(el.fontSize ?? 64, 64) : Math.min(el.fontSize ?? 48, 44), textAlign: el.align ?? 'left', justifyContent: el.placeholder === 'picture' || el.align === 'center' ? 'center' : 'flex-start', alignItems: el.vAlign === 'top' ? 'flex-start' : 'center' }}>
-        <span>{el.placeholder === 'picture' ? '🖼 ' : ''}{PLACEHOLDER_PROMPT[el.placeholder]}</span>
+      <div className={`placeholder-prompt ${el.placeholder}`} style={{ ...box, fontSize: el.placeholder === 'title' ? Math.min(el.fontSize ?? 64, 64) : Math.min(el.fontSize ?? 48, 44), textAlign: el.align === 'distributed' || el.align === 'justLow' ? 'justify' : el.align ?? 'left', justifyContent: el.placeholder in FRAME_PLACEHOLDERS || el.align === 'center' ? 'center' : 'flex-start', alignItems: el.vAlign === 'top' ? 'flex-start' : 'center' }}>
+        <span>{FRAME_PLACEHOLDERS[el.placeholder] ? `${FRAME_PLACEHOLDERS[el.placeholder]} ` : ''}{PLACEHOLDER_PROMPT[el.placeholder]}</span>
       </div>
     );
   }
@@ -393,7 +444,8 @@ export function ElementView({ el }: { el: SlideElement }) {
 }
 
 export { runStyle } from './runStyle';
-import { runStyle } from './runStyle';
+import { runStyle, runText, linkColorFor } from './runStyle';
+import { RunSpan } from './RunSpan';
 
 /** Home › Paragraph › Tabs: a line whose tabs go to the box's tab stops (domain/tabStops). */
 function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; size: number }) {
@@ -486,15 +538,15 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
   const lineBody = (text: string, i: number) => (
     <ListLine marker={markers[i]} highlight={text.trim() ? el.highlight : undefined}>
       {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
-        : runs[i] ? runs[i]!.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(text) ? <DynamicText text={text} /> : text}
+        : runs[i] ? runs[i]!.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(text) ? <DynamicText text={text} /> : runText(text)}
     </ListLine>
   );
   return (
     <div data-text-element={el.id} style={{
       ...box, left: el.x, top: el.y, width: el.w, height: el.h, ...elementTextStyle(el), display: 'flex', flexDirection: 'column', whiteSpace: 'pre-wrap',
-      justifyContent: V_ALIGN[el.vAlign ?? 'middle'], textAlign: el.align ?? 'center',
-      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff', tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
-      fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500, fontStyle: el.italic ? 'italic' : undefined, lineHeight: el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25),
+      justifyContent: V_ALIGN[el.vAlign ?? 'middle'], ...alignCss(el.align ?? 'center'),
+      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff', ['--link-color' as string]: linkColorFor(el.color), tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
+      fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500, fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, base, el.paragraphs ? 1.2 : 1.25),
       textDecoration: decoration(el), letterSpacing: el.letterSpacing ? el.letterSpacing : undefined,
       paddingLeft: el.indent ? el.indent * INDENT_PX : undefined, ...columnsAndDirection(el),
       // A box that does not fit itself to its text (a font size set by hand, Front) lets the text show
@@ -508,13 +560,13 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
         ? el.paragraphs.map((p, i) => (
             <div key={i} data-para={i} style={{
               fontSize: (p.fontSize ?? base), fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
-              color: p.color, textAlign: p.align, minHeight: '1.2em', flexShrink: 0,
+              color: p.color, ...alignCss(p.align), minHeight: '1.2em', flexShrink: 0,
             }}>
               {lineBody(p.text, i)}
             </div>
           ))
         : styled ? lines.map((l, i) => <div key={i} data-para={i}>{l ? lineBody(l, i) : '\u00a0'}</div>)
-          : el.text && TOKEN.test(el.text) ? <DynamicText text={el.text} /> : el.text}
+          : el.text && TOKEN.test(el.text) ? <DynamicText text={el.text} /> : el.text && runText(el.text)}
     </div>
   );
 }

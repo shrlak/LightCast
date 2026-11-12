@@ -401,3 +401,152 @@ fn a_custom_scheme_from_a_theme_file_is_used() {
     assert_eq!(s.name, "Church");
     assert_eq!(crate::color::hex(s.colors[4]).to_lowercase(), "#c00000");
 }
+
+// ── Chart types beyond column/bar/line/pie ───────────────────────────────────────────────────
+
+fn svg_of(v: Value) -> String {
+    let mut req = json!({"op": "chart.svg", "w": 800, "h": 500});
+    for (k, x) in v.as_object().unwrap() {
+        req[k] = x.clone();
+    }
+    ok(req)["svg"].as_str().unwrap().to_string()
+}
+
+fn count(s: &str, pat: &str) -> usize {
+    s.matches(pat).count()
+}
+
+const ALL_KINDS: [&str; 27] = [
+    "column", "columnStacked", "columnPercent", "bar", "barStacked", "barPercent", "line", "lineMarkers", "lineStacked", "area", "areaStacked", "pie", "doughnut",
+    "scatter", "bubble", "radar", "radarFilled", "stock", "surface", "histogram", "pareto", "boxWhisker", "waterfall", "funnel", "treemap", "sunburst", "combo",
+];
+
+#[test]
+fn every_chart_kind_draws_a_document() {
+    for kind in ALL_KINDS {
+        let svg = svg_of(json!({"kind": kind, "title": "차트", "categories": ["가", "나", "다", "라"],
+            "series": [{"name": "A", "values": [4, 2.5, 3, 5]}, {"name": "B", "values": [2, 4, 1.5, 3]}, {"name": "C", "values": [3, 3, 4, 2]}, {"name": "D", "values": [5, 1, 2, 4]}],
+            "dataLabels": true, "upDownBars": true}));
+        assert!(svg.starts_with("<svg") && svg.ends_with("</svg>"), "{kind}");
+        assert!(svg.contains("차트"), "{kind} keeps its title");
+        assert!(!svg.contains("NaN") && !svg.contains("inf"), "{kind} has finite coordinates");
+    }
+    // Empty and degenerate data never panic.
+    for kind in ALL_KINDS {
+        let _ = svg_of(json!({"kind": kind, "categories": [], "series": []}));
+        let _ = svg_of(json!({"kind": kind, "categories": ["a"], "series": [{"name": "x", "values": [0]}]}));
+    }
+}
+
+#[test]
+fn waterfall_floats_and_totals_stand() {
+    let svg = svg_of(json!({"kind": "waterfall", "categories": ["시작", "증가", "감소", "합계"], "series": [{"name": "금액", "values": [100, 50, -30, 120]}],
+        "subtotals": [0, 3], "dataLabels": true}));
+    // Three connectors (between four bars) and the zero line.
+    assert_eq!(count(&svg, "stroke-opacity=\"0.5\""), 3);
+    for t in ["증가", "감소", "합계"] {
+        assert!(svg.contains(t));
+    }
+    assert!(svg.contains(">-30<"), "the decrease keeps its sign as a label");
+}
+
+#[test]
+fn histogram_bins_by_count_and_size() {
+    let obs = [1, 2, 2, 3, 4, 5, 9];
+    let by_count = svg_of(json!({"kind": "histogram", "categories": [], "series": [{"name": "값", "values": obs}], "binCount": 4, "dataLabels": true, "legend": false}));
+    assert!(by_count.contains("[1, 3]") && by_count.contains("(3, 5]"), "bin labels as Excel writes them");
+    // 4 bars (counts 4, 2, 0, 1), touching, with a thin white outline.
+    assert_eq!(count(&by_count, "stroke=\"#ffffff\" stroke-opacity=\"0.7\""), 4, "the empty bin is a zero-height bar");
+    let by_size = svg_of(json!({"kind": "histogram", "categories": [], "series": [{"name": "값", "values": obs}], "binSize": 5, "legend": false}));
+    assert_eq!(count(&by_size, "stroke=\"#ffffff\" stroke-opacity=\"0.7\""), 2);
+}
+
+#[test]
+fn pareto_sorts_bins_and_adds_a_cumulative_line_on_a_percent_axis() {
+    let svg = svg_of(json!({"kind": "pareto", "categories": [], "series": [{"name": "값", "values": [1, 2, 2, 3, 4, 5, 9, 9, 9]}], "binCount": 3, "dataLabels": true}));
+    assert!(svg.contains("100%") && svg.contains("누적 %"));
+    assert!(svg.contains("<circle"), "the cumulative line has markers");
+}
+
+#[test]
+fn box_whisker_draws_a_box_per_group_and_series() {
+    let svg = svg_of(json!({"kind": "boxWhisker", "categories": ["A", "A", "A", "A", "A", "A", "B", "B", "B", "B", "B", "B"],
+        "series": [{"name": "s", "values": [1, 2, 3, 4, 5, 6, 10, 11, 12, 13, 14, 90]}], "legend": false}));
+    assert_eq!(count(&svg, "fill-opacity=\"0.85\""), 2, "one box per group");
+    assert!(count(&svg, "<circle") >= 1, "the 90 is an outlier");
+    let inc = svg_of(json!({"kind": "boxWhisker", "inclusiveQuartiles": true, "categories": ["A", "A", "A", "A", "A"], "series": [{"name": "s", "values": [1, 2, 3, 4, 100]}]}));
+    let exc = svg_of(json!({"kind": "boxWhisker", "inclusiveQuartiles": false, "categories": ["A", "A", "A", "A", "A"], "series": [{"name": "s", "values": [1, 2, 3, 4, 100]}]}));
+    assert_ne!(inc, exc, "the quartile method changes the boxes");
+}
+
+#[test]
+fn hierarchies_draw_groups_and_leaves() {
+    let req = |kind: &str| json!({"kind": kind, "categories": ["1월", "2월", "3월", "4월"], "categoryLevels": [["1분기", "", "", "2분기"]],
+        "series": [{"name": "값", "values": [4, 3, 2, 5]}], "dataLabels": true, "legend": false});
+    let tm = svg_of(req("treemap"));
+    // Two groups and four leaves.
+    assert_eq!(count(&tm, "<rect"), 6);
+    assert!(tm.contains("1분기") && tm.contains("2분기"));
+    let sb = svg_of(req("sunburst"));
+    assert_eq!(count(&sb, "<path"), 6, "two groups and four leaves");
+    // A flat treemap is one tile per category.
+    let flat = svg_of(json!({"kind": "treemap", "categories": ["a", "b", "c"], "series": [{"name": "v", "values": [5, 3, 2]}], "legend": false}));
+    assert_eq!(count(&flat, "<rect"), 3);
+}
+
+#[test]
+fn squarify_tiles_the_area_in_proportion() {
+    use crate::chart_ex::{Rect, squarify};
+    let area = Rect { x0: 0.0, y0: 0.0, x1: 600.0, y1: 400.0 };
+    let tiles = squarify(&[6.0, 6.0, 4.0, 3.0, 2.0, 2.0, 1.0], area);
+    let total: f64 = tiles.iter().map(Rect::area).sum();
+    assert!((total - 240_000.0).abs() < 1.0, "the tiles cover the area");
+    assert!((tiles[0].area() / 240_000.0 - 6.0 / 24.0).abs() < 1e-6, "a tile's share is its value's share");
+    assert_eq!(squarify(&[0.0, -1.0], area), vec![Rect::ZERO; 2]);
+}
+
+#[test]
+fn funnel_radar_stock_surface_bubble_combo() {
+    let funnel = svg_of(json!({"kind": "funnel", "categories": ["방문", "가입", "구매"], "series": [{"name": "v", "values": [100, 60, 20]}]}));
+    assert_eq!(count(&funnel, "<rect"), 3);
+    let radar = svg_of(json!({"kind": "radar", "categories": ["a", "b", "c", "d", "e"], "series": [{"name": "s", "values": [1, 2, 3, 4, 5]}], "legend": false}));
+    assert_eq!(count(&radar, "<circle"), 5);
+    let filled = svg_of(json!({"kind": "radarFilled", "categories": ["a", "b", "c"], "series": [{"name": "s", "values": [1, 2, 3]}]}));
+    assert!(filled.contains("fill-opacity=\"0.55\""));
+    assert!(!svg_of(json!({"kind": "radar", "categories": ["a", "b"], "series": [{"name": "s", "values": [1, 2]}], "legend": false})).contains("<path"), "two spokes draw no polygon");
+    let hlc = json!({"kind": "stock", "categories": ["월", "화"], "series": [{"name": "고가", "values": [58, 60]}, {"name": "저가", "values": [11, 12]}, {"name": "종가", "values": [43, 40]}]});
+    let mut hlc = hlc;
+    hlc["gridlines"] = json!(false);
+    assert_eq!(count(&svg_of(hlc), "<line"), 5, "a high-low line and a close dash per day, and the zero line");
+    let ohlc = json!({"kind": "stock", "upDownBars": true, "categories": ["월", "화"], "series": [{"name": "시가", "values": [20, 40]}, {"name": "고가", "values": [58, 60]}, {"name": "저가", "values": [11, 12]}, {"name": "종가", "values": [43, 30]}]});
+    let svg = svg_of(ohlc);
+    assert!(svg.contains("fill=\"#ffffff\" stroke") && svg.contains("fill=\"#404040\""), "rose is white, fell is dark");
+    let surf = svg_of(json!({"kind": "surface", "categories": ["1", "2", "3"], "series": [{"name": "a", "values": [1, 5, 9]}, {"name": "b", "values": [2, 6, 10]}]}));
+    assert!(count(&surf, "<rect") >= 6);
+    let bubble = svg_of(json!({"kind": "bubble", "categories": [], "series": [{"name": "s", "values": [3, 5, 2], "xValues": [1, 2, 3], "sizes": [10, 40, 20]}]}));
+    assert_eq!(count(&bubble, "fill-opacity=\"0.6\""), 3);
+    let combo = svg_of(json!({"kind": "combo", "categories": ["a", "b", "c"],
+        "series": [{"name": "매출", "values": [10, 20, 30]}, {"name": "비율", "values": [1, 2, 3], "kind": "lineMarkers", "secondaryAxis": true}]}));
+    assert!(count(&combo, "<circle") == 3, "line with markers over columns");
+}
+
+#[test]
+fn percent_stacks_run_to_one_hundred() {
+    let svg = svg_of(json!({"kind": "columnPercent", "categories": ["a", "b"], "series": [{"name": "x", "values": [1, 3]}, {"name": "y", "values": [3, 1]}]}));
+    assert!(svg.contains(">100%<") && svg.contains(">0%<"));
+    let stacked_area = svg_of(json!({"kind": "areaStacked", "categories": ["a", "b"], "series": [{"name": "x", "values": [1, 3]}, {"name": "y", "values": [3, 1]}]}));
+    assert!(stacked_area.contains(">4<"), "the axis reaches the stacked total");
+}
+
+#[test]
+fn palettes_and_gridlines() {
+    let base = json!({"kind": "column", "categories": ["a"], "series": [{"name": "x", "values": [1]}]});
+    let colourful = svg_of(base.clone());
+    let mut mono = base.clone();
+    mono["palette"] = json!("monochrome3");
+    assert_ne!(colourful, svg_of(mono), "a monochrome palette uses one accent");
+    let mut none = base;
+    none["gridlines"] = json!(false);
+    assert_eq!(count(&svg_of(none), "stroke-opacity=\"0.25\""), 0);
+    assert!(count(&colourful, "stroke-opacity=\"0.25\"") > 0);
+}

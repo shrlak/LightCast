@@ -11,13 +11,16 @@ import {
   alignSelection, canGroup, canUngroup, copyStyle, deleteSelection, distributeSelection, flipSelection, groupSelection, makeChart, makeIcon,
   makeTable, orderSelection, rotateSelection, ungroupSelection, regroupSelection, canRegroup,
 } from '../../domain/editOps';
-import { shapeQuickStyles, type ChartKind } from '../../engine';
+import { shapeQuickStyles } from '../../engine';
+import { ChartMenu } from './chartMenu';
 import { TextFormatPanel } from './TextFormatPanel';
 import { textTarget, useTextSelectionTick, type Ed } from './editor';
+import { activeTextEditor } from '../RichTextEditor';
+import { armPainter, armedPainter, finishPainter, holdFormat } from '../../domain/formatPainter';
 import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { clipboardToElements, readSystemClipboard, type PasteMode } from './pasteObjects';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
-import { ARROW_KINDS, BEVELS, CAMERAS, DASHES, NO_EFFECTS, REFLECTIONS, SHADOW_PRESETS, shadowOf } from '../../domain/shapeEffects';
+import { ARROW_KINDS, BEVELS, CAMERAS, CAPS, COMPOUNDS, DASHES, JOINS, NO_EFFECTS, REFLECTIONS, SHADOW_PRESETS, shadowOf } from '../../domain/shapeEffects';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
 import { seedSmartArt } from './dialogsMore';
@@ -162,6 +165,12 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
             {[1, 2, 3, 4, 6, 9, 12, 18].map((w) => <MenuItem key={w} label={<span className="line-sample" style={{ borderTopWidth: Math.max(1, w / 2) }}>{w / 2} pt</span>} on={first?.strokeWidth === w} onClick={() => { set({ strokeWidth: w, stroke: first?.stroke ?? '#ffffff' }); close(); }} />)}
             <MenuHead>대시</MenuHead>
             {DASHES.map((d) => <MenuItem key={d.id} label={d.label} on={(first?.dash ?? 'solid') === d.id} onClick={() => { set({ dash: d.id === 'solid' ? undefined : d.id }); close(); }} />)}
+            <MenuHead>끝 모양</MenuHead>
+            <div className="rb-chip-row">{CAPS.map((c) => <button key={c.id} type="button" className={`mini-btn ${(first?.cap ?? 'flat') === c.id ? 'on' : ''}`} onClick={() => { set({ cap: c.id === 'flat' ? undefined : c.id }); close(); }}>{c.label}</button>)}</div>
+            <MenuHead>연결 형식</MenuHead>
+            <div className="rb-chip-row">{JOINS.map((j) => <button key={j.id} type="button" className={`mini-btn ${(first?.join ?? 'round') === j.id ? 'on' : ''}`} onClick={() => { set({ join: j.id === 'round' ? undefined : j.id }); close(); }}>{j.label}</button>)}</div>
+            <MenuHead>복합 선</MenuHead>
+            <div className="bevel-grid">{COMPOUNDS.map((c) => <button key={c.id} type="button" className={`mini-btn ${(first?.compound ?? 'single') === c.id ? 'on' : ''}`} onClick={() => { set({ compound: c.id === 'single' ? undefined : c.id, ...(c.id !== 'single' && (first?.strokeWidth ?? 0) < 6 ? { strokeWidth: 9, stroke: first?.stroke ?? '#ffffff' } : {}) }); close(); }}>{c.label}</button>)}</div>
             <MenuHead>화살표</MenuHead>
             <MenuItem label="화살표 없음" onClick={() => { set({ arrowStart: undefined, arrowEnd: undefined, arrowStartKind: undefined, arrowEndKind: undefined }); close(); }} />
             <MenuItem label="끝 화살표 →" onClick={() => { set({ arrowStart: undefined, arrowEnd: true }); close(); }} />
@@ -180,7 +189,7 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
   );
 }
 
-const NO_FILL_EXTRAS: Partial<SlideElement> = { gradient: undefined, gradientType: undefined, fillImage: undefined, pattern: undefined };
+const NO_FILL_EXTRAS: Partial<SlideElement> = { gradient: undefined, gradientStops: undefined, gradientType: undefined, fillImage: undefined, pattern: undefined };
 const GRADIENTS: [string, string, string][] = [['#ffffff', '#7f7f7f', '회색'], ['#9cc3e6', '#1f4e79', '파랑'], ['#ffe699', '#c55a11', '주황'], ['#c5e0b4', '#375623', '녹색'], ['#f4b183', '#843c0c', '갈색'], ['#d9b3ff', '#4b0082', '보라']];
 
 /** Shape Fill ▾ › 그림… / 그라데이션 / 패턴 (DeckCraft's picture, gradient and pattern fills). */
@@ -198,6 +207,8 @@ function FillExtras({ ed, first, set, close }: { ed: Ed; first?: SlideElement; s
   };
   return (
     <div className="fill-extras">
+      <MenuHead>투명도</MenuHead>
+      <div className="rb-chip-row" title="채우기만 투명하게 (개체 불투명도와는 별개)"><input type="range" min={0} max={100} step={5} value={Math.round((first?.fillTransparency ?? 0) * 100)} onChange={(e) => set({ fillTransparency: Number(e.target.value) ? Number(e.target.value) / 100 : undefined })} /><input type="number" min={0} max={100} step={5} style={{ width: 52 }} value={Math.round((first?.fillTransparency ?? 0) * 100)} onChange={(e) => set({ fillTransparency: Math.max(0, Math.min(100, Number(e.target.value))) / 100 || undefined })} />%</div>
       <MenuItem icon="🖼" label="그림…" onClick={() => file.current?.click()} />
       <input ref={file} type="file" accept="image/*" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
       <MenuHead>그라데이션</MenuHead>
@@ -307,6 +318,15 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
     ed.setSel(r.elements.map((c) => c.id));
   })();
   const one = ed.selEls[0];
+  // 서식 복사: from the characters selected in the text being typed, else from the selected object (the next click puts it down).
+  const pickFormat = (keep: boolean) => {
+    const typing = activeTextEditor();
+    if (typing) { holdFormat(typing.pick()); armPainter(keep, () => undefined); ed.cmd.notify('서식을 복사했습니다 — 서식을 바꿀 글자를 선택하세요'); return; }
+    if (!one) return;
+    const style = copyStyle(one);
+    holdFormat(style);
+    ed.setTool({ kind: 'painter', style, keep });
+  };
   return (
     <>
       <Group label="클립보드">
@@ -314,9 +334,9 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
         <Col>
           <Small icon={RI.cut} label="잘라내기" title="잘라내기 (Ctrl+X)" disabled={!sel.length || !ed.canEdit} onClick={() => { copyObjects(ed.selEls); if (ed.slide) ed.updateSlide(deleteSelection(ed.slide, sel)); ed.setSel([]); }} />
           <Small icon={RI.copy} label="복사" title="복사 (Ctrl+C)" disabled={!sel.length} onClick={() => copyObjects(ed.selEls)} />
-          <span onDoubleClick={() => one && ed.setTool({ kind: 'painter', style: copyStyle(one), keep: true })}>
-            <Small icon={RI.painter} label="서식 복사" title="서식 복사 — 개체를 고르고 누른 뒤, 서식을 바꿀 개체를 클릭 (두 번 누르면 계속)" active={ed.tool?.kind === 'painter'} disabled={!one}
-              onClick={() => (ed.tool?.kind === 'painter' ? ed.setTool(null) : one && ed.setTool({ kind: 'painter', style: copyStyle(one) }))} />
+          <span onDoubleClick={() => pickFormat(true)}>
+            <Small icon={RI.painter} label="서식 복사" title="서식 복사 (Ctrl+Shift+C, 붙여넣기 Ctrl+Shift+V) — 개체나 글자를 고르고 누른 뒤, 서식을 바꿀 개체를 클릭하거나 글자를 선택 (두 번 누르면 계속)" active={ed.tool?.kind === 'painter' || !!armedPainter()} disabled={!one && !activeTextEditor()}
+              onClick={() => (ed.tool?.kind === 'painter' ? ed.setTool(null) : armedPainter() ? finishPainter(true) : pickFormat(false))} />
           </span>
         </Col>
       </Group>
@@ -448,9 +468,8 @@ const WORDART = [
   { label: '채우기: 금색', patch: { color: '#e3b21c', bold: true, shadow: true } },
   { label: '채우기: 빨강', patch: { color: '#d83f6b', bold: true, shadow: true } },
 ] as const;
-const CHARTS: [ChartKind, string][] = [['column', '세로 막대형'], ['columnStacked', '누적 세로 막대형'], ['bar', '가로 막대형'], ['barStacked', '누적 가로 막대형'], ['line', '꺾은선형'], ['area', '영역형'], ['pie', '원형'], ['doughnut', '도넛형'], ['scatter', '분산형']];
 
-export function InsertTab({ ed, onLink: _onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
+export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => void; onComment: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const kind = useRef<'image' | 'video' | 'audio'>('image');
   const [hover, setHover] = useState<[number, number]>([0, 0]);
@@ -480,6 +499,8 @@ export function InsertTab({ ed, onLink: _onLink, onComment }: { ed: Ed; onLink: 
                 <span key={`${r}-${c}`} className={`tp-cell ${r < hover[0] && c < hover[1] ? 'on' : ''}`} onMouseEnter={() => setHover([r + 1, c + 1])} onClick={() => { add(makeTable(r + 1, c + 1)); close(); }} />
               )))}
             </div>
+            <MenuSep />
+            <MenuItem label="표 그리기" hint="끌어서 표를 그리고, 표 안을 끌어 나눕니다" onClick={() => { if (!blocked(ed)) ed.setTool({ kind: 'tableDraw' }); close(); }} />
           </div>
         )} />
       </Group>
@@ -496,11 +517,11 @@ export function InsertTab({ ed, onLink: _onLink, onComment }: { ed: Ed; onLink: 
         <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n, keep) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n, keep }); close(); }} onFreeform={(scribble, curve) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble, curve }); close(); }} />} />
         <DropButton big icon={RI.icons} label="아이콘" wide render={(close) => <IconGallery onPick={(n) => { add(makeIcon(n)); close(); }} />} />
         <Big icon="⧉" label="SmartArt" title="SmartArt 그래픽 삽입" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('smartArt')} />
-        <DropButton big icon={RI.chart} label="차트" render={(close) => <>{CHARTS.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { add(makeChart(k)); close(); }} />)}</>} />
+        <DropButton big icon={RI.chart} label="차트" wide render={(close) => <ChartMenu onPick={(k) => { add(makeChart(k)); close(); }} />} />
       </Group>
       <Group label="링크">
         <Big icon="⊕" label="확대/축소" title="요약 · 구역 · 슬라이드 확대/축소" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('zoom')} />
-        <Big icon={RI.link} label="링크" title="웹 페이지 · 현재 문서의 슬라이드 · 전자 메일 주소로 링크 (슬라이드 쇼에서 클릭하면 열림)" disabled={!ed.slide} onClick={() => ed.setDialog('hyperlink')} />
+        <Big icon={RI.link} label="링크" title="웹 페이지 · 현재 문서의 슬라이드 · 전자 메일 주소로 링크 (슬라이드 쇼에서 클릭하면 열림; 글자를 골라 두면 그 글자에만)" disabled={!ed.slide} onClick={() => (activeTextEditor()?.hasSelection() ? onLink() : ed.setDialog('hyperlink'))} />
         <Big icon="☛" label="실행" title="개체를 클릭했을 때 할 일 (실행 설정)" disabled={!ed.selEls.length} onClick={() => ed.setDialog('action')} />
       </Group>
       <Group label="메모">

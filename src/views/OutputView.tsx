@@ -1,5 +1,6 @@
-import { useEffect, useRef } from 'react';
-import { actionAt, actionOf } from '../domain/showActions';
+import { useEffect, useRef, useState } from 'react';
+import { actionAt, actionOf, hoverActionOf, hoverAt, runLinkAt, type ShowAction } from '../domain/showActions';
+import type { SlideElement } from '../domain/types';
 import { SlideCanvas } from '../ui/SlideCanvas';
 import { CANVAS_W } from '../domain/canvas';
 import { useLiveFeed } from '../ui/hooks';
@@ -17,6 +18,10 @@ export function OutputView() {
   latest.current = live;
   const screenId = new URLSearchParams(location.search).get('screen');
   const screen = live?.screens.find((s) => s.id === screenId) ?? live?.screens[0];
+  const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
+
+  // A ScreenTip belongs to the slide it was shown on.
+  useEffect(() => setTip(null), [live?.slide?.id]);
 
   useEffect(() => {
     document.title = `LightCast — ${screen?.name ?? 'Output'}`;
@@ -36,25 +41,50 @@ export function OutputView() {
       e.preventDefault();
       ch.post({ type: 'key', key: e.key, shiftKey: e.shiftKey });
     };
+    // What an object's action does here: a link opens in this window, a video plays in it, anything else is
+    // the console's to do (it moves the live show on, or plays the audio).
+    const perform = (a: ShowAction, el: SlideElement) => {
+      if (a.kind === 'url') { if (a.url) window.open(a.url, '_blank', 'noopener'); return; }
+      if (a.kind === 'playMedia' && el.kind === 'video') { window.dispatchEvent(new CustomEvent('lightcast:media', { detail: { id: el.id } })); return; }
+      ch.post({ type: 'show', action: a });
+    };
+    const pointAt = (e: MouseEvent) => {
+      const r = document.querySelector('.output-canvas')?.getBoundingClientRect();
+      if (!r?.width) return null;
+      const k = CANVAS_W / r.width;
+      return { x: (e.clientX - r.left) * k, y: (e.clientY - r.top) * k };
+    };
     // A click on an object with an action (Action Settings, a link, a slide zoom) does it, as in
     // PowerPoint's slide show; clicks elsewhere are left alone (double-click is full screen).
     const onClick = (e: MouseEvent) => {
-      const canvas = document.querySelector('.output-canvas');
-      const r = canvas?.getBoundingClientRect();
-      if (!r?.width) return;
-      const k = CANVAS_W / r.width;
-      const el = actionAt(latest.current?.slide, (e.clientX - r.left) * k, (e.clientY - r.top) * k);
+      const link = runLinkAt(e.target);
+      if (link) { window.open(link, '_blank', 'noopener'); return; }
+      const at = pointAt(e);
+      if (!at) return;
+      const el = actionAt(latest.current?.slide, at.x, at.y);
       const a = el ? actionOf(el) : null;
-      if (!a) return;
-      if (a.kind === 'url') { if (a.url) window.open(a.url, '_blank', 'noopener'); return; }
-      ch.post({ type: 'show', action: a });
+      if (el && a) perform(a, el);
+    };
+    // Pointing at an object: its ScreenTip, and its Mouse Over action once as the pointer enters it.
+    let hovered: string | null = null;
+    const onMove = (e: MouseEvent) => {
+      const at = pointAt(e);
+      const over = at ? hoverAt(latest.current?.slide, at.x, at.y) : null;
+      const tipped = over ?? (at ? actionAt(latest.current?.slide, at.x, at.y) : null);
+      setTip(tipped?.tooltip ? { x: e.clientX, y: e.clientY, text: tipped.tooltip } : null);
+      if ((over?.id ?? null) === hovered) return;
+      hovered = over?.id ?? null;
+      const a = over ? hoverActionOf(over) : null;
+      if (over && a) perform(a, over);
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('click', onClick);
+    window.addEventListener('mousemove', onMove);
     window.addEventListener('dblclick', toggle);
     return () => {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('click', onClick);
+      window.removeEventListener('mousemove', onMove);
       window.removeEventListener('dblclick', toggle);
       ch.close();
     };
@@ -83,6 +113,7 @@ export function OutputView() {
   return (
     <div className="output-root" style={{ background: bg }}>
       <SlideCanvas {...liveCanvasProps(live, screen)} className="output-canvas" />
+      {tip && <div className="output-tip" style={{ left: tip.x + 14, top: tip.y + 18 }}>{tip.text}</div>}
     </div>
   );
 }

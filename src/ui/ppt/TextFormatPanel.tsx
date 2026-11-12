@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
-import type { HAlign, ListStyle, VAlign } from '../../domain/types';
-import { LINE_SPACINGS, SINGLE_SPACING, listMarker, stepFontSize, type CaseKind } from '../../domain/textFormat';
+import type { HAlign, ListStyle, TextDirection, VAlign } from '../../domain/types';
+import { LINE_SPACINGS, SINGLE_SPACING, TEXT_DIRECTIONS, directionId, directionPatch, listMarker, stepFontSize, type CaseKind } from '../../domain/textFormat';
 import { FontSize } from './FontSize';
 import { FontPicker } from './FontPicker';
 import { Icon } from './pptIcons';
@@ -27,6 +27,7 @@ export interface TextFormatValue {
   indent: number;
   columns: number;
   vertical: boolean;
+  direction?: TextDirection;
   autoFit: boolean;
   /** The selection mixes sizes / fonts: the size box and the font name show blank (PowerPoint, format.state). */
   sizeMixed?: boolean;
@@ -238,15 +239,13 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onS
         <Tog icon={Icon.alignLeft} title="왼쪽 맞춤 (Ctrl+L)" on={f.align === 'left'} onClick={() => onChange({ align: 'left' })} />
         <Tog icon={Icon.alignCenter} title="가운데 맞춤 (Ctrl+E)" on={f.align === 'center'} onClick={() => onChange({ align: 'center' })} />
         <Tog icon={Icon.alignRight} title="오른쪽 맞춤 (Ctrl+R)" on={f.align === 'right'} onClick={() => onChange({ align: 'right' })} />
-        <Tog icon={Icon.justify} title="양쪽 맞춤 (Ctrl+J)" on={f.align === 'justify'} onClick={() => onChange({ align: 'justify' })} />
+        <Tog icon={Icon.justify} title="양쪽 맞춤 (Ctrl+J)" on={f.align === 'justify' || f.align === 'justLow'} onClick={() => onChange({ align: 'justify' })} />
+        <Tog icon={Icon.distribute} title="균등 분할" on={f.align === 'distributed'} onClick={() => onChange({ align: 'distributed' })} />
         <span className="ppt-sep" />
-        <Drop icon={Icon.textDirection} title="텍스트 방향" active={f.vertical}>
-          {(close) => (
-            <>
-              <button type="button" className={`ppt-item ${!f.vertical ? 'on' : ''}`} onClick={() => { onChange({ vertical: false }); close(); }}>가로</button>
-              <button type="button" className={`ppt-item ${f.vertical ? 'on' : ''}`} onClick={() => { onChange({ vertical: true }); close(); }}>세로 쓰기</button>
-            </>
-          )}
+        <Drop icon={Icon.textDirection} title="텍스트 방향" active={directionId(f) !== 'horz'}>
+          {(close) => TEXT_DIRECTIONS.map((d) => (
+            <button key={d.id} type="button" className={`ppt-item ${directionId(f) === d.id ? 'on' : ''}`} onClick={() => { onChange(directionPatch(d.id)); close(); }}>{d.label}</button>
+          ))}
         </Drop>
         <Drop icon={{ top: Icon.alignTop, middle: Icon.alignMiddle, bottom: Icon.alignBottom }[f.vAlign]} title="텍스트 맞춤">
           {(close) => ([['top', '위쪽', Icon.alignTop], ['middle', '중간', Icon.alignMiddle], ['bottom', '아래쪽', Icon.alignBottom]] as const).map(([v, label, icon]) => (

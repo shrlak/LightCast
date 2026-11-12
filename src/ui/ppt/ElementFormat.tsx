@@ -7,7 +7,9 @@ import { TextFormatPanel, type TextFormatValue } from './TextFormatPanel';
 import { changeCase, clearTextFormat } from '../../domain/textFormat';
 import { autoFitMode, autoFitValue } from '../../domain/textFit';
 import { AutoTextarea } from '../AutoTextarea';
-import type { ChartData as ChartModel, TableData } from '../../engine';
+import { Format3dSection, FillSection, LineSection } from './ShapeFormatSections';
+import type { ChartData as ChartModel, ChartSeriesKind, TableData } from '../../engine';
+import { addLevel, addRow, addSeries, cellNumber, chartHint, chartRows, chartTraits, removeLevel, removeRow, removeSeries, switchRowColumn, toggleSubtotal } from '../../domain/chartTypes';
 
 export interface TableRange { r: number; c: number; r1: number; c1: number }
 
@@ -34,28 +36,97 @@ function TableGrid({ el, onChange, cell, onCell }: { el: SlideElement; onChange:
   );
 }
 
-/** The chart's data as a small sheet: categories down, series across. */
+/** The chart's data as a small sheet. Its columns follow the type's data shape: categories down and series
+ *  across; observations for a histogram, Pareto or box chart; waterfall totals; bubble x/y/size; outer
+ *  levels for a treemap or sunburst; a type and axis per series for a combo chart. */
 function ChartData({ el, onChange }: { el: SlideElement; onChange: (p: Partial<SlideElement>) => void }) {
   const ch = el.chart as ChartModel;
-  const set = (patch: Partial<ChartModel>) => onChange({ chart: { ...ch, ...patch } });
-  const n = ch.categories.length;
+  const set = (next: ChartModel) => onChange({ chart: next });
+  const t = chartTraits(ch.kind);
+  const rows = chartRows(ch);
+  const levels = ch.categoryLevels ?? [];
+  const sub = new Set(ch.subtotals ?? []);
+  const setSeries = (i: number, patch: Partial<ChartModel['series'][number]>) => set({ ...ch, series: ch.series.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  const setAt = (arr: number[] | undefined, r: number, v: number, fillWith = 0) => Array.from({ length: rows }, (_, k) => (k === r ? v : arr?.[k] ?? fillWith));
+  const num = (v: number | undefined, on: (n: number) => void) => <input type="number" value={v ?? 0} onChange={(e) => on(cellNumber(e.target.value))} />;
+  const hint = chartHint(ch.kind);
   return (
     <div className="chart-data-edit">
-      <label className="stack">차트 제목<input value={ch.title ?? ''} onChange={(e) => set({ title: e.target.value })} /></label>
-      <table><thead><tr><th />{ch.series.map((s, i) => (
-        <th key={i}><input value={s.name} onChange={(e) => set({ series: ch.series.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} /></th>
-      ))}</tr></thead>
-      <tbody>{ch.categories.map((cat, r) => (
-        <tr key={r}><th><input value={cat} onChange={(e) => set({ categories: ch.categories.map((x, j) => (j === r ? e.target.value : x)) })} /></th>
-          {ch.series.map((s, i) => <td key={i}><input type="number" value={s.values[r] ?? 0} onChange={(e) => set({ series: ch.series.map((x, j) => (j === i ? { ...x, values: Array.from({ length: n }, (_, k) => (k === r ? Number(e.target.value) : x.values[k] ?? 0)) } : x)) })} /></td>)}
-        </tr>
-      ))}</tbody></table>
+      <label className="stack">차트 제목<input value={ch.title ?? ''} onChange={(e) => set({ ...ch, title: e.target.value })} /></label>
+      {hint && <div className="cd-hint">{hint}</div>}
+      <table>
+        <thead>
+          <tr>
+            {[...levels].reverse().map((_, i) => <th key={`l${i}`} className="cd-sub">{`수준 ${levels.length - i}`}</th>)}
+            {!t.noLabels && <th>{ch.kind === 'boxWhisker' ? '그룹' : '항목'}</th>}
+            {ch.series.map((s, i) => (
+              <th key={i} colSpan={t.xy ? 3 : 1}><input value={s.name} onChange={(e) => setSeries(i, { name: e.target.value })} /></th>
+            ))}
+            {t.totals && <th className="cd-sub">합계</th>}
+          </tr>
+          {t.xy && <tr>{levels.map((_, i) => <th key={i} />)}<th />{ch.series.flatMap((_s, i) => ['X', 'Y', '크기'].map((h) => <th key={`${i}${h}`} className="cd-sub">{h}</th>))}</tr>}
+          {t.combo && (
+            <tr>
+              <th className="cd-sub">종류</th>
+              {ch.series.map((s, i) => (
+                <th key={i}>
+                  <select value={s.kind ?? 'column'} onChange={(e) => setSeries(i, { kind: e.target.value as ChartSeriesKind })}>
+                    <option value="column">세로 막대형</option><option value="line">꺾은선형</option><option value="lineMarkers">표식이 있는 꺾은선형</option><option value="area">영역형</option>
+                  </select>
+                  <label className="rb-check"><input type="checkbox" checked={!!s.secondaryAxis} onChange={(e) => setSeries(i, { secondaryAxis: e.target.checked })} /> 보조 축</label>
+                </th>
+              ))}
+            </tr>
+          )}
+        </thead>
+        <tbody>{Array.from({ length: rows }, (_, r) => (
+          <tr key={r}>
+            {[...levels].map((_, li) => levels.length - 1 - li).map((li) => (
+              <td key={`l${li}`}><input value={levels[li]?.[r] ?? ''} onChange={(e) => set({ ...ch, categoryLevels: levels.map((l, k) => (k === li ? Array.from({ length: rows }, (_, q) => (q === r ? e.target.value : l[q] ?? '')) : l)) })} /></td>
+            ))}
+            {!t.noLabels && <th><input value={ch.categories[r] ?? ''} onChange={(e) => set({ ...ch, categories: Array.from({ length: rows }, (_, q) => (q === r ? e.target.value : ch.categories[q] ?? '')) })} /></th>}
+            {ch.series.flatMap((s, i) => t.xy
+              ? [
+                <td key={`${i}x`}>{num(s.xValues?.[r] ?? r + 1, (v) => setSeries(i, { xValues: setAt(s.xValues, r, v) }))}</td>,
+                <td key={`${i}y`}>{num(s.values[r], (v) => setSeries(i, { values: setAt(s.values, r, v) }))}</td>,
+                <td key={`${i}z`}>{num(s.sizes?.[r] ?? 10, (v) => setSeries(i, { sizes: setAt(s.sizes, r, v, 10) }))}</td>,
+              ]
+              : [<td key={i}>{num(s.values[r], (v) => setSeries(i, { values: setAt(s.values, r, v) }))}</td>])}
+            {t.totals && <td className="cd-chk"><input type="checkbox" title="합계로 설정" checked={sub.has(r)} onChange={() => set(toggleSubtotal(ch, r))} /></td>}
+          </tr>
+        ))}</tbody>
+      </table>
       <div className="row gap-xs wrap">
-        <button className="mini-btn" onClick={() => set({ categories: [...ch.categories, `항목 ${n + 1}`], series: ch.series.map((s) => ({ ...s, values: [...s.values, 0] })) })}>＋ 항목</button>
-        <button className="mini-btn" disabled={n < 2} onClick={() => set({ categories: ch.categories.slice(0, -1), series: ch.series.map((s) => ({ ...s, values: s.values.slice(0, n - 1) })) })}>－ 항목</button>
-        <button className="mini-btn" onClick={() => set({ series: [...ch.series, { name: `계열 ${ch.series.length + 1}`, values: ch.categories.map(() => 0) }] })}>＋ 계열</button>
-        <button className="mini-btn" disabled={ch.series.length < 2} onClick={() => set({ series: ch.series.slice(0, -1) })}>－ 계열</button>
+        <button className="mini-btn" onClick={() => set(addRow(ch))}>{t.observations ? '＋ 관측값' : '＋ 항목'}</button>
+        <button className="mini-btn" disabled={rows < 2} onClick={() => set(removeRow(ch, rows - 1))}>{t.observations ? '－ 관측값' : '－ 항목'}</button>
+        <button className="mini-btn" disabled={t.single} onClick={() => set(addSeries(ch))}>＋ 계열</button>
+        <button className="mini-btn" disabled={ch.series.length <= Math.max(1, t.minSeries)} onClick={() => set(removeSeries(ch, ch.series.length - 1))}>－ 계열</button>
+        {t.hierarchy && <button className="mini-btn" onClick={() => set(addLevel(ch))}>＋ 수준</button>}
+        {t.hierarchy && <button className="mini-btn" disabled={!levels.length} onClick={() => set(removeLevel(ch, levels.length - 1))}>－ 수준</button>}
+        <button className="mini-btn" title="계열과 항목을 맞바꿉니다" disabled={t.observations || t.hierarchy || ch.kind === 'bubble'} onClick={() => set(switchRowColumn(ch))}>행/열 전환</button>
       </div>
+      <ChartKindOptions chart={ch} set={set} />
+    </div>
+  );
+}
+
+/** The options that belong to one type: histogram bins, quartile method, stock up/down bars. */
+export function ChartKindOptions({ chart: ch, set }: { chart: ChartModel; set: (c: ChartModel) => void }) {
+  const bins = ch.kind === 'histogram' || ch.kind === 'pareto';
+  if (!bins && ch.kind !== 'boxWhisker' && ch.kind !== 'stock') return null;
+  const optNum = (v: number | undefined) => (v && v > 0 ? v : '');
+  return (
+    <div className="cd-opts">
+      {bins && <>
+        <label>구간 개수 <input type="number" min={1} max={1000} placeholder="자동" value={optNum(ch.binCount)} onChange={(e) => set({ ...ch, binCount: e.target.value ? Math.max(1, Math.min(1000, Math.round(Number(e.target.value)))) : undefined, binSize: e.target.value ? undefined : ch.binSize })} /></label>
+        <label>구간 너비 <input type="number" min={0} step="any" placeholder="자동" value={optNum(ch.binSize)} onChange={(e) => set({ ...ch, binSize: Number(e.target.value) > 0 ? Number(e.target.value) : undefined, binCount: Number(e.target.value) > 0 ? undefined : ch.binCount })} /></label>
+      </>}
+      {ch.kind === 'boxWhisker' && (
+        <label>사분위수 계산 <select value={ch.inclusiveQuartiles ? 'inc' : 'exc'} onChange={(e) => set({ ...ch, inclusiveQuartiles: e.target.value === 'inc' })}><option value="exc">중앙값 제외</option><option value="inc">중앙값 포함</option></select></label>
+      )}
+      {ch.kind === 'stock' && (
+        <label className="rb-check"><input type="checkbox" checked={!!ch.upDownBars} onChange={(e) => set({ ...ch, upDownBars: e.target.checked })} /> 상승/하락 막대 (시가-종가 상자)</label>
+      )}
     </div>
   );
 }
@@ -70,14 +141,14 @@ export const textValue = (el: SlideElement): TextFormatValue => ({
   fontFamily: el.fontFamily, fontSize: sizeOf(el), bold: !!el.bold, italic: !!el.italic, underline: !!el.underline, strike: !!el.strike,
   shadow: !!el.shadow, letterSpacing: el.letterSpacing ?? 0, color: (el.paragraphs?.find((p) => p.text.trim())?.color ?? el.color ?? '#ffffff').slice(0, 7),
   highlight: el.highlight, align: el.align ?? 'center', vAlign: el.vAlign ?? 'middle', lineHeight: el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25),
-  list: el.list, indent: el.indent ?? 0, columns: el.columns ?? 1, vertical: !!el.vertical, autoFit: el.autoFit !== false,
+  list: el.list, indent: el.indent ?? 0, columns: el.columns ?? 1, vertical: !!el.vertical, direction: el.direction, autoFit: el.autoFit !== false,
 });
 
 /** A chosen size applies equally to every paragraph in this box. */
 export const elementPatch = (_el: SlideElement, { fontSize, ...rest }: Partial<TextFormatValue>): Partial<SlideElement> =>
   ({ ...rest, ...(fontSize === undefined ? {} : { fontSize }) });
 
-export const CLEAR_TEXT_FORMAT: Partial<SlideElement> = { bold: false, italic: false, underline: undefined, strike: undefined, shadow: false, letterSpacing: undefined, highlight: undefined, list: undefined, indent: undefined, columns: undefined, vertical: undefined, lineHeight: undefined };
+export const CLEAR_TEXT_FORMAT: Partial<SlideElement> = { bold: false, italic: false, underline: undefined, strike: undefined, shadow: false, letterSpacing: undefined, highlight: undefined, list: undefined, indent: undefined, columns: undefined, vertical: undefined, direction: undefined, lineHeight: undefined, lineExact: undefined };
 
 const FIT_LABELS: [Exclude<ReturnType<typeof autoFitMode>, 'legacy'>, string][] = [['none', '자동 맞춤 안 함'], ['shrink', '넘치면 텍스트 크기 조정'], ['resize', '도형을 텍스트 크기에 맞춤']];
 
@@ -103,7 +174,9 @@ export function AutoFitOptions({ el, onChange }: { el: SlideElement; onChange: (
  * Settings of the object selected on the slide, in the right-hand panel: its text, font, size,
  * colours, alignment, position and size, order on the slide — changes show at once.
  */
-export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell, onCell }: {
+export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell, onCell, themeFont }: {
+  /** The theme font (the font list's 제목 / 본문 entries). */
+  themeFont?: string;
   /** Table cells picked (Table Layout acts on them). */
   cell?: TableRange;
   onCell?: (r: TableRange) => void;
@@ -148,6 +221,7 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
             onChangeCase={(kind) => onChange({ text: changeCase(el.text ?? '', kind) })}
             onClear={() => onChange(clearTextFormat(el))}
             autoFitOption={false}
+            theme={themeFont}
           />
           <AutoFitOptions el={el} onChange={onChange} />
         </>
@@ -187,6 +261,13 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
           {el.kind === 'shape' && (
             <label className="stack">도형 안 텍스트<AutoTextarea rows={2} value={el.text ?? ''} onChange={(e) => onChange({ text: e.target.value || undefined, runs: undefined, color: el.color ?? '#ffffff' })} /></label>
           )}
+          {el.kind === 'shape' && (
+            <>
+              <FillSection el={el} onChange={onChange} />
+              <LineSection el={el} onChange={onChange} />
+              <Format3dSection el={el} onChange={onChange} />
+            </>
+          )}
         </>
       )}
 
@@ -200,7 +281,7 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
         <label className="stack">이름 (선택 창)<input value={el.name ?? ''} onChange={(e) => onChange({ name: e.target.value || undefined })} /></label>
       </details>
 
-      <label className="ef-range">투명도<input type="range" min={0.1} max={1} step={0.05} value={el.opacity ?? 1} onChange={(e) => onChange({ opacity: Number(e.target.value) })} /></label>
+      <label className="ef-range" title="개체 전체(채우기·윤곽선·글자)의 불투명도">개체 불투명도<input type="range" min={0.1} max={1} step={0.05} value={el.opacity ?? 1} onChange={(e) => onChange({ opacity: Number(e.target.value) })} /></label>
       <div className="ef-grid">{num('x')}{num('y')}{num('w')}{num('h')}</div>
       <div className="row gap-xs">
         <button className="mini-btn" onClick={() => onChange({ x: Math.round((CANVAS_W - el.w) / 2) })}>가로 가운데</button>

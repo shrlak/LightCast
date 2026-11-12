@@ -6,6 +6,8 @@ import type { Slide, SlideAnimation, SlideElement } from './types';
 import { CANVAS_H, CANVAS_W } from './canvas';
 import { uid } from './lyrics';
 import { DUPLICATE_OFFSET, freeformPath, movableIds } from './shapeOps';
+import { copyFormat, paintElements, type CopiedStyle } from './formatPainter';
+import { sampleChart } from './chartTypes';
 import {
   connectShapes, mergeShapes, type MergeMode, type PathShape,
   alignBoxes, boundsOf, distributeBoxes, flipBoxes, newTable, orderIds, recognizeInk, rotateBoxes, shapeCatalog, smoothInk,
@@ -16,23 +18,46 @@ export type Elements = SlideElement[];
 
 export const boxOf = (e: SlideElement): EBox => ({ id: e.id, x: e.x, y: e.y, w: e.w, h: e.h, rot: e.rotation ?? 0 });
 
-/** The ids to act on for a selection: every member of a group any selected object belongs to. */
-export function expandSelection(els: Elements, sel: string[]): string[] {
-  const groups = new Set(els.filter((e) => sel.includes(e.id) && e.groupId).map((e) => e.groupId));
+/**
+ * Groups "entered" with a second click: while one is, its members are selected one by one (PowerPoint's
+ * click-into-a-group) instead of the group acting as a unit. The canvas editor enters a group on a
+ * click of a selected group's member and leaves it when the selection moves elsewhere; every edit below
+ * reads this, so formatting, moving and deleting follow the member without each caller passing it along.
+ * Groups here are `groupId` on their members, so entering one changes nothing on the slide itself.
+ */
+const entered = new Set<string>();
+export const enterGroup = (gid: string) => { entered.add(gid); };
+export const leaveGroups = () => { entered.clear(); };
+export const enteredGroups = (): ReadonlySet<string> => entered;
+/** Groups no longer holding a selected member are left (the selection went elsewhere). */
+export function pruneEntered(els: Elements, sel: string[]) {
+  for (const g of [...entered]) if (!els.some((e) => e.groupId === g && sel.includes(e.id))) entered.delete(g);
+}
+
+/** The ids to act on for a selection: every member of a group any selected object belongs to (unless that group is entered). */
+export function expandSelection(els: Elements, sel: string[], open: ReadonlySet<string> = entered): string[] {
+  const groups = new Set(els.filter((e) => sel.includes(e.id) && e.groupId && !open.has(e.groupId)).map((e) => e.groupId));
   return els.filter((e) => sel.includes(e.id) || (e.groupId && groups.has(e.groupId))).map((e) => e.id);
+}
+
+/** A group left with one member is no group (deleting or copying part of a group). */
+export function dropLoneGroups(els: Elements): Elements {
+  const count = new Map<string, number>();
+  for (const e of els) if (e.groupId) count.set(e.groupId, (count.get(e.groupId) ?? 0) + 1);
+  return els.some((e) => e.groupId && count.get(e.groupId) === 1) ? els.map((e) => (e.groupId && count.get(e.groupId) === 1 ? { ...e, groupId: undefined } : e)) : els;
 }
 
 /**
  * The selection as the units Arrange works on: each group counts as one box (its bounds), each
  * other object as itself. `members` are the object ids a unit moves.
  */
-export function selectionUnits(els: Elements, sel: string[]): { box: EBox; members: string[] }[] {
-  const ids = expandSelection(els, sel);
+export function selectionUnits(els: Elements, sel: string[], open: ReadonlySet<string> = entered): { box: EBox; members: string[] }[] {
+  const ids = expandSelection(els, sel, open);
   const seen = new Set<string>();
   const out: { box: EBox; members: string[] }[] = [];
   for (const e of els) {
     if (!ids.includes(e.id) || seen.has(e.id)) continue;
-    if (e.groupId) {
+    if (e.groupId && !open.has(e.groupId)) {
       const members = els.filter((x) => x.groupId === e.groupId);
       members.forEach((m) => seen.add(m.id));
       const b = boundsOf(members.map(boxOf)) ?? boxOf(e);
@@ -93,7 +118,8 @@ export function groupSelection(els: Elements, sel: string[]): Elements {
 
 /** 그룹 해제. */
 export function ungroupSelection(els: Elements, sel: string[]): Elements {
-  const ids = expandSelection(els, sel);
+  // Ungrouping from inside a group takes the whole group apart, not just the member picked.
+  const ids = expandSelection(els, sel, new Set());
   return els.map((e) => (ids.includes(e.id) && e.groupId ? { ...e, groupId: undefined, prevGroupId: e.groupId } : e));
 }
 
@@ -147,7 +173,7 @@ export function nudgeSelection(els: Elements, sel: string[], dx: number, dy: num
 export function deleteSelection(slide: Slide, sel: string[]): Partial<Slide> {
   const els = slide.elements ?? [];
   const ids = expandSelection(els, sel);
-  const elements = els.filter((e) => !ids.includes(e.id));
+  const elements = dropLoneGroups(els.filter((e) => !ids.includes(e.id)));
   const animations = slide.animations?.filter((a) => !ids.includes(a.elementId));
   return { elements: elements.length ? elements : undefined, animations: animations?.length ? animations : undefined };
 }
@@ -156,14 +182,14 @@ export function deleteSelection(slide: Slide, sel: string[]): Partial<Slide> {
 export function cloneElements(source: Elements, offset: number | [number, number] = 0): Elements {
   const [ox, oy] = typeof offset === 'number' ? [offset, offset] : offset;
   const groups = new Map<string, string>();
-  return source.map((e) => {
+  return dropLoneGroups(source.map((e) => {
     let groupId = e.groupId;
     if (groupId) {
       if (!groups.has(groupId)) groups.set(groupId, uid('g'));
       groupId = groups.get(groupId);
     }
     return { ...e, id: uid('el'), groupId, x: e.x + ox, y: e.y + oy };
-  });
+  }));
 }
 
 /** 복제 (Ctrl+D): the copies and their ids, to select, set off by `offset` (12 pt; see shapeOps.duplicateOffset). */
@@ -174,30 +200,11 @@ export function duplicateSelection(els: Elements, sel: string[], offset: [number
   return { elements: [...els, ...copies], ids: copies.map((c) => c.id), pairs: sources.map((e, i) => [e.id, copies[i].id]) };
 }
 
-/** The look Format Painter (서식 복사) carries from one object to another. */
-const STYLE_KEYS = [
-  'fill', 'stroke', 'strokeWidth', 'dash', 'gradient', 'gradientAngle', 'dropShadow', 'glow', 'opacity',
-  'fontFamily', 'fontSize', 'color', 'bold', 'italic', 'underline', 'strike', 'shadow', 'align', 'vAlign', 'letterSpacing', 'lineHeight', 'highlight',
-] as const;
-export type CopiedStyle = Partial<Pick<SlideElement, (typeof STYLE_KEYS)[number]>>;
-export function copyStyle(el: SlideElement): CopiedStyle {
-  const out: Record<string, unknown> = {};
-  for (const k of STYLE_KEYS) out[k] = el[k];
-  return out as CopiedStyle;
-}
+/** The look Format Painter (서식 복사) carries from one object to another (see formatPainter). */
+export type { CopiedStyle } from './formatPainter';
+export const copyStyle = copyFormat;
 export function pasteStyle(els: Elements, sel: string[], style: CopiedStyle): Elements {
-  const ids = expandSelection(els, sel);
-  return els.map((e) => {
-    if (!ids.includes(e.id)) return e;
-    const textOnly = e.kind === 'text';
-    const patch: Record<string, unknown> = {};
-    for (const k of STYLE_KEYS) {
-      // A text box takes the text look only; its transparent frame stays.
-      if (textOnly && ['fill', 'stroke', 'strokeWidth', 'dash', 'gradient', 'gradientAngle'].includes(k)) continue;
-      if (style[k] !== undefined) patch[k] = style[k];
-    }
-    return { ...e, ...patch, ...(patch.fontSize !== undefined ? { paragraphs: e.paragraphs?.map((p) => ({ ...p, fontSize: undefined })) } : {}) };
-  });
+  return paintElements(els, expandSelection(els, sel), style);
 }
 
 // ── Insert ────────────────────────────────────────────────────────────────────────────────────
@@ -230,15 +237,9 @@ export function makeTable(rows: number, cols: number): SlideElement | null {
   return { id: uid('el'), kind: 'table', table, ...centred(w, h), fontSize: 32, color: '#ffffff' };
 }
 
-export const CHART_SAMPLE: Record<'categories' | 'series', never> | ChartData = {
-  kind: 'column', title: '', legend: true, dataLabels: false,
-  categories: ['항목 1', '항목 2', '항목 3', '항목 4'],
-  series: [{ name: '계열 1', values: [4.3, 2.5, 3.5, 4.5] }, { name: '계열 2', values: [2.4, 4.4, 1.8, 2.8] }, { name: '계열 3', values: [2, 2, 3, 5] }],
-};
+export const CHART_SAMPLE: ChartData = sampleChart('column');
 export function makeChart(kind: ChartKind): SlideElement {
-  const sample = CHART_SAMPLE as ChartData;
-  const single = kind === 'pie' || kind === 'doughnut';
-  return { id: uid('el'), kind: 'chart', chart: { ...sample, kind, series: single ? sample.series.slice(0, 1) : sample.series }, ...centred(960, 640), color: '#ffffff' };
+  return { id: uid('el'), kind: 'chart', chart: sampleChart(kind), ...centred(960, 640), color: '#ffffff' };
 }
 
 export const makeIcon = (name: string): SlideElement => ({ id: uid('el'), kind: 'icon', icon: name, ...centred(240, 240), color: '#ffffff' });

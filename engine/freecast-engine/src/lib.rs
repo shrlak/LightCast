@@ -27,6 +27,7 @@ use serde_json::{Value, json};
 pub mod animation;
 pub mod arrange;
 pub mod chart;
+pub mod chart_ex;
 pub mod color;
 pub mod find;
 pub mod geometry;

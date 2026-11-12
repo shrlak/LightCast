@@ -227,8 +227,37 @@ export const layoutTable = (table: TableData, w: number, h: number, scheme?: str
   tableCache(`${JSON.stringify(table)}|${w}|${h}|${scheme ?? ''}`, () => engineCall<{ cells: TableCellBox[] }>('table.layout', { table, w, h, scheme })?.cells ?? null) ?? [];
 
 // ── Charts ────────────────────────────────────────────────────────────────────────────────────
-export type ChartKind = 'column' | 'columnStacked' | 'bar' | 'barStacked' | 'line' | 'area' | 'pie' | 'doughnut' | 'scatter';
-export interface ChartData { kind: ChartKind; title?: string; categories: string[]; series: { name: string; values: number[]; color?: string }[]; legend?: boolean; dataLabels?: boolean; textColor?: string }
+export type ChartKind =
+  | 'column' | 'columnStacked' | 'columnPercent' | 'bar' | 'barStacked' | 'barPercent'
+  | 'line' | 'lineMarkers' | 'lineStacked' | 'area' | 'areaStacked' | 'pie' | 'doughnut' | 'scatter' | 'bubble'
+  | 'radar' | 'radarFilled' | 'stock' | 'surface' | 'combo'
+  // The Office 2016 types.
+  | 'waterfall' | 'histogram' | 'pareto' | 'boxWhisker' | 'treemap' | 'sunburst' | 'funnel';
+/** What a series of a combo chart is drawn as. */
+export type ChartSeriesKind = 'column' | 'line' | 'lineMarkers' | 'area';
+export interface ChartSeries {
+  name: string; values: number[]; color?: string;
+  /** Combo: this series' own type, and whether it reads the secondary value axis on the right. */
+  kind?: ChartSeriesKind; secondaryAxis?: boolean;
+  /** Scatter and bubble: x values; bubble: sizes. */
+  xValues?: number[]; sizes?: number[];
+}
+export interface ChartData {
+  kind: ChartKind; title?: string; categories: string[]; series: ChartSeries[]; legend?: boolean; dataLabels?: boolean; textColor?: string;
+  gridlines?: boolean;
+  /** `colorful` (the theme accents in turn) or `monochrome1`..`monochrome6` (shades of one accent). */
+  palette?: string;
+  /** Waterfall: the points that are totals. */
+  subtotals?: number[];
+  /** Histogram and Pareto: a bin count or width (none: automatic). */
+  binCount?: number; binSize?: number;
+  /** Box and whisker: quartiles by the inclusive method. */
+  inclusiveQuartiles?: boolean;
+  /** Treemap and sunburst: outer category levels, innermost first. */
+  categoryLevels?: string[][];
+  /** Stock: open-high-low-close boxes. */
+  upDownBars?: boolean;
+}
 const chartCache = cached<string>(300);
 export const chartSvg = (chart: ChartData, w: number, h: number, scheme?: string, fontFamily?: string) =>
   chartCache(`${JSON.stringify(chart)}|${w}|${h}|${scheme ?? ''}|${fontFamily ?? ''}`, () => engineCall<{ svg: string }>('chart.svg', { ...chart, w, h, scheme, fontFamily: fontFamily ?? '' })?.svg ?? null);
