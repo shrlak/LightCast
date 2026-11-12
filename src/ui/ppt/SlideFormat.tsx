@@ -15,6 +15,7 @@ import { changeCase } from '../../domain/textFormat';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { PdfReadOnly } from '../PdfReadOnly';
 import { ProtectedMaterialNotice } from '../MaterialProtection';
+import { BackgroundPictureOptions, BackgroundSources } from './designTab';
 
 interface Props {
   state: AppState;
@@ -165,9 +166,9 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
         </div>
         <div className="fmt-row">
           <label className="fmt-color grow" title="단색 배경"><span style={{ background: bgColor }} />단색<input type="color" value={bgColor} onChange={(e) => setBg({ kind: 'color', value: e.target.value })} /></label>
-          <button onClick={() => fileRef.current?.click()}>그림 · 동영상…</button>
           <input ref={fileRef} type="file" accept="image/*,video/*" hidden onChange={(e) => uploadBg(e.target.files?.[0])} />
         </div>
+        <BackgroundSources ed={{ dispatch, cmd: { notify: flash } as never }} setBg={setBg} onFile={() => fileRef.current?.click()} />
         {bg && (bg.kind === 'media' || bg.kind === 'image') && (
           <div className="fmt-row">
             <span className="muted">맞춤</span>
@@ -175,6 +176,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
             <button className={`fmt-tog ${bg.fit === 'contain' ? 'on' : ''}`} onClick={() => setBg({ ...bg, fit: 'contain' })}>맞추기</button>
           </div>
         )}
+        {bg && (bg.kind === 'media' || bg.kind === 'image') && <BackgroundPictureOptions bg={bg} setBg={setBg} />}
         <button disabled={!bg} onClick={() => applyToAll('background')}>이 배경을 모든 슬라이드에 적용</button>
       </Section>
 

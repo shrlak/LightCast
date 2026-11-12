@@ -10,11 +10,13 @@ import { canBuildByParagraph, slideTimeline } from '../../domain/animations';
 import type { Ed } from './editor';
 import { useRef } from 'react';
 import { withMaster } from '../../domain/master';
-import { FONT_OPTIONS } from '../../domain/fonts';
+import { FONT_OPTIONS, officeFont } from '../../domain/fonts';
 import { customSchemeName, readThemeFile } from '../../domain/io/themeFile';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { Big, Col, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
+import { openThemeColors, openThemeFonts, removeCustomColors, removeCustomFonts, useCustomSchemes } from './designTab';
+import { applyFontScheme, applyBackgroundStyle, backgroundStyles, colorsOf, customSchemeId, loadColorSchemes } from '../../domain/themeStyles';
 import { ANIMATION, ANIMATION_CLASS, ANIMATION_START, TRANSITION, TRANSITION_CATEGORY, animOptionLabel, optionLabel } from './ko';
 
 function MediaSwatch({ id, video }: { id: string; video: boolean }) {
@@ -31,7 +33,11 @@ export function DesignTab({ ed }: { ed: Ed }) {
   // A scheme brought in by Browse for Themes is listed first (the engine reads its colours from its name).
   const schemes = [...colorSchemes()];
   const custom = p?.colorScheme?.startsWith('custom:') ? p.colorScheme : null;
-  if (custom) schemes.unshift({ name: custom, colors: custom.split('|')[1]?.split(',') ?? [] });
+  const customSaved = loadColorSchemes();
+  if (custom && !customSaved.some((s) => customSchemeId(s.name, s.colors) === custom)) schemes.unshift({ name: custom, colors: custom.split('|')[1]?.split(',') ?? [] });
+  const customLists = useCustomSchemes();
+  const themeText = lib.themes.find((x) => x.id === p?.themeId)?.color ?? '#ffffff';
+  const styles = backgroundStyles(colorsOf(p?.colorScheme, colorSchemes()));
   const schemeLabel = (n: string) => (n.startsWith('custom:') ? n.slice(7).split('|')[0] : n);
   const themeFile = useRef<HTMLInputElement>(null);
   const browseTheme = async (f: File | undefined) => {
@@ -48,8 +54,8 @@ export function DesignTab({ ed }: { ed: Ed }) {
   const variants: { scheme: string; background: Background; label: string }[] = [
     { scheme: cur, background: presetBackground('Black'), label: '현재 색 · 검정 배경' },
     { scheme: cur, background: { kind: 'color', value: '#ffffff' } as Background, label: '현재 색 · 흰색 배경' },
-    { scheme: others[0]?.name ?? cur, background: { kind: 'color', value: '#1f2a44' } as Background, label: `${schemeLabel(others[0]?.name ?? '')} · 남색 배경` },
-    { scheme: others[1]?.name ?? cur, background: { kind: 'color', value: '#f2f2f2' } as Background, label: `${schemeLabel(others[1]?.name ?? '')} · 밝은 회색 배경` },
+    { scheme: others[0]?.name ?? cur, background: backgroundStyles(others[0]?.colors ?? [])[2].background, label: `${schemeLabel(others[0]?.name ?? '')} · 어두운 배경 (텍스트 2)` },
+    { scheme: others[1]?.name ?? cur, background: backgroundStyles(others[1]?.colors ?? [])[1].background, label: `${schemeLabel(others[1]?.name ?? '')} · 밝은 배경 (배경 2)` },
   ];
   return (
     <>
@@ -96,6 +102,16 @@ export function DesignTab({ ed }: { ed: Ed }) {
                 close();
               }} />
             ))}
+            {!!customLists.fonts.length && <MenuHead>사용자 지정</MenuHead>}
+            {customLists.fonts.map((f) => (
+              <div key={f.id} className="rb-mi-row">
+                <MenuItem on={p?.fontScheme?.name === f.name && p.fontScheme.major === f.major && p.fontScheme.minor === f.minor} label={<span><b style={{ fontFamily: officeFont(f.major), fontSize: 15 }}>{f.major}</b> / <span style={{ fontFamily: officeFont(f.minor), fontSize: 13 }}>{f.minor}</span> — {f.name}</span>} onClick={() => { if (p) ed.updatePres(applyFontScheme(p, f)); close(); }} />
+                <button type="button" className="rb-mi-act" title="편집" aria-label={`${f.name} 편집`} onClick={() => { close(); openThemeFonts(ed, f.id); }}>✎</button>
+                <button type="button" className="rb-mi-act" title="삭제" aria-label={`${f.name} 삭제`} onClick={() => { if (window.confirm(`사용자 지정 글꼴 “${f.name}”을(를) 목록에서 지울까요?\n이미 적용한 슬라이드의 글꼴은 그대로 남습니다.`)) removeCustomFonts(f.id); }}>✕</button>
+              </div>
+            ))}
+            <MenuSep />
+            <MenuItem icon="가A" label="새 테마 글꼴 만들기…" onClick={() => { close(); openThemeFonts(ed); }} />
           </>
         )} />
         <DropButton big icon={<span className="scheme-chip">{(schemes.find((s) => s.name === p?.colorScheme) ?? schemes[0])?.colors.slice(4, 8).map((c) => <i key={c} style={{ background: c }} />)}</span>} label="색" title="표 · 차트 · 도형 스타일 · 색 선택에 쓰는 테마 색" disabled={!p || !ed.canEdit} render={(close) => (
@@ -103,6 +119,19 @@ export function DesignTab({ ed }: { ed: Ed }) {
             {schemes.map((s) => (
               <MenuItem key={s.name} on={(p?.colorScheme ?? schemes[0]?.name) === s.name} label={<span className="scheme-row"><span className="scheme-chip">{s.colors.slice(4, 10).map((c, i) => <i key={i} style={{ background: c }} />)}</span>{schemeLabel(s.name)}</span>} onClick={() => { ed.updatePres({ colorScheme: s.name }); close(); }} />
             ))}
+            {!!customLists.colors.length && <MenuHead>사용자 지정</MenuHead>}
+            {customLists.colors.map((s) => {
+              const id = customSchemeId(s.name, s.colors);
+              return (
+                <div key={s.id} className="rb-mi-row">
+                  <MenuItem on={p?.colorScheme === id} label={<span className="scheme-row"><span className="scheme-chip">{s.colors.slice(4, 10).map((c, i) => <i key={i} style={{ background: c }} />)}</span>{s.name}</span>} onClick={() => { ed.updatePres({ colorScheme: id }); close(); }} />
+                  <button type="button" className="rb-mi-act" title="편집" aria-label={`${s.name} 편집`} onClick={() => { close(); openThemeColors(ed, s.id); }}>✎</button>
+                  <button type="button" className="rb-mi-act" title="삭제" aria-label={`${s.name} 삭제`} onClick={() => { if (window.confirm(`사용자 지정 색 “${s.name}”을(를) 목록에서 지울까요?\n이미 적용한 프레젠테이션의 색은 그대로 남습니다.`)) removeCustomColors(s.id); }}>✕</button>
+                </div>
+              );
+            })}
+            <MenuSep />
+            <MenuItem icon="🎨" label="새 테마 색 만들기…" onClick={() => { close(); openThemeColors(ed); }} />
           </>
         )} />
       </Group>
@@ -117,6 +146,19 @@ export function DesignTab({ ed }: { ed: Ed }) {
             <button key={m.id} type="button" className="rb-swatch" title={m.name} disabled={!p || !ed.canEdit} onClick={() => applyBackground({ kind: 'media', mediaId: m.id, mediaType: m.type === 'video' ? 'video' : 'image' })}><MediaSwatch id={m.id} video={m.type === 'video'} /></button>
           ))}
         </Gallery>
+        <DropButton big icon={RI.background} label="배경 스타일" title="테마 색으로 만든 배경 스타일 1–12 (모든 슬라이드)" disabled={!p || !ed.canEdit} render={(close) => (
+          <>
+            <MenuHead>배경 스타일</MenuHead>
+            <div className="bgstyle-grid">
+              {styles.map((s) => (
+                <button key={s.n} type="button" className="bgstyle" title={s.label} aria-label={s.label} style={{ background: s.css }} onClick={() => { if (p) ed.updatePres(applyBackgroundStyle(p, s, themeText)); close(); }}><span style={{ color: s.text }}>Aa</span></button>
+              ))}
+            </div>
+            <MenuSep />
+            <MenuItem label="배경 서식…" onClick={() => { close(); ed.setSel([]); ed.setPane('format'); }} />
+            <MenuItem label="배경 지우기" onClick={() => { applyBackground(undefined); close(); }} />
+          </>
+        )} />
         <Col>
           <Small icon="✕" label="배경 지우기" disabled={!p || !ed.canEdit} onClick={() => applyBackground(undefined)} />
           <label className="rb-range">어둡게 <input type="range" min={0} max={0.9} step={0.05} disabled={!p} value={p?.bgEffect?.dim ?? 0} onChange={(e) => ed.updatePres({ bgEffect: { dim: Number(e.target.value), blur: p?.bgEffect?.blur ?? 0 } })} /></label>
@@ -128,11 +170,16 @@ export function DesignTab({ ed }: { ed: Ed }) {
           <>
             <MenuItem label="표준 (4:3)" on onClick={close} />
             <MenuItem label="와이드스크린 (16:9)" disabled hint="교회 프로젝터에 맞춘 4:3 고정" onClick={close} />
+            <MenuSep />
+            <MenuItem label="슬라이드 크기…" onClick={() => { close(); ed.setDialog('slideSize'); }} />
           </>
         )} />
         <Big icon={RI.background} label="배경 서식" title="이 슬라이드만의 배경 — 오른쪽 서식 창" disabled={!ed.slide} onClick={() => { ed.setSel([]); ed.setPane('format'); }} />
         <label className="rb-check" title="슬라이드 마스터의 개체를 이 슬라이드에서 숨깁니다"><input type="checkbox" disabled={!ed.slide || !ed.canEdit || !ed.p?.master?.elements.length} checked={!!ed.slide?.hideMaster}
           onChange={(e) => { if (ed.slide) ed.updateSlide({ hideMaster: e.target.checked || undefined, elements: withMaster({ ...ed.slide, hideMaster: e.target.checked }, ed.p?.master?.elements ?? []).elements }); }} /> 배경 그래픽 숨기기</label>
+      </Group>
+      <Group label="디자이너">
+        <Big icon={<span style={{ fontSize: 24 }}>✨</span>} label="디자인 아이디어" title="이 슬라이드의 제목 · 내용 · 그림을 여러 가지로 배치해 봅니다" disabled={!ed.slide} active={ed.pane === 'designer'} onClick={() => ed.setPane(ed.pane === 'designer' ? null : 'designer')} />
       </Group>
     </>
   );

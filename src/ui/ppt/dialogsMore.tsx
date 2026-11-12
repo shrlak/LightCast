@@ -18,6 +18,7 @@ import { activeTextEditor } from '../RichTextEditor';
 import { Check, Dialog, Field, Num } from './dialogs';
 import { SMARTART_CATEGORIES, SMARTART_LAYOUT, SMARTART_STYLE, smartArtColorLabel } from './ko';
 import type { DialogKind, Ed } from './editor';
+import { SlideSizeDialog, ThemeColorsDialog, ThemeFontsDialog } from './designTab';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
@@ -516,6 +517,9 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'thesaurus': return <ThesaurusDialog ed={ed} onClose={onClose} />;
     case 'zoom': return <ZoomDialog ed={ed} onClose={onClose} />;
     case 'audio': return <PlaybackDialog ed={ed} onClose={onClose} />;
+    case 'themeColors': return <ThemeColorsDialog ed={ed} onClose={onClose} />;
+    case 'themeFonts': return <ThemeFontsDialog ed={ed} onClose={onClose} />;
+    case 'slideSize': return <SlideSizeDialog onClose={onClose} />;
     default: return null;
   }
 }
