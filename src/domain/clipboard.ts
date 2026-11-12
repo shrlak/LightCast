@@ -249,8 +249,14 @@ const fragment = (html: string) => {
   return s >= 0 && e > s ? html.slice(s + 20, e) : null;
 };
 
+/** DeckCraft richclip's caps: a hostile fragment is cut off, never executed. */
+export const MAX_HTML = 1 << 20;
+export const MAX_PARAS = 2000;
+export const MAX_RUNS = 10000;
+
 /** Pasted HTML → lines of formatted text (for a text box being typed in). */
 export function htmlToLines(html: string): HtmlLine[] {
+  if (html.length > MAX_HTML) return [];
   const doc = parseMarkup(html, true);
   const rules = styleRules(doc);
   const frag = fragment(html);
@@ -344,6 +350,26 @@ export function pastedLines(html: string | null | undefined, custom?: string | n
     }));
   }
   if (!html) return null;
-  const lines = htmlToLines(html);
-  return lines.length ? lines.map((l) => l.runs) : null;
+  const lines = htmlToLines(html).slice(0, MAX_PARAS);
+  return lines.length ? capRuns(lines.map((l) => l.runs)) : null;
+}
+
+/** At most MAX_RUNS runs in all (DeckCraft richclip). */
+function capRuns(lines: TextRun[][]): TextRun[][] {
+  let left = MAX_RUNS;
+  return lines.map((l) => { const keep = l.slice(0, Math.max(0, left)); left -= keep.length; return keep; });
+}
+
+const fold = (t: string) => t.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ').replace(/[\u200b]/g, '').trim();
+const plainOf = (lines: { runs: TextRun[] }[]) => lines.map((l) => l.runs.map((r) => r.text).join('')).join('\n');
+
+/**
+ * Does foreign HTML say the same words as the clipboard's plain text? (DeckCraft same_words: stale
+ * HTML left on the clipboard by another copy is ignored, and the plain text pastes.) Blank lines
+ * are not compared.
+ */
+export function htmlMatchesText(html: string | null | undefined, text: string | null | undefined): boolean {
+  if (!html || !text) return true;
+  const squash = (t: string) => fold(t).split('\n').map((x) => x.trim()).filter(Boolean).join('\n');
+  return squash(plainOf(htmlToLines(html))) === squash(text);
 }

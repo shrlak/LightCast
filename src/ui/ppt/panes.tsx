@@ -1,6 +1,7 @@
 // Task panes on the right of the window: 애니메이션 창, 선택 창, 메모.
-import { useState } from 'react';
-import type { SlideAnimation, SlideElement } from '../../domain/types';
+import { useState, useSyncExternalStore } from 'react';
+import type { Slide, SlideAnimation, SlideComment, SlideElement } from '../../domain/types';
+import { commentCount, initialsOf, neighbourComment, type CommentRef } from '../../domain/comments';
 import { uid } from '../../domain/lyrics';
 import { getDevice } from '../../domain/device';
 import { loadSession } from '../../domain/cloud';
@@ -103,49 +104,100 @@ export function SelectionPane({ ed }: { ed: Ed }) {
   );
 }
 
+// The comment Previous / Next (and a click on a card) put in focus: shared by the ribbon and the pane.
+let focused: CommentRef | null = null;
+const focusListeners = new Set<() => void>();
+export function setCommentFocus(ref: CommentRef | null) { focused = ref; focusListeners.forEach((f) => f()); }
+const useCommentFocus = () => useSyncExternalStore((f) => { focusListeners.add(f); return () => { focusListeners.delete(f); }; }, () => focused);
+
+/** Review › Previous / Next comment (DeckCraft comment.prev / comment.next): goes to its slide and opens the pane. */
+export function stepComment(ed: Ed, forward: boolean) {
+  const p = ed.p;
+  if (!p) return;
+  const at = ed.slide ? p.slides.indexOf(ed.slide) : 0;
+  const cur = focused && focused.slide === at ? focused.index : null;
+  const next = neighbourComment(p.slides, at, cur, forward);
+  if (!next) return ed.cmd.notify(commentCount(p.slides) ? (forward ? '마지막 메모입니다.' : '첫 메모입니다.') : '메모가 없습니다.');
+  ed.cmd.setSlideId(p.slides[next.slide].id);
+  setCommentFocus(next);
+  if (ed.pane !== 'comments') ed.setPane('comments');
+}
+
 export function CommentsPane({ ed, draftOpen, onDraftDone }: { ed: Ed; draftOpen: boolean; onDraftDone: () => void }) {
   const slide = ed.slide;
-  const list = slide?.comments ?? [];
+  const p = ed.p;
+  const slides = p?.slides ?? [];
+  const here = slide ? slides.indexOf(slide) : -1;
   const [text, setText] = useState('');
   const [writing, setWriting] = useState(false);
   const [reply, setReply] = useState<Record<string, string>>({});
-  const author = loadSession()?.username ?? getDevice().userName ?? '나';
+  const focus = useCommentFocus();
+  const author = loadSession()?.username || getDevice().userName || '나';
+  const anchor = ed.sel.length === 1 && ed.elements.some((e) => e.id === ed.sel[0]) ? ed.sel[0] : undefined;
   const save = () => {
     if (!slide || !text.trim()) return;
-    ed.updateSlide({ comments: [...list, { id: uid('c'), author, text: text.trim(), at: Date.now() }] });
+    const list = slide.comments ?? [];
+    ed.updateSlide({ comments: [...list, { id: uid('c'), author, text: text.trim(), at: Date.now(), ...(anchor ? { elementId: anchor } : {}) }] });
+    setCommentFocus({ slide: here, index: list.length });
     setText('');
     setWriting(false);
     onDraftDone();
   };
-  const set = (comments: typeof list) => ed.updateSlide({ comments: comments.length ? comments : undefined });
+  const setOn = (s: Slide, comments: SlideComment[]) => ed.updatePres({ slides: slides.map((x) => (x.id === s.id ? { ...x, comments: comments.length ? comments : undefined } : x)) });
+  const go = (si: number, ci: number) => {
+    const s = slides[si];
+    setCommentFocus({ slide: si, index: ci });
+    if (s.id !== slide?.id) ed.cmd.setSlideId(s.id);
+    const el = s.comments?.[ci]?.elementId;
+    if (el && s.elements?.some((e) => e.id === el)) setTimeout(() => ed.setSel([el]), 0);
+  };
+  const groups = slides.map((s, si) => ({ s, si })).filter(({ s }) => s.comments?.length);
   return (
     <div className="task-pane">
       <PaneHead title="메모" onClose={() => ed.setPane(null)} />
-      {(draftOpen || writing || !list.length) && slide && (
+      {(draftOpen || writing || !groups.length) && slide && (
         <div className="comment-new">
+          <small className="dlg-note">슬라이드 {here + 1}{anchor ? ` · ${elementName(ed.elements.find((e) => e.id === anchor)!, ed.elements.findIndex((e) => e.id === anchor))}` : ''}</small>
           <textarea autoFocus={draftOpen || writing} placeholder="메모를 입력하세요. 팀원이 이 슬라이드에서 봅니다." value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) save(); }} />
           <div className="row gap-xs"><span className="grow" /><button type="button" onClick={() => { setText(''); setWriting(false); onDraftDone(); }}>취소</button><button type="button" className="primary" disabled={!text.trim()} onClick={save}>게시</button></div>
         </div>
       )}
-      {!draftOpen && !writing && !!list.length && <div className="task-tools"><button type="button" onClick={() => setWriting(true)}>＋ 새 메모</button></div>}
-      <ul className="comment-list">
-        {list.map((c) => (
-          <li key={c.id} className={c.resolved ? 'resolved' : ''}>
-            <div className="comment-head"><b>{c.author}</b><small>{new Date(c.at).toLocaleString()}</small></div>
-            <p>{c.text}</p>
-            {c.replies?.map((r, i) => <div key={i} className="comment-reply"><b>{r.author}</b> {r.text}</div>)}
-            <div className="row gap-xs">
-              <input placeholder="회신" value={reply[c.id] ?? ''} onChange={(e) => setReply({ ...reply, [c.id]: e.target.value })} onKeyDown={(e) => {
-                if (e.key !== 'Enter' || !reply[c.id]?.trim()) return;
-                set(list.map((x) => (x.id === c.id ? { ...x, replies: [...(x.replies ?? []), { author, text: reply[c.id].trim(), at: Date.now() }] } : x)));
-                setReply({ ...reply, [c.id]: '' });
-              }} />
-              <button type="button" className="mini-btn" onClick={() => set(list.map((x) => (x.id === c.id ? { ...x, resolved: !x.resolved } : x)))}>{c.resolved ? '다시 열기' : '해결'}</button>
-              <button type="button" className="mini-btn danger" onClick={() => set(list.filter((x) => x.id !== c.id))}>삭제</button>
-            </div>
-          </li>
-        ))}
-      </ul>
+      <div className="task-tools">
+        {!draftOpen && !writing && !!groups.length && <button type="button" onClick={() => setWriting(true)}>＋ 새 메모</button>}
+        <span className="grow" />
+        <button type="button" title="이전 메모" disabled={!groups.length} onClick={() => stepComment(ed, false)}>◀ 이전</button>
+        <button type="button" title="다음 메모" disabled={!groups.length} onClick={() => stepComment(ed, true)}>다음 ▶</button>
+      </div>
+      {!groups.length && <p className="dlg-note comment-empty">메모가 없습니다.</p>}
+      {groups.map(({ s, si }) => (
+        <div key={s.id} className="comment-group">
+          <div className={`comment-slide ${si === here ? 'on' : ''}`}>슬라이드 {si + 1}{s.title ? ` · ${s.title.slice(0, 24)}` : ''}</div>
+          <ul className="comment-list">
+            {s.comments!.map((c, ci) => {
+              const list = s.comments!;
+              const on = focus?.slide === si && focus.index === ci;
+              const el = c.elementId ? s.elements?.find((e) => e.id === c.elementId) : undefined;
+              return (
+                <li key={c.id} className={`${c.resolved ? 'resolved' : ''} ${on ? 'focus' : ''}`} ref={on ? (n) => n?.scrollIntoView({ block: 'nearest' }) : undefined} onClick={() => go(si, ci)}>
+                  <div className="comment-head"><span className="comment-avatar">{initialsOf(c.author)}</span><b className="grow">{c.author}</b><small>{new Date(c.at).toLocaleString()}{c.resolved ? ' · 해결됨' : ''}</small></div>
+                  {el && <small className="comment-anchor">📌 {elementName(el, s.elements!.indexOf(el))}</small>}
+                  <p>{c.text}</p>
+                  {c.replies?.map((r, i) => <div key={i} className="comment-reply"><span className="comment-avatar sm">{initialsOf(r.author)}</span><b>{r.author}</b> {r.text}</div>)}
+                  <div className="row gap-xs" onClick={(e) => e.stopPropagation()}>
+                    <input placeholder="회신" value={reply[c.id] ?? ''} onChange={(e) => setReply({ ...reply, [c.id]: e.target.value })} onKeyDown={(e) => {
+                      if (e.key !== 'Enter' || !reply[c.id]?.trim()) return;
+                      setOn(s, list.map((x) => (x.id === c.id ? { ...x, replies: [...(x.replies ?? []), { author, text: reply[c.id].trim(), at: Date.now() }] } : x)));
+                      setReply({ ...reply, [c.id]: '' });
+                    }} />
+                    <button type="button" className="mini-btn" disabled={!ed.canEdit} onClick={() => setOn(s, list.map((x) => (x.id === c.id ? { ...x, resolved: !x.resolved || undefined } : x)))}>{c.resolved ? '다시 열기' : '해결'}</button>
+                    <button type="button" className="mini-btn danger" disabled={!ed.canEdit} onClick={() => { setOn(s, list.filter((x) => x.id !== c.id)); if (on) setCommentFocus(null); }}>삭제</button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
     </div>
   );
 }

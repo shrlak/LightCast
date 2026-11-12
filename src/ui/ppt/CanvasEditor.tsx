@@ -19,6 +19,7 @@ import {
 import { layoutTable } from '../../engine';
 import { drawLine, eraseLine } from '../../domain/tableBorders';
 import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, insertPoint, moveAnchor, moveControl, nearestOnPath, openPath, parsePath, setPointType, setSegmentType, shiftPath, writePath, type Seg } from '../../domain/pathEdit';
+import { DEFAULT_GRID_PX, dragGuidePos, dropGuide, gridStep, guideAt, guideCount, guideLabel, type GuideAxis } from '../../domain/guides';
 import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
 import { adjOf, geometryOf, isLinePreset, presetOf } from '../EngineElements';
 import { RichTextEditor, type EditStart, type EditorControl } from '../RichTextEditor';
@@ -59,6 +60,14 @@ export interface ViewOptions {
   guides?: boolean;
   /** 눈금자: centimetre rulers along the top and left, with the selected box's indents and tabs. */
   ruler?: boolean;
+  /** View › Grid Options (DeckCraft view.gridOptions): the grid's spacing in canvas px (default 30 = 15 pt). */
+  gridSpacing?: number;
+  /** 개체를 눈금에 맞춤; unset = while the grid is shown (LightCast's old behaviour). */
+  snapToGrid?: boolean;
+  /** 스마트 가이드: snap to the slide and the other objects (default on). */
+  smartGuides?: boolean;
+  /** View › Color/Grayscale › 회색조: the editor shows the slides in grey (the slides are unchanged). */
+  grayscale?: boolean;
 }
 
 type Drag =
@@ -71,7 +80,8 @@ type Drag =
   | { mode: 'ink'; points: [number, number][] }
   | { mode: 'point'; id: string; seg: number; startX: number; startY: number; moved: boolean; base?: string }
   | { mode: 'ctrl'; id: string; seg: number; which: 0 | 1; startX: number; startY: number; moved: boolean }
-  | { mode: 'tdraw'; id: string; r: number; c: number; cx: number; cy: number; cw: number; ch: number; x0: number; y0: number };
+  | { mode: 'tdraw'; id: string; r: number; c: number; cx: number; cy: number; cw: number; ch: number; x0: number; y0: number }
+  | { mode: 'guide'; axis: GuideAxis; index: number };
 
 interface Props {
   slide: Slide;
@@ -97,6 +107,8 @@ interface Props {
   defaultShape?: Partial<SlideElement>;
   /** Guides the user placed (View › Guides), drawn and snapped to. */
   customGuides?: { v: number[]; h: number[] };
+  /** A guide was dragged (moved, or deleted by dropping it off the slide). */
+  onGuidesChange?: (g: { v: number[]; h: number[] }) => void;
   /** A picture placeholder was double-clicked: pick a picture (its media id, or null). */
   pickPicture?: () => Promise<string | null>;
   /** Show the objects as the slide show would at the start (hidden objects stay hidden). */
@@ -141,7 +153,7 @@ function toSlide(el: SlideElement, lx: number, ly: number): [number, number] {
  * italic, underline or colour. Every geometric answer — hits, sizes, angles, snapping — comes from
  * the Rust engine. Changes apply as you go, so a slide that is live updates on screen.
  */
-export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, onAddMedia, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, pickPicture, motionPaths }: Props) {
+export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, onAddMedia, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, onGuidesChange, pickPicture, motionPaths }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const k = width / CANVAS_W || 1;
   /** The box being typed in, and how typing started there (caret at a click, a word, or waiting for an input method). */
@@ -160,6 +172,10 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const identity = slide.sourceSlideId ?? slide.id;
   const [preview, setPreview] = useState<Map<string, Box & { rot?: number; adj?: number[] }> | null>(null);
   const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
+  // A drawing guide being dragged (where it is now), and the guide under the pointer (its cursor).
+  const [guideDrag, setGuideDrag] = useState<{ axis: GuideAxis; index: number; pos: number } | null>(null);
+  const [guideHover, setGuideHover] = useState<GuideAxis | null>(null);
+  const gridPx = view?.gridSpacing ?? DEFAULT_GRID_PX;
   const [band, setBand] = useState<Box | null>(null);
   const [inkPath, setInkPath] = useState<[number, number][] | null>(null);
   const drag = useRef<Drag | null>(null);
@@ -438,6 +454,13 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     }
     // Front-most object under the pointer (rotated boxes, in drawing order).
     const hit = hitBox(pickable.map((el) => boxOf(shownEl(el))), x, y, 3);
+    // Away from every object a press on a drawing guide picks the guide up (DeckCraft).
+    const onGuide = !hit && !tool && onGuidesChange ? guideAt(customGuides, x, y, 5 / k) : null;
+    if (onGuide && customGuides) {
+      drag.current = { mode: 'guide', ...onGuide };
+      setGuideDrag({ ...onGuide, pos: customGuides[onGuide.axis][onGuide.index] });
+      return;
+    }
     if (!hit) {
       if (hasSlideText && x >= textBox.x && x <= textBox.x + textBox.w && y >= textBox.y && y <= textBox.y + textBox.h) {
         // The browser would move focus to the canvas after this and end the typing straight away.
@@ -499,8 +522,20 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
 
   const onMove = (e: RPointerEvent) => {
     const d = drag.current;
-    if (!d) return;
+    if (!d) {
+      if (onGuidesChange && !tool && customGuides) {
+        const [hx, hy] = pointer(e);
+        const near = guideAt(customGuides, hx, hy, 5 / k);
+        const g = near && !hitBox(pickable.map(boxOf), hx, hy, 3) ? near : null;
+        if ((g?.axis ?? null) !== guideHover) setGuideHover(g?.axis ?? null);
+      }
+      return;
+    }
     const [x, y] = pointer(e);
+    if (d.mode === 'guide') {
+      setGuideDrag({ axis: d.axis, index: d.index, pos: dragGuidePos(d.axis === 'v' ? x : y, !e.altKey) });
+      return;
+    }
     if (d.mode === 'marquee' || d.mode === 'draw') {
       d.x1 = x; d.y1 = y;
       if (d.mode === 'draw' && e.shiftKey) {
@@ -549,7 +584,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       let sx = 0, sy = 0;
       if (united && !e.altKey) {
         const others = visible.filter((el) => !d.ids.includes(el.id)).map(boxOf);
-        const s = snapBox({ id: 'm', ...united, rot: 0 }, others, { grid: view?.grid ? 30 : 0, smart: true, guidesV: customGuides?.v, guidesH: customGuides?.h });
+        const s = snapBox({ id: 'm', ...united, rot: 0 }, others, { grid: (view?.snapToGrid ?? !!view?.grid) ? gridPx : 0, smart: view?.smartGuides !== false, guidesV: customGuides?.v, guidesH: customGuides?.h });
         if (s) { sx = s.x - united.x; sy = s.y - united.y; setGuides(s.guides); }
       } else setGuides({ v: [], h: [] });
       setPreview(new Map(boxes.map((b) => [b.id, { x: Math.round(b.x + sx), y: Math.round(b.y + sy), w: b.w, h: b.h }])));
@@ -602,6 +637,12 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     setGuides({ v: [], h: [] });
     setBand(null);
     if (!d) return;
+    if (d.mode === 'guide') {
+      const g = guideDrag;
+      setGuideDrag(null);
+      if (g && customGuides && g.pos !== customGuides[d.axis][d.index]) onGuidesChange?.(dropGuide(customGuides, d.axis, d.index, g.pos));
+      return;
+    }
     if (d.mode === 'marquee') {
       const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
       if (r.w < 3 && r.h < 3) return;
@@ -888,7 +929,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   })();
 
   return (
-    <div className={`ce-root ${tool ? `tool-${tool.kind}` : ''}`} ref={ref} tabIndex={0} onKeyDown={onKeyDown} onFocus={(e) => { if (e.target === ref.current) focusRoot(); }} onPointerDown={onRootDown} onPointerMove={onMove} onPointerUp={onUp} onContextMenuCapture={(e) => { if (tool?.kind === 'points') { e.preventDefault(); e.stopPropagation(); } }}
+    <div className={`ce-root ${tool ? `tool-${tool.kind}` : ''} ${guideDrag || guideHover ? `on-guide-${guideDrag?.axis ?? guideHover}` : ''}`} ref={ref} tabIndex={0} onKeyDown={onKeyDown} onFocus={(e) => { if (e.target === ref.current) focusRoot(); }} onPointerDown={onRootDown} onPointerMove={onMove} onPointerUp={onUp} onContextMenuCapture={(e) => { if (tool?.kind === 'points') { e.preventDefault(); e.stopPropagation(); } }}
       onCopy={(e) => onCopy(e)} onCut={(e) => onCopy(e, true)} onPaste={onPaste} onDoubleClick={(e) => {
         const [x, y] = pointer(e);
         if (tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); return; }
@@ -917,8 +958,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         onInput={sinkInput} onBlur={() => { sinkMuted.current = true; }} onFocus={() => { sinkMuted.current = false; }}
         onPointerDown={(e) => e.stopPropagation()} />
       <div className="ce-overlay">
-        {view?.grid && <div className="ce-grid" style={{ backgroundSize: `${30 * k}px ${30 * k}px` }} />}
-        {view?.guides && <><div className="ce-guide ce-guide-v ce-fixed" style={{ left: (CANVAS_W / 2) * k }} /><div className="ce-guide ce-guide-h ce-fixed" style={{ top: (CANVAS_H / 2) * k }} /></>}
+        {view?.grid && gridStep(gridPx, k) && <div className="ce-grid" style={{ backgroundSize: `${gridPx * k}px ${gridPx * k}px` }} />}
+        {view?.guides && !guideCount(customGuides) && <><div className="ce-guide ce-guide-v ce-fixed" style={{ left: (CANVAS_W / 2) * k }} /><div className="ce-guide ce-guide-h ce-fixed" style={{ top: (CANVAS_H / 2) * k }} /></>}
         {hasSlideText && !editing && <div className={`ce-box slide-text ${selected.includes(SLIDE_TEXT) ? 'on' : ''}`} style={at(textBox)} />}
         {visible.map((raw) => {
           const el = shownEl(raw);
@@ -994,8 +1035,13 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
             <line x1={tablePreview.x0} y1={tablePreview.y0} x2={tablePreview.x1} y2={tablePreview.y1} stroke="#0078d4" strokeWidth={2 / k} strokeDasharray={`${6 / k} ${4 / k}`} />
           </svg>
         )}
-        {customGuides?.v.map((x, i) => <div key={`cgv${i}`} className="ce-guide ce-guide-v ce-user" style={{ left: x * k }} />)}
-        {customGuides?.h.map((y, i) => <div key={`cgh${i}`} className="ce-guide ce-guide-h ce-user" style={{ top: y * k }} />)}
+        {customGuides?.v.map((x, i) => <div key={`cgv${i}`} className={`ce-guide ce-guide-v ce-user ${guideDrag?.axis === 'v' && guideDrag.index === i ? 'dragging' : ''}`} style={{ left: (guideDrag?.axis === 'v' && guideDrag.index === i ? guideDrag.pos : x) * k }} />)}
+        {customGuides?.h.map((y, i) => <div key={`cgh${i}`} className={`ce-guide ce-guide-h ce-user ${guideDrag?.axis === 'h' && guideDrag.index === i ? 'dragging' : ''}`} style={{ top: (guideDrag?.axis === 'h' && guideDrag.index === i ? guideDrag.pos : y) * k }} />)}
+        {guideDrag && (
+          <span className="ce-guide-tip" style={guideDrag.axis === 'v' ? { left: guideDrag.pos * k + 6, top: 6 } : { top: guideDrag.pos * k + 6, left: 6 }}>
+            {guideDrag.pos < 0 || guideDrag.pos > (guideDrag.axis === 'v' ? CANVAS_W : CANVAS_H) ? '놓으면 삭제' : guideLabel(guideDrag.axis, guideDrag.pos)}
+          </span>
+        )}
         {inkPath && tool?.kind === 'pen' && (
           <svg className="ce-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
             <polyline points={inkPath.map((p) => p.join(',')).join(' ')} fill="none" stroke={tool.color} strokeWidth={tool.width} strokeOpacity={tool.highlighter ? 0.45 : 1} strokeLinecap="round" strokeLinejoin="round" />

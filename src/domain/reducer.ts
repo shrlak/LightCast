@@ -503,7 +503,7 @@ function core(s: AppState, a: Action): AppState {
     case 'sunday/settings':
       return setLib(s, { sunday: { ...lib.sunday, ...a.patch } });
     case 'library/replace':
-      return { ...createInitialState(keepProtectedMaterials({ ...a.library, cloudResetId: lib.cloudResetId ?? a.library.cloudResetId, protectionChanges: mergeProtectionChanges(lib, a.library) }, protectionWinners(lib), [lib])), past: [...s.past, s.library].slice(-60), pastPositions: [...s.pastPositions, { before: s.cursor, after: null }].slice(-60) };
+      return { ...createInitialState(keepProtectedMaterials({ ...a.library, cloudResetId: lib.cloudResetId ?? a.library.cloudResetId, protectionChanges: mergeProtectionChanges(lib, a.library) }, protectionWinners(lib), [lib])), past: [...s.past, s.library].slice(-HISTORY_DEPTH), pastPositions: [...s.pastPositions, { before: s.cursor, after: null }].slice(-HISTORY_DEPTH) };
     case 'device/register':
       return setLib(s, { devices: [...(lib.devices ?? []).filter((d) => d.id !== a.device.id), a.device] });
     case 'activity/record':
@@ -600,6 +600,9 @@ function core(s: AppState, a: Action): AppState {
 }
 
 /** Actions that change the library but should not be undoable. */
+/** Undo steps kept (PowerPoint allows up to 150; DeckCraft keeps 500 with a byte budget, which a whole-library snapshot cannot do). */
+export const HISTORY_DEPTH = 150;
+
 const NO_HISTORY = new Set<Action['type']>(['trash/expire', 'trash/purge', 'device/register', 'activity/record', 'timer/op', 'macro/run', 'usage/clear', 'library/replace', 'schedule/ran', 'slide/runActions', 'online/songs', 'songs/dedupe', 'live/videoClock', 'library/merge']);
 
 function historyKey(a: Action): string {
@@ -622,10 +625,10 @@ function reduceState(s: AppState, a: Action): AppState {
     if (!from.length) return s;
     const library = from[from.length - 1];
     const rest = from.slice(0, -1);
-    const other = [...(a.type === 'undo' ? s.future : s.past), s.library].slice(-60);
+    const other = [...(a.type === 'undo' ? s.future : s.past), s.library].slice(-HISTORY_DEPTH);
     const positions = a.type === 'undo' ? s.pastPositions : s.futurePositions;
     const position = positions.at(-1);
-    const otherPositions = [...(a.type === 'undo' ? s.futurePositions : s.pastPositions), position ?? { before: s.cursor, after: s.cursor }].slice(-60);
+    const otherPositions = [...(a.type === 'undo' ? s.futurePositions : s.pastPositions), position ?? { before: s.cursor, after: s.cursor }].slice(-HISTORY_DEPTH);
     const next = { ...s, library, lastKey: null, ...(a.type === 'undo'
       ? { past: rest, future: other, pastPositions: positions.slice(0, -1), futurePositions: otherPositions }
       : { past: other, future: rest, pastPositions: otherPositions, futurePositions: positions.slice(0, -1) }) };
@@ -665,8 +668,8 @@ function reduceState(s: AppState, a: Action): AppState {
   const coalesce = !slideList && key === s.lastKey && (a.type === 'theme/upsert' || a.type.endsWith('/update') || a.type.endsWith('/upsert'));
   return syncLive({
     ...next,
-    past: coalesce ? s.past : [...s.past, s.library].slice(-60),
-    pastPositions: coalesce ? s.pastPositions.map((p, i, all) => i === all.length - 1 ? { ...p, after: next.cursor } : p) : [...s.pastPositions, { before: s.cursor, after: next.cursor }].slice(-60),
+    past: coalesce ? s.past : [...s.past, s.library].slice(-HISTORY_DEPTH),
+    pastPositions: coalesce ? s.pastPositions.map((p, i, all) => i === all.length - 1 ? { ...p, after: next.cursor } : p) : [...s.pastPositions, { before: s.cursor, after: next.cursor }].slice(-HISTORY_DEPTH),
     future: [],
     futurePositions: [],
     lastKey: key,

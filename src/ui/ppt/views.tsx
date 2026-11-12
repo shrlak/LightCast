@@ -1,13 +1,14 @@
 // Views and dialogs of the PowerPoint window: 찾기 / 바꾸기, 개요 보기, 여러 슬라이드, 읽기용 보기,
 // transition and animation previews, and the 파일 (backstage) view.
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
-import type { Presentation, Slide, SlideElement } from '../../domain/types';
+import type { Slide, SlideElement } from '../../domain/types';
 import { CANVAS_W } from '../../domain/canvas';
 import { actionAt } from '../../domain/showActions';
 export { actionAt };
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
-import { findText, replaceText, type TextItem } from '../../engine';
+import { findText } from '../../engine';
+import { findItems, parseFindKey, replaceMatches } from '../../domain/findReplace';
 import { SlideCanvas } from '../SlideCanvas';
 import { printHtml } from '../printHtml';
 import type { LiveBuild } from '../../domain/animations';
@@ -18,21 +19,8 @@ import { TRANSITION } from './ko';
 import { PrintRun, PropertiesForm, type PrintMode } from './printing';
 
 // ── Find and replace ──────────────────────────────────────────────────────────────────────────
-type Key = { slideId: string; field: 'text' | 'title' | 'subtext' | 'notes' | 'el'; elementId?: string };
-const keyOf = (k: Key) => [k.slideId, k.field, k.elementId ?? ''].join('|');
-const parseKey = (s: string): Key => { const [slideId, field, elementId] = s.split('|'); return { slideId, field: field as Key['field'], elementId: elementId || undefined }; };
-
-function textItems(p: Presentation): TextItem[] {
-  const out: TextItem[] = [];
-  for (const s of p.slides) {
-    if (s.title) out.push({ key: keyOf({ slideId: s.id, field: 'title' }), text: s.title });
-    if (s.text) out.push({ key: keyOf({ slideId: s.id, field: 'text' }), text: s.text });
-    if (s.subtext) out.push({ key: keyOf({ slideId: s.id, field: 'subtext' }), text: s.subtext });
-    for (const el of s.elements ?? []) if (el.text) out.push({ key: keyOf({ slideId: s.id, field: 'el', elementId: el.id }), text: el.text });
-    if (s.notes) out.push({ key: keyOf({ slideId: s.id, field: 'notes' }), text: s.notes });
-  }
-  return out;
-}
+// What is searched and how a replacement keeps the formatting: domain/findReplace (DeckCraft text.find /
+// text.replace — slide text, objects, table cells and notes).
 
 /** Home › Editing › Find / Replace, searched by the engine across the whole presentation. */
 export function FindReplaceDialog({ ed, replace: startReplace, onClose }: { ed: Ed; replace: boolean; onClose: () => void }) {
@@ -44,43 +32,29 @@ export function FindReplaceDialog({ ed, replace: startReplace, onClose }: { ed: 
   const [at, setAt] = useState(-1);
   const [msg, setMsg] = useState('');
   const p = ed.p;
-  const hits = useMemo(() => (p && q ? findText(textItems(p), q, { matchCase, wholeWord: whole }) : []), [p, q, matchCase, whole]);
+  const hits = useMemo(() => (p && q ? findText(findItems(p), q, { matchCase, wholeWord: whole }) : []), [p, q, matchCase, whole]);
   const go = (i: number) => {
     if (!hits.length || !p) return setMsg(q ? '찾는 항목이 없습니다.' : '');
     const n = ((i % hits.length) + hits.length) % hits.length;
     setAt(n);
-    const k = parseKey(hits[n].key);
+    const k = parseFindKey(hits[n].key);
     ed.cmd.setSlideId(k.slideId);
     if (k.elementId) setTimeout(() => ed.setSel([k.elementId!]), 0);
     setMsg(`${n + 1} / ${hits.length}`);
   };
-  const apply = (items: TextItem[]) => {
-    if (!p) return;
-    const by = new Map(items.map((i) => [i.key, i.text]));
-    const slides = p.slides.map((s) => {
-      let next: Slide = s;
-      for (const [key, text] of by) {
-        const k = parseKey(key);
-        if (k.slideId !== s.id) continue;
-        if (k.field === 'el') next = { ...next, elements: next.elements?.map((e) => (e.id === k.elementId ? { ...e, text, runs: undefined, paragraphs: e.paragraphs ? text.split('\n').map((t, i) => ({ ...e.paragraphs![Math.min(i, e.paragraphs!.length - 1)], text: t, runs: undefined })) : undefined } : e)) };
-        else next = { ...next, [k.field]: text };
-      }
-      return next;
-    });
-    ed.updatePres({ slides });
-  };
   const one = () => {
     if (!p || at < 0 || !hits[at]) return go(0);
-    const h = hits[at];
-    const res = replaceText(textItems(p), q, r, { matchCase, wholeWord: whole, onlyKey: h.key, onlyStart: h.start });
-    apply(res.items);
-    setMsg(res.count ? '1개를 바꿨습니다.' : '');
+    ed.updatePres({ slides: replaceMatches(p.slides, [hits[at]], r) });
+    setMsg('1개를 바꿨습니다.');
+    // The next match is where this one was (the list is searched again).
+    setAt(at - 1);
   };
   const all = () => {
     if (!p) return;
-    const res = replaceText(textItems(p), q, r, { matchCase, wholeWord: whole });
-    apply(res.items);
-    setMsg(`${res.count}개 항목을 바꿨습니다.`);
+    if (!hits.length) return setMsg('찾는 항목이 없습니다.');
+    ed.updatePres({ slides: replaceMatches(p.slides, hits, r) });
+    setMsg(`${hits.length}개 항목을 바꿨습니다.`);
+    setAt(-1);
   };
   return (
     <div className="ppt-dialog" role="dialog" aria-label={replace ? '바꾸기' : '찾기'}>
@@ -413,6 +387,25 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         )}
       </main>
       {printing && p && <PrintRun ed={ed} mode={printing} onDone={() => setPrinting(null)} />}
+    </div>
+  );
+}
+
+// ── Notes Page view ───────────────────────────────────────────────────────────────────────────
+/** View › 슬라이드 노트 (DeckCraft view.notesPage): the slide on a page with its notes under it, to edit. */
+export function NotesPageView({ ed, grayscale, onNotes }: { ed: Ed; grayscale?: boolean; onNotes: (notes: string | undefined) => void }) {
+  const p = ed.p, s = ed.slide;
+  if (!p || !s || !ed.theme) return <div className="ppt-empty"><p>프레젠테이션을 고르세요.</p></div>;
+  const m = p.notesMaster;
+  const n = p.slides.indexOf(s) + 1;
+  return (
+    <div className="notes-page-view">
+      <div className={`notes-page ${grayscale ? 'grayscale' : ''}`}>
+        <div className="notes-page-head"><span>{m?.header}</span><span>{m?.date ? new Date().toLocaleDateString() : ''}</span></div>
+        <div className="notes-page-slide"><SlideCanvas slide={s} theme={ed.theme} background={resolveBackground(s, p)} /></div>
+        <textarea className="notes-page-text" disabled={!ed.canEdit} placeholder="텍스트를 입력하십시오" value={s.notes ?? ''} onChange={(e) => onNotes(e.target.value || undefined)} />
+        <div className="notes-page-foot"><span>{m?.footer}</span><span>{m?.pageNumber !== false ? n : ''}</span></div>
+      </div>
     </div>
   );
 }

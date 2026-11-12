@@ -12,7 +12,8 @@
 import { engineReady, onEngineReady, spellAddWord, spellCheck, spellLoad, spellSuggest } from '../engine';
 import { desktop } from './desktop';
 import { koMisspellings } from './koSpelling';
-import type { Presentation, Slide, SlideElement } from './types';
+import type { Presentation, Slide } from './types';
+import { spliceAt, type FindKey } from './findReplace';
 
 export type SpellField = 'title' | 'text' | 'subtext' | 'notes' | 'el' | 'cell';
 export interface SpellWord {
@@ -21,8 +22,34 @@ export interface SpellWord {
   word: string; start: number;
   /** The proofing language of the text it is in (element, else slide). */
   lang?: string;
-  /** A Korean rule's hit, with the rule's fix. */
-  kind?: 'ko'; suggestions?: string[];
+  /**
+   * A Korean rule's hit, with the rule's fix; or a repeated word (DeckCraft's `repeated`: "the the"),
+   * where `word` / `start` cover the gap and the second word — what 삭제 takes out — and `shown`
+   * is the word itself.
+   */
+  kind?: 'ko' | 'repeat'; suggestions?: string[]; shown?: string;
+}
+
+/**
+ * Words that repeat the word just before them with only spaces between ("the the", "은혜 은혜"), as
+ * PowerPoint and DeckCraft flag them; a line is a paragraph. Each covers the gap and the second word.
+ */
+export function repeatedWords(text: string): { word: string; start: number; shown: string }[] {
+  const out: { word: string; start: number; shown: string }[] = [];
+  let lineStart = 0;
+  for (const line of text.split('\n')) {
+    const words = [...line.matchAll(/[\p{L}\p{M}\p{N}][\p{L}\p{M}\p{N}'’]*/gu)];
+    for (let i = 1; i < words.length; i++) {
+      const a = words[i - 1], b = words[i];
+      const end = a.index! + a[0].length;
+      const gap = line.slice(end, b.index!);
+      if (gap && /^[  \t]+$/.test(gap) && a[0].toLowerCase() === b[0].toLowerCase()) {
+        out.push({ word: gap + b[0], start: lineStart + end, shown: b[0] });
+      }
+    }
+    lineStart += line.length + 1;
+  }
+  return out;
 }
 
 /** Words worth checking: letters only, two or more, not all capitals, not part of a link. */
@@ -77,7 +104,7 @@ function sources(s: Slide): Source[] {
  * words outside Hangul (see `isMisspelled` below for the app's own); Korean text is checked with the
  * rule list unless `korean` is false.
  */
-export function misspellings(p: Presentation, isMisspelled: (w: string, lang?: string) => boolean, ignore: Set<string> = new Set(), { korean = true } = {}): SpellWord[] {
+export function misspellings(p: Presentation, isMisspelled: (w: string, lang?: string) => boolean, ignore: Set<string> = new Set(), { korean = true, repeated = true } = {}): SpellWord[] {
   const out: SpellWord[] = [];
   for (const s of p.slides) {
     for (const src of sources(s)) {
@@ -86,9 +113,14 @@ export function misspellings(p: Presentation, isMisspelled: (w: string, lang?: s
       if (korean) {
         for (const h of koMisspellings(src.text)) if (!ignore.has(h.word.toLowerCase())) found.push({ ...at, word: h.word, start: h.start, kind: 'ko', suggestions: h.suggestions });
       }
+      // A repeated word is reported once, as repeated (not also as misspelt). Ignoring one
+      // ("모두 건너뛰기") ignores that word repeated: its key is the word twice.
+      const reps = repeated ? repeatedWords(src.text).filter((r) => !ignore.has(repeatKey(r.shown))) : [];
+      const repAt = new Set(reps.map((r) => r.start + r.word.length - r.shown.length));
+      for (const r of reps) found.push({ ...at, word: r.word, start: r.start, kind: 'repeat', shown: r.shown, suggestions: [] });
       for (const w of wordsIn(src.text)) {
         for (const { word, start } of foreignParts(w.word, w.start)) {
-          if (ignore.has(word.toLowerCase()) || !isMisspelled(word, src.lang)) continue;
+          if (repAt.has(start) || ignore.has(word.toLowerCase()) || !isMisspelled(word, src.lang)) continue;
           found.push({ ...at, word, start });
         }
       }
@@ -98,55 +130,60 @@ export function misspellings(p: Presentation, isMisspelled: (w: string, lang?: s
   return out;
 }
 
-const swap = (text: string, start: number, from: string, to: string) => (text.slice(start, start + from.length) === from ? text.slice(0, start) + to + text.slice(start + from.length) : text);
+/** What "모두 건너뛰기" adds to the ignore list for a hit (a repeated word: the word twice). */
+export const repeatKey = (word: string) => `${word.toLowerCase()} ${word.toLowerCase()}`;
+export const ignoreKey = (hit: SpellWord) => (hit.kind === 'repeat' ? repeatKey(hit.shown ?? hit.word.trim()) : hit.word.toLowerCase());
 
-/** A text box with new text: its runs no longer spell it, so it keeps its own formatting. */
-function withText(e: SlideElement, text: string): SlideElement {
-  if (text === e.text) return e;
-  return { ...e, text, runs: undefined, paragraphs: e.paragraphs ? text.split('\n').map((t, i) => ({ ...e.paragraphs![Math.min(i, e.paragraphs!.length - 1)], text: t, runs: undefined })) : undefined };
-}
-
-/** Every occurrence of the hit's word in `text` changed to `to`. */
-function replaceAll(text: string, hit: SpellWord, to: string): string {
+/** Where every occurrence of the hit's word stands in `text` (Change All), as [start, end). */
+function occurrences(text: string, hit: SpellWord): [number, number][] {
   if (hit.kind === 'ko') {
     // The rule decides where its form stands (몇일이 has it, 며칠 doesn't): change the spans it finds.
-    return koMisspellings(text).filter((h) => h.word === hit.word).reverse().reduce((t, h) => swap(t, h.start, h.word, to), text);
+    return koMisspellings(text).filter((h) => h.word === hit.word).map((h) => [h.start, h.start + h.word.length]);
+  }
+  if (hit.kind === 'repeat') {
+    const w = (hit.shown ?? '').toLowerCase();
+    return repeatedWords(text).filter((r) => r.shown.toLowerCase() === w).map((r) => [r.start, r.start + r.word.length]);
   }
   const re = new RegExp(`(?<![\\p{L}\\p{M}])${hit.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{M}])`, 'gu');
-  return text.replace(re, to);
+  return [...text.matchAll(re)].map((m) => [m.index!, m.index! + m[0].length]);
 }
 
-/** The slides with one occurrence changed (Change), or every occurrence of the word (Change All). */
+/** The texts of a slide a change looks at, with where each is. */
+function slideTexts(s: Slide): { k: FindKey; text: string }[] {
+  const out: { k: FindKey; text: string }[] = [];
+  for (const field of ['title', 'text', 'subtext', 'notes'] as const) if (s[field]) out.push({ k: { slideId: s.id, field }, text: s[field]! });
+  for (const e of s.elements ?? []) {
+    if (e.master) continue;
+    if (e.text) out.push({ k: { slideId: s.id, field: 'el', elementId: e.id }, text: e.text });
+    e.table?.rows.forEach((row, r) => row.forEach((c, ci) => { if (c.text) out.push({ k: { slideId: s.id, field: 'cell', elementId: e.id, cell: [r, ci] }, text: c.text }); }));
+  }
+  return out;
+}
+
+const keyOfHit = (hit: SpellWord): FindKey => ({ slideId: hit.slideId, field: hit.field, elementId: hit.elementId, cell: hit.cell });
+const textAt = (s: Slide, k: FindKey) => slideTexts(s).find((t) => t.k.field === k.field && t.k.elementId === k.elementId && t.k.cell?.join() === k.cell?.join())?.text;
+
+/**
+ * The slides with one occurrence changed (Change), or every occurrence of the word (Change All).
+ * The character formatting stays: the new word takes the formatting of the one it replaces
+ * (DeckCraft review.spellingChange). A repeated word is deleted with the space before it (to = '').
+ */
 export function changeWord(slides: Slide[], hit: SpellWord, to: string, all = false): Slide[] {
   if (all) {
-    const fix = (t?: string) => (t ? replaceAll(t, hit, to) : t);
     return slides.map((s) => {
-      const text = fix(s.text) ?? '';
-      return {
-        ...s, title: fix(s.title), text, subtext: fix(s.subtext), notes: fix(s.notes), textRuns: text === s.text ? s.textRuns : undefined,
-        elements: s.elements?.map((e) => {
-          if (e.master) return e;
-          const t = e.text ? withText(e, replaceAll(e.text, hit, to)) : e;
-          return e.table ? { ...t, table: { ...e.table, rows: e.table.rows.map((row) => row.map((c) => ({ ...c, text: fix(c.text) ?? '' }))) } } : t;
-        }),
-      };
+      let next = s;
+      for (const { k, text } of slideTexts(s)) {
+        for (const [a, b] of occurrences(text, hit).reverse()) next = spliceAt(next, k, a, b, to);
+      }
+      return next;
     });
   }
   return slides.map((s) => {
     if (s.id !== hit.slideId) return s;
-    if (hit.field === 'title' || hit.field === 'subtext' || hit.field === 'notes') return { ...s, [hit.field]: swap(s[hit.field] ?? '', hit.start, hit.word, to) };
-    if (hit.field === 'text') return { ...s, text: swap(s.text, hit.start, hit.word, to), textRuns: undefined };
-    return {
-      ...s,
-      elements: s.elements?.map((e) => {
-        if (e.id !== hit.elementId) return e;
-        if (hit.field === 'cell' && e.table && hit.cell) {
-          const [r, c] = hit.cell;
-          return { ...e, table: { ...e.table, rows: e.table.rows.map((row, ri) => row.map((cell, ci) => (ri === r && ci === c ? { ...cell, text: swap(cell.text, hit.start, hit.word, to) } : cell))) } };
-        }
-        return withText(e, swap(e.text ?? '', hit.start, hit.word, to));
-      }),
-    };
+    const k = keyOfHit(hit);
+    // Only while the word is still where it was found.
+    if (textAt(s, k)?.slice(hit.start, hit.start + hit.word.length) !== hit.word) return s;
+    return spliceAt(s, k, hit.start, hit.start + hit.word.length, to);
   });
 }
 

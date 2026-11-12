@@ -78,3 +78,11 @@ export function accept(slides: Slide[], r: Revision): Slide[] {
     case 'element': return slides.map((s) => (s.id === r.slideId ? { ...s, elements: s.elements?.map((e) => (e.id === r.element.id ? r.element : e)) } : s));
   }
 }
+
+/**
+ * Every revision accepted (Review › Accept All). As DeckCraft's review.accept {all}: a deletion that
+ * would leave the presentation without slides is skipped, so its last slide stays.
+ */
+export function acceptAll(slides: Slide[], revs: Revision[]): Slide[] {
+  return revs.reduce((sl, r) => (r.kind === 'slideDelete' && sl.length <= 1 && sl.some((s) => s.id === r.slideId) ? sl : accept(sl, r)), slides);
+}
