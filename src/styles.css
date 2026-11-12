@@ -1915,3 +1915,4 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 
 /* Typing on a selected box: the hidden field an input method composes in (CanvasEditor `sink`). */
 .ce-ime-sink { position: absolute; width: 1px; height: 1.2em; padding: 0; border: 0; margin: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; caret-color: transparent; background: transparent; color: transparent; z-index: 0; }
+.ac-list > button { display: grid; grid-template-columns: 1fr 1.6fr; gap: 8px; }

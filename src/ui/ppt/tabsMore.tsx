@@ -59,6 +59,7 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
         <Col>
           <label className="rb-check" title="입력할 때 틀린 단어에 빨간 밑줄"><input type="checkbox" checked={spell} onChange={() => { setSpellCheck(!spell); setSpell(!spell); }} /> 입력할 때 검사</label>
           <Small icon="🌐" label="언어" title="교정 언어 설정 · 맞춤법 검사 안 함" onClick={() => ed.setDialog('language')} />
+          <Small icon="✎" label="자동 고침 옵션" title="입력할 때 자동으로 바꾸기 · 둥근 따옴표 · 자동 글머리 기호" onClick={() => ed.setDialog('autocorrect')} />
         </Col>
         <Big icon="📖" label="동의어 사전" title="선택한 단어와 뜻이 같은 단어" onClick={() => ed.setDialog('thesaurus')} />
       </Group>
