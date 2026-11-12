@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
 import type { Presentation, Slide, SlideElement } from '../../domain/types';
 import { CANVAS_W } from '../../domain/canvas';
-import { actionAt } from '../../domain/showActions';
+import { actionAt, runLinkAt } from '../../domain/showActions';
 export { actionAt };
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
@@ -216,6 +216,8 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     else if (a.kind === 'url' && a.url) window.open(a.url, '_blank', 'noopener');
   };
   const onStageClick = (e: MouseEvent<HTMLDivElement>) => {
+    const link = runLinkAt(e.target);
+    if (link) { window.open(link, '_blank', 'noopener'); return; }
     const r = stage.current?.querySelector('.slide-canvas, .canvas, div')?.getBoundingClientRect() ?? stage.current?.getBoundingClientRect();
     if (r && r.width) {
       const k = CANVAS_W / r.width;

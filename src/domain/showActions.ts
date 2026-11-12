@@ -13,6 +13,10 @@ export function actionAt(slide: Slide | null | undefined, x: number, y: number):
   return els.find((e) => !e.hidden && (e.action || e.href || (e.kind === 'zoom' && e.targetSlideId)) && x >= e.x && x <= e.x + e.w && y >= e.y && y <= e.y + Math.max(e.h, 1)) ?? null;
 }
 
+/** The address of a link inside text (Insert › Link on characters) under a click, if the click is on one. */
+export const runLinkAt = (target: EventTarget | null): string | null =>
+  (target as Element | null)?.closest?.('[data-link]')?.getAttribute('data-link') ?? null;
+
 export function actionOf(el: SlideElement): ShowAction | null {
   if (el.kind === 'zoom' && el.targetSlideId) return { kind: 'zoom', slideId: el.targetSlideId };
   return el.action ?? (el.href ? { kind: 'url', url: el.href } : null);

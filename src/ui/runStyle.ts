@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import type { TextRun } from '../domain/types';
+import { softToNewline } from '../domain/textFormat';
 
 /** A run's own character formatting, over its text box's (size, weight, slant, lines, colour, raised / lowered). */
 export const runStyle = (r: TextRun): CSSProperties => ({
@@ -15,7 +16,7 @@ export const runStyle = (r: TextRun): CSSProperties => ({
 });
 
 /** What a run's characters draw: a soft line break (Shift+Enter, \v) is a line break inside the paragraph. */
-export const runText = (text: string) => (text.includes('\u000b') ? text.replace(/\u000b/g, '\n') : text);
+export const runText = softToNewline;
 
 /** The theme's hyperlink colour for text of colour `text`: PowerPoint's blue on light, a lighter blue on dark text boxes. */
 export function linkColorFor(text: string | undefined, theme?: string): string {

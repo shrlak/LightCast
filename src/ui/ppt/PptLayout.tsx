@@ -1,3 +1,4 @@
+import { activeTextEditor } from '../RichTextEditor';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } from 'react';
 import type { Action, AppState } from '../../domain/reducer';
 import type { Slide, SlideElement } from '../../domain/types';
@@ -89,7 +90,8 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [find, setFind] = useState<null | 'find' | 'replace'>(null);
   const [preview, setPreview] = useState<null | 'transition' | 'animation'>(null);
   const [reading, setReading] = useState<false | { ids?: string[]; rehearse?: boolean }>(false);
-  const [linking, setLinking] = useState(false);
+  /** Insert › Link: on the selected objects, or on the characters selected in the text being typed. */
+  const [linking, setLinking] = useState<false | 'object' | 'text'>(false);
   const [commentDraft, setCommentDraft] = useState(false);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string; seq: number } | null>(null);
   const [objMenu, setObjMenu] = useState<DOMRect | null>(null);
@@ -324,7 +326,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     onBackstage: () => setBackstage(true),
     onFind: () => setFind('find'),
     onReplace: () => setFind('replace'),
-    onLink: () => setLinking(true),
+    onLink: () => setLinking(activeTextEditor()?.hasSelection() ? 'text' : 'object'),
     onComment: () => { setPane('comments'); setCommentDraft(true); },
     onPreview: (w: 'transition' | 'animation') => setPreview(w),
     onOutline: () => cmd.setView(cmd.view === 'outline' ? 'normal' : 'outline'),
@@ -379,8 +381,13 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
         dispatch({ type: 'presentation/update', id: target.id, patch: target.arrangementId ? { slides, arrangementId: null } : { slides } });
         setMulti([]);
       }} />}
-      {linking && <NameDialog title="링크 삽입 — 주소" initialValue={ed.selEls[0]?.href ?? 'https://'} onClose={() => setLinking(false)} onSave={(href) => {
+      {linking && <NameDialog title={linking === 'text' ? '링크 삽입 — 선택한 글자' : '링크 삽입 — 주소'} initialValue={(linking === 'text' ? activeTextEditor()?.currentLink() : ed.selEls[0]?.href) ?? 'https://'} onClose={() => setLinking(false)} onSave={(href) => {
         const v = href.trim();
+        if (linking === 'text') {
+          activeTextEditor()?.link(v && v !== 'https://' ? v : undefined);
+          setLinking(false);
+          return;
+        }
         ed.setElements((els) => els.map((e) => (selIds.includes(e.id) ? { ...e, href: v && v !== 'https://' ? v : undefined } : e)));
         setLinking(false);
       }} />}
@@ -503,7 +510,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
           <MenuItem label="맨 앞으로 가져오기" onClick={() => { ed.setElements((els) => orderSelection(els, selIds, 'front')); setObjMenu(null); }} />
           <MenuItem label="맨 뒤로 보내기" onClick={() => { ed.setElements((els) => orderSelection(els, selIds, 'back')); setObjMenu(null); }} />
           <MenuSep />
-          <MenuItem label="링크" onClick={() => { setLinking(true); setObjMenu(null); }} />
+          <MenuItem label="링크" onClick={() => { setLinking(activeTextEditor()?.hasSelection() ? 'text' : 'object'); setObjMenu(null); }} />
           <MenuItem label="애니메이션 창" onClick={() => { setPane('animation'); setObjMenu(null); }} />
           <MenuItem label="개체 서식…" onClick={() => { setPane('format'); setObjMenu(null); }} />
           <MenuSep />

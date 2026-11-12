@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { actionAt, actionOf } from '../domain/showActions';
+import { actionAt, actionOf, runLinkAt } from '../domain/showActions';
 import { SlideCanvas } from '../ui/SlideCanvas';
 import { CANVAS_W } from '../domain/canvas';
 import { useLiveFeed } from '../ui/hooks';
@@ -39,6 +39,8 @@ export function OutputView() {
     // A click on an object with an action (Action Settings, a link, a slide zoom) does it, as in
     // PowerPoint's slide show; clicks elsewhere are left alone (double-click is full screen).
     const onClick = (e: MouseEvent) => {
+      const link = runLinkAt(e.target);
+      if (link) { window.open(link, '_blank', 'noopener'); return; }
       const canvas = document.querySelector('.output-canvas');
       const r = canvas?.getBoundingClientRect();
       if (!r?.width) return;

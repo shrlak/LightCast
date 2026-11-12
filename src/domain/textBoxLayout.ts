@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { SlideElement } from './types';
 import { textElementBounds, type TextBounds } from './textBox';
-import { INDENT_PX, isVerticalText, listMarkers, lineHeightCss, writingCss } from './textFormat';
+import { INDENT_PX, isVerticalText, listMarkers, lineHeightCss, softToNewline, writingCss } from './textFormat';
 import { fitTextNode } from './boundedTextLayout';
 import { uniformTextBoxFont } from './textBoxFonts';
 import { lineRuns } from './richText';
@@ -48,9 +48,9 @@ function measurementNode(el: SlideElement): HTMLDivElement {
     if (runs[i]) for (const r of runs[i]!) {
       const span = document.createElement('span');
       applyStyle(span, { fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? 800 : 400, fontStyle: r.italic ? 'italic' : undefined });
-      span.textContent = r.text; line.append(span);
+      span.textContent = softToNewline(r.text); line.append(span);
     }
-    else line.append(document.createTextNode(text || '\u00a0'));
+    else line.append(document.createTextNode(softToNewline(text) || '\u00a0'));
     node.append(line);
   });
   document.body.append(node);

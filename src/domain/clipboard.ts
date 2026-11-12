@@ -66,6 +66,9 @@ function runCss(r: Partial<TextRun>, el: SlideElement): string {
   return css.join(';');
 }
 
+/** A soft line break (Shift+Enter, \v) inside a line, as the <br> other programs read it as. */
+const softBr = (html: string) => html.replace(/\u000b/g, '<br>');
+
 /** The lines of a text object with their runs (formatting of the box filled in on each run). */
 function linesOf(el: SlideElement): { runs: TextRun[]; align?: HAlign }[] {
   const lines = (el.text ?? '').split('\n');
@@ -84,7 +87,7 @@ export function objectsHtml(els: SlideElement[], media?: Record<string, ClipMedi
     if (el.table) {
       return `<table style="border-collapse:collapse">${el.table.rows.map((row) => `<tr>${row.map((c) => `<td style="border:1px solid #999;padding:4px;${runCss({}, el)}">${esc(c.text)}</td>`).join('')}</tr>`).join('')}</table>`;
     }
-    return linesOf(el).map((l) => `<p style="margin:0;text-align:${l.align ?? 'left'}">${l.runs.map((r) => `<span style="${esc(runCss(r, el))}">${esc(r.text)}</span>`).join('') || '<br>'}</p>`).join('');
+    return linesOf(el).map((l) => `<p style="margin:0;text-align:${l.align ?? 'left'}">${l.runs.map((r) => `<span style="${esc(runCss(r, el))}">${softBr(esc(r.text))}</span>`).join('') || '<br>'}</p>`).join('');
   }).join('<br>');
   return `<meta charset="utf-8"><div ${ATTR}="${payload}">${body || '&#8203;'}</div>`;
 }
@@ -323,7 +326,7 @@ const RUNS_ATTR = 'data-freecast-runs';
 /** HTML for characters copied from a text box: exact runs for LightCast, formatted text for others. */
 export function runsHtml(lines: TextRun[][], align?: HAlign): string {
   const payload = toB64(JSON.stringify(lines));
-  const body = lines.map((l) => `<p style="margin:0;text-align:${align ?? 'left'}">${l.map((r) => `<span style="${esc(runCss(r, {} as SlideElement))}">${esc(r.text)}</span>`).join('') || '<br>'}</p>`).join('');
+  const body = lines.map((l) => `<p style="margin:0;text-align:${align ?? 'left'}">${l.map((r) => `<span style="${esc(runCss(r, {} as SlideElement))}">${softBr(esc(r.text))}</span>`).join('') || '<br>'}</p>`).join('');
   return `<meta charset="utf-8"><div ${RUNS_ATTR}="${payload}">${body}</div>`;
 }
 

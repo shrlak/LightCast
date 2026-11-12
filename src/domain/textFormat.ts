@@ -124,3 +124,6 @@ export function alignCss(align: HAlign | undefined): Pick<CSSProperties, 'textAl
   if (align === 'justLow') return { textAlign: 'justify' };
   return { textAlign: align };
 }
+
+/** What a soft line break (Shift+Enter, \v) draws as inside a pre-wrap box: a line break within the paragraph. */
+export const softToNewline = (text: string) => (text.includes('\u000b') ? text.replace(/\u000b/g, '\n') : text);
