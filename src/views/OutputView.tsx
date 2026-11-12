@@ -20,6 +20,9 @@ export function OutputView() {
   const screen = live?.screens.find((s) => s.id === screenId) ?? live?.screens[0];
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(null);
 
+  // A ScreenTip belongs to the slide it was shown on.
+  useEffect(() => setTip(null), [live?.slide?.id]);
+
   useEffect(() => {
     document.title = `LightCast — ${screen?.name ?? 'Output'}`;
     document.body.classList.toggle('transparent', screen?.key === 'transparent');
