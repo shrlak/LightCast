@@ -81,3 +81,54 @@ describe('Spelling (DeckCraft review.spelling / spellingChange)', () => {
     expect(all[0].elements![0].runs).toEqual([[{ text: 'I ', bold: true }, { text: 'receive', color: '#00ff00' }]]);
   });
 });
+
+import { commentThreads, deleteComments, initialsOf, neighbourComment } from '../src/domain/comments';
+import { acceptAll, compare } from '../src/domain/compare';
+
+describe('Comments (DeckCraft comment.next / prev / delete)', () => {
+  const c = (id: string) => ({ id, author: 'Kim Min', text: id, at: 0 });
+  const slides = [s('a', { comments: [c('1')] }), s('b'), s('c', { comments: [c('2'), c('3')] }), s('d')];
+
+  it('lists threads in deck order', () => {
+    expect(commentThreads(slides)).toEqual([{ slide: 0, index: 0 }, { slide: 2, index: 0 }, { slide: 2, index: 1 }]);
+  });
+  it('steps from a comment and stops at the ends', () => {
+    expect(neighbourComment(slides, 2, 0, true)).toEqual({ slide: 2, index: 1 });
+    expect(neighbourComment(slides, 2, 1, true)).toBeNull();
+    expect(neighbourComment(slides, 0, 0, false)).toBeNull();
+    expect(neighbourComment(slides, 2, 0, false)).toEqual({ slide: 0, index: 0 });
+  });
+  it('without a comment: next is on or after the slide, previous strictly before it', () => {
+    expect(neighbourComment(slides, 1, null, true)).toEqual({ slide: 2, index: 0 });
+    expect(neighbourComment(slides, 2, null, false)).toEqual({ slide: 0, index: 0 });
+    expect(neighbourComment(slides, 3, null, true)).toBeNull();
+    expect(neighbourComment([s('x')], 0, null, true)).toBeNull();
+  });
+  it('deletes one, a slide’s or all comments', () => {
+    expect(deleteComments(slides, { slideId: 'c', id: '2' })[2].comments).toEqual([c('3')]);
+    expect(deleteComments(slides, { slideId: 'c' })[2].comments).toBeUndefined();
+    expect(deleteComments(slides, { slideId: 'c' })[0].comments).toHaveLength(1);
+    expect(deleteComments(slides, 'all').every((x) => !x.comments)).toBe(true);
+  });
+  it('initials', () => {
+    expect(initialsOf('Kim Min')).toBe('KM');
+    expect(initialsOf('김민수')).toBe('김');
+    expect(initialsOf('')).toBe('?');
+  });
+});
+
+describe('Compare › Accept All (DeckCraft review.accept {all})', () => {
+  it('keeps the deck’s last remaining slide', () => {
+    const mine = pres([s('a', { text: 'x' })]);
+    const other = pres([]);
+    const revs = compare(mine, other);
+    expect(revs.map((r) => r.kind)).toEqual(['slideDelete']);
+    expect(acceptAll(mine.slides, revs)).toHaveLength(1);
+  });
+  it('deletes slides while others remain', () => {
+    const mine = pres([s('a'), s('b')]);
+    const other = pres([s('b', { text: 'new' })]);
+    const out = acceptAll(mine.slides, compare(mine, other));
+    expect(out.map((x) => [x.id, x.text])).toEqual([['b', 'new']]);
+  });
+});

@@ -363,6 +363,8 @@ export interface SlideComment {
   at: number;
   resolved?: boolean;
   replies?: { author: string; text: string; at: number }[];
+  /** The object it was written on (selected when the comment was added), as DeckCraft anchors it. */
+  elementId?: string;
 }
 
 /** Things a slide does when it goes live (ProPresenter "slide actions"). */

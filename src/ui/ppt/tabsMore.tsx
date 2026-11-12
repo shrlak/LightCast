@@ -9,6 +9,9 @@ import { SUNDAY_STEPS } from '../../domain/sunday/wizardSteps';
 import { ACCEPT } from './commands';
 import { setSpellCheck, spellCheckOn } from '../RichTextEditor';
 import type { Ed } from './editor';
+import { commentCount, deleteComments } from '../../domain/comments';
+import { setCommentFocus, stepComment } from './panes';
+import { acceptAllRevisions, endCompare, useCompare } from './reviewPanes';
 import { Big, Col, DropButton, Group, MenuItem, RI, Small } from './ribbonParts';
 
 export function SlideShowTab({ ed }: { ed: Ed }) {
@@ -51,6 +54,8 @@ export function SlideShowTab({ ed }: { ed: Ed }) {
 
 export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) {
   const comments = ed.slide?.comments?.length ?? 0;
+  const total = commentCount(ed.p?.slides ?? []);
+  const comparing = !!useCompare();
   const [spell, setSpell] = useState(spellCheckOn());
   return (
     <>
@@ -64,13 +69,24 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
       </Group>
       <Group label="비교">
         <Big icon="⇆" label="비교" title="다른 버전과 비교해 바뀐 내용을 하나씩 적용하거나 거부합니다" disabled={!ed.p} onClick={() => ed.setDialog('compare')} />
-        <Big icon="☑" label="수정 내용" active={ed.pane === 'revisions'} onClick={() => ed.setPane(ed.pane === 'revisions' ? null : 'revisions')} />
+        <Col>
+          <Small icon="✓" label="모두 적용" title="비교한 파일의 바뀐 내용을 모두 적용합니다 (마지막 슬라이드는 남깁니다)" disabled={!comparing || !ed.canEdit} onClick={() => acceptAllRevisions(ed)} />
+          <Small icon="✕" label="검토 끝내기" disabled={!comparing} onClick={() => endCompare(ed)} />
+          <Small icon="☑" label="수정 내용" active={ed.pane === 'revisions'} onClick={() => ed.setPane(ed.pane === 'revisions' ? null : 'revisions')} />
+        </Col>
       </Group>
       <Group label="메모">
         <Big icon={RI.comment} label="새 메모" disabled={!ed.slide} onClick={onComment} />
+        <DropButton big icon={RI.deleteIcon} label="삭제" disabled={!total || !ed.canEdit} render={(close) => (
+          <>
+            <MenuItem label="이 슬라이드의 모든 메모 삭제" disabled={!comments} onClick={() => { if (ed.slide) ed.updatePres({ slides: deleteComments(ed.p!.slides, { slideId: ed.slide.id }) }); setCommentFocus(null); close(); }} />
+            <MenuItem label={`이 프레젠테이션의 모든 메모 삭제 (${total})`} onClick={() => { ed.updatePres({ slides: deleteComments(ed.p!.slides, 'all') }); setCommentFocus(null); close(); }} />
+          </>
+        )} />
         <Col>
+          <Small icon="◀" label="이전" title="이전 메모" disabled={!total} onClick={() => stepComment(ed, false)} />
+          <Small icon="▶" label="다음" title="다음 메모" disabled={!total} onClick={() => stepComment(ed, true)} />
           <Small icon="💬" label={`메모 표시${comments ? ` (${comments})` : ''}`} active={ed.pane === 'comments'} onClick={() => ed.setPane(ed.pane === 'comments' ? null : 'comments')} />
-          <Small icon={RI.deleteIcon} label="이 슬라이드의 메모 삭제" disabled={!comments || !ed.canEdit} onClick={() => ed.updateSlide({ comments: undefined })} />
         </Col>
       </Group>
       <Group label="기록">
