@@ -91,3 +91,16 @@ describe('a finished 주일예배 leaves nothing behind but the songs', () => {
     expect(next.sunday.prayerText).toBe('1. 나라와 민족');
   });
 });
+
+describe('server-side cleanup step', () => {
+  it('removes a finished service and reports the files to delete, and does nothing before 5 pm', async () => {
+    const { cleanupFinishedServices } = await import('../src/domain/sunday/serverCleanup');
+    const lib = fixture();
+    expect(cleanupFinishedServices(lib, new Date(2026, 9, 25, 16, 59))).toBeNull();
+    const out = cleanupFinishedServices(lib, new Date(2026, 9, 25, 17))!;
+    expect(out.removedMediaIds).toEqual(['only']);
+    expect(out.library.playlists.map((p) => p.name)).not.toContain('1025 주일예배');
+    expect(out.library.presentations.map((p) => p.id)).toEqual(['song', 'online']);
+    expect(cleanupFinishedServices(out.library, new Date(2026, 9, 25, 18))).toBeNull();
+  });
+});
