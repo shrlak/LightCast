@@ -38,6 +38,8 @@ export interface DesktopBridge {
   copyTeamLink(): Promise<boolean>;
   /** A .pptx drawn by PowerPoint / LibreOffice on this computer, as a PDF; null when neither can. */
   pptxToPdf(bytes: Uint8Array): Promise<Uint8Array | null>;
+  /** The pages being printed (body.printing) as a PDF with real text; null when it cannot. Older apps lack it. */
+  printToPdf?(): Promise<Uint8Array | null>;
   /** Legacy binary PPT → editable PPTX via locally installed PowerPoint or LibreOffice. */
   pptToPptx(bytes: Uint8Array): Promise<Uint8Array | null>;
   /** Review › Spelling (desktop app versions that have it). */

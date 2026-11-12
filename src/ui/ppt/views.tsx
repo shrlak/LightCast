@@ -328,8 +328,8 @@ export function PlayPreview({ ed, what, onDone }: { ed: Ed; what: 'transition' |
 // ── File (backstage) ──────────────────────────────────────────────────────────────────────────
 type Page = 'home' | 'open' | 'info' | 'save' | 'print' | 'export';
 
-function Card({ icon, title, text, onClick }: { icon: ReactNode; title: string; text?: string; onClick: () => void }) {
-  return <button type="button" className="bs-card" onClick={onClick}><span className="bs-card-icon">{icon}</span><b>{title}</b>{text && <small>{text}</small>}</button>;
+function Card({ icon, title, text, onClick, disabled }: { icon: ReactNode; title: string; text?: string; onClick: () => void; disabled?: boolean }) {
+  return <button type="button" className="bs-card" disabled={disabled} onClick={onClick}><span className="bs-card-icon">{icon}</span><b>{title}</b>{text && <small>{text}</small>}</button>;
 }
 
 export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {

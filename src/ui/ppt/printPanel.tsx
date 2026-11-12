@@ -25,21 +25,22 @@ export function outlineHtml(p: Presentation, pages: { slide: Presentation['slide
 export function PrintPanel({ ed, onMaster, onChords }: { ed: Ed; onMaster: () => void; onChords: () => void }) {
   const p = ed.p;
   const [o, setO] = useState<PrintOptions>({ ...DEFAULT_PRINT, perPage: (p?.handoutMaster?.perPage ?? DEFAULT_PRINT.perPage) as HandoutPerPage, landscape: !!p?.handoutMaster?.landscape });
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState<'print' | 'pdf' | null>(null);
   const set = (patch: Partial<PrintOptions>) => setO((cur) => ({ ...cur, ...patch }));
   const sel = useMemo(() => (p ? printPages(p, o) : { pages: [] as ReturnType<typeof printPages>['pages'] }), [p, o]);
   if (!p) return <p>프레젠테이션이 열려 있지 않습니다.</p>;
   const mode: PrintMode | null = o.what === 'outline' ? null : o.what;
   const sheets = o.what === 'handout' ? Math.ceil(sel.pages.length / o.perPage) : sel.pages.length;
-  const go = () => {
+  const go = (pdf = false) => {
     if (!sel.pages.length) return;
-    if (mode) setRunning(true);
+    if (mode) setRunning(pdf ? 'pdf' : 'print');
     else printHtml(outlineHtml(p, sel.pages, o));
   };
   return (
     <div className="bs-print">
       <div className="bs-print-opts">
-        <button type="button" className="bs-print-go primary" disabled={!sel.pages.length} onClick={go}>🖨 인쇄{sel.pages.length ? ` (${sheets}쪽)` : ''}</button>
+        <button type="button" className="bs-print-go primary" disabled={!sel.pages.length} onClick={() => go()}>🖨 인쇄{sel.pages.length ? ` (${sheets}쪽)` : ''}</button>
+        <button type="button" className="bs-print-go" disabled={!sel.pages.length || !mode} title="글자가 그대로 선택되는 PDF 파일로 저장합니다 (데스크톱 앱은 바로 저장, 브라우저는 인쇄 창에서 PDF로 저장)" onClick={() => go(true)}>📄 PDF로 저장</button>
         <label className="bs-opt"><span>인쇄 대상</span>
           <select value={o.what} onChange={(e) => set({ what: e.target.value as PrintWhat })}>{WHAT.map(([id, l]) => <option key={id} value={id}>{l}</option>)}</select>
         </label>
@@ -67,7 +68,7 @@ export function PrintPanel({ ed, onMaster, onChords }: { ed: Ed; onMaster: () =>
           <button type="button" onClick={onMaster}>유인물 마스터…</button>
           <button type="button" onClick={onChords}>🎼 코드 · 키 악보 인쇄</button>
         </div>
-        <p className="bs-note">인쇄 창에서 대상을 “PDF로 저장”으로 고르면 PDF 파일이 만들어집니다.</p>
+        <p className="bs-note">“PDF로 저장”은 데스크톱 앱에서 바로 파일로 저장합니다. 브라우저에서는 인쇄 창에서 대상을 “PDF로 저장”으로 고르세요. 개요는 인쇄 창으로만 인쇄됩니다.</p>
       </div>
       <div className="bs-print-preview">
         <h2>미리 보기{sel.pages.length ? ` · ${sel.pages.length}장` : ''}</h2>
@@ -79,7 +80,7 @@ export function PrintPanel({ ed, onMaster, onChords }: { ed: Ed; onMaster: () =>
           </div>
         )}
       </div>
-      {running && mode && <PrintRun ed={ed} mode={mode} o={o} onDone={() => setRunning(false)} />}
+      {running && mode && <PrintRun ed={ed} mode={mode} o={o} pdf={running === 'pdf'} onDone={() => setRunning(null)} />}
     </div>
   );
 }

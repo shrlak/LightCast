@@ -13,15 +13,15 @@ function fixture(): Library {
   };
 }
 describe('service media lifecycle', () => {
-  it('manual service deletion preserves song lists, songs, shared media and logo', () => {
+  it('service deletion removes its decks and files for good, and keeps song lists, songs, shared media and logo', () => {
     const lib = fixture();
     expect(deletedServices(lib, ['service-list'])).toEqual({ playlistIds: ['service-list'], presentationIds: ['service'], mediaIds: ['only'] });
     const next = reducer(createInitialState(lib), { type: 'playlist/delete', id: 'service-list' });
     expect(next.library.playlists).toEqual([lib.playlists[1]]);
     expect(next.library.presentations).toEqual(lib.presentations.slice(1));
-    expect(next.library.media).toEqual(lib.media);
-    const purged = reducer(next, { type: 'trash/purge', ids: next.library.trash!.map((e) => e.id) });
-    expect(purged.library.media.map((m) => m.id)).toEqual(['shared', 'logo', 'standalone']);
+    // Removed for good the same day: nothing waits in the 30-day trash, and the files only this service used go too.
+    expect(next.library.trash ?? []).toEqual([]);
+    expect(next.library.media.map((m) => m.id)).toEqual(['shared', 'logo', 'standalone']);
   });
   it('single deck deletion retains exclusive media until the trash expires', () => {
     const next = reducer(createInitialState(fixture()), { type: 'presentation/delete', id: 'service' });
@@ -65,5 +65,29 @@ describe('one-cycle service retention', () => {
     expect(finishedServices(held.library, new Date(2026, 9, 26)).playlistIds).toEqual([]);
     const normal = reducer(held, { type: 'playlist/retention', id: 'service-list' });
     expect(finishedServices(normal.library, new Date(2026, 9, 26)).playlistIds).toEqual(['service-list']);
+  });
+});
+
+describe('a finished 주일예배 leaves nothing behind but the songs', () => {
+  const deck = (id: string, folder: string, extra: Partial<Presentation> = {}): Presentation => ({ id, title: id, folder, themeId: 'theme_classic', slides: [], ...extra });
+  const base = (): Library => ({ ...createSeedLibrary(),
+    presentations: [deck('sermon', '1025 주일예배'), deck('ads', '1025 주일예배'), deck('song', 'Songs')],
+    playlists: [{ id: 'svc', name: '1025 주일예배', items: [{ id: 'a', presentationId: 'sermon' }, { id: 'b', presentationId: 'ads' }, { id: 'c', presentationId: 'song' }] }],
+    sunday: { ...createSeedLibrary().sunday, prayerText: '1. 나라와 민족' },
+  });
+  it('clears 기도제목 and the earlier trash copies of that week, keeps the library songs', () => {
+    const lib = base();
+    const trashed = reducer(createInitialState(lib), { type: 'presentation/delete', id: 'ads' }).library;
+    expect(trashed.trash?.length).toBe(1);
+    const next = reducer(createInitialState(trashed), { type: 'playlist/delete', id: 'svc' }).library;
+    expect(next.presentations.map((p) => p.id)).toEqual(['song']);
+    expect(next.trash ?? []).toEqual([]);
+    expect(next.sunday.prayerText).toBeUndefined();
+  });
+  it('keeps 기도제목 when next week\'s service already exists', () => {
+    const lib = base();
+    lib.playlists.push({ id: 'next', name: '1101 주일예배', items: [] });
+    const next = reducer(createInitialState(lib), { type: 'playlist/delete', id: 'svc' }).library;
+    expect(next.sunday.prayerText).toBe('1. 나라와 민족');
   });
 });

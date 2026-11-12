@@ -1,6 +1,7 @@
 import { trashPresentation, trashSlides, restoreTrash, purgeTrash } from './trash';
 import { exclusivePresentationMedia } from './mediaCleanup';
 import { deletedServices, isServicePlaylist } from './sunday/cleanup';
+import { isLibrarySong } from './sunday/dedupe';
 import { isSaturdayDawnName, saturdayDawnImageCleanup } from './saturdayDawn';
 import type {
   Arrangement, Background, Library, MacroStep, MediaMeta, MediaPlayback, MessageTemplate, Macro, Playlist, PlaylistItem,
@@ -338,14 +339,23 @@ function core(s: AppState, a: Action): AppState {
       };
     }
     case 'services/finish': {
+      // A finished (or deleted) 주일예배 is removed for good — sermon, 광고, 기도 and the rest of its folder —
+      // not parked in the 30-day trash, which would keep its files on the church server. Library songs stay.
       const gone = new Set(a.presentationIds.filter((id) => !isProtected(findPres(lib, id))));
       const drop = new Set(a.playlistIds);
-      const trash = [...(lib.trash ?? []), ...lib.presentations.filter((p) => gone.has(p.id)).map((p) => trashPresentation(lib, p, a.occurredAt ?? Date.now()))];
-      const removedMedia = new Set(exclusivePresentationMedia({ ...lib, trash }, [...gone]));
+      const folders = new Set(lib.playlists.filter((p) => drop.has(p.id)).map((p) => p.name));
+      const isServiceCopy = (p: Presentation) => !!p.folder && folders.has(p.folder) && !isLibrarySong(p);
+      const trash = (lib.trash ?? []).filter((e) => !isServiceCopy(e.presentation));
+      const earlier = (lib.trash ?? []).filter((e) => isServiceCopy(e.presentation)).map((e) => e.presentation).filter((p) => !lib.presentations.some((x) => x.id === p.id));
+      const everyGone = [...gone, ...earlier.map((p) => p.id)];
+      const removedMedia = new Set(exclusivePresentationMedia({ ...lib, trash, presentations: [...lib.presentations, ...earlier] }, everyGone));
       let playlists = lib.playlists.filter((p) => !drop.has(p.id)).map((pl) => ({ ...pl, items: pl.items.filter((i) => i.kind === 'header' || !gone.has(i.presentationId)) }));
       if (!playlists.length) playlists = [{ id: uid('pl'), name: '재생목록', items: [] }];
+      // This week's 기도제목 text belongs to the week that ended (unless the next week's service is already made).
+      const nextWeekExists = playlists.some((p) => isServicePlaylist(p.name));
+      const sunday = nextWeekExists || lib.sunday.prayerText === undefined ? lib.sunday : { ...lib.sunday, prayerText: undefined };
       return {
-        ...setLib(s, { presentations: lib.presentations.filter((p) => !gone.has(p.id)), playlists, trash, media: lib.media.filter((m) => !removedMedia.has(m.id)) }),
+        ...setLib(s, { presentations: lib.presentations.filter((p) => !gone.has(p.id)), playlists, trash, media: lib.media.filter((m) => !removedMedia.has(m.id)), sunday }),
         activePlaylistId: playlists.some((p) => p.id === s.activePlaylistId) ? s.activePlaylistId : playlists[0].id,
         selectedId: s.selectedId && gone.has(s.selectedId) ? null : s.selectedId,
         playlistIndex: null,

@@ -139,11 +139,13 @@ function read(key: string): unknown {
   }
 }
 
-function write(key: string, value: unknown) {
+function write(key: string, value: unknown): boolean {
   try {
     localStorage.setItem(key, JSON.stringify(value));
+    return true;
   } catch {
     // Storage full or blocked; the app keeps working in memory.
+    return false;
   }
 }
 
@@ -152,7 +154,8 @@ export function loadLibrary(): Library {
 }
 
 /** Online songs are never written to this computer — only the user's own presentations. */
-export const saveLibrary = (lib: Library) => write(LIBRARY_KEY, { ...lib, presentations: lib.presentations.filter((p) => !p.online) });
+/** False when the library could not be written (storage full or blocked). */
+export const saveLibrary = (lib: Library): boolean => write(LIBRARY_KEY, { ...lib, presentations: lib.presentations.filter((p) => !p.online) });
 export const saveLive = (live: LiveState) => write(LIVE_KEY, live);
 export const loadLive = (): LiveState | null => {
   const v = read(LIVE_KEY);
