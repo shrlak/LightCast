@@ -18,6 +18,7 @@ import { MotionLayer } from './MotionLayer';
 import { AnimatedElements, FxTransition, ParagraphBuild } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
 import { shapeGeometry } from '../engine';
+import { pictureOpacity, tileLayout } from '../domain/pictureBackground';
 import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform, useEngineEpoch } from './EngineElements';
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
@@ -95,6 +96,46 @@ function CameraBg({ deviceId, label, animate }: { deviceId: string; label: strin
   return <video ref={ref} className="layer media" autoPlay muted playsInline />;
 }
 
+/** Format Background › Tile picture as texture: the picture repeated at its scale and offset, optionally mirrored. */
+function TiledPicture({ src, pic }: { src: string; pic: NonNullable<Extract<Background, { kind: 'media' }>['pic']> }) {
+  const [nat, setNat] = useState<{ w: number; h: number } | null>(null);
+  const lay = nat ? tileLayout(pic, nat) : null;
+  const [cell, setCell] = useState<string | null>(null);
+  const mx = lay?.mirrorX, my = lay?.mirrorY;
+  useEffect(() => {
+    let alive = true;
+    const img = new Image();
+    img.onload = () => { if (alive) setNat({ w: img.naturalWidth, h: img.naturalHeight }); };
+    img.src = src;
+    return () => { alive = false; };
+  }, [src]);
+  // A mirrored tile is the picture and its reflection drawn into one cell, which then repeats.
+  useEffect(() => {
+    if (!nat || (!mx && !my)) { setCell(null); return; }
+    const sx = (pic.scaleX ?? 100) / 100, sy = (pic.scaleY ?? 100) / 100;
+    const w = Math.max(1, Math.round(nat.w * sx)), h = Math.max(1, Math.round(nat.h * sy));
+    if ((mx ? 2 * w : w) * (my ? 2 * h : h) > 64e6) { setCell(null); return; }
+    let alive = true;
+    const img = new Image();
+    img.onload = () => {
+      if (!alive) return;
+      const c = document.createElement('canvas');
+      c.width = mx ? 2 * w : w; c.height = my ? 2 * h : h;
+      const g = c.getContext('2d');
+      if (!g) return;
+      for (const fx of mx ? [0, 1] : [0]) for (const fy of my ? [0, 1] : [0]) {
+        g.save(); g.translate(fx ? 2 * w : 0, fy ? 2 * h : 0); g.scale(fx ? -1 : 1, fy ? -1 : 1);
+        g.drawImage(img, 0, 0, w, h); g.restore();
+      }
+      setCell(c.toDataURL('image/jpeg', 0.92));
+    };
+    img.src = src;
+    return () => { alive = false; };
+  }, [nat, mx, my, src, pic.scaleX, pic.scaleY]);
+  if (!lay) return null;
+  return <div className="layer" style={{ backgroundImage: `url("${cell ?? src}")`, backgroundSize: `${lay.cellW}px ${lay.cellH}px`, backgroundPosition: lay.position, backgroundRepeat: 'repeat', opacity: pictureOpacity(pic) }} />;
+}
+
 function BackgroundLayer({ background, animate, video, onTime }: { background: Background | null; animate: boolean; video?: CanvasProps['video']; onTime?: CanvasProps['onVideoTime'] }) {
   const url = useMediaUrl(background?.kind === 'media' ? background.mediaId : null);
   const imageSrc = background?.kind === 'image' ? assetUrl(background.url) : background?.kind === 'media' && background.mediaType === 'image' ? url : null;
@@ -114,7 +155,7 @@ function BackgroundLayer({ background, animate, video, onTime }: { background: B
   else if (background.kind === 'camera') node = <CameraBg deviceId={background.deviceId} label={background.label} animate={animate} />;
   else if (background.kind === 'image' || background.mediaType === 'image') {
     pending = !ready;
-    if (ready) node = <img className="layer media" style={{ objectFit: fit, background: background.kind === 'image' ? '#fff' : undefined }} src={ready} alt="" decoding="sync" />;
+    if (ready) node = background.pic?.tile ? <TiledPicture src={ready} pic={background.pic} /> : <img className="layer media" style={{ objectFit: fit, background: background.kind === 'image' ? '#fff' : undefined, opacity: background.pic?.transparency ? pictureOpacity(background.pic) : undefined }} src={ready} alt="" decoding="sync" />;
   } else if (url) {
     node = animate
       ? <VideoBg url={url} fit={fit!} loop={background.loop !== false} video={video} onTime={onTime} />

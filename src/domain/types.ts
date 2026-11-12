@@ -61,12 +61,25 @@ export type MediaFit = 'cover' | 'contain' | 'fill';
 export type Background =
   | { kind: 'color'; value: string }
   | { kind: 'gradient'; value: string }
-  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean }
+  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean; pic?: BackgroundPicture }
   /** Built-in image shipped with the app (the church's template backgrounds). */
-  | { kind: 'image'; url: string; fit?: MediaFit }
+  | { kind: 'image'; url: string; fit?: MediaFit; pic?: BackgroundPicture }
   | { kind: 'camera'; deviceId: string; label: string }
   /** Generated moving background (aurora, waves, stars…); drawn live, no file needed. */
   | { kind: 'motion'; style: MotionStyle; colors: string[]; speed?: number };
+
+/** Format Background › Picture fill options (see pictureBackground.ts). */
+export interface BackgroundPicture {
+  /** Tile the picture as a texture instead of stretching it to the slide. */
+  tile?: boolean;
+  /** Tile scale in % (default 100) and offset in canvas pixels. */
+  scaleX?: number; scaleY?: number; offsetX?: number; offsetY?: number;
+  mirror?: 'none' | 'x' | 'y' | 'xy';
+  /** Where the tiling starts (default tl, top left). */
+  align?: 'tl' | 't' | 'tr' | 'l' | 'ctr' | 'r' | 'bl' | 'b' | 'br';
+  /** 0–100 %. */
+  transparency?: number;
+}
 
 export type MotionStyle = 'aurora' | 'waves' | 'stars' | 'rays' | 'embers' | 'bokeh';
 
@@ -509,6 +522,8 @@ export interface Presentation {
   timeline?: Timeline;
   /** Design › Variants › Colors: the engine colour scheme tables, charts and the colour picker use. */
   colorScheme?: string;
+  /** Design › Fonts: the heading / body fonts (Create New Theme Fonts); the faces are PowerPoint font names. */
+  fontScheme?: { name: string; major: string; minor: string };
   /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
   master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[] };
   /** Slide Show › Set Up Slide Show. */
