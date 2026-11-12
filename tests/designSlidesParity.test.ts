@@ -5,6 +5,7 @@ import { REPEAT_UNTIL_CLICK, advanceBuild, animSpec, animationBadges, buildState
 import { BUILTIN_SOUNDS, soundSamples, wavBytes } from '../src/domain/transitionSounds';
 import { applyBorders, editCells, penDash, setTrackSize } from '../src/domain/tableBorders';
 import { newTable } from '../src/engine';
+import { addNode, demoteNode, editSmartArt, moveNode, promoteNode, smartArtElements } from '../src/domain/smartArt';
 
 const box = (id: string, more: Partial<SlideElement> = {}): SlideElement => ({ id, kind: 'shape', shape: 'rect', x: 100, y: 100, w: 200, h: 100, ...more } as SlideElement);
 const anim = (elementId: string, more: Partial<SlideAnimation> = {}): SlideAnimation => ({ id: `a-${elementId}-${Math.random()}`, elementId, effect: 'fade', class: 'entrance', start: 'click', durationMs: 500, delayMs: 0, ...more });
@@ -114,5 +115,55 @@ describe('Table Design / Layout', () => {
     const ins = editTable(t, 'insertRowAbove', 0, 0)!;
     expect(ins.rows[2][1].anchor).toBe('bottom');
     expect(ins.rows[2][1].dir).toBe('vert270');
+  });
+});
+
+describe('SmartArt outline edits', () => {
+  const n = (...levels: number[]) => levels.map((level, i) => ({ text: `n${i}`, level }));
+  const lv = (nodes: { level: number }[]) => nodes.map((x) => x.level).join('');
+
+  it('adds shapes after, before, below, above and as assistant (DeckCraft rules)', () => {
+    const base = n(0, 1, 0);
+    expect(addNode(base, 0, 'after').index).toBe(2);
+    expect(lv(addNode(base, 0, 'after').nodes)).toBe('0100');
+    expect(addNode(base, 0, 'before').index).toBe(0);
+    expect(lv(addNode(base, 0, 'below').nodes)).toBe('0110');
+    expect(lv(addNode(base, 0, 'above').nodes)).toBe('0120');
+    expect(lv(addNode(base, 2, 'assistant').nodes)).toBe('0101');
+    expect(addNode(base, null, 'after').index).toBe(3);
+  });
+
+  it('promotes and demotes with sub-points and refuses what cannot move', () => {
+    const base = n(0, 0, 1);
+    expect(lv(demoteNode(base, 1)!)).toBe('012');
+    expect(demoteNode(base, 0)).toBeNull();
+    expect(demoteNode(n(0, 1), 1)).toBeNull();
+    expect(lv(promoteNode(base, 2)!)).toBe('000');
+    expect(promoteNode(base, 0)).toBeNull();
+  });
+
+  it('moves a node with its sub-points among its siblings', () => {
+    const base = n(0, 1, 0, 1, 1);
+    const down = moveNode(base, 0, 1)!;
+    expect(down.nodes.map((x) => x.text)).toEqual(['n2', 'n3', 'n4', 'n0', 'n1']);
+    expect(down.index).toBe(3);
+    const up = moveNode(base, 2, -1)!;
+    expect(up.nodes.map((x) => x.text)).toEqual(['n2', 'n3', 'n4', 'n0', 'n1']);
+    expect(up.index).toBe(0);
+    expect(moveNode(base, 0, -1)).toBeNull();
+    expect(moveNode(base, 2, 1)).toBeNull();
+  });
+
+  it('lays a graphic out again with the new outline, mirrored for Right to Left', () => {
+    const spec = { kind: 'process', style: 'flat', colors: 'colorful', nodes: n(0, 0, 0), box: { x: 100, y: 200, w: 1000, h: 400 } };
+    const els = smartArtElements(spec)!;
+    const owner = els.find((e) => e.smartArt)!;
+    const added = editSmartArt(els, owner, undefined, { kind: 'add', position: 'after' })!;
+    expect(added.elements.find((e) => e.smartArt)!.smartArt!.nodes).toHaveLength(4);
+    const rtl = editSmartArt(els, owner, undefined, { kind: 'rtl' })!;
+    const first = (list: typeof els) => list.filter((e) => e.text).sort((a, b) => a.x - b.x)[0].text;
+    expect(first(els)).toBe('n0');
+    expect(first(rtl.elements)).toBe('n2');
+    expect(editSmartArt(els, owner, undefined, { kind: 'promote' })).toBeNull();
   });
 });

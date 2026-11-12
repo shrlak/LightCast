@@ -16,7 +16,7 @@ import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead,
 import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canRegroup, regroupSelection, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
 import { shapeToPath, smoothCorners, warpCatalog, warpGuides } from '../../engine';
 import { WARP_LABEL, polyD, warpPreset } from '../../domain/textWarp';
-import { smartArtOwner } from '../../domain/smartArt';
+import { editSmartArt, smartArtOwner, type OutlineOp } from '../../domain/smartArt';
 import { applyBorders, CELL_MARGINS, editCells, setTrackSize, trackSizes, type BorderMode } from '../../domain/tableBorders';
 import type { CellBorder, TableCell } from '../../engine';
 import { layoutTable } from '../../engine';
@@ -135,6 +135,37 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
       {smartArtOwner(ed.elements, ed.selEls) && (
         <Group label="SmartArt">
           <Big icon="⧉" label="텍스트 창 · 레이아웃" title="SmartArt의 텍스트, 레이아웃, 스타일, 색 바꾸기" onClick={() => ed.setDialog('smartArt')} />
+          {(() => {
+            const owner = smartArtOwner(ed.elements, ed.selEls);
+            const go = (op: OutlineOp) => {
+              if (!owner) return;
+              const r = editSmartArt(ed.elements, owner, ed.sel.find((id) => id !== owner.id) ?? ed.sel[0], op, ed.p?.colorScheme);
+              if (!r) return ed.cmd.notify('이 도형에는 적용할 수 없습니다');
+              ed.setElements(() => r.elements); ed.setSel(r.ids);
+            };
+            const off = !owner || !ed.canEdit;
+            return (
+              <>
+                <DropButton big icon="＋" label="도형 추가" disabled={off} render={(close) => (
+                  <>
+                    {([['after', '뒤에 도형 추가'], ['before', '앞에 도형 추가'], ['above', '위에 도형 추가'], ['below', '아래에 도형 추가'], ['assistant', '어시스턴트 추가']] as const).map(([position, l]) => (
+                      <MenuItem key={position} label={l} onClick={() => { go({ kind: 'add', position }); close(); }} />
+                    ))}
+                  </>
+                )} />
+                <Col>
+                  <Small icon="⇦" label="수준 올리기" disabled={off} onClick={() => go({ kind: 'promote' })} />
+                  <Small icon="⇨" label="수준 내리기" disabled={off} onClick={() => go({ kind: 'demote' })} />
+                  <Small icon="⇄" label="오른쪽에서 왼쪽" active={!!owner?.smartArt?.rtl} disabled={off} onClick={() => go({ kind: 'rtl' })} />
+                </Col>
+                <Col>
+                  <Small icon="▲" label="위로 이동" disabled={off} onClick={() => go({ kind: 'up' })} />
+                  <Small icon="▼" label="아래로 이동" disabled={off} onClick={() => go({ kind: 'down' })} />
+                  <Small icon="↺" label="그래픽 원래대로" disabled={off} onClick={() => go({ kind: 'reset' })} />
+                </Col>
+              </>
+            );
+          })()}
           <Big icon="🖼" label="그림 삽입" title="선택한 SmartArt 도형을 그림으로 채웁니다 (그림 레이아웃의 그림 자리)" disabled={ed.sel.length !== 1}
             onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.onchange = () => { const f = inp.files?.[0]; if (!f) return; const id = uid('m'); void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image', backgroundHidden: true } }); ed.setElements((els) => els.map((e) => (e.id === ed.sel[0] ? { ...e, fillImage: id, pattern: undefined, gradient: undefined } : e))); }); }; inp.click(); }} />
           <DropButton big icon="⇄" label="변환" render={(close) => {

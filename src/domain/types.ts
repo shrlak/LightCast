@@ -308,8 +308,8 @@ export interface SlideElement {
   zoomReturn?: boolean;
   zoomEndSlideId?: string;
   zoomOf?: { slide: Slide; theme: Theme; background: Background | null };
-  /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it). */
-  smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number } };
+  /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it); `rtl`: Right to Left. */
+  smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number }; rtl?: boolean };
   /** Text effects. */
   caps?: 'all' | 'small';
   /** WordArt › Text Effects › Transform: the text follows this path. */
