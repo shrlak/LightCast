@@ -1,4 +1,5 @@
 import { activeTextEditor } from '../RichTextEditor';
+import { copyFormat, finishPainter, heldFormat, holdFormat } from '../../domain/formatPainter';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } from 'react';
 import type { Action, AppState } from '../../domain/reducer';
 import type { Slide, SlideElement } from '../../domain/types';
@@ -23,7 +24,7 @@ import { SUNDAY_STEPS } from '../../domain/sunday/wizardSteps';
 import { AddToPlaylistMenu } from '../AddToPlaylist';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { animationBadges } from '../../domain/animations';
-import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, ungroupSelection } from '../../domain/editOps';
+import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, pasteStyle, ungroupSelection } from '../../domain/editOps';
 import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AnimationPane, CommentsPane, SelectionPane } from './panes';
 import { Dialogs } from './dialogs';
@@ -225,6 +226,14 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
         const k = e.key.toLowerCase();
         if (k === 'm') { e.preventDefault(); addSlideAfter(); return; }
         if (k === 'h') { e.preventDefault(); setFind('replace'); return; }
+        // 서식 복사 / 붙여넣기 on the selected objects, when the canvas itself has no focus (after Esc from typing).
+        if (e.shiftKey && (k === 'c' || k === 'v') && ed.selEls.length && ed.canEdit) {
+          if (k === 'c') holdFormat(copyFormat(ed.selEls[0]));
+          else if (heldFormat()) { const held = heldFormat()!; ed.setElements((els) => pasteStyle(els, selIds, held)); finishPainter(); }
+          else return;
+          e.preventDefault();
+          return;
+        }
       }
       if (e.key === 'Escape' && tool) { setTool(null); return; }
       if (typing || !paneSlides.length || backstage || reading) return;
