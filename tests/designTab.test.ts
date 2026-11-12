@@ -18,7 +18,8 @@ describe('Design Ideas', () => {
   it('offers picture layouts for a picture slide and text layouts for a title + text slide', () => {
     expect(ideasFor(slide([title(), body(), pic()])).map((i) => i.id)).toEqual(['fullBleed', 'pictureLeft', 'pictureRight', 'framed']);
     expect(ideasFor(slide([title(), body()])).map((i) => i.id)).toEqual(['titleColumn', 'centred', 'titleBottom']);
-    expect(ideasFor(slide([body()]))).toEqual([]);
+    expect(ideasFor(slide([body()])).map((i) => i.id)).toEqual(['textCentred', 'textLeft']);
+    expect(ideasFor(slide([]))).toEqual([]);
     expect(ideasFor(null)).toEqual([]);
   });
   it('builds ideas from the slide’s own title and text, not only from boxes', () => {
@@ -29,11 +30,11 @@ describe('Design Ideas', () => {
     expect(out.text).toBe('');
     expect(out.elements!.map((e) => e.text)).toEqual(['제목', '내용']);
   });
-  it('gives no ideas when other graphics, two pictures, lyrics or imported pages are in the way', () => {
+  it('gives no ideas when other graphics, two pictures, front templates or imported pages are in the way', () => {
     expect(ideasFor(slide([title(), body(), { id: 'x', kind: 'shape', x: 0, y: 0, w: 10, h: 10 }]))).toEqual([]);
     expect(ideasFor(slide([title(), body(), { id: 'x', kind: 'shape', x: 0, y: 0, w: 10, h: 10, hidden: true }])).length).toBe(3);
     expect(ideasFor(slide([title(), pic(), pic({ id: 'p2' })]))).toEqual([]);
-    expect(ideasFor(slide([title(), body()], { lyricBody: true }))).toEqual([]);
+    expect(ideasFor(slide([title(), body()], { preserveTextLayout: true }))).toEqual([]);
     expect(ideasFor(slide([title(), body()], { importSource: { format: 'pdf', name: 'a', page: 1 } }))).toEqual([]);
   });
   it('Picture left puts the text beside the picture, cropped to fill, picture at the back', () => {

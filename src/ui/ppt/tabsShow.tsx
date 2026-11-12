@@ -134,18 +134,6 @@ export function DesignTab({ ed }: { ed: Ed }) {
             <MenuItem icon="🎨" label="새 테마 색 만들기…" onClick={() => { close(); openThemeColors(ed); }} />
           </>
         )} />
-      </Group>
-      <Group label="배경 (모든 슬라이드)">
-        <Gallery rows={2} className="rb-gallery-bg">
-          {BACKGROUND_PRESETS.map((b) => (
-            <button key={b.name} type="button" className="rb-swatch" title={b.name} disabled={!p || !ed.canEdit} onClick={() => applyBackground(b.background)}>
-              {b.background.kind === 'image' ? <img className="rb-swatch-fill" src={assetUrl(b.background.url)} alt="" /> : <span className="rb-swatch-fill" style={swatchStyle(b.background)} />}
-            </button>
-          ))}
-          {lib.media.filter((m) => m.type !== 'audio' && !m.backgroundHidden).map((m) => (
-            <button key={m.id} type="button" className="rb-swatch" title={m.name} disabled={!p || !ed.canEdit} onClick={() => applyBackground({ kind: 'media', mediaId: m.id, mediaType: m.type === 'video' ? 'video' : 'image' })}><MediaSwatch id={m.id} video={m.type === 'video'} /></button>
-          ))}
-        </Gallery>
         <DropButton big icon={RI.background} label="배경 스타일" title="테마 색으로 만든 배경 스타일 1–12 (모든 슬라이드)" disabled={!p || !ed.canEdit} render={(close) => (
           <>
             <MenuHead>배경 스타일</MenuHead>
@@ -159,6 +147,18 @@ export function DesignTab({ ed }: { ed: Ed }) {
             <MenuItem label="배경 지우기" onClick={() => { applyBackground(undefined); close(); }} />
           </>
         )} />
+      </Group>
+      <Group label="배경 (모든 슬라이드)">
+        <Gallery rows={2} className="rb-gallery-bg">
+          {BACKGROUND_PRESETS.map((b) => (
+            <button key={b.name} type="button" className="rb-swatch" title={b.name} disabled={!p || !ed.canEdit} onClick={() => applyBackground(b.background)}>
+              {b.background.kind === 'image' ? <img className="rb-swatch-fill" src={assetUrl(b.background.url)} alt="" /> : <span className="rb-swatch-fill" style={swatchStyle(b.background)} />}
+            </button>
+          ))}
+          {lib.media.filter((m) => m.type !== 'audio' && !m.backgroundHidden).map((m) => (
+            <button key={m.id} type="button" className="rb-swatch" title={m.name} disabled={!p || !ed.canEdit} onClick={() => applyBackground({ kind: 'media', mediaId: m.id, mediaType: m.type === 'video' ? 'video' : 'image' })}><MediaSwatch id={m.id} video={m.type === 'video'} /></button>
+          ))}
+        </Gallery>
         <Col>
           <Small icon="✕" label="배경 지우기" disabled={!p || !ed.canEdit} onClick={() => applyBackground(undefined)} />
           <label className="rb-range">어둡게 <input type="range" min={0} max={0.9} step={0.05} disabled={!p} value={p?.bgEffect?.dim ?? 0} onChange={(e) => ed.updatePres({ bgEffect: { dim: Number(e.target.value), blur: p?.bgEffect?.blur ?? 0 } })} /></label>

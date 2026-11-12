@@ -10,7 +10,7 @@ import type { Slide, SlideElement, Theme } from './types';
 import { CANVAS_H, CANVAS_W } from './canvas';
 import { uid } from './lyrics';
 
-export type IdeaId = 'fullBleed' | 'pictureLeft' | 'pictureRight' | 'framed' | 'titleColumn' | 'centred' | 'titleBottom';
+export type IdeaId = 'fullBleed' | 'pictureLeft' | 'pictureRight' | 'framed' | 'titleColumn' | 'centred' | 'titleBottom' | 'textCentred' | 'textLeft';
 export interface Idea { id: IdeaId; label: string }
 
 const PICTURE_IDEAS: Idea[] = [
@@ -24,7 +24,12 @@ const TEXT_IDEAS: Idea[] = [
   { id: 'centred', label: '가운데 제목, 아래에 글' },
   { id: 'titleBottom', label: '글이 위, 제목은 아래' },
 ];
-export const IDEA_LABEL: Record<IdeaId, string> = Object.fromEntries([...PICTURE_IDEAS, ...TEXT_IDEAS].map((i) => [i.id, i.label])) as Record<IdeaId, string>;
+/** Beyond DeckCraft: a slide of text alone (most song and announcement slides have no title). */
+const TEXT_ONLY_IDEAS: Idea[] = [
+  { id: 'textCentred', label: '글을 가운데에, 여백을 넓게' },
+  { id: 'textLeft', label: '글을 왼쪽에 맞춰' },
+];
+export const IDEA_LABEL: Record<IdeaId, string> = Object.fromEntries([...PICTURE_IDEAS, ...TEXT_IDEAS, ...TEXT_ONLY_IDEAS].map((i) => [i.id, i.label])) as Record<IdeaId, string>;
 
 /** The title band of Full-bleed: a shape behind the title, removed again by every other idea. */
 export const BAND_PREFIX = 'idea-band';
@@ -32,8 +37,8 @@ const BAND_DARK = 'rgba(0,0,0,0.6)';
 const BAND_LIGHT = 'rgba(255,255,255,0.86)';
 const isBand = (e: SlideElement) => e.id.startsWith(BAND_PREFIX);
 
-/** A slide an idea must leave alone: lyrics laid out their own way, templates, imported pages. */
-const locked = (s: Slide) => !!(s.lyricBody || s.preserveTextLayout || s.importSource);
+/** A slide an idea must leave alone: front templates that keep their own layout, imported pages. */
+const locked = (s: Slide) => !!(s.preserveTextLayout || s.importSource);
 
 const blank = (t?: string) => !t || !t.trim();
 const isTitle = (e: SlideElement) => e.kind === 'text' && e.placeholder === 'title';
@@ -87,6 +92,7 @@ export function ideasFor(slide: Slide | null | undefined): Idea[] {
   const r = roles(probe);
   if (r.picture !== undefined) return PICTURE_IDEAS;
   if (r.title !== undefined && r.text.length) return TEXT_IDEAS;
+  if (r.title === undefined && r.text.length) return TEXT_ONLY_IDEAS;
   return [];
 }
 
@@ -168,6 +174,12 @@ function layout(id: IdeaId, r: Roles, sw: number, sh: number): { place: [number,
       if (r.title !== undefined) place.push([r.title, { x: sw * 0.1, y: m, w: sw * 0.8, h: sh * 0.26 }]);
       stack({ x: sw * 0.18, y: m + sh * 0.3, w: sw * 0.64, h: sh - 2 * m - sh * 0.3 });
       break;
+    case 'textCentred':
+      stack({ x: sw * 0.12, y: m, w: sw * 0.76, h: sh - 2 * m });
+      break;
+    case 'textLeft':
+      stack({ x: m * 1.5, y: m, w: sw - 3 * m, h: sh - 2 * m });
+      break;
     case 'titleBottom':
       stack({ x: m, y: m, w: sw - 2 * m, h: sh * 0.62 });
       if (r.title !== undefined) place.push([r.title, { x: m, y: sh * 0.72, w: sw - 2 * m, h: sh * 0.2 }]);
@@ -208,6 +220,8 @@ export function applyIdea(slide: Slide, id: IdeaId, opts: ApplyOptions = {}): Sl
       o.fontSize = fitFont(e, o.w, o.h);
       if (e.paragraphs) o.paragraphs = e.paragraphs.map((p) => (p.fontSize ? { ...p, fontSize: Math.min(p.fontSize, o.fontSize!) } : p));
       // A column / row title reads from the top-left of its box on the text side, centred when it is the headline.
+      if (id === 'textCentred') { o.align = 'center'; o.vAlign = 'middle'; }
+      if (id === 'textLeft') { o.align = 'left'; o.vAlign = 'middle'; }
       if (id === 'titleColumn' && i === r.title) { o.align = 'left'; o.vAlign = 'top'; }
       if ((id === 'pictureLeft' || id === 'pictureRight' || id === 'framed') && i !== r.title) { o.align = 'left'; o.vAlign = 'top'; }
     }
