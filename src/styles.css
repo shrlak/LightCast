@@ -1912,3 +1912,23 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 /* Animation Pane: the paragraph steps of a 단락별로 build, under their effect. */
 .anim-list li.anim-sub { padding-top: 2px; padding-bottom: 2px; font-size: 11.5px; }
 .anim-list li.anim-sub .anim-name { padding-left: 14px; color: #605e5c; white-space: nowrap; text-overflow: ellipsis; }
+
+/* File › Print: options column + live preview (DeckCraft print dialog) */
+.bs-print { display: flex; gap: 28px; align-items: flex-start; flex-wrap: wrap; }
+.bs-print-opts { width: 300px; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.bs-print-go { align-self: flex-start; padding: 10px 22px; font-size: 15px; background: var(--pp, #1f8a52); color: #fff; border: 0; border-radius: 4px; }
+.bs-print-go:disabled { opacity: .5; }
+.bs-opt { display: grid; grid-template-columns: 120px 1fr; gap: 8px; align-items: center; }
+.bs-opt-err { margin: 0; color: #a4262c; font-size: 12px; }
+.bs-opt input[aria-invalid="true"] { border-color: #a4262c; }
+.bs-print-links { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; margin-top: 6px; }
+.bs-print-preview { flex: 1; min-width: 320px; }
+.bs-print-preview .page-preview { height: 380px; }
+.print-slide.noframe { border: 0; }
+.print-page.slide-page.no-fit .print-slide { width: 78%; }
+/* View › Grayscale: the slide pictures in the editor, thumbnails, sorter, reading view and print. */
+body.gray-view .canvas-frame { filter: grayscale(1); }
+.bs-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 28px; margin: 0 0 16px; max-width: 760px; font-size: 13px; }
+.bs-stats > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-bottom: 1px solid #edebe9; }
+.bs-stats dt { color: #605e5c; } .bs-stats dd { margin: 0; font-weight: 600; text-align: right; }
+.bs-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--pp, #1f8a52); text-decoration: underline; cursor: pointer; font-size: 13px; }

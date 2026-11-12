@@ -54,3 +54,16 @@ describe('File › Info statistics', () => {
     expect(mediaIdsOf(p).sort()).toEqual(['m1', 'm2']);
   });
 });
+
+describe('Picture export embeds only the font slices a slide uses', () => {
+  it('reads unicode-range values', async () => {
+    const { unicodeRangeCovers, familiesOf } = await import('../src/domain/fontEmbed');
+    expect(unicodeRangeCovers('', 'a')).toBe(true);
+    expect(unicodeRangeCovers('U+0000-00FF, U+0131', 'abc')).toBe(true);
+    expect(unicodeRangeCovers('U+AC00-D7A3', 'abc')).toBe(false);
+    expect(unicodeRangeCovers('U+AC00-D7A3', 'a가')).toBe(true);
+    expect(unicodeRangeCovers('U+4??', 'ā')).toBe(false);
+    expect(unicodeRangeCovers('U+1??', 'ā')).toBe(true);
+    expect([...familiesOf(['"Nanum Gothic", sans-serif'])]).toEqual(['nanum gothic', 'sans-serif']);
+  });
+});

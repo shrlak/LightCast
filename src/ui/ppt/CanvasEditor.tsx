@@ -56,6 +56,8 @@ export interface ViewOptions {
   guides?: boolean;
   /** 눈금자: centimetre rulers along the top and left, with the selected box's indents and tabs. */
   ruler?: boolean;
+  /** 회색조: slide pictures everywhere (editor, thumbnails, sorter, reading view, print) in grayscale. */
+  gray?: boolean;
 }
 
 type Drag =

@@ -111,7 +111,7 @@ export function docStats(p: Presentation): DocStats {
     noteWords: p.slides.reduce((n, s) => n + countWords(s.notes), 0),
     comments: p.slides.reduce((n, s) => n + (s.comments?.length ?? 0), 0),
     animations: p.slides.reduce((n, s) => n + (s.animations?.length ?? 0), 0),
-    transitions: p.slides.filter((s) => s.transition && s.transition.kind !== 'none').length,
+    transitions: p.slides.filter((s) => s.transition && s.transition.kind !== 'cut').length,
     pictures: count('image'), videos: count('video'), audios: count('audio'),
     media: mediaIdsOf(p).length,
   };

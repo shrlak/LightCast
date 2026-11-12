@@ -93,6 +93,9 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
         <Big icon={RI.sorterView} label="여러 슬라이드" active={cmd.view === 'sorter'} onClick={() => cmd.setView('sorter')} />
         <Big icon={RI.readingView} label="읽기용 보기" onClick={onReading} />
       </Group>
+      <Group label="색상/회색조">
+        <Big icon="◐" label="회색조" title="슬라이드를 회색조로 보기 (인쇄에도 적용)" active={!!ed.view.gray} onClick={() => ed.setView({ ...ed.view, gray: !ed.view.gray })} />
+      </Group>
       <Group label="마스터 보기">
         <Big icon="▤" label="슬라이드 마스터" title="모든 슬라이드에 나오는 개체와 배경" disabled={!ed.p} onClick={() => ed.setDialog('master')} />
         <Big icon="▥" label="유인물 마스터" title="유인물 인쇄: 페이지당 슬라이드 수, 머리글 · 바닥글" disabled={!ed.p} onClick={() => ed.setDialog('handoutMaster')} />

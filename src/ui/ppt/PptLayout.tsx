@@ -81,6 +81,10 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [tool, setTool] = useState<CanvasTool | null>(null);
   const [view, setView] = useState<ViewOptions>({});
   const [pane, setPane] = useState<TaskPane>(null);
+  useEffect(() => {
+    document.body.classList.toggle('gray-view', !!view.gray);
+    return () => document.body.classList.remove('gray-view');
+  }, [view.gray]);
   const [dialog, setDialog] = useState<DialogKind | null>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);
