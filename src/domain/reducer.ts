@@ -3,7 +3,7 @@ import { exclusivePresentationMedia } from './mediaCleanup';
 import { deletedServices, isServicePlaylist } from './sunday/cleanup';
 import { isSaturdayDawnName, saturdayDawnImageCleanup } from './saturdayDawn';
 import type {
-  Arrangement, Background, Library, MacroStep, MediaMeta, MessageTemplate, Macro, Playlist, PlaylistItem,
+  Arrangement, Background, Library, MacroStep, MediaMeta, MediaPlayback, MessageTemplate, Macro, Playlist, PlaylistItem,
   Presentation, Prop, RetreatLook, Schedule, Screen, Slide, SlideAction, SundaySettings, Theme, Timer, DeviceIdentity, DeviceRegistration, ActivityEntry,
 } from './types';
 import { retreatBackground } from './motion';
@@ -28,7 +28,7 @@ interface HistoryPosition { before: Cursor | null; after: Cursor | null }
 
 export interface AppState extends NavState {
   selectedId: string | null;
-  audio: { mediaId: string | null; nonce: number };
+  audio: { mediaId: string | null; nonce: number; playback?: MediaPlayback; slideId?: string };
   /** Position in the looping announcements layer. */
   announce: { presentationId: string; seq: number } | null;
   past: Library[];
@@ -102,7 +102,8 @@ type DomainAction =
   | { type: 'live/message'; message: string | null }
   | { type: 'live/outputTimer'; id: string | null }
   | { type: 'live/video'; playing?: boolean; restart?: boolean }
-  | { type: 'audio/play'; mediaId: string | null }
+  /** `playback`: an audio object's own settings (trim, fades, volume, loop); `slideId`: the slide it stops leaving, unless it plays across slides. */
+  | { type: 'audio/play'; mediaId: string | null; playback?: MediaPlayback; slideId?: string }
   | { type: 'live/logo'; on?: boolean }
   | { type: 'library/logo'; mediaId: string | null }
   | { type: 'live/stageMessage'; message: string | null }
@@ -176,8 +177,14 @@ function live(s: AppState, c: Cursor, now?: number): AppState {
   if (next.playlistIndex !== s.playlistIndex && next.cursor) next = { ...next, selectedId: next.cursor.presentationId };
   // Transitions › Sound, or an audio object set to play by itself: the operator's player starts it.
   const shown = next.live.slide;
-  const sound = shown?.transition?.sound ?? shown?.elements?.find((e) => e.kind === 'audio' && e.mediaId && e.playback?.autoplay && !e.hidden)?.mediaId;
-  if (sound) next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1 } };
+  const obj = shown?.elements?.find((e) => e.kind === 'audio' && e.mediaId && e.playback?.autoplay && !e.hidden);
+  const sound = shown?.transition?.sound ?? obj?.mediaId;
+  // An audio object stops when its slide is left unless it plays across slides (DeckCraft media.options acrossSlides).
+  if (!sound && next.audio.slideId && next.audio.slideId !== shown?.id) next = { ...next, audio: { mediaId: null, nonce: next.audio.nonce + 1 } };
+  if (sound) {
+    const own = !shown?.transition?.sound && obj ? obj : undefined;
+    next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1, ...(own?.playback ? { playback: own.playback } : {}), ...(own && !own.playback?.acrossSlides ? { slideId: shown!.id } : {}) } };
+  }
   const actions = next.live.slide?.actions;
   if (actions?.length) next = runActions(next, actions, now ?? 0);
   if (now != null && next.cursor && next.cursor.presentationId !== prevPres) {
@@ -551,7 +558,7 @@ function core(s: AppState, a: Action): AppState {
         live: { ...s.live, video: { playing: a.playing ?? s.live.video.playing, restart: s.live.video.restart + (a.restart ? 1 : 0) } },
       };
     case 'audio/play':
-      return { ...s, audio: { mediaId: a.mediaId, nonce: s.audio.nonce + 1 } };
+      return { ...s, audio: { mediaId: a.mediaId, nonce: s.audio.nonce + 1, ...(a.mediaId && a.playback ? { playback: a.playback } : {}), ...(a.mediaId && a.slideId ? { slideId: a.slideId } : {}) } };
     case 'live/logo':
       return { ...s, live: { ...s.live, logo: a.on ?? !s.live.logo, logoMediaId: lib.logoMediaId } };
     case 'library/logo':

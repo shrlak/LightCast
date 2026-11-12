@@ -495,9 +495,14 @@ function PlaybackDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <Field label="종료 시간 (0 = 끝까지)"><Num value={v.end ?? 0} min={0} step={0.5} onChange={(n) => set({ end: n || undefined })} /></Field>
         </div>
       </fieldset>
-      <Check label="반복 재생" checked={!!v.loop} onChange={(on) => set({ loop: on || undefined })} />
+      <div className="dlg-cols">
+        <Check label="반복 재생" checked={!!v.loop} onChange={(on) => set({ loop: on || undefined })} />
+        <Check label="재생 후 되감기" checked={!!v.rewind} onChange={(on) => set({ rewind: on || undefined })} />
+        <Check label="쇼 동안 숨기기" checked={!!v.hideDuringShow} onChange={(on) => set({ hideDuringShow: on || undefined })} />
+        {audio ? <Check label="여러 슬라이드에서 재생" checked={!!v.acrossSlides} onChange={(on) => set({ acrossSlides: on || undefined })} />
+          : <Check label="전체 화면 재생" checked={!!v.fullScreen} onChange={(on) => set({ fullScreen: on || undefined })} />}
+      </div>
       {!audio && <Field label="포스터 프레임 (초 — 재생 전 보여 줄 장면)"><Num value={v.poster ?? 0} min={0} step={0.5} onChange={(n) => set({ poster: n || undefined })} /></Field>}
-      {audio && <Check label="쇼 동안 숨기기" checked={!!v.hideDuringShow} onChange={(on) => set({ hideDuringShow: on || undefined })} />}
     </Dialog>
   );
 }

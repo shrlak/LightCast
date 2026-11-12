@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch } from 'react';
+import { atEnd, playStart, playVolume } from '../domain/mediaPlayback';
 import type { Action, AppState } from '../domain/reducer';
 import { putMedia } from '../domain/media';
 import { uid } from '../domain/lyrics';
@@ -59,6 +60,7 @@ export function AudioPlayer({ state, dispatch }: Props) {
     a?.setSinkId?.(sink).catch(() => undefined);
   }, [sink, url]);
   const onEnded = () => {
+    if (state.audio.playback?.loop && ref.current) { ref.current.currentTime = playStart(state.audio.playback); void ref.current.play().catch(() => undefined); return; }
     const i = tracks.findIndex((t) => t.id === state.audio.mediaId);
     if (auto && i >= 0 && i + 1 < tracks.length) dispatch({ type: 'audio/play', mediaId: tracks[i + 1].id });
   };
@@ -66,15 +68,29 @@ export function AudioPlayer({ state, dispatch }: Props) {
   useEffect(() => {
     const a = ref.current;
     if (!a || !url) return;
-    a.volume = volume;
-    a.currentTime = 0;
+    const pb = state.audio.playback;
+    a.volume = playVolume(pb, playStart(pb), a.duration || 0, volume);
+    a.currentTime = playStart(pb);
     a.play().catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, state.audio.nonce]);
 
+  // An audio object's own playback: its trimmed span, fades, volume and loop (Insert › Audio › 재생).
   useEffect(() => {
-    if (ref.current) ref.current.volume = volume;
-  }, [volume]);
+    const a = ref.current;
+    const pb = state.audio.playback;
+    if (!a) return;
+    if (!pb) { a.volume = volume; return; }
+    const t = setInterval(() => {
+      if (a.paused) return;
+      const d = a.duration || 0;
+      a.volume = playVolume(pb, a.currentTime, d, volume);
+      const end = atEnd(a.currentTime, pb, d);
+      if (end === 'loop') a.currentTime = playStart(pb);
+      else if (end !== 'play') { a.pause(); a.currentTime = playStart(pb); }
+    }, 50);
+    return () => clearInterval(t);
+  }, [volume, url, state.audio.nonce, state.audio.playback]);
 
   const fadeOut = () => {
     const a = ref.current;

@@ -23,6 +23,7 @@ import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effe
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { pictureLookCss } from './pictureStyles';
+import { atEnd, fadeGain, playStart, playVolume } from '../domain/mediaPlayback';
 import { useAutoTextBoxes, useFontEpoch } from './textBoxLayout';
 import { elementTextStyle } from '../domain/textBoxLayout';
 import { fitTextNode, type TextLayout } from '../domain/boundedTextLayout';
@@ -269,28 +270,54 @@ function StillPicture({ el, url, box }: { el: SlideElement; url: string; box: CS
   return <canvas ref={ref} aria-label={el.alt ?? ''} style={{ ...box, ...pictureStyleCss(el.pictureStyle, el.w, el.h), objectFit: el.fit ?? 'contain' }} />;
 }
 
-/** A video object: in a slide show it follows its playback settings (start / end, loop, volume, sound). */
+/** A video object: in a slide show it follows its playback settings (trim, fades, loop, rewind, volume, sound, hide, full screen). */
 function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; style: CSSProperties; live: boolean }) {
   const ref = useRef<HTMLVideoElement>(null);
   const pb = el.playback ?? {};
+  const [playing, setPlaying] = useState(false);
+  const [gain, setGain] = useState(1);
   useEffect(() => {
     const v = ref.current;
     if (!v) return;
-    v.volume = pb.volume ?? 1;
-    if (pb.start) v.currentTime = pb.start;
-    if (!live) { v.pause(); if (pb.poster) v.currentTime = pb.poster; return; }
+    v.volume = playVolume(pb, v.currentTime, v.duration || 0);
+    v.currentTime = live ? playStart(pb) : pb.poster ?? playStart(pb);
+    if (!live) { v.pause(); return; }
     if (pb.autoplay !== false) v.play().catch(() => undefined);
-    const onTime = () => {
-      if (pb.end && v.currentTime >= pb.end) {
-        if (pb.loop !== false) v.currentTime = pb.start ?? 0;
-        else v.pause();
-      }
-    };
-    v.addEventListener('timeupdate', onTime);
-    return () => v.removeEventListener('timeupdate', onTime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live, url, pb.start, pb.end, pb.loop, pb.volume, pb.autoplay, pb.poster]);
+  useEffect(() => {
+    const v = ref.current;
+    if (!v) return;
+    let raf = 0;
+    const tick = () => {
+      const d = v.duration || 0;
+      v.volume = playVolume(pb, v.currentTime, d);
+      setGain(pb.fadeIn || pb.fadeOut ? fadeGain(v.currentTime, pb, d) : 1);
+      const end = atEnd(v.currentTime, pb, d);
+      if (end === 'loop') v.currentTime = playStart(pb);
+      else if (end !== 'play') { v.pause(); if (end === 'rewind') v.currentTime = pb.poster ?? playStart(pb); }
+      if (!v.paused) raf = requestAnimationFrame(tick);
+    };
+    const onPlay = () => { setPlaying(true); raf = requestAnimationFrame(tick); };
+    const onPause = () => { setPlaying(false); cancelAnimationFrame(raf); };
+    // Action › Play Media and the Playback tab's Play / Pause reach the video by its id.
+    const onCmd = (e: Event) => {
+      const d = (e as CustomEvent<{ id: string; action: 'toggle' | 'play' | 'pause' }>).detail;
+      if (d?.id !== el.id) return;
+      if (d.action === 'pause' || (d.action === 'toggle' && !v.paused)) v.pause();
+      else { if (atEnd(v.currentTime, pb, v.duration || 0) !== 'play' || v.currentTime < playStart(pb)) v.currentTime = playStart(pb); v.play().catch(() => undefined); }
+    };
+    v.addEventListener('play', onPlay);
+    v.addEventListener('pause', onPause);
+    window.addEventListener('lightcast-media', onCmd);
+    return () => { cancelAnimationFrame(raf); v.removeEventListener('play', onPlay); v.removeEventListener('pause', onPause); window.removeEventListener('lightcast-media', onCmd); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, el.id, pb.start, pb.end, pb.loop, pb.rewind, pb.fadeIn, pb.fadeOut, pb.volume, pb.muted, pb.poster]);
+  const full = live && playing && pb.fullScreen ? { left: 0, top: 0, width: CANVAS_W, height: CANVAS_H, transform: 'none', zIndex: 5, background: '#000' } : {};
+  const hidden = live && !playing && pb.hideDuringShow ? { visibility: 'hidden' as const } : {};
+  const faded = gain < 1 ? { opacity: ((style.opacity as number | undefined) ?? 1) * gain } : {};
   // Output windows play without sound unless the video's sound is turned on (the room hears one copy).
-  return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover' }} muted={pb.muted !== false} loop={pb.loop !== false && !pb.end} playsInline />;
+  return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover', ...faded, ...full, ...hidden }} muted={live && pb.muted !== false} playsInline preload="metadata" />;
 }
 
 /** One free-positioned object from the slide editor. */

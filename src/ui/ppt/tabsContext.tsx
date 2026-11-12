@@ -12,6 +12,7 @@ import { EffectsMenu } from './tabsMain';
 import { pictureCatalog, type PictureSteps } from '../../engine';
 import { editTable, tableStyles, type ChartKind, type TableAction, type TableData } from '../../engine';
 import type { Ed } from './editor';
+import { PlaybackTab } from './tabPlayback';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
@@ -23,8 +24,8 @@ import { applyBorders, CELL_MARGINS, type BorderMode } from '../../domain/tableB
 import type { CellBorder } from '../../engine';
 import { layoutTable } from '../../engine';
 
-export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart';
-export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인' };
+export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart' | 'playback';
+export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인', playback: '재생' };
 
 /** The contextual tabs for what is selected. */
 export function contextTabs(ed: Ed): ContextTab[] {
@@ -33,6 +34,8 @@ export function contextTabs(ed: Ed): ContextTab[] {
   if (kinds.size === 1 && kinds.has('table')) return ['tableDesign', 'tableLayout'];
   if (kinds.size === 1 && kinds.has('chart')) return ['chart'];
   if (kinds.size === 1 && kinds.has('image')) return ['picture'];
+  // Video / Audio: their 서식 (shape) and 재생 tabs.
+  if ([...kinds].every((k) => k === 'audio' || k === 'video')) return ['shape', 'playback'];
   return ['shape'];
 }
 
@@ -535,6 +538,7 @@ export function ChartDesignTab({ ed }: { ed: Ed }) {
 export function ContextTabBody({ tab, ed }: { tab: ContextTab; ed: Ed }) {
   if (tab === 'shape') return <ShapeFormatTab ed={ed} />;
   if (tab === 'picture') return <PictureFormatTab ed={ed} />;
+  if (tab === 'playback') return <PlaybackTab ed={ed} />;
   if (tab === 'tableDesign') return <TableDesignTab ed={ed} />;
   if (tab === 'tableLayout') return <TableLayoutTab ed={ed} />;
   return <ChartDesignTab ed={ed} />;
