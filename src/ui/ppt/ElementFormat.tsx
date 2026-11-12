@@ -103,7 +103,9 @@ export function AutoFitOptions({ el, onChange }: { el: SlideElement; onChange: (
  * Settings of the object selected on the slide, in the right-hand panel: its text, font, size,
  * colours, alignment, position and size, order on the slide — changes show at once.
  */
-export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell, onCell }: {
+export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell, onCell, themeFont }: {
+  /** The theme font (the font list's 제목 / 본문 entries). */
+  themeFont?: string;
   /** Table cells picked (Table Layout acts on them). */
   cell?: TableRange;
   onCell?: (r: TableRange) => void;
@@ -148,6 +150,7 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
             onChangeCase={(kind) => onChange({ text: changeCase(el.text ?? '', kind) })}
             onClear={() => onChange(clearTextFormat(el))}
             autoFitOption={false}
+            theme={themeFont}
           />
           <AutoFitOptions el={el} onChange={onChange} />
         </>

@@ -111,7 +111,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
       {!selected && <button title="원래 글자 크기로 상자를 늘리고, 슬라이드 안에 들어가지 않을 때만 글자를 줄입니다." onClick={() => boxMode ? upd({ elements: elements.map((e) => e.kind === 'text' ? { ...e, autoFit: true, maximizeFont: false } : e) }) : setStyle({ autoFit: true })}>넘친 내용 맞추기</button>}
       {!selected && boxMode && <button onClick={() => patchBoxes((e) => ({ fontSize: sizeOf(e), x: e.x, y: e.y, w: e.w, h: e.h }))}>글자 크기 통일</button>}
       {selected ? (
-        <ElementFormat
+        <ElementFormat themeFont={t.fontFamily}
           el={selected}
           onChange={(patch) => upd({ elements: elements.map((e) => (e.id === selected.id ? patchElement(e, patch) : e)) })}
           onDelete={() => { upd({ elements: elements.filter((e) => e.id !== selected.id) }); onSelect?.(null); }}
@@ -135,6 +135,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
           onChangeCase={boxMode ? (kind) => patchBoxes((e) => ({ text: changeCase(e.text ?? '', kind) })) : (kind) => upd({ text: changeCase(slide.text, kind), ...(slide.title ? { title: changeCase(slide.title, kind) } : {}), ...(slide.subtext ? { subtext: changeCase(slide.subtext, kind) } : {}) })}
           onClear={boxMode ? () => patchBoxes(clearTextFormat) : () => upd({ style: undefined, preferredFontSize: undefined })}
           shortcuts={false}
+          theme={t.fontFamily}
         />
       </Section>
 
