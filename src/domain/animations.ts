@@ -102,6 +102,18 @@ export function rewindBuild(slide: Slide, build: LiveBuild | undefined, now: num
   return first;
 }
 
+/**
+ * Animations › Animation Painter (DeckCraft animation.painterApply): the targets get every
+ * animation picked from the source, replacing their own (painting a shape onto itself does not
+ * double them); the copies go to the end of the sequence.
+ */
+export function paintAnimations(list: SlideAnimation[], picked: SlideAnimation[], targets: string[], newId: () => string): SlideAnimation[] {
+  if (!picked.length || !targets.length) return list;
+  const kept = list.filter((a) => !targets.includes(a.elementId));
+  const copies = targets.flatMap((id) => picked.map((a) => ({ ...a, id: newId(), elementId: id, trigger: a.trigger === id ? undefined : a.trigger })));
+  return [...kept, ...copies];
+}
+
 /** A trigger's sequence at `now`: a step that has played to its end counts as done. */
 function triggerNow(tl: PreparedTimeline, id: string, run: TriggerRun, now: number): { done: number; t: number; playing: boolean } {
   const info = tl.triggers?.find((x) => x.elementId === id);

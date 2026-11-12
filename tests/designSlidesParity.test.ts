@@ -1,7 +1,8 @@
 // DeckCraft parity for design, slides, transitions, animations, tables and SmartArt.
 import { describe, expect, it } from 'vitest';
 import type { Slide, SlideAnimation, SlideElement } from '../src/domain/types';
-import { REPEAT_UNTIL_CLICK, advanceBuild, animSpec, animationBadges, buildStates, clickTrigger, initialBuild, triggerObjects } from '../src/domain/animations';
+import { REPEAT_UNTIL_CLICK, advanceBuild, animSpec, animationBadges, buildStates, clickTrigger, initialBuild, paintAnimations, triggerObjects } from '../src/domain/animations';
+import { BUILTIN_SOUNDS, soundSamples, wavBytes } from '../src/domain/transitionSounds';
 import { applyBorders, editCells, penDash, setTrackSize } from '../src/domain/tableBorders';
 import { newTable } from '../src/engine';
 
@@ -55,6 +56,31 @@ describe('Animations › Trigger, Repeat and Rewind', () => {
     expect(a.rewind).toBe(true);
     expect(a.repeat).toBe(REPEAT_UNTIL_CLICK);
     expect(a.trigger).toBeUndefined();
+  });
+});
+
+describe('Animation Painter and transition sounds', () => {
+  it('paints every animation of the source onto the targets, replacing theirs', () => {
+    const list = [anim('a', { effect: 'fly' }), anim('a', { effect: 'spin', class: 'emphasis', trigger: 'b' }), anim('b'), anim('c')];
+    let n = 0;
+    const out = paintAnimations(list, list.slice(0, 2), ['b'], () => `n${++n}`);
+    expect(out.filter((x) => x.elementId === 'b').map((x) => x.effect)).toEqual(['fly', 'spin']);
+    // A trigger on the target itself would never fire: it goes.
+    expect(out.find((x) => x.id === 'n2')!.trigger).toBeUndefined();
+    expect(out.filter((x) => x.elementId === 'a')).toHaveLength(2);
+    expect(paintAnimations(list, [], ['b'], () => 'x')).toBe(list);
+  });
+
+  it('synthesises every built-in sound as a short PCM WAV', () => {
+    for (const [id] of BUILTIN_SOUNDS) {
+      const s = soundSamples(id)!;
+      expect(s.length / 22050).toBeGreaterThan(0.01);
+      expect(s.length / 22050).toBeLessThan(2);
+      const w = wavBytes(s);
+      expect(String.fromCharCode(...w.slice(0, 4))).toBe('RIFF');
+      expect(w.length).toBe(44 + s.length * 2);
+    }
+    expect(soundSamples('nope')).toBeNull();
   });
 });
 

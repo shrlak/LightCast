@@ -5,7 +5,7 @@ import { uid } from '../../domain/lyrics';
 import { getDevice } from '../../domain/device';
 import { loadSession } from '../../domain/cloud';
 import { orderSelection, moveAnimation } from '../../domain/editOps';
-import { animationClicks, slideTimeline, textParagraphs } from '../../domain/animations';
+import { REPEAT_UNTIL_CLICK, animationClicks, slideTimeline, textParagraphs } from '../../domain/animations';
 import type { Ed } from './editor';
 import { ANIMATION, ANIMATION_START } from './ko';
 
@@ -31,6 +31,7 @@ export function AnimationPane({ ed, onPlay }: { ed: Ed; onPlay: () => void }) {
       <PaneHead title="애니메이션 창" onClose={() => ed.setPane(null)} />
       <div className="task-tools">
         <button type="button" disabled={!list.length} onClick={onPlay}>▶ 모두 재생</button>
+        <button type="button" disabled={!list.length || !ed.canEdit} title="이 슬라이드의 애니메이션을 모두 지웁니다" onClick={() => { set([]); setPicked(null); }}>모두 제거</button>
         <span className="grow" />
         <button type="button" disabled={!picked} title="앞으로" onClick={() => picked && set(moveAnimation(list, picked, -1))}>▲</button>
         <button type="button" disabled={!picked} title="뒤로" onClick={() => picked && set(moveAnimation(list, picked, 1))}>▼</button>
@@ -46,7 +47,7 @@ export function AnimationPane({ ed, onPlay }: { ed: Ed; onPlay: () => void }) {
             <li key={a.id} className={picked === a.id ? 'on' : ''} onClick={() => { setPicked(a.id); if (el) ed.setSel([el.id]); }}>
               <span className="anim-num">{a.start === 'click' && c ? c.clicks[0] : ''}</span>
               <span className="anim-ico" style={{ color: COLORS[a.class] }}>{a.start === 'click' ? '🖱' : a.start === 'with' ? '' : '⏱'}★</span>
-              <span className="anim-name">{el ? elementName(el, i) : '(지운 개체)'}<small>{ANIMATION[a.effect] ?? a.effect} · {ANIMATION_START[a.start]} · {(a.durationMs / 1000).toFixed(2)}초</small></span>
+              <span className="anim-name">{el ? elementName(el, i) : '(지운 개체)'}<small>{ANIMATION[a.effect] ?? a.effect} · {a.trigger ? `⚡ ${(() => { const t = els.findIndex((e) => e.id === a.trigger); return t >= 0 ? elementName(els[t], t) : '(지운 개체)'; })()} 클릭 시` : ANIMATION_START[a.start]} · {(a.durationMs / 1000).toFixed(2)}초{a.repeat && a.repeat > 1 ? ` · ${a.repeat === REPEAT_UNTIL_CLICK ? '다음 클릭까지 반복' : `${a.repeat}번 반복`}` : ''}{a.rewind ? ' · 되감기' : ''}</small></span>
               <select value={a.start} onClick={(e) => e.stopPropagation()} onChange={(e) => set(list.map((x) => (x.id === a.id ? { ...x, start: e.target.value as SlideAnimation['start'] } : x)))}>
                 {(['click', 'with', 'after'] as const).map((s) => <option key={s} value={s}>{ANIMATION_START[s]}</option>)}
               </select>

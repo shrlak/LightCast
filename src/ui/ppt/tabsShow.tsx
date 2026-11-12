@@ -6,14 +6,16 @@ import { SlideCanvas, assetUrl } from '../SlideCanvas';
 import { useMediaUrl } from '../hooks';
 import { animationCatalog, colorSchemes, transitionCatalog, type AnimEffectInfo } from '../../engine';
 import { moveAnimation, setAnimation, addAnimation } from '../../domain/editOps';
-import { canBuildByParagraph, slideTimeline } from '../../domain/animations';
+import { REPEAT_UNTIL_CLICK, canBuildByParagraph, paintAnimations, slideTimeline } from '../../domain/animations';
+import { elementName } from './panes';
 import type { Ed } from './editor';
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { withMaster } from '../../domain/master';
 import { FONT_OPTIONS } from '../../domain/fonts';
 import { customSchemeName, readThemeFile } from '../../domain/io/themeFile';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
+import { BUILTIN_SOUNDS, builtinSound } from '../../domain/transitionSounds';
 import { Big, Col, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { ANIMATION, ANIMATION_CLASS, ANIMATION_START, TRANSITION, TRANSITION_CATEGORY, animOptionLabel, optionLabel } from './ko';
 
@@ -164,6 +166,17 @@ export function TransitionsTab({ ed, onPreview }: { ed: Ed; onPreview: () => voi
     set({ kind: `fx:${id}`, duration: c?.durationMs || 1000, option: c?.options[0]?.id });
   };
   const groups = ['Subtle', 'Exciting', 'Dynamic Content'];
+  const addSound = (f: File) => {
+    const id = uid('m');
+    void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'audio' } }); set({ sound: id, stopSound: undefined }); });
+  };
+  // A built-in sound goes into the media library once and is reused after that.
+  const builtin = (id: string) => {
+    const f = builtinSound(id);
+    if (!f) return;
+    const have = ed.state.library.media.find((m) => m.type === 'audio' && m.name === f.name);
+    if (have) set({ sound: have.id, stopSound: undefined }); else addSound(f);
+  };
   return (
     <>
       <Group label="미리 보기"><Big icon={RI.preview} label="미리 보기" disabled={!ed.slide} onClick={onPreview} /></Group>
@@ -188,20 +201,36 @@ export function TransitionsTab({ ed, onPreview }: { ed: Ed; onPreview: () => voi
       </Group>
       <Group label="타이밍">
         <Col>
-          <label className="rb-field">소리: <select disabled={!ed.slide || !ed.canEdit} value={t?.sound ?? ''} onChange={(e) => { if (e.target.value === '__file') { soundFile.current?.click(); return; } set({ sound: e.target.value || undefined }); }}>
+          <label className="rb-field">소리: <select disabled={!ed.slide || !ed.canEdit} value={t?.stopSound ? '__stop' : t?.sound ?? ''} onChange={(e) => {
+            const v = e.target.value;
+            if (v === '__file') { soundFile.current?.click(); return; }
+            if (v === '__stop') return set({ sound: undefined, soundLoop: undefined, stopSound: true });
+            if (v.startsWith('builtin:')) return builtin(v.slice(8));
+            set({ sound: v || undefined, stopSound: undefined, ...(v ? {} : { soundLoop: undefined }) });
+          }}>
             <option value="">[소리 없음]</option>
-            {ed.state.library.media.filter((m) => m.type === 'audio').map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            <option value="__stop">[이전 소리 중지]</option>
+            <optgroup label="기본 소리">{BUILTIN_SOUNDS.map(([id, l]) => <option key={id} value={`builtin:${id}`}>{l}</option>)}</optgroup>
+            <optgroup label="미디어 라이브러리">{ed.state.library.media.filter((m) => m.type === 'audio').map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</optgroup>
             <option value="__file">기타 소리…</option>
           </select></label>
-          <input ref={soundFile} type="file" accept="audio/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (!f) return; const id = uid('m'); void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'audio' } }); set({ sound: id }); }); }} />
-          <label className="rb-field">기간(초): <input type="number" min={0.01} max={60} step={0.25} disabled={!ed.slide || !ed.canEdit} value={((t?.duration ?? 1) / 1000).toFixed(2)} onChange={(e) => set({ duration: Math.max(1, Math.round(Number(e.target.value) * 1000)) })} /></label>
-          <Small icon="⧉" label="모두 적용" title="이 화면 전환을 모든 슬라이드에" disabled={!ed.p || !ed.canEdit} onClick={() => { if (!ed.p) return; const tr = transitionOf(ed); ed.updatePres({ transition: tr, slides: ed.p.slides.map((s) => ({ ...s, transition: undefined })) }); ed.cmd.notify('모든 슬라이드에 같은 화면 전환을 적용했습니다'); }} />
+          <input ref={soundFile} type="file" accept="audio/*" hidden onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) addSound(f); }} />
+          <label className="rb-check" title="다음 소리가 나올 때까지 이 소리를 되풀이합니다"><input type="checkbox" disabled={!t?.sound || !ed.canEdit} checked={!!t?.sound && !!t.soundLoop} onChange={(e) => set({ soundLoop: e.target.checked || undefined })} /> 다음 소리까지 반복</label>
+          <label className="rb-field">기간(초): <input type="number" min={0.01} max={59} step={0.25} disabled={!ed.slide || !ed.canEdit} value={((t?.duration ?? 1) / 1000).toFixed(2)} onChange={(e) => set({ duration: Math.min(59000, Math.max(1, Math.round(Number(e.target.value) * 1000))) })} /></label>
         </Col>
         <Col>
-          <label className="rb-check"><input type="checkbox" checked readOnly /> 마우스를 클릭할 때</label>
+          <label className="rb-check" title="끄면 클릭해도 다음 슬라이드로 넘어가지 않습니다 (애니메이션은 클릭으로 재생)"><input type="checkbox" disabled={!ed.slide || !ed.canEdit} checked={t?.advanceOnClick !== false} onChange={(e) => set({ advanceOnClick: e.target.checked ? undefined : false })} /> 마우스를 클릭할 때</label>
           <label className="rb-check"><input type="checkbox" disabled={!ed.slide || !ed.canEdit} checked={!!ed.slide?.autoAdvance} onChange={(e) => ed.updateSlide({ autoAdvance: e.target.checked ? 5 : undefined })} /> 다음 시간 후:</label>
           <input className="rb-num" type="number" min={0} step={0.5} disabled={!ed.slide?.autoAdvance} value={ed.slide?.autoAdvance ?? 0} onChange={(e) => ed.updateSlide({ autoAdvance: Number(e.target.value) > 0 ? Number(e.target.value) : undefined })} />
         </Col>
+        <Big icon="⧉" label="모두 적용" title="이 화면 전환과 소리 · 타이밍을 모든 슬라이드에" disabled={!ed.p || !ed.canEdit} onClick={() => {
+          if (!ed.p) return;
+          const tr = transitionOf(ed);
+          // DeckCraft's Apply To All copies the whole transition, advance timing included.
+          const after = ed.slide?.autoAdvance;
+          ed.updatePres({ transition: tr, slides: ed.p.slides.map((s) => ({ ...s, transition: undefined, autoAdvance: after })) });
+          ed.cmd.notify('모든 슬라이드에 같은 화면 전환과 타이밍을 적용했습니다');
+        }} />
       </Group>
     </>
   );
@@ -231,6 +260,9 @@ export function AnimGallery({ onPick, current }: { onPick: (e: AnimEffectInfo | 
   );
 }
 
+/** The armed Animation Painter: the animations picked and from which object; `sticky` after a double-click. */
+const painter: { current: { anims: SlideAnimation[]; source: string; sticky: boolean } | null } = { current: null };
+
 export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void }) {
   const cat = animationCatalog();
   const slide = ed.slide;
@@ -246,6 +278,32 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
   const steps = slide ? slideTimeline(slide)?.steps ?? 0 : 0;
   // Effect Options › 순서 for a text box or shape with text (motion paths move the whole object).
   const seqable = !!first && first.class !== 'path' && canBuildByParagraph(ed.selEls.find((e) => e.id === first.elementId));
+  // Animation Painter: armed with the selected object's animations, it paints the next object picked.
+  const [, repaint] = useState(0);
+  const armPainter = (sticky: boolean) => {
+    if (!slide || !ids.length) return;
+    const src = ids[0];
+    const anims = (slide.animations ?? []).filter((a) => a.elementId === src);
+    if (!anims.length) return ed.cmd.notify('이 개체에는 복사할 애니메이션이 없습니다');
+    painter.current = { anims, source: src, sticky };
+    repaint((x) => x + 1);
+    ed.cmd.notify(`애니메이션 ${anims.length}개를 복사했습니다 — 적용할 개체를 클릭하세요${sticky ? ' (계속 적용, Esc: 끝)' : ''}`);
+  };
+  const disarmPainter = () => { painter.current = null; repaint((x) => x + 1); };
+  const selKey = ids.join(',');
+  useEffect(() => {
+    const pt = painter.current;
+    if (!pt || !slide || !ids.length || selKey === pt.source) return;
+    setList(paintAnimations(slide.animations ?? [], pt.anims, ids, () => uid('an')));
+    if (!pt.sticky) disarmPainter();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selKey]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && painter.current) disarmPainter(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  const repeatValue = first?.repeat === REPEAT_UNTIL_CLICK ? 'click' : String(first?.repeat && first.repeat > 1 ? first.repeat : 1);
   return (
     <>
       <Group label="미리 보기"><Big icon={RI.preview} label="미리 보기" title={`이 슬라이드의 애니메이션 재생 (${steps}단계)`} disabled={!slide?.animations?.length} onClick={onPreview} /></Group>
@@ -279,9 +337,19 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
         <Small icon="✎" label="사용자 지정 경로" title="이동 경로를 직접 그립니다 (이 개체의 애니메이션을 바꿈)" disabled={!can || ids.length !== 1} onClick={() => ed.setTool({ kind: 'motionPath', id: ids[0], add: false })} />
         <Col>
           <Small icon={RI.animPane} label="애니메이션 창" active={ed.pane === 'animation'} onClick={() => ed.setPane(ed.pane === 'animation' ? null : 'animation')} />
-          <Small icon="⧉" label="애니메이션 복사" title="선택한 개체의 애니메이션을 다른 개체에 (다른 개체를 고른 뒤 다시 누르기)" disabled={!can || !first}
-            onClick={() => { if (!slide || !first) return; (window as unknown as { __fcAnim?: SlideAnimation }).__fcAnim = first; ed.cmd.notify('애니메이션을 복사했습니다 — 적용할 개체를 고르고 “애니메이션 붙여넣기”를 누르세요'); }} />
-          <Small icon="📋" label="애니메이션 붙여넣기" disabled={!can} onClick={() => { const a = (window as unknown as { __fcAnim?: SlideAnimation }).__fcAnim; const e = a && cat.find((c) => c.id === a.effect && c.class === a.class); if (slide && e) setList(addAnimation(slide, ids, e).map((x) => (ids.includes(x.elementId) && x.effect === a.effect ? { ...x, option: a.option, durationMs: a.durationMs, delayMs: a.delayMs, start: a.start, sequence: a.sequence } : x))); }} />
+          <DropButton icon="⚡" label="트리거" title="다른 개체를 클릭할 때 이 애니메이션 재생" disabled={!first || !ed.canEdit} render={(close) => (
+            <>
+              <MenuHead>클릭할 때</MenuHead>
+              <MenuItem label="(없음 — 슬라이드 클릭 순서대로)" on={!first?.trigger} onClick={() => { patchMine({ trigger: undefined }); close(); }} />
+              {ed.elements.filter((e) => !e.master && !ids.includes(e.id)).map((e) => (
+                <MenuItem key={e.id} label={elementName(e, ed.elements.indexOf(e))} on={first?.trigger === e.id} onClick={() => { patchMine({ trigger: e.id }); close(); }} />
+              ))}
+            </>
+          )} />
+          <span onDoubleClick={() => armPainter(true)}>
+            <Small icon="🖌" label="애니메이션 복사" title="애니메이션 복사 — 이 개체의 애니메이션을 다음에 클릭하는 개체에 그대로 적용합니다 (두 번 누르면 계속, Esc: 끝)" active={!!painter.current}
+              disabled={!slide || (!first && !painter.current)} onClick={() => (painter.current ? disarmPainter() : armPainter(false))} />
+          </span>
         </Col>
       </Group>
       <Group label="타이밍">
@@ -291,6 +359,12 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
           </select></label>
           <label className="rb-field">⏱ 재생 시간: <input type="number" min={0.01} step={0.25} disabled={!first} value={((first?.durationMs ?? 500) / 1000).toFixed(2)} onChange={(e) => patchMine({ durationMs: Math.max(10, Math.round(Number(e.target.value) * 1000)) })} /></label>
           <label className="rb-field">⏳ 지연: <input type="number" min={0} step={0.25} disabled={!first} value={((first?.delayMs ?? 0) / 1000).toFixed(2)} onChange={(e) => patchMine({ delayMs: Math.max(0, Math.round(Number(e.target.value) * 1000)) })} /></label>
+        </Col>
+        <Col>
+          <label className="rb-field">↻ 반복: <select disabled={!first} value={repeatValue} onChange={(e) => patchMine({ repeat: e.target.value === 'click' ? REPEAT_UNTIL_CLICK : Number(e.target.value) > 1 ? Number(e.target.value) : undefined })}>
+            <option value="1">(없음)</option>{[2, 3, 4, 5, 10].map((n) => <option key={n} value={n}>{n}</option>)}<option value="click">다음 클릭할 때까지</option>
+          </select></label>
+          <label className="rb-check" title="효과가 끝나면 개체가 효과 전 모습으로 돌아갑니다"><input type="checkbox" disabled={!first} checked={!!first?.rewind} onChange={(e) => patchMine({ rewind: e.target.checked || undefined })} /> 재생 후 되감기</label>
         </Col>
         <Col>
           <span className="rb-note">애니메이션 순서 바꾸기</span>

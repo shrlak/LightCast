@@ -28,7 +28,8 @@ interface HistoryPosition { before: Cursor | null; after: Cursor | null }
 
 export interface AppState extends NavState {
   selectedId: string | null;
-  audio: { mediaId: string | null; nonce: number };
+  /** `loop`: Transitions › Sound › Loop Until Next Sound. */
+  audio: { mediaId: string | null; nonce: number; loop?: boolean };
   /** Position in the looping announcements layer. */
   announce: { presentationId: string; seq: number } | null;
   past: Library[];
@@ -177,7 +178,9 @@ function live(s: AppState, c: Cursor, now?: number): AppState {
   // Transitions › Sound, or an audio object set to play by itself: the operator's player starts it.
   const shown = next.live.slide;
   const sound = shown?.transition?.sound ?? shown?.elements?.find((e) => e.kind === 'audio' && e.mediaId && e.playback?.autoplay && !e.hidden)?.mediaId;
-  if (sound) next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1 } };
+  if (sound) next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1, ...(shown?.transition?.sound === sound && shown.transition.soundLoop ? { loop: true } : {}) } };
+  // [Stop Previous Sound]: the slide silences a sound still playing.
+  else if (shown?.transition?.stopSound && next.audio.mediaId) next = { ...next, audio: { mediaId: null, nonce: next.audio.nonce + 1 } };
   const actions = next.live.slide?.actions;
   if (actions?.length) next = runActions(next, actions, now ?? 0);
   if (now != null && next.cursor && next.cursor.presentationId !== prevPres) {
