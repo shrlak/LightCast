@@ -8,8 +8,18 @@ import type { HandoutMaster, NotesMaster, PagePlaceholders, Presentation, Slide 
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
 import { SlideCanvas } from '../SlideCanvas';
+import { desktop } from '../../domain/desktop';
+import { pdfFileName } from '../../domain/io/pdfName';
 import { Check, Dialog, Field } from './dialogs';
 import type { Ed } from './editor';
+
+function saveBlob(name: string, blob: Blob) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
 
 export type PrintMode = 'slides' | 'handout' | 'notes';
 export const DEFAULT_HANDOUT: HandoutMaster = { perPage: 3, date: true, pageNumber: true };
@@ -66,16 +76,26 @@ export function PrintPages({ ed, mode, handout, notes }: { ed: Ed; mode: PrintMo
   ))}</>;
 }
 
-/** Renders the pages off screen and opens the print dialog; done when printing ends. */
-export function PrintRun({ ed, mode, onDone }: { ed: Ed; mode: PrintMode; onDone: () => void }) {
+/** Renders the pages off screen and opens the print dialog; done when printing ends. With `pdf`, the desktop app
+ *  writes them straight to a PDF file (real text, no dialog); the browser has no such call, so it opens the
+ *  print dialog, where "Save as PDF" does the same. */
+export function PrintRun({ ed, mode, onDone, pdf }: { ed: Ed; mode: PrintMode; onDone: () => void; pdf?: boolean }) {
+  const title = ed.p?.title;
   useEffect(() => {
     document.body.classList.add('printing');
     const done = () => { document.body.classList.remove('printing'); onDone(); };
-    window.addEventListener('afterprint', done);
+    const direct = pdf ? desktop?.printToPdf?.bind(desktop) : undefined;
+    if (!direct) window.addEventListener('afterprint', done);
     // Let the slide canvases measure themselves before the page is printed.
-    const t = window.setTimeout(() => window.print(), 600);
+    const t = window.setTimeout(() => {
+      if (!direct) return window.print();
+      direct().then((bytes) => {
+        if (bytes?.length) saveBlob(pdfFileName(title, mode), new Blob([bytes as BlobPart], { type: 'application/pdf' }));
+        else window.alert('PDF를 만들지 못했습니다. 인쇄 창에서 PDF로 저장해 보세요.');
+      }, () => window.alert('PDF를 만들지 못했습니다.')).finally(done);
+    }, 600);
     return () => { window.clearTimeout(t); window.removeEventListener('afterprint', done); document.body.classList.remove('printing'); };
-  }, [onDone]);
+  }, [onDone, pdf, title, mode]);
   const landscape = mode === 'slides' || (mode === 'handout' ? ed.p?.handoutMaster?.landscape : ed.p?.notesMaster?.landscape);
   return createPortal(
     <div id="print-root" className={landscape ? 'landscape' : ''}>

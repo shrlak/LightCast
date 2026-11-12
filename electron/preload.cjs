@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   copyTeamLink: () => ipcRenderer.invoke('desktop:copyTeamLink'),
   copyRemoteCode: () => ipcRenderer.invoke('desktop:copyRemoteCode'),
   pptxToPdf: (bytes) => ipcRenderer.invoke('desktop:pptxToPdf', bytes),
+  printToPdf: () => ipcRenderer.invoke('desktop:printToPdf'),
   pptToPptx: (bytes) => ipcRenderer.invoke('desktop:pptToPptx', bytes),
   // Review › Spelling: the system / Chromium spell checker the text boxes already use.
   isMisspelled: (word) => webFrame.isWordMisspelled(String(word)),

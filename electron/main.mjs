@@ -406,6 +406,16 @@ ipcMain.handle('desktop:copyTeamLink', (e) => {
   clipboard.writeText(teamPairingAddress(REMOTE_PROXY, settings.teamLinkId)); return true;
 });
 ipcMain.handle('desktop:pptxToPdf', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptxToPdf(bytes) : null));
+// File › Export › PDF: the print pages the console has laid out (body.printing + #print-root), written as a
+// real PDF — selectable text, A4 or landscape as the page's own @page rule says.
+ipcMain.handle('desktop:printToPdf', async (e) => {
+  if (!fromMain(e)) return null;
+  try {
+    return new Uint8Array(await e.sender.printToPDF({ preferCSSPageSize: true, printBackground: true }));
+  } catch {
+    return null;
+  }
+});
 ipcMain.handle('desktop:pptToPptx', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptToPptx(bytes) : null));
 // Paste from PowerPoint: Office puts the copied shapes on the clipboard as a small Office package
 // (DrawingML), under this name on Windows and as a pasteboard type on macOS.

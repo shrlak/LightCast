@@ -116,6 +116,43 @@ jobs:
           done
           gh release upload "v$v" upload/* --clobber
 
+  # Linux builds are extra: they never hold back the Mac and Windows installers (or the verify job below).
+  # AppImage updates itself from latest-linux.yml; the .deb, .rpm and .tar.gz are installed by hand.
+  # FreeBSD has no Electron build of its own: it runs the Linux .tar.gz through the Linuxulator
+  # (see docs/linux-freebsd.md), or serves the web app with `npm start`.
+  build-linux:
+    needs: tag
+    if: needs.tag.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: sudo apt-get update && sudo apt-get install -y rpm
+      - run: npm ci
+      - name: Build the Rust engine (WebAssembly)
+        run: |
+          rustup update stable --no-self-update && rustup default stable
+          rustup target add wasm32-unknown-unknown
+          npm run engine
+      - run: npm test
+      - run: npm run build
+      - run: npx electron-builder --linux --publish never
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          [ -f release/latest-linux.yml ] || { echo "::error::release/latest-linux.yml was not built"; exit 1; }
+          mkdir upload
+          find release -maxdepth 1 -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -name '*.tar.gz' -o -name 'latest-linux.yml' \) | while IFS= read -r f; do
+            cp "$f" "upload/$(basename "$f" | tr ' ' '-')"
+          done
+          gh release upload "v$v" upload/* --clobber
+
   # Every release carries both installers (one universal Mac .dmg, one Windows .exe for x64 and ARM64)
   # and the files the auto-updater reads (the per-architecture Mac .zip files and latest*.yml); fail
   # loudly if one is missing.
