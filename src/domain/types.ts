@@ -129,9 +129,12 @@ export interface TextRun {
 
 /** What clicking an object does in a slide show (Insert › Action). */
 export interface ElementAction {
-  kind: 'next' | 'prev' | 'first' | 'last' | 'slide' | 'url' | 'end';
+  /** lastViewed: back to the slide shown before; customShow: play custom show `show` and come back; playMedia: play the object's own audio / video. */
+  kind: 'next' | 'prev' | 'first' | 'last' | 'slide' | 'url' | 'end' | 'lastViewed' | 'customShow' | 'playMedia';
   slideId?: string;
   url?: string;
+  /** customShow: the custom show's id. */
+  show?: string;
 }
 
 /** Playback (video / audio objects). */
@@ -151,6 +154,8 @@ export interface MediaPlayback {
   hideDuringShow?: boolean;
   /** Video poster frame, seconds. */
   poster?: number;
+  /** Bookmarks on the clip (name, seconds), in time order: the playback preview jumps to them. */
+  bookmarks?: { name: string; t: number }[];
 }
 
 /** Picture Format adjustments; the shown picture is made from `original` by the engine. */
@@ -276,6 +281,10 @@ export interface SlideElement {
   alt?: string;
   /** A link opened when the object is clicked in a slide show. */
   href?: string;
+  /** Insert › Link › ScreenTip: shown when the pointer rests on the object in a slide show. */
+  tooltip?: string;
+  /** Insert › Action › Mouse Over: what pointing at the object does in a slide show. */
+  hoverAction?: ElementAction;
   table?: import('../engine').TableData;
   chart?: import('../engine').ChartData;
   /** Lucide icon name ('icon' objects). */

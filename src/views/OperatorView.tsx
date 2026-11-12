@@ -22,7 +22,7 @@ import { ActivityModal } from '../ui/ActivityModal';
 import { FindPalette } from '../ui/FindPalette';
 import { RestorePointsModal } from '../ui/RestorePointsModal';
 import { useLiveBroadcast, useRelay } from '../ui/hooks';
-import { liveActionFor } from '../domain/showActions';
+import { liveActionFor, noteVisit, showHistory } from '../domain/showActions';
 import { SlideEditorModal } from '../ui/SlideEditorModal';
 import { isSong } from '../domain/templates/fill';
 import { EditorModal } from '../ui/EditorModal';
@@ -284,6 +284,12 @@ export function OperatorView() {
   // Objects clicked on the projector window (Action Settings, slide zooms) drive the live show.
   const showStateRef = useRef(state);
   showStateRef.current = state;
+  // "Last slide viewed" buttons go back along the pages the live show visited (a new presentation starts over).
+  const visitedPres = useRef<string | null>(null);
+  useEffect(() => {
+    if (state.cursor?.presentationId !== visitedPres.current) { visitedPres.current = state.cursor?.presentationId ?? null; showHistory.list = []; }
+    showHistory.list = noteVisit(showHistory.list, state.cursor?.seq);
+  }, [state.cursor?.presentationId, state.cursor?.seq]);
   useLiveBroadcast(state.live, relay.send, (a) => {
     if (a.kind === 'end') { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); return; }
     const act = liveActionFor(showStateRef.current, a);

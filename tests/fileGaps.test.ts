@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Presentation, Slide } from '../src/domain/types';
+import type { Presentation, Slide, SlideElement } from '../src/domain/types';
 import { DEFAULT_PRINT, colorFilter, docStats, exportFileName, exportHeight, formatBytes, mediaIdsOf, parseSlideRange, printPages } from '../src/domain/filePrint';
 
 const s = (id: string, more: Partial<Slide> = {}): Slide => ({ id, group: 'G', text: id, ...more });
@@ -120,5 +120,66 @@ describe('Photo album (DeckCraft album.rs)', async () => {
     expect(pa.needsAdjust(pic('a'), { gray: true })).toBe(true);
     expect(pa.needsAdjust(pic('a', { contrast: -0.1 }), {})).toBe(true);
     expect(pa.albumAdjust(pic('a', { brightness: 0.3 }), { gray: true })).toEqual({ recolor: 'grayscale', brightness: 0.3 });
+  });
+});
+
+describe('Media bookmarks and poster frame', async () => {
+  const mm = await import('../src/domain/mediaMarks');
+  it('adds bookmarks in time order, ignores a second one at the same moment, removes and steps', () => {
+    let list = mm.addBookmark(undefined, 12.34, '후렴');
+    list = mm.addBookmark(list, 3);
+    list = mm.addBookmark(list, 3.02);
+    expect(list).toEqual([{ name: '책갈피 2', t: 3 }, { name: '후렴', t: 12.3 }]);
+    expect(mm.stepBookmark(list, 0, 1)).toEqual(list[0]);
+    expect(mm.stepBookmark(list, 3, 1)).toEqual(list[1]);
+    expect(mm.stepBookmark(list, 12.3, 1)).toBeNull();
+    expect(mm.stepBookmark(list, 12.3, -1)).toEqual(list[0]);
+    expect(mm.stepBookmark(list, 3, -1)).toBeNull();
+    expect(mm.removeBookmark(list, 0)).toEqual([list[1]]);
+  });
+  it('formats clock times', () => {
+    expect(mm.formatClock(7.9)).toBe('0:07');
+    expect(mm.formatClock(62)).toBe('1:02');
+    expect(mm.formatClock(3723)).toBe('1:02:03');
+  });
+});
+
+describe('Projector window: the new action kinds', async () => {
+  const sa = await import('../src/domain/showActions');
+  const el = (id: string, more: Partial<SlideElement>): SlideElement => ({ id, kind: 'shape', x: 0, y: 0, w: 100, h: 100, ...more });
+  const slides = [s('a'), s('b'), s('c', { disabled: true }), s('d')];
+  const deck = { ...pres(slides), customShows: [{ id: 'cs', name: 'Short', slideIds: ['gone', 'd', 'b'] }] };
+  const state = { cursor: { presentationId: 'p', seq: 3, playlistIndex: null }, library: { presentations: [deck] } as unknown as import('../src/domain/types').Library };
+
+  it('lastViewed goes back to the page visited before, via the console history', () => {
+    expect(sa.lastViewed([0, 1, 3], 3)).toBe(1);
+    expect(sa.lastViewed([3], 3)).toBeNull();
+    expect(sa.liveActionFor(state, { kind: 'lastViewed' }, [0, 1, 3])).toMatchObject({ type: 'live/go', seq: 1 });
+    expect(sa.liveActionFor(state, { kind: 'lastViewed' }, [3])).toBeNull();
+  });
+  it('records visits without repeats and caps the list', () => {
+    expect(sa.noteVisit([0, 1], 1)).toEqual([0, 1]);
+    expect(sa.noteVisit([0, 1], 2)).toEqual([0, 1, 2]);
+    expect(sa.noteVisit([0, 1], null)).toEqual([0, 1]);
+    expect(sa.noteVisit([0, 1, 2], 3, 3)).toEqual([1, 2, 3]);
+  });
+  it('customShow jumps to the first slide of the show that is still in the deck', () => {
+    expect(sa.liveActionFor(state, { kind: 'customShow', show: 'cs' })).toMatchObject({ type: 'live/go', seq: 3 });
+    expect(sa.liveActionFor(state, { kind: 'customShow', show: 'nope' })).toBeNull();
+  });
+  it('playMedia: an audio object plays through the console, a video plays in the window itself', () => {
+    const audio = el('au', { kind: 'audio', mediaId: 'm1', action: { kind: 'playMedia' } });
+    const video = el('vi', { kind: 'video', mediaId: 'm2', action: { kind: 'playMedia' } });
+    expect(sa.liveActionFor(state, sa.actionOf(audio)!)).toEqual({ type: 'audio/play', mediaId: 'm1' });
+    expect(sa.liveActionFor(state, sa.actionOf(video)!)).toBeNull();
+    expect(sa.actionOf(video)).toMatchObject({ kind: 'playMedia', target: { id: 'vi', kind: 'video' } });
+  });
+  it('Mouse Over: finds the object under the pointer and its action', () => {
+    const hot = el('h', { x: 10, y: 10, w: 50, h: 50, hoverAction: { kind: 'next' }, tooltip: '다음' });
+    const sl = s('a', { elements: [hot] });
+    expect(sa.hoverAt(sl, 20, 20)?.id).toBe('h');
+    expect(sa.hoverAt(sl, 200, 200)).toBeNull();
+    expect(sa.hoverActionOf(hot)).toEqual({ kind: 'next' });
+    expect(sa.liveActionFor(state, sa.hoverActionOf(hot)!)).toMatchObject({ type: 'live/next' });
   });
 });

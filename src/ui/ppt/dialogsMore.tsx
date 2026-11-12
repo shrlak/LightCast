@@ -10,6 +10,7 @@ import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { sections } from '../../domain/sections';
 import { withMaster } from '../../domain/master';
 import { PhotoAlbumDialog } from './albumDialog';
+import { MediaPanel } from './mediaPanel';
 import { nodesFromText, smartArtElements, smartArtOwner, relayoutSmartArt, textFromNodes, type SmartArtSpec } from '../../domain/smartArt';
 import { smartArtCatalog, thesaurus } from '../../engine';
 import { SlideCanvas } from '../SlideCanvas';
@@ -416,11 +417,12 @@ function PlaybackDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const ok = () => {
     const clean = Object.fromEntries(Object.entries(v).filter(([, x]) => x !== undefined && x !== false && x !== 0)) as MediaPlayback;
     if (v.volume === 0) clean.volume = 0;
+    if (!clean.bookmarks?.length) delete clean.bookmarks;
     ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, playback: Object.keys(clean).length ? clean : undefined } : e)));
     onClose();
   };
   return (
-    <Dialog title={audio ? '오디오 재생' : '비디오 재생'} onClose={onClose} onOk={ok} okDisabled={!ed.canEdit}>
+    <Dialog title={audio ? '오디오 재생' : '비디오 재생'} onClose={onClose} onOk={ok} okDisabled={!ed.canEdit} wide>
       <Field label="시작"><select value={v.autoplay ? 'auto' : 'click'} onChange={(e) => set({ autoplay: e.target.value === 'auto' || undefined })}><option value="click">클릭할 때</option><option value="auto">자동 실행</option></select></Field>
       <div className="dlg-grid3">
         <Field label="볼륨"><select value={v.muted ? 'mute' : String(v.volume ?? 1)} onChange={(e) => set(e.target.value === 'mute' ? { muted: true } : { muted: undefined, volume: Number(e.target.value) })}><option value="0.25">낮게</option><option value="0.6">중간</option><option value="1">높게</option><option value="mute">음소거</option></select></Field>
@@ -436,6 +438,7 @@ function PlaybackDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
       </fieldset>
       <Check label="반복 재생" checked={!!v.loop} onChange={(on) => set({ loop: on || undefined })} />
       {!audio && <Field label="포스터 프레임 (초 — 재생 전 보여 줄 장면)"><Num value={v.poster ?? 0} min={0} step={0.5} onChange={(n) => set({ poster: n || undefined })} /></Field>}
+      <MediaPanel el={el} v={v} set={set} />
       {audio && <Check label="쇼 동안 숨기기" checked={!!v.hideDuringShow} onChange={(on) => set({ hideDuringShow: on || undefined })} />}
     </Dialog>
   );

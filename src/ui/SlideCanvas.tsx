@@ -269,6 +269,16 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
     v.addEventListener('timeupdate', onTime);
     return () => v.removeEventListener('timeupdate', onTime);
   }, [live, url, pb.start, pb.end, pb.loop, pb.volume, pb.autoplay, pb.poster]);
+  // Insert › Action › Play Media: a click (or pointing) at the object in the output window starts and pauses it.
+  useEffect(() => {
+    const on = (e: Event) => {
+      const v = ref.current;
+      if (!v || (e as CustomEvent<{ id?: string }>).detail?.id !== el.id) return;
+      if (v.paused) v.play().catch(() => undefined); else v.pause();
+    };
+    window.addEventListener('lightcast:media', on);
+    return () => window.removeEventListener('lightcast:media', on);
+  }, [el.id]);
   // Output windows play without sound unless the video's sound is turned on (the room hears one copy).
   return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover' }} muted={pb.muted !== false} loop={pb.loop !== false && !pb.end} playsInline />;
 }
