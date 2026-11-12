@@ -15,6 +15,9 @@ import { prepareAnnouncementSizing } from '../announcementSizing';
 import { isFrontPresentation, isFrontSlide } from '../frontLayout';
 import { resolveBackground } from '../autoBackground';
 import { motionFlatColor } from '../motion';
+import JSZip from 'jszip';
+import { fillXml, lnXml, needsShapePatch, patchPptx, type ShapePatch } from './shapeXml';
+import { scene3dXml } from '../shape3d';
 
 const W = 10;
 const H = 7.5;
@@ -23,8 +26,23 @@ const PX = W / CANVAS_W; // inches per canvas pixel (4:3 slides, 10 × 7.5 in)
 const hex = (c: string | undefined, d = 'FFFFFF') => /#?([0-9a-f]{6})/i.exec(c ?? '')?.[1] ?? d;
 type Box = { x: number; y: number; w: number; h: number; rotate?: number };
 
+/** What each export still has to put into the shapes' XML (outline cap / join / compound, gradients, 3-D…; see shapeXml). */
+const shapePatches = new WeakMap<PptxGenJS, ShapePatch[]>();
+let markerSeq = 0;
+
+/** A picture fill's bytes and file type, from the data URL the media store gives. */
+function blipOf(data: string | null): { ext: string; data: Uint8Array } | null {
+  const m = /^data:image\/([a-z+.-]+);base64,(.*)$/is.exec(data ?? '');
+  if (!m) return null;
+  const bin = atob(m[2]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  const ext = m[1].toLowerCase().replace('svg+xml', 'svg');
+  return { ext, data: bytes };
+}
+
 /** A preset shape as PowerPoint's own (same OOXML preset name and adjust values), with its text. */
-function addShapeElement(s: PptxGenJS.Slide, el: SlideElement, box: Box) {
+async function addShapeElement(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideElement, box: Box) {
   const name = (el.shape ?? (el.ellipse ? 'ellipse' : el.radius ? 'roundRect' : 'rect')) as PptxGenJS.SHAPE_NAME;
   const transparent = !el.fill || el.fill === 'transparent' || /rgba\([^)]*,\s*0\)/.test(el.fill);
   const alpha = /rgba\([^)]*,\s*([\d.]+)\)/.exec(el.fill ?? '')?.[1];
@@ -36,6 +54,15 @@ function addShapeElement(s: PptxGenJS.Slide, el: SlideElement, box: Box) {
     rectRadius: !el.shape && el.radius ? Math.min(0.5, (el.radius * PX) / Math.min(box.w, box.h)) : undefined,
     shadow: el.dropShadow ? { type: 'outer', blur: 6, offset: 3, angle: 90, color: '000000', opacity: 0.45 } : undefined,
   };
+  if (needsShapePatch(el)) {
+    const marker = `lcs-${++markerSeq}`;
+    (opts as { objectName?: string }).objectName = marker;
+    const pic = el.fillImage ? blipOf(await dataUrl(el.fillImage)) : null;
+    const blip = pic ? { id: `rIdLc${markerSeq}`, ...pic } : undefined;
+    const list = shapePatches.get(pptx) ?? [];
+    list.push({ marker, name: el.name, fill: fillXml(el, blip?.id), ln: lnXml(el), sp3d: scene3dXml(el), blip });
+    shapePatches.set(pptx, list);
+  }
   if (el.text) s.addText(el.text, { ...opts, shape: name, fontSize: (el.fontSize ?? 40) * 0.5, color: hex(el.color), bold: el.bold, italic: el.italic, align: el.align ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fontFace: el.fontFamily ? pptxFont(el.fontFamily) : undefined });
   else s.addShape(name, opts);
 }
@@ -210,7 +237,7 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
       } else if (el.kind === 'qr' && el.link) {
         s.addImage({ ...box, data: qrDataUrl(el.link) });
       } else if (el.kind === 'shape') {
-        addShapeElement(s, el, box);
+        await addShapeElement(pptx, s, el, box);
       } else if (el.kind === 'table' && el.table) {
         addTableElement(s, el, box);
       } else if (el.kind === 'chart' && el.chart) {
@@ -250,5 +277,34 @@ export async function buildPptx(lib: Library, source: { playlist: Playlist } | {
     if (props.company) pptx.company = props.company;
   }
   for (const p of list) await addPresentation(pptx, lib, p);
+  patchOnWrite(pptx);
   return pptx;
+}
+
+/** PptxGenJS writes the file; shapes that need more than it can say are rewritten in that file (shapeXml). */
+function patchOnWrite(pptx: PptxGenJS) {
+  const patches = shapePatches.get(pptx);
+  if (!patches?.length) return;
+  const write = pptx.write.bind(pptx);
+  const patched = async (props?: PptxGenJS.WriteProps) => {
+    const type = typeof props === 'string' ? props : props?.outputType ?? 'blob';
+    const out = await write({ ...(typeof props === 'object' ? props : {}), outputType: 'arraybuffer' });
+    const zip = await JSZip.loadAsync(out as ArrayBuffer);
+    await patchPptx(zip, patches);
+    const asType = ({ nodebuffer: 'nodebuffer', arraybuffer: 'arraybuffer', uint8array: 'uint8array', base64: 'base64', binarystring: 'binarystring', blob: 'blob' } as const)[type as 'blob'] ?? 'blob';
+    return zip.generateAsync({ type: asType as 'blob', compression: 'DEFLATE' });
+  };
+  pptx.write = patched as PptxGenJS['write'];
+  pptx.writeFile = async (props?: PptxGenJS.WriteFileProps) => {
+    const fileName = (typeof props === 'string' ? props : props?.fileName) ?? 'Presentation.pptx';
+    const blob = await patched({ outputType: 'blob' }) as Blob;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fileName.endsWith('.pptx') ? fileName : `${fileName}.pptx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    return fileName;
+  };
 }

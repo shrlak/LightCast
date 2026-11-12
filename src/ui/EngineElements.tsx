@@ -2,7 +2,8 @@
 // them), tables, charts, icons and ink.
 import { useId, useSyncExternalStore, type CSSProperties } from 'react';
 import type { SlideElement } from '../domain/types';
-import { ARROW_SCALE, arrowPath, dashPattern, effectFilter, effectStyle, transformOf } from '../domain/shapeEffects';
+import { ARROW_SCALE, arrowPath, capOf, compoundLayers, dashPattern, effectFilter, effectStyle, fillOpacityOf, gradientStopsOf, joinOf, transformOf } from '../domain/shapeEffects';
+import { extrusionOf, faceShading } from '../domain/shape3d';
 import { lineRuns } from '../domain/richText';
 
 import { runStyle as runCss } from './runStyle';
@@ -59,15 +60,29 @@ export function ShapeElement({ el }: { el: SlideElement }) {
   const sw = el.strokeWidth ?? (el.stroke || line ? DEFAULT_STROKE_WIDTH : 0);
   const stroke = el.stroke ?? (line ? el.fill ?? '#ffffff' : undefined);
   const imageUrl = useMediaUrl(el.fillImage);
-  const fill = el.fillImage && imageUrl ? `url(#i${gid})` : el.pattern ? `url(#p${gid})` : el.gradient ? `url(#g${gid})` : el.fill ?? '#ffffff';
+  const fill = el.fillImage && imageUrl ? `url(#i${gid})` : el.pattern ? `url(#p${gid})` : el.gradient || el.gradientStops ? `url(#g${gid})` : el.fill ?? '#ffffff';
   if (!g) {
     // Engine not loaded: the plain box or circle LightCast always drew.
     return <div style={{ ...box, background: el.gradient ? `linear-gradient(${(el.gradientAngle ?? 90) + 90}deg, ${el.gradient[0]}, ${el.gradient[1]})` : el.fill ?? '#ffffff', borderRadius: el.ellipse || el.shape === 'ellipse' ? '50%' : el.radius ?? 0, border: el.stroke ? `${sw}px solid ${el.stroke}` : undefined }} />;
   }
   const a = ((el.gradientAngle ?? 90) * Math.PI) / 180;
   const [tx, ty, tw, th] = g.textRect;
-  return (
-    <div style={box} data-shape={presetOf(el)}>
+  const stops = gradientStopsOf(el);
+  const stopEls = stops?.map((st, i) => <stop key={i} offset={st.pos / 100} stopColor={st.color} stopOpacity={1 - (st.transparency ?? 0)} />);
+  const fillAlpha = fillOpacityOf(el);
+  const cap = capOf(el, line), join = joinOf(el);
+  const linecap = cap === 'flat' ? 'butt' as const : cap;
+  const closedShape = !g.open;
+  // 3-D Format: depth / contour are drawn behind the face, lighting and material over it.
+  const ext = closedShape ? extrusionOf(el) : null;
+  const shading = closedShape ? faceShading(el) : null;
+  const sideSvg = (key: string, z: number, color: string, width: number) => (
+    <svg key={key} width={el.w} height={el.h} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} aria-hidden style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none', transform: `translateZ(${z}px)` }}>
+      <g transform={custom}>{g.paths.map((p, i) => p.fill === 'none' ? null : <path key={i} d={p.d} fillRule={p.evenOdd ? 'evenodd' : undefined} fill={color} stroke={color} strokeWidth={width} strokeLinejoin="round" vectorEffect={custom ? 'non-scaling-stroke' : undefined} />)}</g>
+    </svg>
+  );
+  const face = (
+    <>
       <svg width={el.w} height={el.h} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} style={{ position: 'absolute', inset: 0, overflow: 'visible' }} aria-label={el.alt}>
         <defs>
           {el.fillImage && imageUrl && (
@@ -81,16 +96,15 @@ export function ShapeElement({ el }: { el: SlideElement }) {
               <path d={patternPath(el.pattern.kind, 2)} fill={el.pattern.fg} />
             </pattern>
           )}
-          {el.gradient && el.gradientType === 'radial' && (
-            <radialGradient id={`g${gid}`} cx="0.5" cy="0.5" r="0.7">
-              <stop offset="0" stopColor={el.gradient[0]} /><stop offset="1" stopColor={el.gradient[1]} />
-            </radialGradient>
+          {stops && el.gradientType === 'radial' && (
+            <radialGradient id={`g${gid}`} cx="0.5" cy="0.5" r="0.7">{stopEls}</radialGradient>
           )}
-          {el.gradient && el.gradientType !== 'radial' && (
-            <linearGradient id={`g${gid}`} x1={0.5 - Math.cos(a) / 2} y1={0.5 - Math.sin(a) / 2} x2={0.5 + Math.cos(a) / 2} y2={0.5 + Math.sin(a) / 2}>
-              <stop offset="0" stopColor={el.gradient[0]} /><stop offset="1" stopColor={el.gradient[1]} />
-            </linearGradient>
+          {stops && el.gradientType !== 'radial' && (
+            <linearGradient id={`g${gid}`} x1={0.5 - Math.cos(a) / 2} y1={0.5 - Math.sin(a) / 2} x2={0.5 + Math.cos(a) / 2} y2={0.5 + Math.sin(a) / 2}>{stopEls}</linearGradient>
           )}
+          {shading && (shading.radial
+            ? <radialGradient id={`l${gid}`} cx={shading.x1} cy={shading.y1} r="0.75">{shading.stops.map((st, i) => <stop key={i} offset={st.offset} stopColor={st.color} stopOpacity={st.opacity} />)}</radialGradient>
+            : <linearGradient id={`l${gid}`} x1={shading.x1} y1={shading.y1} x2={shading.x2} y2={shading.y2}>{shading.stops.map((st, i) => <stop key={i} offset={st.offset} stopColor={st.color} stopOpacity={st.opacity} />)}</linearGradient>)}
           {([['s', el.arrowStart, el.arrowStartKind], ['e', el.arrowEnd, el.arrowEndKind]] as const).map(([end, on, kind]) => {
             if (!on) return null;
             const a = arrowPath(kind), m = ARROW_SCALE[el.arrowSize ?? 'med'];
@@ -104,17 +118,36 @@ export function ShapeElement({ el }: { el: SlideElement }) {
         <g transform={custom}>
         {g.paths.map((p, i) => {
           const shade = SHADE[p.fill];
+          const stroked = p.stroke && sw > 0;
+          const layers = stroked ? compoundLayers(el.compound, sw, closedShape && p.fill !== 'none') : null;
+          const evenOdd = p.evenOdd ? 'evenodd' as const : undefined;
+          const ve = custom ? 'non-scaling-stroke' as const : undefined;
+          const lineProps = { strokeLinejoin: join, strokeMiterlimit: join === 'miter' ? 10 : undefined, strokeLinecap: linecap } as const;
           const common = {
-            vectorEffect: custom ? 'non-scaling-stroke' as const : undefined,
-            d: p.d, fillRule: p.evenOdd ? 'evenodd' as const : undefined,
-            stroke: p.stroke && sw > 0 ? stroke : undefined, strokeWidth: p.stroke && sw > 0 ? sw : undefined,
-            strokeDasharray: dashPattern(el.dash, sw || 1), strokeLinejoin: 'round' as const, strokeLinecap: line ? 'round' as const : undefined,
+            vectorEffect: ve,
+            d: p.d, fillRule: evenOdd,
+            // A compound line paints through masks below; this path then only carries the fill and the arrowheads.
+            stroke: stroked ? (layers ? 'none' : stroke) : undefined, strokeWidth: stroked ? sw : undefined,
+            strokeDasharray: layers ? undefined : dashPattern(el.dash, sw || 1), ...lineProps,
           };
+          const filled = !(p.fill === 'none' || g.open);
           return (
             <g key={i}>
-              <path {...common} fill={p.fill === 'none' || g.open ? 'none' : fill}
+              {layers && <defs>{layers.map((L, li) => (
+                <mask key={li} id={`m${gid}_${i}_${li}`} maskUnits="userSpaceOnUse" x={-100000} y={-100000} width={200000} height={200000}>
+                  {L.ops.map((o, k) => {
+                    const c = o.white ? '#fff' : '#000';
+                    if (o.op === 'stroke') return <path key={k} d={p.d} fill="none" stroke={c} strokeWidth={o.width} vectorEffect={ve} {...lineProps} />;
+                    if (o.op === 'fill') return <path key={k} d={p.d} fill={c} fillRule={evenOdd} />;
+                    return <path key={k} d={`M-100000 -100000H100000V100000H-100000Z ${p.d}`} fill={c} fillRule="evenodd" />;
+                  })}
+                </mask>
+              ))}</defs>}
+              <path {...common} fill={filled ? fill : 'none'} fillOpacity={filled && fillAlpha < 1 ? fillAlpha : undefined}
                 markerStart={el.arrowStart ? `url(#as${gid})` : undefined} markerEnd={el.arrowEnd ? `url(#ae${gid})` : undefined} />
+              {layers?.map((_, li) => <path key={li} d={p.d} fill="none" stroke={stroke} strokeWidth={sw} strokeDasharray={dashPattern(el.dash, sw || 1)} vectorEffect={ve} mask={`url(#m${gid}_${i}_${li})`} {...lineProps} />)}
               {shade && <path d={p.d} fill={shade[0]} fillOpacity={shade[1]} fillRule={common.fillRule} />}
+              {shading && filled && <path d={p.d} fill={`url(#l${gid})`} fillRule={common.fillRule} />}
             </g>
           );
         })}
@@ -132,6 +165,15 @@ export function ShapeElement({ el }: { el: SlideElement }) {
           return el.text.split('\n').map((line, i) => <div key={i} data-para={i}>{runs[i] ? runs[i]!.map((r, j) => <span key={j} style={runCss(r)}>{r.text}</span>) : line || '\u00a0'}</div>);
         })()}</div>
       ) : null}
+    </>
+  );
+  if (!ext) return <div style={box} data-shape={presetOf(el)}>{face}</div>;
+  // Copies pushed back along z make the extruded side once the shape is tilted (CSS cannot extrude); the face keeps the filter and opacity.
+  return (
+    <div style={{ position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, transform: elementTransform(el), transformStyle: 'preserve-3d' }} data-shape={presetOf(el)} data-depth>
+      {ext.zs.map((z, i) => sideSvg(`z${i}`, z, i === ext.zs.length - 1 && ext.contour ? ext.contourColor : ext.color, ext.gap + (i === ext.zs.length - 1 ? ext.contour * 2 : 0)))}
+      {ext.contour > 0 && sideSvg('ring', -0.5, ext.contourColor, sw + ext.contour * 2)}
+      <div style={{ ...box, left: 0, top: 0, transform: undefined }}>{face}</div>
     </div>
   );
 }
