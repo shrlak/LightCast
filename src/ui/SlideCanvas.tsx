@@ -23,6 +23,7 @@ import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effe
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { useAutoTextBoxes, useFontEpoch } from './textBoxLayout';
+import { autoFitMode, drawnText } from '../domain/textFit';
 import { elementTextStyle } from '../domain/textBoxLayout';
 import { fitTextNode, type TextLayout } from '../domain/boundedTextLayout';
 import { slideTextFrame } from '../domain/slideTextLayout';
@@ -404,7 +405,9 @@ function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
   );
 }
 
-function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
+function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties }) {
+  // Shrink text on overflow: drawn at its fontScale, the stored sizes unchanged.
+  const el = drawnText(stored);
   // Built by paragraph (Effect Options › 단락별로): every line its own element, so it can animate alone.
   const byPara = useContext(ParagraphBuild);
   if (el.warp && el.text) return <WarpText el={el} box={box} />;
@@ -430,7 +433,7 @@ function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
       paddingLeft: el.indent ? el.indent * INDENT_PX : undefined, ...columnsAndDirection(el),
       // A box that does not fit itself to its text (a font size set by hand, Front) lets the text show
       // past its edge, as PowerPoint does, instead of cutting it off.
-      textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, overflow: el.autoFit === false ? 'visible' : 'hidden',
+      textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, overflow: autoFitMode(el) === 'legacy' ? 'hidden' : 'visible',
       ...(el.textTransparency ? { color: `color-mix(in srgb, ${el.color ?? '#fff'} ${Math.round((1 - el.textTransparency) * 100)}%, transparent)` } : {}),
       ...(el.margins ? { padding: `${el.margins[1]}px ${el.margins[2]}px ${el.margins[3]}px ${el.margins[0]}px` } : {}),
       ...(el.spaceBefore || el.spaceAfter ? { ['--sp-before' as string]: `${el.spaceBefore ?? 0}px`, ['--sp-after' as string]: `${el.spaceAfter ?? 0}px` } : {}),

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { changeCase, clearTextFormat, FONT_SIZES, formatSpan, listMarker, listMarkers, mixedState, stepElementFont, stepFontSize, textSpans } from '../src/domain/textFormat';
 import type { SlideElement } from '../src/domain/types';
+import { autoFitMode, autoFitValue, drawnText, lineReduction, newTextBox, resizedTextBox, resizeToText, scaledText, shrinkScale } from '../src/domain/textFit';
+import { patchElement } from '../src/domain/templates/convert';
 
 const pt = (px: number) => px / 2;
 const steps = (from: number, dir: 1 | -1, n: number) => { const out: number[] = []; let v = from * 2; for (let i = 0; i < n; i++) out.push(pt(v = stepFontSize(v, dir))); return out; };
@@ -81,5 +83,64 @@ describe('PowerPoint text commands', () => {
     expect([out.fontSize, out.bold, out.color, out.fontFamily, out.highlight]).toEqual([undefined, undefined, undefined, undefined, undefined]);
     expect([out.align, out.list, out.lineHeight, out.columns]).toEqual(['left', 'bullet', 2, 2]);
     expect(out.paragraphs).toEqual([{ text: 'a', align: 'right' }, { text: 'b' }]);
+  });
+});
+
+describe('text box autofit (Format Shape › 텍스트 상자, DeckCraft format.autofit / fit_text_box)', () => {
+  const box = (p: Partial<SlideElement> = {}): SlideElement => ({ id: 't', kind: 'text', x: 100, y: 200, w: 400, h: 300, text: 'Hello', fontSize: 64, ...p });
+
+  it('has PowerPoint’s three modes, with LightCast’s own fit for template boxes', () => {
+    expect([autoFitMode(box({ autoFit: false })), autoFitMode(box({ autoFit: 'shrink' })), autoFitMode(box({ autoFit: 'resize' })), autoFitMode(box()), autoFitMode(box({ autoFit: true }))])
+      .toEqual(['none', 'shrink', 'resize', 'legacy', 'legacy']);
+    expect([autoFitValue('none'), autoFitValue('shrink'), autoFitValue('resize')]).toEqual([false, 'shrink', 'resize']);
+  });
+
+  it('Resize shape to fit text: the height follows the text (grows and shrinks), top-left kept; no wrap → width too', () => {
+    expect(resizeToText(box(), { w: 380, h: 520.2 })).toEqual({ x: 100, y: 200, w: 400, h: 521 });
+    expect(resizeToText(box(), { w: 380, h: 80 })).toEqual({ x: 100, y: 200, w: 400, h: 80 });
+    expect(resizeToText(box({ wrap: false }), { w: 912.4, h: 80 })).toEqual({ x: 100, y: 200, w: 913, h: 80 });
+    // DeckCraft's minimum: 8 pt high, 20 pt wide.
+    expect(resizeToText(box({ wrap: false }), { w: 3, h: 2 })).toEqual({ x: 100, y: 200, w: 40, h: 16 });
+  });
+
+  it('Shrink text on overflow: DeckCraft’s search for the largest scale that fits', () => {
+    expect(shrinkScale(() => true)).toBe(1);
+    expect(shrinkScale(() => false)).toBe(0.1);
+    const s = shrinkScale((k) => k <= 0.62);
+    expect(s).toBeGreaterThan(0.61); expect(s).toBeLessThanOrEqual(0.62);
+    expect(lineReduction(1)).toBe(0); expect(lineReduction(0.9)).toBeCloseTo(0.08); expect(lineReduction(0.5)).toBe(0.2);
+  });
+
+  it('draws a shrunk box at its scale without changing the stored sizes', () => {
+    const el = box({ autoFit: 'shrink', fontScale: 0.5, lineHeight: 1.25, letterSpacing: 4, paragraphs: [{ text: 'a', fontSize: 80, runs: [{ text: 'a', fontSize: 100 }] }] });
+    const d = drawnText(el);
+    expect([d.fontSize, d.letterSpacing, d.lineHeight]).toEqual([32, 2, 1]);
+    expect(d.paragraphs![0].fontSize).toBe(40); expect(d.paragraphs![0].runs![0].fontSize).toBe(50);
+    expect(el.fontSize).toBe(64);
+    expect(drawnText(box({ autoFit: 'resize', fontScale: 0.5 }))).toEqual(box({ autoFit: 'resize', fontScale: 0.5 }));
+    expect(scaledText(el, 1)).toBe(el);
+  });
+
+  it('a click makes a box that grows sideways without wrapping; a drag one of that width that wraps', () => {
+    const click = newTextBox('a', { x: 300, y: 400 });
+    expect(click).toMatchObject({ x: 300, y: 400, text: '', autoFit: 'resize', wrap: false, align: 'left', vAlign: 'top' });
+    const drag = newTextBox('b', { x: 10, y: 20 }, { w: 500, h: 30 });
+    expect(drag).toMatchObject({ x: 10, y: 20, w: 500, autoFit: 'resize', text: '' });
+    expect(drag.wrap).toBeUndefined();
+  });
+
+  it('sizing with the handles keeps the autofit mode and turns wrapping on with a new width; fonts never scale', () => {
+    const nb = { x: 100, y: 200, w: 600, h: 300 };
+    expect(resizedTextBox(box({ autoFit: 'resize', wrap: false }), nb)).toEqual({ ...nb, wrap: undefined });
+    expect(resizedTextBox(box({ autoFit: 'shrink' }), nb)).toEqual(nb);
+    expect(resizedTextBox(box({ autoFit: 'resize', wrap: false }), { ...nb, w: 400, h: 500 })).toEqual({ ...nb, w: 400, h: 500 });
+    expect(resizedTextBox(box(), nb)).toEqual({ ...nb, autoFit: false });
+    expect('fontSize' in resizedTextBox(box({ autoFit: 'resize' }), nb)).toBe(false);
+  });
+
+  it('a new font size keeps PowerPoint’s autofit (only LightCast’s own fit stops)', () => {
+    expect(patchElement(box({ autoFit: 'resize' }), { fontSize: 96 }).autoFit).toBe('resize');
+    expect(patchElement(box({ autoFit: 'shrink' }), { fontSize: 96 }).autoFit).toBe('shrink');
+    expect(patchElement(box({ autoFit: true }), { fontSize: 96 }).autoFit).toBe(false);
   });
 });

@@ -218,8 +218,14 @@ export interface SlideElement {
   paragraphs?: ElementParagraph[];
   /** Character formatting of a box without `paragraphs`: the runs of each line of `text`. */
   runs?: TextRun[][];
-  /** Grow the box to fit its text, preserving font sizes (default on). */
-  autoFit?: boolean;
+  /**
+   * Format Shape › 텍스트 상자 › 자동 맞춤: false 자동 맞춤 안 함, 'shrink' 넘치면 텍스트 크기 조정,
+   * 'resize' 도형을 텍스트 크기에 맞춤 (PowerPoint / DeckCraft, domain/textFit). true / unset is
+   * LightCast's fit for template boxes: grow inside the slide, preserving font sizes.
+   */
+  autoFit?: boolean | 'shrink' | 'resize';
+  /** 'shrink' boxes: the scale their text is drawn at so it fits (PowerPoint's normAutofit fontScale, 0.1–1). */
+  fontScale?: number;
   /** PowerPoint text options, as on the slide text (see Theme). */
   underline?: boolean;
   strike?: boolean;

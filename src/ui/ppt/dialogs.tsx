@@ -6,6 +6,7 @@ import { useMemo, useState, type ReactNode } from 'react';
 import type { SlideElement } from '../../domain/types';
 import { FONT_OPTIONS } from '../../domain/fonts';
 import { SINGLE_SPACING } from '../../domain/textFormat';
+import { autoFitMode, autoFitValue } from '../../domain/textFit';
 import { formatAllRuns } from '../../domain/richText';
 import { activeTextEditor } from '../RichTextEditor';
 import { textTarget, type DialogKind, type Ed } from './editor';
@@ -157,15 +158,18 @@ function ParagraphDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const m = e?.margins ?? [14, 7, 14, 7];
   const [margins, setMargins] = useState<[number, number, number, number]>([pt(m[0]), pt(m[1]), pt(m[2]), pt(m[3])]);
   const [wrap, setWrap] = useState(e?.wrap !== false);
-  const [autoFit, setAutoFit] = useState(v?.autoFit ?? true);
+  const [fit, setFit] = useState(e ? autoFitMode(e) : 'legacy');
   const [columns, setColumns] = useState(v?.columns ?? 1);
   if (!t || !v) return <Dialog title="단락" onClose={onClose}><p>서식을 바꿀 텍스트를 고르세요.</p></Dialog>;
   const boxes = t.els.length > 0;
   const ok = () => {
     const lineHeight = Math.round(line * SINGLE_SPACING * 100) / 100;
-    t.onChange({ align, indent: level, lineHeight, vAlign, autoFit, columns });
+    // Switching the reading direction mirrors left / right alignment (DeckCraft format.rtl).
+    const mirrored = rtl !== !!e?.rtl && (align === 'left' || align === 'right') ? (align === 'left' ? 'right' : 'left') : align;
+    t.onChange({ align: mirrored, indent: level, lineHeight, vAlign, columns });
     if (boxes) {
       t.patchEach(() => ({
+        ...(fit !== 'legacy' ? { autoFit: autoFitValue(fit), fontScale: undefined } : {}),
         firstIndent: special === 'none' ? undefined : (special === 'first' ? 1 : -1) * by * 2,
         spaceBefore: before ? before * 2 : undefined, spaceAfter: after ? after * 2 : undefined, rtl: rtl || undefined,
         margins: margins.map((x) => Math.max(0, x * 2)) as [number, number, number, number], wrap: wrap ? undefined : false,
@@ -214,13 +218,18 @@ function ParagraphDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             <Field label="세로 맞춤">
               <select value={vAlign} onChange={(ev) => setVAlign(ev.target.value as typeof vAlign)}><option value="top">위쪽</option><option value="middle">중간</option><option value="bottom">아래쪽</option></select>
             </Field>
-            <Field label="단"><Num value={columns} min={1} max={3} onChange={setColumns} /></Field>
+            <Field label="단 (1–16)"><Num value={columns} min={1} max={16} onChange={(n) => setColumns(Math.max(1, Math.min(16, Math.round(n) || 1)))} /></Field>
           </div>
           <div className="dlg-grid4">
             {(['왼쪽 여백', '위쪽 여백', '오른쪽 여백', '아래쪽 여백'] as const).map((l, i) => <Field key={l} label={`${l} (pt)`}><Num value={margins[i]} min={0} max={200} step={0.5} onChange={(n) => setMargin(i, n)} /></Field>)}
           </div>
           <Check label="도형의 텍스트 배치 (자동 줄 바꿈)" checked={wrap} onChange={setWrap} />
-          <Check label="넘치면 도형 크기 조정" checked={autoFit} onChange={setAutoFit} />
+          <Field label="자동 맞춤">
+            <select value={fit} onChange={(ev) => setFit(ev.target.value as typeof fit)}>
+              {fit === 'legacy' && <option value="legacy">LightCast 자동 맞춤</option>}
+              <option value="none">자동 맞춤 안 함</option><option value="shrink">넘치면 텍스트 크기 조정</option><option value="resize">도형을 텍스트 크기에 맞춤</option>
+            </select>
+          </Field>
           <div className="dlg-row"><button type="button" onClick={() => ed.setDialog('tabs')}>탭…</button></div>
         </fieldset>
       )}

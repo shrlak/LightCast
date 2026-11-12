@@ -100,7 +100,9 @@ function Palette({ colors, value, onPick }: { colors: string[]; value?: string; 
  * 바꾸기, 텍스트 강조 색, 글꼴 색; 글머리 기호, 번호 매기기, 목록 수준 줄임 / 늘림, 줄 간격, 단;
  * 왼쪽 / 가운데 / 오른쪽 / 양쪽 맞춤, 텍스트 방향, 텍스트 맞춤 — plus 자동 맞춤.
  */
-export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onStep, onDialog, theme, shortcuts = true, part }: {
+export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onStep, onDialog, theme, shortcuts = true, part, autoFitOption = true }: {
+  /** The slide text's 넘치면 텍스트 상자 크기 조정 (a text box has Format Shape's three choices instead). */
+  autoFitOption?: boolean;
   /** 글꼴 크기 크게 / 작게: every character from its own size (without it, the shown size steps). */
   onStep?: (dir: 1 | -1) => void;
   /** 기타 간격… / 줄 간격 옵션… / 기타 단… open the Font or Paragraph dialog. */
@@ -252,7 +254,7 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onS
           ))}
         </Drop>
       </div>
-      {!part && <label className="check small ppt-autofit"><input type="checkbox" checked={f.autoFit} onChange={(e) => onChange({ autoFit: e.target.checked })} /> 넘치면 텍스트 상자 크기 조정</label>}
+      {!part && autoFitOption && <label className="check small ppt-autofit"><input type="checkbox" checked={f.autoFit} onChange={(e) => onChange({ autoFit: e.target.checked })} /> 넘치면 텍스트 상자 크기 조정</label>}
       </>}
     </div>
   );
