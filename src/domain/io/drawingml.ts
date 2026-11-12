@@ -8,6 +8,7 @@ import type { DashStyle, ElementParagraph, HAlign, ListStyle, SlideElement, Text
 import { uid } from '../lyrics';
 import { normalizeRuns } from '../richText';
 import { officeFont } from '../fonts';
+import { fromPptxVert } from '../textFormat';
 import { child, find, kids, local, parseMarkup, path, type MNode } from './markup';
 
 export const EMU_PER_PX = 6350;
@@ -98,7 +99,7 @@ const colorIn = (n: MNode | null | undefined, theme: DmlTheme, ph?: string) => (
 
 // ── Text ────────────────────────────────────────────────────────────────────────────────────────
 
-const ALIGN: Record<string, HAlign> = { l: 'left', ctr: 'center', r: 'right', just: 'justify', dist: 'justify' };
+const ALIGN: Record<string, HAlign> = { l: 'left', ctr: 'center', r: 'right', just: 'justify', dist: 'distributed', justLow: 'justLow', thaiDist: 'distributed' };
 const AUTONUM: Record<string, ListStyle> = { arabicPeriod: 'number', arabicParenR: 'number-paren', arabicParenBoth: 'number-paren', romanUcPeriod: 'roman', romanLcPeriod: 'roman', alphaLcPeriod: 'alpha', alphaUcPeriod: 'alpha', alphaLcParenR: 'alpha', hangulGanadaPeriod: 'hangul', ganada: 'hangul' };
 const EAST_ASIAN = /[ᄀ-ᇿ　-鿿가-힯豈-﫿＀-￯]/;
 
@@ -141,7 +142,7 @@ function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, th
   };
 }
 
-interface Para { runs: Run[]; align?: HAlign; list?: ListStyle; lineHeight?: number; before?: number; after?: number; empty: Run }
+interface Para { runs: Run[]; align?: HAlign; list?: ListStyle; lineHeight?: number; lineExactPx?: number; before?: number; after?: number; empty: Run }
 
 function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme): Para[] {
   const lst = child(txBody, 'lstStyle');
@@ -164,10 +165,11 @@ function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme): Para[]
       return pts ? (Number(pts) / 100) * 2 : undefined;
     };
     const pct = path(pPr, 'lnSpc', 'spcPct')?.attrs.val;
+    const lnPts = path(pPr, 'lnSpc', 'spcPts')?.attrs.val;
     const auto = child(pPr, 'buAutoNum')?.attrs.type;
     const list: ListStyle | undefined = child(pPr, 'buNone') ? undefined : auto ? AUTONUM[auto] ?? 'number' : child(pPr, 'buChar') ? (/[○◦]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'circle' : /[■▪§]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'square' : /[✓ü]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'check' : /[➢Ø→]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'arrow' : 'bullet') : undefined;
     const algn = pPr?.attrs.algn ?? lvlPr?.attrs.algn;
-    return { runs, align: algn ? ALIGN[algn] : undefined, list, lineHeight: pct ? (Number(pct) / 100000) * 1.2 : undefined, before: spc('spcBef'), after: spc('spcAft'), empty };
+    return { runs, align: algn ? ALIGN[algn] : undefined, list, lineHeight: pct ? (Number(pct) / 100000) * 1.2 : undefined, lineExactPx: lnPts ? (Number(lnPts) / 100) * 2 : undefined, before: spc('spcBef'), after: spc('spcAft'), empty };
   });
 }
 
@@ -175,16 +177,9 @@ const RUN_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'strike', 'baseline
 
 /** Paragraphs → the element's text, its own formatting (that of most of its text) and runs for the rest. */
 export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Partial<SlideElement> {
-  // A soft line break (<a:br/>) is a new line of the same paragraph; LightCast keeps lines.
-  const lines: { runs: Run[]; p: Para }[] = [];
-  for (const p of paras) {
-    let cur: Run[] = [];
-    for (const r of p.runs) {
-      if (r.text === '\v') { lines.push({ runs: cur, p }); cur = []; } else cur.push(r);
-    }
-    lines.push({ runs: cur, p });
-  }
-  const all = lines.flatMap((l) => l.runs).filter((r) => r.text);
+  // A soft line break (<a:br/>) stays inside its paragraph's line as a \v character (Shift+Enter).
+  const lines: { runs: Run[]; p: Para }[] = paras.map((p) => ({ runs: p.runs, p }));
+  const all = lines.flatMap((l) => l.runs).filter((r) => r.text && r.text !== '\v');
   const first = all[0] ?? paras[0]?.empty ?? { text: '' };
   // The box's own formatting is its first text's (as PowerPoint shows it when the box is selected).
   const own: Partial<Record<(typeof RUN_KEYS)[number], unknown>> = {};
@@ -215,6 +210,7 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
     align: aligns[0],
     list: lp?.list,
     lineHeight: lp?.lineHeight,
+    ...(lp?.lineExactPx ? { lineExact: { mode: 'exact' as const, px: lp.lineExactPx } } : {}),
     spaceBefore: lp?.before,
     spaceAfter: lp?.after,
   };
@@ -331,7 +327,7 @@ function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string)
     margins: [px(bodyPr?.attrs.lIns, 14.4), px(bodyPr?.attrs.tIns, 7.2), px(bodyPr?.attrs.rIns, 14.4), px(bodyPr?.attrs.bIns, 7.2)],
     autoFit: !!child(bodyPr, 'spAutoFit'),
     ...(bodyPr?.attrs.wrap === 'none' ? { wrap: false } : {}),
-    ...(/^(vert|eaVert|wordArtVert|vert270)$/.test(bodyPr?.attrs.vert ?? '') ? { vertical: true } : {}),
+    ...fromPptxVert(bodyPr?.attrs.vert),
     ...(bodyPr?.attrs.numCol && Number(bodyPr.attrs.numCol) > 1 ? { columns: Number(bodyPr.attrs.numCol) } : {}),
     ...(child(bodyPr, 'prstTxWarp') && child(bodyPr, 'prstTxWarp')!.attrs.prst !== 'textNoShape' ? { warp: child(bodyPr, 'prstTxWarp')!.attrs.prst } : {}),
   } : {};

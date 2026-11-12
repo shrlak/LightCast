@@ -4,7 +4,9 @@ import { useId, useSyncExternalStore, type CSSProperties } from 'react';
 import type { DashStyle, SlideElement } from '../domain/types';
 import { lineRuns } from '../domain/richText';
 
-import { runStyle as runCss } from './runStyle';
+import { linkColorFor, runText } from './runStyle';
+import { RunSpan } from './RunSpan';
+import { alignCss, lineHeightCss, writingCss } from '../domain/textFormat';
 import { useMediaUrl } from './hooks';
 import { patternPath } from '../domain/patterns';
 import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type FillMode, type ShapeGeometry, type TableData } from '../engine';
@@ -143,13 +145,13 @@ export function ShapeElement({ el }: { el: SlideElement }) {
       {el.text ? (
         <div style={{
           position: 'absolute', left: tx, top: ty, width: tw, height: th, display: 'flex', flexDirection: 'column', overflow: 'hidden',
-          justifyContent: el.vAlign === 'top' ? 'flex-start' : el.vAlign === 'bottom' ? 'flex-end' : 'center', textAlign: el.align ?? 'center',
+          justifyContent: el.vAlign === 'top' ? 'flex-start' : el.vAlign === 'bottom' ? 'flex-end' : 'center', ...alignCss(el.align ?? 'center'), ...writingCss(el), ['--link-color' as string]: linkColorFor(el.color),
           fontSize: el.fontSize ?? 40, fontFamily: el.fontFamily, color: el.color ?? '#ffffff', fontWeight: el.bold ? 800 : 500, fontStyle: el.italic ? 'italic' : undefined,
-          lineHeight: el.lineHeight ?? 1.2, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textDecoration: [el.underline && 'underline', el.strike && 'line-through'].filter(Boolean).join(' ') || undefined,
+          lineHeight: lineHeightCss(el, el.fontSize ?? 40, 1.2), whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textDecoration: [el.underline && 'underline', el.strike && 'line-through'].filter(Boolean).join(' ') || undefined,
           textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, transform: [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ') || undefined,
         }}>{(() => {
           const runs = lineRuns(el);
-          return el.text.split('\n').map((line, i) => <div key={i} data-para={i}>{runs[i] ? runs[i]!.map((r, j) => <span key={j} style={runCss(r)}>{r.text}</span>) : line || '\u00a0'}</div>);
+          return el.text.split('\n').map((line, i) => <div key={i} data-para={i}>{runs[i] ? runs[i]!.map((r, j) => <RunSpan key={j} r={r} />) : runText(line) || '\u00a0'}</div>);
         })()}</div>
       ) : null}
     </div>

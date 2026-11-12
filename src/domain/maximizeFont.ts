@@ -20,7 +20,7 @@ export function maximumFontFromNode(node: HTMLElement, width: number, height: nu
     return { font: parseFloat(style.fontSize), line: parseFloat(style.lineHeight), top: parseFloat(style.marginTop), bottom: parseFloat(style.marginBottom) };
   });
   Object.assign(clone.style, { position: 'fixed', left: '-100000px', top: '0', width: `${width}px`, height: 'max-content', minHeight: '0', visibility: 'hidden', pointerEvents: 'none', margin: '0', whiteSpace: getComputedStyle(node).whiteSpace === 'pre' ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere', display: 'block' });
-  if (getComputedStyle(node).writingMode.startsWith('vertical')) { clone.style.width = 'max-content'; clone.style.height = `${height}px`; }
+  if (/^(vertical|sideways)/.test(getComputedStyle(node).writingMode)) { clone.style.width = 'max-content'; clone.style.height = `${height}px`; }
   document.body.append(clone);
   try {
     return largestFittingFont((size) => {

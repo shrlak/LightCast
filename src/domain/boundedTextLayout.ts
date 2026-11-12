@@ -15,7 +15,7 @@ export function fitTextNode(node: HTMLElement, initial: TextBox, bounds: TextBou
     width: `${base.w}px`, height: 'max-content', minHeight: '0', maxHeight: 'none', overflow: 'visible', whiteSpace: noWrap ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere' });
   document.body.append(clone);
   try {
-    if (original.writingMode.startsWith('vertical')) {
+    if (/^(vertical|sideways)/.test(original.writingMode)) {
       clone.style.width = 'max-content'; clone.style.height = `${base.h}px`;
       if (clone.scrollWidth > bounds.w) clone.style.height = `${bounds.h}px`;
       const box = growTextBox(base, { w: clone.scrollWidth, h: clone.clientHeight }, align, vAlign, bounds);

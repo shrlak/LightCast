@@ -1,13 +1,13 @@
 import { isFrontSlide } from '../domain/frontLayout';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun, Theme, Timer, Transition } from '../domain/types';
+import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextDirection, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
 import { morphFrame, smooth } from '../domain/morph';
 import { DEFAULT_TAB, decimalAt, layoutTabLine, splitRunsAtTabs } from '../domain/tabStops';
 import { PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
-import { INDENT_PX, listMarkers } from '../domain/textFormat';
+import { INDENT_PX, alignCss, lineHeightCss, listMarkers, writingCss } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
 import { qrDataUrl } from '../domain/io/qr';
@@ -165,7 +165,7 @@ export function textStyle(theme: Theme): CSSProperties {
     fontSize: theme.fontSize,
     fontWeight: theme.fontWeight,
     color: theme.color,
-    textAlign: theme.align,
+    ...alignCss(theme.align),
     lineHeight: theme.lineHeight,
     textTransform: theme.uppercase ? 'uppercase' : 'none',
     fontStyle: theme.italic ? 'italic' : undefined,
@@ -181,9 +181,9 @@ export function textStyle(theme: Theme): CSSProperties {
 const decoration = (f: { underline?: boolean; strike?: boolean }) => [f.underline && 'underline', f.strike && 'line-through'].filter(Boolean).join(' ') || undefined;
 
 /** 단 (columns) and 텍스트 방향 (vertical text). */
-const columnsAndDirection = (f: { columns?: number; vertical?: boolean }): CSSProperties => ({
+const columnsAndDirection = (f: { columns?: number; vertical?: boolean; direction?: TextDirection }): CSSProperties => ({
   ...(f.columns && f.columns > 1 ? { columnCount: f.columns, columnGap: '1.2em', display: 'block' } : {}),
-  ...(f.vertical ? { writingMode: 'vertical-rl' } : {}),
+  ...writingCss(f),
 });
 
 /** A line with its bullet / number and its highlight. */
@@ -203,7 +203,7 @@ function Lines({ text, list, highlight, runs }: { text: string; list?: ListStyle
         const content = bold ? bold[1] : line;
         // Runs only stand for a line they still spell once chords are taken out.
         const own = runs?.[i] && runs[i]!.map((r) => r.text).join('') === line ? runs[i] : null;
-        const body = own ? own.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
+        const body = own ? own.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
         return <div key={i}><ListLine marker={markers[i]} highlight={line.trim() ? highlight : undefined}>{bold ? <strong style={{ fontWeight: 800 }}>{body}</strong> : body}</ListLine></div>;
       })}
     </>
@@ -211,7 +211,7 @@ function Lines({ text, list, highlight, runs }: { text: string; list?: ListStyle
 }
 
 const V_ALIGN = { top: 'flex-start', middle: 'center', bottom: 'flex-end' } as const;
-const H_ALIGN = { left: 'flex-start', center: 'center', right: 'flex-end', justify: 'stretch' } as const;
+const H_ALIGN = { left: 'flex-start', center: 'center', right: 'flex-end', justify: 'stretch', distributed: 'stretch', justLow: 'stretch' } as const;
 
 /** Drawn for a slide show (output, reading view) rather than in the editor: media play by their settings. */
 export const ShowContext = createContext(false);
@@ -287,7 +287,7 @@ export function ElementView({ el }: { el: SlideElement }) {
   if (el.placeholder && (el.placeholder === 'picture' || !el.text)) {
     if (show) return null;
     return (
-      <div className={`placeholder-prompt ${el.placeholder}`} style={{ ...box, fontSize: el.placeholder === 'title' ? Math.min(el.fontSize ?? 64, 64) : Math.min(el.fontSize ?? 48, 44), textAlign: el.align ?? 'left', justifyContent: el.placeholder === 'picture' || el.align === 'center' ? 'center' : 'flex-start', alignItems: el.vAlign === 'top' ? 'flex-start' : 'center' }}>
+      <div className={`placeholder-prompt ${el.placeholder}`} style={{ ...box, fontSize: el.placeholder === 'title' ? Math.min(el.fontSize ?? 64, 64) : Math.min(el.fontSize ?? 48, 44), textAlign: el.align === 'distributed' || el.align === 'justLow' ? 'justify' : el.align ?? 'left', justifyContent: el.placeholder === 'picture' || el.align === 'center' ? 'center' : 'flex-start', alignItems: el.vAlign === 'top' ? 'flex-start' : 'center' }}>
         <span>{el.placeholder === 'picture' ? '🖼 ' : ''}{PLACEHOLDER_PROMPT[el.placeholder]}</span>
       </div>
     );
@@ -326,7 +326,8 @@ export function ElementView({ el }: { el: SlideElement }) {
 }
 
 export { runStyle } from './runStyle';
-import { runStyle } from './runStyle';
+import { runStyle, runText, linkColorFor } from './runStyle';
+import { RunSpan } from './RunSpan';
 
 /** Home › Paragraph › Tabs: a line whose tabs go to the box's tab stops (domain/tabStops). */
 function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; size: number }) {
@@ -417,15 +418,15 @@ function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
   const lineBody = (text: string, i: number) => (
     <ListLine marker={markers[i]} highlight={text.trim() ? el.highlight : undefined}>
       {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
-        : runs[i] ? runs[i]!.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>) : TOKEN.test(text) ? <DynamicText text={text} /> : text}
+        : runs[i] ? runs[i]!.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(text) ? <DynamicText text={text} /> : runText(text)}
     </ListLine>
   );
   return (
     <div data-text-element={el.id} style={{
       ...box, left: el.x, top: el.y, width: el.w, height: el.h, ...elementTextStyle(el), display: 'flex', flexDirection: 'column', whiteSpace: 'pre-wrap',
-      justifyContent: V_ALIGN[el.vAlign ?? 'middle'], textAlign: el.align ?? 'center',
-      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff', tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
-      fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500, fontStyle: el.italic ? 'italic' : undefined, lineHeight: el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25),
+      justifyContent: V_ALIGN[el.vAlign ?? 'middle'], ...alignCss(el.align ?? 'center'),
+      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff', ['--link-color' as string]: linkColorFor(el.color), tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
+      fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500, fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, base, el.paragraphs ? 1.2 : 1.25),
       textDecoration: decoration(el), letterSpacing: el.letterSpacing ? el.letterSpacing : undefined,
       paddingLeft: el.indent ? el.indent * INDENT_PX : undefined, ...columnsAndDirection(el),
       // A box that does not fit itself to its text (a font size set by hand, Front) lets the text show
@@ -439,13 +440,13 @@ function TextElement({ el, box }: { el: SlideElement; box: CSSProperties }) {
         ? el.paragraphs.map((p, i) => (
             <div key={i} data-para={i} style={{
               fontSize: (p.fontSize ?? base), fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
-              color: p.color, textAlign: p.align, minHeight: '1.2em', flexShrink: 0,
+              color: p.color, ...alignCss(p.align), minHeight: '1.2em', flexShrink: 0,
             }}>
               {lineBody(p.text, i)}
             </div>
           ))
         : styled ? lines.map((l, i) => <div key={i} data-para={i}>{l ? lineBody(l, i) : '\u00a0'}</div>)
-          : el.text && TOKEN.test(el.text) ? <DynamicText text={el.text} /> : el.text}
+          : el.text && TOKEN.test(el.text) ? <DynamicText text={el.text} /> : el.text && runText(el.text)}
     </div>
   );
 }

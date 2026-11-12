@@ -7,6 +7,8 @@ import { useWidth } from '../hooks';
 import { useAutoTextBoxes } from '../textBoxLayout';
 import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
+import { alignCss, lineHeightCss, writingCss } from '../../domain/textFormat';
+import { linkColorFor } from '../runStyle';
 import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
 import {
   boxOf, cloneElements, deleteSelection, duplicateSelection, expandSelection, groupSelection, inkToShape, makeInk, makeShape, nudgeSelection,
@@ -784,7 +786,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
           <div className="ce-edit-box" style={{ left: textBox.x, top: textBox.y, width: textBox.w, minHeight: textBox.h, justifyContent: theme.vAlign === 'top' ? 'flex-start' : theme.vAlign === 'bottom' ? 'flex-end' : 'center' }}>
             <RichTextEditor key={`${identity}:slide`} lines={lines} lang={slide.lang} noProof={slide.noProof} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color, fontFamily: theme.fontFamily }}
-              style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, textAlign: theme.align, lineHeight: theme.lineHeight }}
+              style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, ...alignCss(theme.align), lineHeight: theme.lineHeight, ['--link-color' as string]: linkColorFor(theme.color, theme.linkColor) }}
               onChange={(l) => typed(SLIDE_TEXT, l)} onDone={stopEditing} />
           </div>
         </div>
@@ -800,7 +802,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       const tr = geometryOf(editEl)?.textRect;
       if (tr) area = { x: editEl.x + tr[0], y: editEl.y + tr[1], w: tr[2], h: tr[3] };
     }
-    const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: editEl.lineHeight ?? 1.2, whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const };
+    const textStyle = editEl.kind === 'text' ? elementTextStyle(editEl) : { fontSize: base.fontSize, fontFamily: editEl.fontFamily, lineHeight: lineHeightCss(editEl, base.fontSize, 1.2), whiteSpace: 'pre-wrap' as const, overflowWrap: 'anywhere' as const, ...writingCss(editEl) };
     const { display: _d, flexDirection: _f, ...rest } = textStyle;
     return (
       <div className="ce-edit-layer" style={{ transform: `scale(${k})` }}>
@@ -810,7 +812,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
           justifyContent: editEl.vAlign === 'top' ? 'flex-start' : editEl.vAlign === 'bottom' ? 'flex-end' : 'center',
         }}>
           <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof}
-            style={{ ...rest, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+            style={{ ...rest, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, ...alignCss(editEl.align ?? 'center'), ['--link-color' as string]: linkColorFor(editEl.color), textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>
       </div>

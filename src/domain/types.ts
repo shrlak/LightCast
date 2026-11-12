@@ -1,4 +1,7 @@
-export type HAlign = 'left' | 'center' | 'right' | 'justify';
+/** 양쪽 맞춤 (justify) also comes in 균등 분할 (distributed: the last line is spread too) and 양쪽 맞춤 (낮음) (justLow). */
+export type HAlign = 'left' | 'center' | 'right' | 'justify' | 'distributed' | 'justLow';
+/** 텍스트 방향 beyond 가로 (and `vertical`, 세로 쓰기): the pptx `vert` / `vert270` / `wordArtVert`. */
+export type TextDirection = 'rotate90' | 'rotate270' | 'stacked';
 /** Bullets or numbering in front of each line (PowerPoint's 글머리 기호 / 번호 매기기). */
 export type ListStyle = 'bullet' | 'circle' | 'square' | 'check' | 'arrow' | 'number' | 'number-paren' | 'roman' | 'alpha' | 'hangul';
 export type VAlign = 'top' | 'middle' | 'bottom';
@@ -26,6 +29,8 @@ export interface Theme {
   autoFit?: boolean;
   /** Prefer unwrapped lyric lines: widen the box, wrapping only if the slide width is exhausted. */
   noWrap?: boolean;
+  /** Hyperlink colour of text links (by the text colour: PowerPoint's blue, lighter on dark). */
+  linkColor?: string;
   /** Text effects. */
   strokeColor?: string;
   strokeWidth?: number;
@@ -46,13 +51,15 @@ export interface Theme {
   columns?: number;
   /** Vertical text (세로 쓰기). */
   vertical?: boolean;
+  /** Home › 텍스트 방향: all text turned 90° / 270°, or stacked upright. */
+  direction?: TextDirection;
 }
 
 /** Per-slide text formatting that overrides the presentation's theme for that slide only. */
 export type SlideStyle = Partial<Pick<Theme,
   'fontFamily' | 'fontSize' | 'fontWeight' | 'color' | 'align' | 'vAlign' | 'lineHeight' | 'shadow' | 'uppercase' |
   'subColor' | 'strokeColor' | 'strokeWidth' | 'italic' | 'underline' | 'padding' | 'strike' | 'letterSpacing' | 'highlight' |
-  'list' | 'indent' | 'columns' | 'vertical' | 'autoFit' | 'glowColor'>>;
+  'list' | 'indent' | 'columns' | 'vertical' | 'direction' | 'autoFit' | 'glowColor'>>;
 
 export type MediaType = 'image' | 'video' | 'audio';
 /** 'fill' stretches to the box (how PowerPoint draws a picture in its frame). */
@@ -125,6 +132,8 @@ export interface TextRun {
   fontFamily?: string;
   /** Highlighter colour behind the run. */
   highlight?: string;
+  /** Insert › Link on these characters: opened by a click in a slide show. */
+  link?: string;
 }
 
 /** What clicking an object does in a slide show (Insert › Action). */
@@ -228,6 +237,9 @@ export interface SlideElement {
   indent?: number;
   columns?: number;
   vertical?: boolean;
+  direction?: TextDirection;
+  /** 줄 간격 고정 / 최소 (points × 2 = canvas px): replaces the `lineHeight` multiple while set. */
+  lineExact?: { mode: 'exact' | 'min'; px: number };
   /** Text-box purpose, retained when editing or filling a template. */
   role?: 'prayer' | 'lyrics';
   /**

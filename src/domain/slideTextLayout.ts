@@ -2,7 +2,7 @@ import type { Slide, Theme } from './types';
 import { CANVAS_H, CANVAS_W } from './canvas';
 import { stripChords } from './lyrics';
 import { fitTextNode, type TextLayout } from './boundedTextLayout';
-import { INDENT_PX, listMarkers } from './textFormat';
+import { INDENT_PX, listMarkers, writingCss } from './textFormat';
 import { isFrontSlide } from './frontLayout';
 
 export function slideTextFrame(slide: Slide, theme: Theme) {
@@ -25,7 +25,7 @@ export function fitSlideText(slide: Slide, theme: Theme): TextLayout {
     textTransform: theme.uppercase ? 'uppercase' : 'none', whiteSpace: theme.noWrap || theme.id === 'theme_tpl_lyrics' ? 'pre' : 'pre-wrap' });
   if (theme.indent) node.style.paddingLeft = `${theme.indent * INDENT_PX}px`;
   if (theme.columns && theme.columns > 1) { node.style.columnCount = String(theme.columns); node.style.columnGap = '1.2em'; }
-  if (theme.vertical) node.style.writingMode = 'vertical-rl';
+  Object.assign(node.style, writingCss(theme));
   const lines = (parent: HTMLElement, text: string) => {
     const content = stripChords(text).split('\n'), markers = listMarkers(content, theme.list);
     content.forEach((line, i) => {
