@@ -114,7 +114,7 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, sho
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || document.querySelector('.modal-backdrop')) return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return;
+      if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) && !t.closest('[data-ime-sink]')) return;
       const { f: cur, onChange: set } = latest.current;
       const k = e.key.toLowerCase();
       const patch: Partial<TextFormatValue> | null =

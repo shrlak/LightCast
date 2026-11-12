@@ -218,7 +218,8 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
       const t = e.target as HTMLElement;
       const mod = e.metaKey || e.ctrlKey;
       if (e.defaultPrevented || e.isComposing || document.querySelector('.modal-backdrop')) return;
-      const typing = t.isContentEditable || !!t.closest('input,textarea,select');
+      // The canvas's hidden typing field (CanvasEditor `sink`) is not typing: the window's shortcuts still apply.
+      const typing = (t.isContentEditable || !!t.closest('input,textarea,select')) && !t.closest('[data-ime-sink]');
       if (mod && !e.altKey && !typing) {
         const k = e.key.toLowerCase();
         if (k === 'm') { e.preventDefault(); addSlideAfter(); return; }
