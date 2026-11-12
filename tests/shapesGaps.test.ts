@@ -273,3 +273,37 @@ describe('selecting inside a group', () => {
     expect(open.map((r) => (r.kind === 'el' ? `${r.inGroup ? 'm' : 'e'}:${r.el.id}` : 'g'))).toEqual(['e:solo', 'g', 'm:c', 'm:b', 'm:a']);
   });
 });
+
+describe('export then import keeps the shape format', () => {
+  it('round-trips the outline, gradient stops and 3-D format through a .pptx slide', async () => {
+    const el = shape({ id: 'rt', stroke: '#ff0000', strokeWidth: 8, cap: 'square', join: 'bevel', compound: 'thinThick', dash: 'sysDashDotDot', arrowEnd: true, arrowEndKind: 'oval',
+      ...withGradientStops([{ pos: 0, color: '#ff0000', transparency: 0.5 }, { pos: 60, color: '#00ff00' }, { pos: 100, color: '#0000ff' }]),
+      bevel: true, bevelKind: 'convex', camera3d: 'obliqueTopLeft', rotate3d: { x: 15, y: 15 }, format3d: { depth: 8, contour: 1.5, material: 'plastic', lighting: 'morning', lightDir: 'r', bevelW: 3, bevelH: 4, bevelBottom: 'angle', bevelBottomW: 2, bevelBottomH: 2 } });
+    const deck: Presentation = { id: 'rt', title: 'rt', themeId: 'theme_classic', slides: [{ id: 's', group: 'Slide', text: '', elements: [el] }] };
+    const pptx = await buildPptx({ ...createSeedLibrary(), presentations: [deck] }, { presentation: deck });
+    const zip = await JSZip.loadAsync(await pptx.write({ outputType: 'nodebuffer' }) as Buffer);
+    const xml = await zip.file('ppt/slides/slide1.xml')!.async('string');
+    const ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"';
+    const tree = xml.slice(xml.indexOf('<p:spTree>'), xml.indexOf('</p:spTree>') + 11).replace('<p:spTree>', `<p:spTree ${ns}>`);
+    const back = drawingToElements(tree, { theme: OFFICE_THEME }).find((e) => e.kind === 'shape' && e.stroke)!;
+    expect(back).toMatchObject({ cap: 'square', join: 'bevel', compound: 'thinThick', dash: 'sysDashDotDot', arrowEnd: true, arrowEndKind: 'oval', camera3d: 'obliqueTopLeft', bevel: true, bevelKind: 'convex' });
+    expect(back.gradientStops).toEqual([{ pos: 0, color: '#ff0000', transparency: 0.5 }, { pos: 60, color: '#00ff00' }, { pos: 100, color: '#0000ff' }]);
+    expect(back.format3d).toEqual(el.format3d);
+  });
+
+  it('adds a picture fill as a related image with its alpha', async () => {
+    const { patchPptx } = await import('../src/domain/io/shapeXml');
+    const zip = new JSZip();
+    zip.file('ppt/slides/slide1.xml', '<p:sld><p:sp><p:nvSpPr><p:cNvPr id="2" name="lcs-7"></p:cNvPr></p:nvSpPr><p:spPr><a:xfrm/><a:prstGeom prst="rect"><a:avLst></a:avLst></a:prstGeom><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill><a:ln></a:ln></p:spPr></p:sp></p:sld>');
+    zip.file('ppt/slides/_rels/slide1.xml.rels', '<Relationships></Relationships>');
+    zip.file('[Content_Types].xml', '<Types><Default Extension="xml" ContentType="application/xml"/><Override PartName="/x"/></Types>');
+    await patchPptx(zip, [{ marker: 'lcs-7', name: '그림 채우기', fill: fillXml(shape({ fillImage: 'm', fillTransparency: 0.5 }), 'rIdLc7'), blip: { id: 'rIdLc7', ext: 'webp', data: new Uint8Array([1, 2, 3]) } }]);
+    const xml = await zip.file('ppt/slides/slide1.xml')!.async('string');
+    expect(xml).toContain('name="그림 채우기"');
+    expect(xml).toContain('<a:blip r:embed="rIdLc7"><a:alphaModFix amt="50000"/>');
+    expect(xml).not.toContain('<a:solidFill>');
+    expect(await zip.file('ppt/slides/_rels/slide1.xml.rels')!.async('string')).toContain('Target="../media/lcfill-rIdLc7.webp"');
+    expect(await zip.file('[Content_Types].xml')!.async('string')).toContain('Extension="webp" ContentType="image/webp"');
+    expect(await zip.file('ppt/media/lcfill-rIdLc7.webp')!.async('uint8array')).toEqual(new Uint8Array([1, 2, 3]));
+  });
+});
