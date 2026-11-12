@@ -14,6 +14,8 @@ import {
 import { shapeQuickStyles, type ChartKind } from '../../engine';
 import { TextFormatPanel } from './TextFormatPanel';
 import { textTarget, useTextSelectionTick, type Ed } from './editor';
+import { activeTextEditor } from '../RichTextEditor';
+import { armPainter, armedPainter, finishPainter, holdFormat } from '../../domain/formatPainter';
 import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { clipboardToElements, readSystemClipboard, type PasteMode } from './pasteObjects';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
@@ -265,6 +267,15 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
     ed.setSel(r.elements.map((c) => c.id));
   })();
   const one = ed.selEls[0];
+  // 서식 복사: from the characters selected in the text being typed, else from the selected object (the next click puts it down).
+  const pickFormat = (keep: boolean) => {
+    const typing = activeTextEditor();
+    if (typing) { holdFormat(typing.pick()); armPainter(keep, () => undefined); ed.cmd.notify('서식을 복사했습니다 — 서식을 바꿀 글자를 선택하세요'); return; }
+    if (!one) return;
+    const style = copyStyle(one);
+    holdFormat(style);
+    ed.setTool({ kind: 'painter', style, keep });
+  };
   return (
     <>
       <Group label="클립보드">
@@ -272,9 +283,9 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
         <Col>
           <Small icon={RI.cut} label="잘라내기" title="잘라내기 (Ctrl+X)" disabled={!sel.length || !ed.canEdit} onClick={() => { copyObjects(ed.selEls); if (ed.slide) ed.updateSlide(deleteSelection(ed.slide, sel)); ed.setSel([]); }} />
           <Small icon={RI.copy} label="복사" title="복사 (Ctrl+C)" disabled={!sel.length} onClick={() => copyObjects(ed.selEls)} />
-          <span onDoubleClick={() => one && ed.setTool({ kind: 'painter', style: copyStyle(one), keep: true })}>
-            <Small icon={RI.painter} label="서식 복사" title="서식 복사 — 개체를 고르고 누른 뒤, 서식을 바꿀 개체를 클릭 (두 번 누르면 계속)" active={ed.tool?.kind === 'painter'} disabled={!one}
-              onClick={() => (ed.tool?.kind === 'painter' ? ed.setTool(null) : one && ed.setTool({ kind: 'painter', style: copyStyle(one) }))} />
+          <span onDoubleClick={() => pickFormat(true)}>
+            <Small icon={RI.painter} label="서식 복사" title="서식 복사 (Ctrl+Shift+C, 붙여넣기 Ctrl+Shift+V) — 개체나 글자를 고르고 누른 뒤, 서식을 바꿀 개체를 클릭하거나 글자를 선택 (두 번 누르면 계속)" active={ed.tool?.kind === 'painter' || !!armedPainter()} disabled={!one && !activeTextEditor()}
+              onClick={() => (ed.tool?.kind === 'painter' ? ed.setTool(null) : armedPainter() ? finishPainter(true) : pickFormat(false))} />
           </span>
         </Col>
       </Group>

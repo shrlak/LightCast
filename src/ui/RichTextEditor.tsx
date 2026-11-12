@@ -6,10 +6,11 @@
 // characters through `activeTextEditor` (the selection is remembered when focus moves to a ribbon
 // control, such as the font size box).
 import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ClipboardEvent as RClipboardEvent, type KeyboardEvent as RKeyboardEvent } from 'react';
-import type { TextRun } from '../domain/types';
+import type { SlideElement, TextRun } from '../domain/types';
 import { insertLines, normalizeRuns, sliceLines, withBoxFormat, type RunFormat } from '../domain/richText';
 import { CLIP_TYPE, pastedLines, runsHtml } from '../domain/clipboard';
 import { stepFontSize } from '../domain/textFormat';
+import { applyFormat, armedPainter, finishPainter, heldFormat, holdFormat, runFormatOf, textPart, type Painted } from '../domain/formatPainter';
 import { runStyle } from './runStyle';
 
 export interface RichTextApi {
@@ -21,6 +22,10 @@ export interface RichTextApi {
   apply(patch: RunFormat): void;
   /** Make the selected characters bigger / smaller. */
   step(dir: 1 | -1): void;
+  /** 서식 복사: the formatting at the start of the selection (the whole box's when nothing is selected). */
+  pick(): Painted;
+  /** 서식 붙여넣기: replace the formatting of the selected characters (of the whole box when nothing is selected). */
+  drop(p: Painted): void;
 }
 
 let active: RichTextApi | null = null;
@@ -213,14 +218,16 @@ interface Props {
   /** Review › Language: the proofing language, and no spelling check. */
   lang?: string;
   noProof?: boolean;
+  /** 서식 복사 inside a box: its own formatting, and a way to change the box's (applied with the next commit of the text). */
+  painter?: { source: () => Painted; setBox: (fn: (e: SlideElement) => SlideElement) => void };
 }
 
 /** The editable text box. Mounted for one typing session. */
-export function RichTextEditor({ lines, base, style, onChange, onDone, plain, lang, noProof }: Props) {
+export function RichTextEditor({ lines, base, style, onChange, onDone, plain, lang, noProof, painter }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const sel = useRef<[number, number]>([0, 0]);
-  const latest = useRef({ onChange, onDone, base });
-  latest.current = { onChange, onDone, base };
+  const latest = useRef({ onChange, onDone, base, painter });
+  latest.current = { onChange, onDone, base, painter };
 
   useLayoutEffect(() => {
     const root = ref.current!;
@@ -287,6 +294,32 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
       },
       apply: (patch) => reformat(() => patch),
       step: (dir) => reformat((r) => ({ fontSize: stepFontSize(r.fontSize ?? latest.current.base.fontSize, dir) })),
+      pick: () => {
+        if (document.activeElement === root) remember();
+        const own = latest.current.painter?.source() ?? {};
+        const r = runAt(readLines(root), sel.current[0]) ?? { text: '' };
+        const b = latest.current.base;
+        // What the characters look like where the selection starts: their own formatting over the box's.
+        const text = { ...own.text, fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, italic: r.italic ?? b.italic, underline: r.underline ?? b.underline, strike: r.strike ?? b.strike, color: r.color ?? b.color, fontFamily: r.fontFamily ?? b.fontFamily, highlight: r.highlight ?? b.highlight };
+        return { text, baseline: r.baseline, para: own.para };
+      },
+      drop: (p) => {
+        if (document.activeElement === root) remember();
+        const [a, b] = sel.current;
+        const cur = readLines(root);
+        const total = cur.reduce((n, l) => n + l.reduce((m, r) => m + r.text.length, 0), 0) + Math.max(0, cur.length - 1);
+        const painterApi = latest.current.painter;
+        if (a === b) {
+          // Nothing selected: the whole box takes it, as DeckCraft does when the selection is not a range.
+          painterApi?.setBox((e) => applyFormat(e, textPart(p)));
+          reformat(() => ({ fontSize: undefined, bold: undefined, italic: undefined, underline: undefined, strike: undefined, color: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined }));
+          return;
+        }
+        // Characters take the character formatting; the paragraph formatting only when the selection covers every paragraph.
+        if (a <= 0 && b >= total && p.para) painterApi?.setBox((e) => applyFormat(e, { para: p.para }));
+        const fmt = runFormatOf(p);
+        reformat((r) => ({ ...Object.fromEntries(Object.keys(r).filter((k) => k !== 'text' && k !== 'link').map((k) => [k, undefined])), ...fmt }));
+      },
     };
     if (!plain) active = api;
     notify();
@@ -325,6 +358,9 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
     const k = e.key.toLowerCase();
     const api = active;
     if (!api) return;
+    // 서식 복사 / 붙여넣기 (Ctrl+Shift+C / V); without anything copied Ctrl+Shift+V stays the plain-text paste.
+    if (e.shiftKey && k === 'c') { holdFormat(api.pick()); e.preventDefault(); return; }
+    if (e.shiftKey && k === 'v' && heldFormat()) { api.drop(heldFormat()!); finishPainter(); e.preventDefault(); return; }
     const cur = api.current();
     if (k === 'b') api.apply({ bold: !cur.bold });
     else if (k === 'i') api.apply({ italic: !cur.italic });
@@ -382,6 +418,12 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         notify();
       }}
       onPointerDown={(e) => e.stopPropagation()}
+      onPointerUp={() => {
+        // The painter armed from the ribbon: selecting characters puts its formatting on them.
+        const a = armedPainter(), api = active;
+        if (!a || !api || plain || !heldFormat()) return;
+        setTimeout(() => { if (api.hasSelection()) { api.drop(heldFormat()!); finishPainter(); } }, 0);
+      }}
       onBlur={() => {
         // Focus moving to a ribbon or Format pane control keeps the session (and selection) alive.
         setTimeout(() => {

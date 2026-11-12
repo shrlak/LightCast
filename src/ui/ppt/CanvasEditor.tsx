@@ -9,6 +9,7 @@ import { isPdfSlide } from '../../domain/importedSlides';
 import { elementTextStyle } from '../../domain/textBoxLayout';
 import { alignCss, directionId, isVerticalText, lineHeightCss, writingCss } from '../../domain/textFormat';
 import { linkColorFor } from '../runStyle';
+import { copyFormat, finishPainter, heldFormat, holdFormat } from '../../domain/formatPainter';
 import { lineRuns, slideLineRuns, slideTextPatch, withRichLines } from '../../domain/richText';
 import {
   boxOf, cloneElements, deleteSelection, duplicateSelection, expandSelection, groupSelection, inkToShape, makeInk, makeShape, nudgeSelection,
@@ -258,11 +259,15 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         return;
       }
       const el = latestEls.current.find((e) => e.id === id);
-      if (el) latestBody.current.onChange({ elements: latestEls.current.map((e) => (e.id === id ? { ...e, ...withRichLines(e, lines) } : e)) });
+      // A format painted onto the box while typing (Ctrl+Shift+V) lands with the text, from the same slide.
+      const box = boxPatch.current;
+      boxPatch.current = [];
+      if (el) latestBody.current.onChange({ elements: latestEls.current.map((e) => (e.id === id ? box.reduce((cur, fn) => fn(cur), { ...e, ...withRichLines(e, lines) }) : e)) });
     };
     commitTimer.current = window.setTimeout(flushText, 250);
   };
   const latestEls = useRef(elements); latestEls.current = elements;
+  const boxPatch = useRef<((e: SlideElement) => SlideElement)[]>([]);
 
   // ── Pointer ─────────────────────────────────────────────────────────────────────────────────
   const pointer = (e: { clientX: number; clientY: number }): [number, number] => {
@@ -710,6 +715,9 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
     const handled = () => { e.preventDefault(); e.stopPropagation(); };
+    // 서식 복사 (Ctrl+Shift+C) and 서식 붙여넣기 (Ctrl+Shift+V) on the selected objects.
+    if (mod && e.shiftKey && key === 'c' && sel.length) { const src = elOf(sel[0]); if (src) holdFormat(copyFormat(src)); return handled(); }
+    if (mod && e.shiftKey && key === 'v' && heldFormat() && sel.length) { setElements(pasteStyle(elements, sel, heldFormat()!)); finishPainter(); return handled(); }
     if (mod && key === 'a' && !e.shiftKey) { onSelect(visible.map((el) => el.id)); return handled(); }
     if (!sel.length) {
       if (key === 'escape' && tool) { onToolDone?.(); return handled(); }
@@ -816,6 +824,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
           justifyContent: editEl.vAlign === 'top' ? 'flex-start' : editEl.vAlign === 'bottom' ? 'flex-end' : 'center',
         }}>
           <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof}
+            painter={{ source: () => { const { object: _o, ...own } = copyFormat(latestEls.current.find((x) => x.id === editEl.id) ?? editEl); return own; }, setBox: (fn) => { boxPatch.current.push(fn); } }}
             style={{ ...rest, ...(vert ? { height: '100%', width: 'max-content', maxWidth: '100%', alignSelf: across } : {}), tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, ...alignCss(editEl.align ?? 'center'), ['--link-color' as string]: linkColorFor(editEl.color), textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>
