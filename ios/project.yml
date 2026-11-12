@@ -1,0 +1,36 @@
+# LightCast 리모컨 — the iPhone app (a native shell around the remote). Generate the Xcode project with
+# `xcodegen generate` (brew install xcodegen), then open LightCastRemote.xcodeproj.
+name: LightCastRemote
+options:
+  bundleIdPrefix: app.freecast
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0.7"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  LightCastRemote:
+    type: application
+    platform: iOS
+    sources: [LightCastRemote]
+    info:
+      path: LightCastRemote/Info.plist
+      properties:
+        CFBundleDisplayName: LightCast 리모컨
+        CFBundleName: LightCast
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIRequiresFullScreen: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        ITSAppUsesNonExemptEncryption: false
+        CFBundleDevelopmentRegion: ko
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.freecast.remote
+        PRODUCT_NAME: LightCastRemote
+        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        GENERATE_INFOPLIST_FILE: NO

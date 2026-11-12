@@ -116,11 +116,40 @@ jobs:
           done
           gh release upload "v$v" upload/* --clobber
 
+  # The iPhone app: LightCast-Remote-<version>.ipa, an unsigned build that is installed on an iPhone with
+  # AltStore / SideStore / Sideloadly (a free Apple ID is enough) or Xcode. See ios/README.md.
+  ios:
+    needs: tag
+    if: needs.tag.outputs.build == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - name: Build the .ipa
+        working-directory: ios
+        run: |
+          set -e
+          v="$(node -p "require('../package.json').version")"
+          xcodegen generate
+          xcodebuild -project LightCastRemote.xcodeproj -scheme LightCastRemote -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            MARKETING_VERSION="$v" CURRENT_PROJECT_VERSION="${{ github.run_number }}" build
+          rm -rf Payload && mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/LightCastRemote.app Payload/
+          zip -qry "LightCast-Remote-$v.ipa" Payload
+      - name: Upload to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          v="$(node -p "require('./package.json').version")"
+          gh release upload "v$v" "ios/LightCast-Remote-$v.ipa" --clobber
+
   # Every release carries both installers (one universal Mac .dmg, one Windows .exe for x64 and ARM64)
   # and the files the auto-updater reads (the per-architecture Mac .zip files and latest*.yml); fail
   # loudly if one is missing.
   verify:
-    needs: [tag, build]
+    needs: [tag, build, ios]
     if: needs.tag.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -133,7 +162,7 @@ jobs:
           assets="$(gh release view "v$v" --json assets --jq '.assets[].name')"
           echo "$assets"
           missing=0
-          for f in "LightCast-$v.dmg" "LightCast-Setup-$v.exe" "LightCast-$v-arm64-mac.zip" "LightCast-$v-mac.zip" latest.yml latest-mac.yml; do
+          for f in "LightCast-$v.dmg" "LightCast-Setup-$v.exe" "LightCast-$v-arm64-mac.zip" "LightCast-$v-mac.zip" "LightCast-Remote-$v.ipa" latest.yml latest-mac.yml; do
             echo "$assets" | grep -qxF "$f" || { echo "::error::Release v$v is missing $f"; missing=1; }
           done
           exit $missing

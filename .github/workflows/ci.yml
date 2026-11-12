@@ -30,3 +30,18 @@ jobs:
       - run: npm run engine
       - run: npm test
       - run: npm run build
+
+  # The iPhone app (ios/) is Swift and cannot be built on Linux: compile it for the simulator on a Mac.
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - name: Build the iPhone app
+        working-directory: ios
+        run: |
+          xcodegen generate
+          xcodebuild -project LightCastRemote.xcodeproj -scheme LightCastRemote -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build

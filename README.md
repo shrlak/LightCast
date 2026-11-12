@@ -42,6 +42,10 @@ Mac용 `.dmg` 하나가 Apple Silicon(M1 · M2 · M3 · M4)과 Intel Mac에서 �
 2. "Windows의 PC 보호" 파란 창이 뜨면 **추가 정보 → 실행**을 누릅니다. (앱이 아직 코드 서명되지 않았기 때문입니다.)
 3. 설치 마법사를 따라 설치합니다. 바탕화면과 시작 메뉴에 LightCast가 생깁니다.
 
+### iPhone 리모컨 앱 (웹앱 아님)
+
+릴리스의 `LightCast-Remote-<버전>.ipa` 는 iPhone에 **앱으로** 설치되는 리모컨입니다 (AltStore · SideStore · Sideloadly · Xcode로 설치, 무료 Apple ID 가능). 설치 방법은 [ios/README.md](ios/README.md) 를 보세요. 이 앱은 자동 업데이트되지 않으니 새 버전은 `.ipa` 를 다시 설치합니다.
+
 ## 자동 업데이트
 
 설치한 뒤에는 따로 다시 받을 필요가 없습니다. LightCast는 스스로 업데이트됩니다.
