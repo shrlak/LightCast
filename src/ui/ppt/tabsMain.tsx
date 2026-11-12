@@ -17,7 +17,7 @@ import { textTarget, useTextSelectionTick, type Ed } from './editor';
 import { SLIDE_TEXT, copyObjects, objectClipboard } from './CanvasEditor';
 import { clipboardToElements, readSystemClipboard, type PasteMode } from './pasteObjects';
 import { Big, Col, ColorButton, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
-import { ARROW_KINDS, BEVELS, CAMERAS, DASHES, NO_EFFECTS, REFLECTIONS, SHADOW_PRESETS, shadowOf } from '../../domain/shapeEffects';
+import { ARROW_KINDS, BEVELS, CAMERAS, CAPS, COMPOUNDS, DASHES, JOINS, NO_EFFECTS, REFLECTIONS, SHADOW_PRESETS, shadowOf } from '../../domain/shapeEffects';
 import { IconGallery, QUICK_SHAPES, ShapeGallery, ShapeThumb } from './galleries';
 import { shapeLabel } from './ko';
 import { seedSmartArt } from './dialogsMore';
@@ -162,6 +162,12 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
             {[1, 2, 3, 4, 6, 9, 12, 18].map((w) => <MenuItem key={w} label={<span className="line-sample" style={{ borderTopWidth: Math.max(1, w / 2) }}>{w / 2} pt</span>} on={first?.strokeWidth === w} onClick={() => { set({ strokeWidth: w, stroke: first?.stroke ?? '#ffffff' }); close(); }} />)}
             <MenuHead>대시</MenuHead>
             {DASHES.map((d) => <MenuItem key={d.id} label={d.label} on={(first?.dash ?? 'solid') === d.id} onClick={() => { set({ dash: d.id === 'solid' ? undefined : d.id }); close(); }} />)}
+            <MenuHead>끝 모양</MenuHead>
+            <div className="rb-chip-row">{CAPS.map((c) => <button key={c.id} type="button" className={`mini-btn ${(first?.cap ?? 'flat') === c.id ? 'on' : ''}`} onClick={() => { set({ cap: c.id === 'flat' ? undefined : c.id }); close(); }}>{c.label}</button>)}</div>
+            <MenuHead>연결 형식</MenuHead>
+            <div className="rb-chip-row">{JOINS.map((j) => <button key={j.id} type="button" className={`mini-btn ${(first?.join ?? 'round') === j.id ? 'on' : ''}`} onClick={() => { set({ join: j.id === 'round' ? undefined : j.id }); close(); }}>{j.label}</button>)}</div>
+            <MenuHead>복합 선</MenuHead>
+            <div className="bevel-grid">{COMPOUNDS.map((c) => <button key={c.id} type="button" className={`mini-btn ${(first?.compound ?? 'single') === c.id ? 'on' : ''}`} onClick={() => { set({ compound: c.id === 'single' ? undefined : c.id, ...(c.id !== 'single' && (first?.strokeWidth ?? 0) < 6 ? { strokeWidth: 9, stroke: first?.stroke ?? '#ffffff' } : {}) }); close(); }}>{c.label}</button>)}</div>
             <MenuHead>화살표</MenuHead>
             <MenuItem label="화살표 없음" onClick={() => { set({ arrowStart: undefined, arrowEnd: undefined, arrowStartKind: undefined, arrowEndKind: undefined }); close(); }} />
             <MenuItem label="끝 화살표 →" onClick={() => { set({ arrowStart: undefined, arrowEnd: true }); close(); }} />
@@ -180,7 +186,7 @@ export function ShapeStyleButtons({ ed, big }: { ed: Ed; big?: boolean }) {
   );
 }
 
-const NO_FILL_EXTRAS: Partial<SlideElement> = { gradient: undefined, gradientType: undefined, fillImage: undefined, pattern: undefined };
+const NO_FILL_EXTRAS: Partial<SlideElement> = { gradient: undefined, gradientStops: undefined, gradientType: undefined, fillImage: undefined, pattern: undefined };
 const GRADIENTS: [string, string, string][] = [['#ffffff', '#7f7f7f', '회색'], ['#9cc3e6', '#1f4e79', '파랑'], ['#ffe699', '#c55a11', '주황'], ['#c5e0b4', '#375623', '녹색'], ['#f4b183', '#843c0c', '갈색'], ['#d9b3ff', '#4b0082', '보라']];
 
 /** Shape Fill ▾ › 그림… / 그라데이션 / 패턴 (DeckCraft's picture, gradient and pattern fills). */
@@ -198,6 +204,8 @@ function FillExtras({ ed, first, set, close }: { ed: Ed; first?: SlideElement; s
   };
   return (
     <div className="fill-extras">
+      <MenuHead>투명도</MenuHead>
+      <div className="rb-chip-row" title="채우기만 투명하게 (개체 불투명도와는 별개)"><input type="range" min={0} max={100} step={5} value={Math.round((first?.fillTransparency ?? 0) * 100)} onChange={(e) => set({ fillTransparency: Number(e.target.value) ? Number(e.target.value) / 100 : undefined })} /><input type="number" min={0} max={100} step={5} style={{ width: 52 }} value={Math.round((first?.fillTransparency ?? 0) * 100)} onChange={(e) => set({ fillTransparency: Math.max(0, Math.min(100, Number(e.target.value))) / 100 || undefined })} />%</div>
       <MenuItem icon="🖼" label="그림…" onClick={() => file.current?.click()} />
       <input ref={file} type="file" accept="image/*" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
       <MenuHead>그라데이션</MenuHead>

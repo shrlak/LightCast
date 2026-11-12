@@ -5,8 +5,8 @@ import { commentCount, initialsOf, neighbourComment, type CommentRef } from '../
 import { uid } from '../../domain/lyrics';
 import { getDevice } from '../../domain/device';
 import { loadSession } from '../../domain/cloud';
-import { orderSelection, moveAnimation } from '../../domain/editOps';
-import { moveInOrder, revealOnPick } from '../../domain/shapeOps';
+import { enterGroup, enteredGroups, leaveGroups, orderSelection, moveAnimation } from '../../domain/editOps';
+import { moveInOrder, revealOnPick, selectionRows } from '../../domain/shapeOps';
 import { REPEAT_UNTIL_CLICK, animationClicks, slideTimeline, textParagraphs } from '../../domain/animations';
 import type { Ed } from './editor';
 import { ANIMATION, ANIMATION_START } from './ko';
@@ -77,6 +77,7 @@ export function SelectionPane({ ed }: { ed: Ed }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [dragId, setDragId] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string; above: boolean } | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   return (
     <div className="task-pane">
       <PaneHead title="선택" onClose={() => ed.setPane(null)} />
@@ -89,22 +90,51 @@ export function SelectionPane({ ed }: { ed: Ed }) {
       </div>
       {!els.length && <p className="task-empty">이 슬라이드에는 개체가 없습니다.</p>}
       <ul className="sel-list">
-        {[...els].filter((el) => !el.master).reverse().map((el) => {
-          const i = els.indexOf(el);
+        {selectionRows(els, new Set([...expanded, ...enteredGroups()])).map((row) => {
+          if (row.kind === 'group') {
+            const ids = row.members.map((m) => m.id);
+            const on = ids.every((id) => ed.selEls.some((s) => s.id === id));
+            const part = !on && ids.some((id) => ed.selEls.some((s) => s.id === id));
+            const allLocked = row.members.every((m) => m.locked), allHidden = row.members.every((m) => m.hidden);
+            const first = row.members[0];
+            const name = first.groupName ?? `그룹 ${row.n}`;
+            return (
+              <li key={`g${row.gid}`} className={`sel-group ${on ? 'on' : ''} ${part ? 'part' : ''} ${over?.id === first.id ? (over.above ? 'drop-above' : 'drop-below') : ''}`} data-group={row.gid}
+                draggable={renaming !== row.gid} onDragStart={(e) => { e.dataTransfer.setData('text/plain', first.id); setDragId(first.id); }} onDragEnd={() => { setDragId(null); setOver(null); }}
+                onDragOver={(e) => { if (!dragId || dragId === first.id) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setOver({ id: first.id, above: e.clientY < r.top + r.height / 2 }); }}
+                onDrop={(e) => { e.preventDefault(); if (dragId && over) { const { id, above } = over; set((l) => moveInOrder(l, dragId, id, above)); } setDragId(null); setOver(null); }}
+                onClick={(e) => {
+                  // The group row selects the group as one object.
+                  leaveGroups();
+                  ed.setSel(e.shiftKey || e.ctrlKey || e.metaKey ? [...new Set([...ed.sel, ...ids])] : ids);
+                }}>
+                <button type="button" className="sel-twist" title={row.open ? '접기' : '펼치기'} onClick={(e) => { e.stopPropagation(); setExpanded((x) => { const n = new Set(x); if (n.has(row.gid)) n.delete(row.gid); else n.add(row.gid); return n; }); }}>{row.open ? '▾' : '▸'}</button>
+                {renaming === row.gid
+                  ? <input autoFocus defaultValue={name} onClick={(e) => e.stopPropagation()} onBlur={(e) => { const v = e.target.value.trim(); set((l) => l.map((x) => (x.groupId === row.gid ? { ...x, groupName: v || undefined } : x))); setRenaming(null); }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }} />
+                  : <span className="sel-name" onDoubleClick={() => setRenaming(row.gid)}>{name} <span className="muted">({ids.length})</span></span>}
+                <button type="button" className="sel-eye" title={allLocked ? '그룹 잠금 해제' : '그룹 잠금'} onClick={(e) => { e.stopPropagation(); set((l) => l.map((x) => (x.groupId === row.gid ? { ...x, locked: allLocked ? undefined : true } : x))); }}>{allLocked ? '🔒' : '🔓'}</button>
+                <button type="button" className="sel-eye" title={allHidden ? '그룹 표시' : '그룹 숨기기'} onClick={(e) => { e.stopPropagation(); set((l) => l.map((x) => (x.groupId === row.gid ? { ...x, hidden: allHidden ? undefined : true } : x))); }}>{allHidden ? '⊘' : '👁'}</button>
+              </li>
+            );
+          }
+          const { el, index: i, inGroup } = row;
           const on = ed.selEls.some((s) => s.id === el.id);
           return (
-            <li key={el.id} className={`${on ? 'on' : ''} ${el.hidden ? 'hidden' : ''} ${el.groupId ? 'grouped' : ''} ${over?.id === el.id ? (over.above ? 'drop-above' : 'drop-below') : ''}`}
-              draggable={renaming !== el.id} onDragStart={(e) => { e.dataTransfer.setData('text/plain', el.id); setDragId(el.id); }} onDragEnd={() => { setDragId(null); setOver(null); }}
+            <li key={el.id} className={`${on ? 'on' : ''} ${el.hidden ? 'hidden' : ''} ${inGroup ? 'member' : ''} ${over?.id === el.id ? (over.above ? 'drop-above' : 'drop-below') : ''}`}
+              draggable={!inGroup && renaming !== el.id} onDragStart={(e) => { e.dataTransfer.setData('text/plain', el.id); setDragId(el.id); }} onDragEnd={() => { setDragId(null); setOver(null); }}
               onDragOver={(e) => { if (!dragId || dragId === el.id) return; e.preventDefault(); const r = e.currentTarget.getBoundingClientRect(); setOver({ id: el.id, above: e.clientY < r.top + r.height / 2 }); }}
               onDrop={(e) => { e.preventDefault(); if (dragId && over) { const { id, above } = over; set((l) => moveInOrder(l, dragId, id, above)); } setDragId(null); setOver(null); }}
               onClick={(e) => {
                 // A hidden object picked in the list is shown (DeckCraft's selection.select).
                 if (el.hidden) set((l) => revealOnPick(l, el.id));
-                ed.setSel(e.shiftKey || e.ctrlKey || e.metaKey ? (ed.sel.includes(el.id) ? ed.sel.filter((x) => x !== el.id) : [...ed.sel, el.id]) : [el.id]);
+                const more = e.shiftKey || e.ctrlKey || e.metaKey;
+                // A member row selects just that member (the group is entered); any other row leaves the group.
+                if (inGroup && el.groupId) enterGroup(el.groupId); else if (!more) leaveGroups();
+                ed.setSel(more ? (ed.sel.includes(el.id) ? ed.sel.filter((x) => x !== el.id) : [...ed.sel, el.id]) : [el.id]);
               }} onDoubleClick={() => setRenaming(el.id)}>
               {renaming === el.id
                 ? <input autoFocus defaultValue={elementName(el, i)} onBlur={(e) => { const v = e.target.value.trim(); set((l) => l.map((x) => (x.id === el.id ? { ...x, name: v || undefined } : x))); setRenaming(null); }} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }} />
-                : <span className="sel-name">{el.groupId ? '▸ ' : ''}{elementName(el, i)}</span>}
+                : <span className="sel-name">{elementName(el, i)}</span>}
               <button type="button" className="sel-eye" title={el.locked ? '잠금 해제' : '잠금 (슬라이드에서 선택 · 이동 안 됨)'} onClick={(e) => { e.stopPropagation(); set((l) => l.map((x) => (x.id === el.id ? { ...x, locked: x.locked ? undefined : true } : x))); }}>{el.locked ? '🔒' : '🔓'}</button>
               <button type="button" className="sel-eye" title={el.hidden ? '표시' : '숨기기'} onClick={(e) => { e.stopPropagation(); set((l) => l.map((x) => (x.id === el.id ? { ...x, hidden: x.hidden ? undefined : true } : x))); }}>{el.hidden ? '⊘' : '👁'}</button>
             </li>

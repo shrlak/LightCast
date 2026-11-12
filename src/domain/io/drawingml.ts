@@ -9,6 +9,8 @@ import { uid } from '../lyrics';
 import { normalizeRuns } from '../richText';
 import { officeFont } from '../fonts';
 import { child, find, kids, local, parseMarkup, path, type MNode } from './markup';
+import { BEVELS, CAMERAS } from '../shapeEffects';
+import { LIGHTINGS, LIGHT_DIRS, MATERIALS, patch3d } from '../shape3d';
 
 export const EMU_PER_PX = 6350;
 const px = (emu: string | undefined, dflt = 0) => (emu === undefined || emu === '' || !Number.isFinite(Number(emu)) ? dflt : Number(emu) / EMU_PER_PX);
@@ -244,7 +246,10 @@ const groupMap = (xf: MNode | null, outer: Map2): Map2 => {
   return (b) => outer({ ...b, x: g.x + (b.x - cx) * sx, y: g.y + (b.y - cy) * sy, w: b.w * sx, h: b.h * sy, rot: b.rot + g.rot });
 };
 
-const DASH: Record<string, DashStyle> = { dash: 'dash', lgDash: 'dash', sysDash: 'dash', dot: 'dot', sysDot: 'dot', dashDot: 'dashDot', lgDashDot: 'dashDot', sysDashDot: 'dashDot', lgDashDotDot: 'dashDot', sysDashDotDot: 'dashDot' };
+const DASH: Record<string, DashStyle> = { dash: 'dash', lgDash: 'lgDash', sysDash: 'sysDash', dot: 'dot', sysDot: 'sysDot', dashDot: 'dashDot', lgDashDot: 'lgDashDot', sysDashDot: 'sysDashDot', lgDashDotDot: 'lgDashDotDot', sysDashDotDot: 'sysDashDotDot' };
+const CAP_IN: Record<string, 'flat' | 'round' | 'square'> = { flat: 'flat', rnd: 'round', sq: 'square' };
+const CMPD_IN: Record<string, 'single' | 'double' | 'thickThin' | 'thinThick' | 'triple'> = { sng: 'single', dbl: 'double', thickThin: 'thickThin', thinThick: 'thinThick', tri: 'triple' };
+const ARROW_IN: Record<string, 'triangle' | 'stealth' | 'diamond' | 'oval' | 'arrow'> = { triangle: 'triangle', stealth: 'stealth', diamond: 'diamond', oval: 'oval', arrow: 'arrow' };
 const LINE_STYLE_W = [6350, 12700, 19050];
 
 export interface DmlContext {
@@ -257,15 +262,21 @@ function fillFields(spPr: MNode | null, style: MNode | null, ctx: DmlContext): P
   const t = ctx.theme;
   if (child(spPr, 'noFill')) return {};
   const solid = child(spPr, 'solidFill');
-  if (solid) { const c = colorIn(solid, t); return c ? { fill: c.hex } : {}; }
+  if (solid) { const c = colorIn(solid, t); return c ? { fill: c.hex, ...(c.alpha < 1 ? { fillTransparency: Math.round((1 - c.alpha) * 1000) / 1000 } : {}) } : {}; }
   const grad = child(spPr, 'gradFill');
   if (grad) {
-    const stops = kids(child(grad, 'gsLst'), 'gs').sort((a, b) => Number(a.attrs.pos) - Number(b.attrs.pos)).map((g) => colorIn(g, t)?.hex).filter(Boolean) as string[];
-    if (stops.length) return { fill: stops[0], gradient: [stops[0], stops[stops.length - 1]], gradientAngle: Number(child(grad, 'lin')?.attrs.ang ?? 0) / 60000, ...(child(grad, 'path') ? { gradientType: 'radial' as const } : {}) };
+    const gs = kids(child(grad, 'gsLst'), 'gs').sort((a, b) => Number(a.attrs.pos) - Number(b.attrs.pos)).map((g) => ({ c: colorIn(g, t), pos: Number(g.attrs.pos) / 1000 })).filter((g) => g.c);
+    const stops = gs.map((g) => g.c!.hex);
+    // More than two stops, or a stop that is partly transparent, keep every stop (Format Shape › Gradient stops).
+    const rich = gs.length > 2 || gs.some((g) => g.c!.alpha < 1);
+    if (stops.length) return { fill: stops[0], gradient: [stops[0], stops[stops.length - 1]], gradientAngle: Number(child(grad, 'lin')?.attrs.ang ?? 0) / 60000, ...(child(grad, 'path') ? { gradientType: 'radial' as const } : {}), ...(rich ? { gradientStops: gs.map((g) => ({ pos: Math.round(g.pos * 10) / 10, color: g.c!.hex, ...(g.c!.alpha < 1 ? { transparency: Math.round((1 - g.c!.alpha) * 1000) / 1000 } : {}) })) } : {}) };
   }
   const blip = path(spPr, 'blipFill', 'blip');
   const media = blip && ctx.media?.(blip.attrs['r:embed'] ?? '');
-  if (media) return { fillImage: media };
+  if (media) {
+    const keep = Number(child(blip, 'alphaModFix')?.attrs.amt ?? 100000) / 100000;
+    return { fillImage: media, ...(keep < 1 ? { fillTransparency: Math.round((1 - keep) * 1000) / 1000 } : {}) };
+  }
   const patt = child(spPr, 'pattFill');
   if (patt) {
     const fg = colorIn(child(patt, 'fgClr'), t)?.hex ?? '#000000', bg = colorIn(child(patt, 'bgClr'), t)?.hex ?? '#ffffff';
@@ -287,13 +298,52 @@ function lineFields(spPr: MNode | null, style: MNode | null, ctx: DmlContext): P
   const w = ln?.attrs.w ? Number(ln.attrs.w) : LINE_STYLE_W[Math.min(refIdx, 3) - 1] ?? 12700;
   const dash = DASH[child(ln, 'prstDash')?.attrs.val ?? ''];
   const arrow = (k: string) => { const ty = child(ln, k)?.attrs.type; return !!ty && ty !== 'none'; };
-  return { stroke: c.hex, strokeWidth: Math.max(0.5, Math.round((w / EMU_PER_PX) * 10) / 10), ...(dash ? { dash } : {}), ...(arrow('headEnd') ? { arrowStart: true } : {}), ...(arrow('tailEnd') ? { arrowEnd: true } : {}) };
+  const kind = (k: string) => ARROW_IN[child(ln, k)?.attrs.type ?? ''];
+  const cap = CAP_IN[ln?.attrs.cap ?? ''], compound = CMPD_IN[ln?.attrs.cmpd ?? ''];
+  const join = child(ln, 'bevel') ? 'bevel' as const : child(ln, 'miter') ? 'miter' as const : child(ln, 'round') ? 'round' as const : undefined;
+  return {
+    stroke: c.hex, strokeWidth: Math.max(0.5, Math.round((w / EMU_PER_PX) * 10) / 10), ...(dash ? { dash } : {}),
+    ...(cap ? { cap } : {}), ...(compound && compound !== 'single' ? { compound } : {}), ...(join ? { join } : {}),
+    ...(arrow('headEnd') ? { arrowStart: true, ...(kind('headEnd') && kind('headEnd') !== 'triangle' ? { arrowStartKind: kind('headEnd') } : {}) } : {}),
+    ...(arrow('tailEnd') ? { arrowEnd: true, ...(kind('tailEnd') && kind('tailEnd') !== 'triangle' ? { arrowEndKind: kind('tailEnd') } : {}) } : {}),
+  };
+}
+
+/** a:scene3d / a:sp3d → the tilt, bevels and Format3d (anything outside the known presets is dropped). */
+function format3dFields(spPr: MNode | null, ctx: DmlContext): Partial<SlideElement> {
+  const scene = child(spPr, 'scene3d'), sp3d = child(spPr, 'sp3d');
+  if (!scene && !sp3d) return {};
+  const out: Partial<SlideElement> = {};
+  const cam = child(scene, 'camera');
+  const preset = CAMERAS.find((c) => c.id === cam?.attrs.prst);
+  const rot = child(cam, 'rot');
+  if (preset) { out.camera3d = preset.id; out.rotate3d = { x: preset.x, y: preset.y, ...(preset.z ? { z: preset.z } : {}), ...(preset.persp ? { persp: true } : {}) }; }
+  else if (rot) {
+    const d = (n: string) => Math.round(Number(rot.attrs[n] ?? 0) / 600) / 100;
+    const r = { x: d('lon'), y: d('lat'), z: d('rev') };
+    if (r.x || r.y || r.z) out.rotate3d = { x: r.x, y: r.y, ...(r.z ? { z: r.z } : {}), ...(/^perspective/.test(cam?.attrs.prst ?? '') ? { persp: true } : {}) };
+  }
+  const rig = child(scene, 'lightRig');
+  const pt = (v: string | undefined) => (v == null ? undefined : Math.round((Number(v) / 12700) * 100) / 100);
+  const top = child(sp3d, 'bevelT'), bottom = child(sp3d, 'bevelB');
+  if (top && BEVELS.some((b) => b.id === top.attrs.prst)) { out.bevel = true; out.bevelKind = top.attrs.prst; }
+  const f = patch3d(undefined, {
+    lighting: LIGHTINGS.some((l) => l.id === rig?.attrs.rig) && rig?.attrs.rig !== 'threePt' ? rig?.attrs.rig : undefined,
+    lightDir: LIGHT_DIRS.some((l) => l.id === rig?.attrs.dir) && rig?.attrs.dir !== 't' ? rig?.attrs.dir : undefined,
+    depth: pt(sp3d?.attrs.extrusionH), contour: pt(sp3d?.attrs.contourW),
+    material: MATERIALS.some((m) => m.id === sp3d?.attrs.prstMaterial) && sp3d?.attrs.prstMaterial !== 'warmMatte' ? sp3d?.attrs.prstMaterial : undefined,
+    depthColor: colorIn(child(sp3d, 'extrusionClr'), ctx.theme)?.hex, contourColor: colorIn(child(sp3d, 'contourClr'), ctx.theme)?.hex,
+    ...(top && out.bevel ? { bevelW: pt(top.attrs.w), bevelH: pt(top.attrs.h) } : {}),
+    ...(bottom && BEVELS.some((b) => b.id === bottom.attrs.prst) ? { bevelBottom: bottom.attrs.prst, bevelBottomW: pt(bottom.attrs.w), bevelBottomH: pt(bottom.attrs.h) } : {}),
+  });
+  if (f) out.format3d = f;
+  return out;
 }
 
 function effectFields(spPr: MNode | null, ctx: DmlContext): Partial<SlideElement> {
   const fx = child(spPr, 'effectLst');
-  if (!fx) return {};
-  const out: Partial<SlideElement> = {};
+  if (!fx) return format3dFields(spPr, ctx);
+  const out: Partial<SlideElement> = format3dFields(spPr, ctx);
   if (child(fx, 'outerShdw')) out.dropShadow = true;
   if (child(fx, 'innerShdw')) { out.dropShadow = true; out.shadowKind = 'inner'; }
   const glow = child(fx, 'glow');

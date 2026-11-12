@@ -266,3 +266,29 @@ export function duplicateOffset(els: SlideElement[], sel: string[], last: LastDu
   }
   return [DUPLICATE_OFFSET, DUPLICATE_OFFSET];
 }
+
+// ── Selection pane rows (groups as expandable rows) ─────────────────────────────────────────────
+
+export type PaneObjectRow =
+  | { kind: 'group'; gid: string; n: number; members: SlideElement[]; open: boolean }
+  | { kind: 'el'; el: SlideElement; index: number; inGroup: boolean };
+
+/**
+ * The Selection pane's rows, front to back: a group is one row (its members follow it, indented, when
+ * it is `open`), every other object a row of its own. `index` is the object's place in the drawing order.
+ */
+export function selectionRows(els: SlideElement[], open: ReadonlySet<string>): PaneObjectRow[] {
+  const rows: PaneObjectRow[] = [];
+  const done = new Set<string>();
+  let n = 0;
+  const listed = els.map((el, index) => ({ el, index })).filter((x) => !x.el.master).reverse();
+  for (const { el, index } of listed) {
+    if (!el.groupId) { rows.push({ kind: 'el', el, index, inGroup: false }); continue; }
+    if (done.has(el.groupId)) continue;
+    done.add(el.groupId);
+    const members = listed.filter((x) => x.el.groupId === el.groupId);
+    rows.push({ kind: 'group', gid: el.groupId, n: ++n, members: members.map((m) => m.el), open: open.has(el.groupId) });
+    if (open.has(el.groupId)) for (const m of members) rows.push({ kind: 'el', el: m.el, index: m.index, inGroup: true });
+  }
+  return rows;
+}

@@ -111,7 +111,33 @@ export interface MediaMeta {
 
 /** 'table', 'chart', 'icon' and 'ink' are drawn by the Rust engine (src/engine), as are preset shapes. */
 export type ElementKind = 'text' | 'image' | 'shape' | 'video' | 'camera' | 'qr' | 'table' | 'chart' | 'icon' | 'ink' | 'audio' | 'zoom';
-export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot' | 'lgDash' | 'sysDash' | 'sysDot';
+export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot' | 'lgDash' | 'sysDash' | 'sysDot' | 'lgDashDot' | 'lgDashDotDot' | 'sysDashDot' | 'sysDashDotDot';
+/** Shape Outline: line end cap, corner join and compound (multi-line) type, as DeckCraft's shape.line takes them. */
+export type LineCap = 'flat' | 'round' | 'square';
+export type LineJoin = 'round' | 'bevel' | 'miter';
+export type CompoundLine = 'single' | 'double' | 'thickThin' | 'thinThick' | 'triple';
+/** One stop of a gradient fill: position 0–100 (%), colour, transparency 0–1 of just this stop. */
+export interface GradientStop { pos: number; color: string; transparency?: number }
+/**
+ * Format Shape › 3-D Format beyond the tilt (DeckCraft three_d.rs): lengths in points, `material` and
+ * `lighting` are the file format's preset names. The top bevel preset is `SlideElement.bevelKind`.
+ */
+export interface Format3d {
+  depth?: number;
+  depthColor?: string;
+  contour?: number;
+  contourColor?: string;
+  material?: string;
+  lighting?: string;
+  /** Light rig direction: tl t tr l r bl b br. */
+  lightDir?: string;
+  /** Top bevel size (points). */
+  bevelW?: number;
+  bevelH?: number;
+  bevelBottom?: string;
+  bevelBottomW?: number;
+  bevelBottomH?: number;
+}
 /** Shape Outline › Arrows: the arrowhead drawn at a line's end (DeckCraft's LineEnd kinds). */
 export type ArrowKind = 'triangle' | 'stealth' | 'diamond' | 'oval' | 'arrow';
 
@@ -262,6 +288,15 @@ export interface SlideElement {
   /** Outline width in canvas pixels (default 4 when `stroke` is set). */
   strokeWidth?: number;
   dash?: DashStyle;
+  cap?: LineCap;
+  join?: LineJoin;
+  compound?: CompoundLine;
+  /** Fill transparency 0–1 (separate from the object's `opacity`, which also fades the outline and text). */
+  fillTransparency?: number;
+  /** Gradient fill with more than two stops / per-stop transparency; `gradient` keeps the first and last colour. */
+  gradientStops?: GradientStop[];
+  /** Format Shape › 3-D Format: depth, contour, material, lighting, bevel sizes. */
+  format3d?: Format3d;
   /** Two-colour gradient fill, drawn at `gradientAngle` degrees (0 = left to right, 90 = top to bottom). */
   gradient?: [string, string];
   gradientAngle?: number;
@@ -282,6 +317,8 @@ export interface SlideElement {
   flipV?: boolean;
   /** Objects with the same group id are selected, moved and sized together (Arrange › Group). */
   groupId?: string;
+  /** Selection pane name of the group (kept on its members). */
+  groupName?: string;
   /** Review › Language: the proofing language (BCP-47), and "do not check spelling". */
   lang?: string;
   noProof?: boolean;

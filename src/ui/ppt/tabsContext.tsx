@@ -75,7 +75,7 @@ function ArrangeGroup({ ed }: { ed: Ed }) {
 
 /** Set as Default Shape: the look new shapes take (fill, outline, effects, text colour and size). */
 function defaultLook(e: SlideElement): Partial<SlideElement> {
-  const keys = ['fill', 'stroke', 'strokeWidth', 'dash', 'gradient', 'gradientAngle', 'gradientType', 'fillImage', 'pattern', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'softEdge', 'reflection', 'reflectionOpts', 'bevel', 'bevelKind', 'rotate3d', 'camera3d', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'opacity', 'color', 'fontSize', 'fontFamily', 'bold', 'italic'] as const;
+  const keys = ['fill', 'fillTransparency', 'gradientStops', 'format3d', 'cap', 'join', 'compound', 'stroke', 'strokeWidth', 'dash', 'gradient', 'gradientAngle', 'gradientType', 'fillImage', 'pattern', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'softEdge', 'reflection', 'reflectionOpts', 'bevel', 'bevelKind', 'rotate3d', 'camera3d', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'opacity', 'color', 'fontSize', 'fontFamily', 'bold', 'italic'] as const;
   const out: Record<string, unknown> = {};
   for (const k of keys) if (e[k] !== undefined) out[k] = e[k];
   return out as Partial<SlideElement>;
@@ -201,7 +201,7 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
           }} />
         </Group>
       )}
-      <Group label="도형 스타일"><ShapeStyleButtons ed={ed} big /></Group>
+      <Group label="도형 스타일" launcher={ed.selEls.length === 1 ? () => ed.setPane('format') : undefined}><ShapeStyleButtons ed={ed} big /></Group>
       <Group label="WordArt 스타일" launcher={text.length ? () => ed.setDialog('font') : undefined}>
         <Col>
           <ColorButton icon={<b style={{ fontSize: 14 }}>A</b>} label="텍스트 채우기" title="텍스트 채우기" disabled={!text.length} value={text[0]?.color} onPick={(c) => setText({ color: c })} />

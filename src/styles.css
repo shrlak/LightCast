@@ -1971,3 +1971,24 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 /* 재생 tab: seconds boxes for fades. */
 .rb-secs { width: 44px; margin: 0 2px; }
 .bgstyle-grid { display: grid; grid-template-columns: repeat(4, 44px); gap: 6px; padding: 8px; } /* Design › Background Styles */
+
+/* Format Shape pane sections (fill transparency and stops, line, 3-D format) */
+.ef-section { border: 1px solid #cfe5d8; border-radius: 6px; padding: 6px 8px; margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ef-section legend { font-size: 12px; font-weight: 700; color: #1f8a52; padding: 0 4px; }
+.ef-range { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.ef-range input[type=range] { flex: 1; min-width: 0; accent-color: #1f8a52; }
+.ef-pct { width: 52px; }
+.ef-sel { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; flex: 1; min-width: 0; }
+.ef-sel select { min-width: 0; max-width: 62%; }
+.ef-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.ef-row .ef-num { flex: 1; min-width: 70px; }
+.ef-stops { display: flex; flex-direction: column; gap: 4px; }
+.ef-stop { display: flex; align-items: center; gap: 4px; }
+.ef-stop .ef-num { flex: 1; min-width: 0; }
+.presenter .ef-section { border-color: #2f4a3a; }
+.ce-outline.group-open { outline: 1px dashed #1f8a52; outline-offset: 3px; pointer-events: none; }
+
+.sel-list li.sel-group { font-weight: 600; }
+.sel-list li.sel-group.part { background: #eef7f1; }
+.sel-list li.member { padding-left: 28px; }
+.sel-twist { border: 0; background: transparent; cursor: pointer; padding: 0 2px; font-size: 12px; color: inherit; width: 16px; }

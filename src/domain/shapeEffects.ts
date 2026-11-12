@@ -1,7 +1,8 @@
 // Shape Effects (도형 효과) as DeckCraft defines them (cmd/shape/appearance.rs shadow_preset,
 // effects; cmd/three_d.rs BEVELS and CAMERAS), and how LightCast draws them with CSS.
 import type { CSSProperties } from 'react';
-import type { SlideElement } from './types';
+import { bevelSizePx } from './shape3d';
+import type { CompoundLine, GradientStop, LineCap, LineJoin, SlideElement } from './types';
 
 export type ShadowKind = NonNullable<SlideElement['shadowKind']>;
 export interface ShadowOpts { color: string; transparency: number; blur: number; dist: number; dir: number }
@@ -87,7 +88,9 @@ export const BEVELS: { id: string; label: string; depth: number; blur: number }[
 export function bevelCss(el: SlideElement): string | undefined {
   if (!el.bevel) return undefined;
   const b = BEVELS.find((x) => x.id === el.bevelKind) ?? BEVELS[0];
-  const d = b.depth, bl = b.blur;
+  // Format Shape › 3-D Format sizes the bevel (the presets are drawn at PowerPoint's default 6 pt).
+  const sz = bevelSizePx(el);
+  const d = Math.round(b.depth * (sz.h / 12) * 10) / 10, bl = Math.round(b.blur * (sz.w / 12) * 10) / 10;
   // A dent (divot) is lit from below, a raised bevel from above.
   const [hi, lo] = b.id === 'divot' ? ['rgba(0,0,0,.35)', 'rgba(255,255,255,.45)'] : ['rgba(255,255,255,.45)', 'rgba(0,0,0,.35)'];
   return `inset ${d}px ${d}px ${bl}px ${hi}, inset -${d}px -${d}px ${bl}px ${lo}`;
@@ -153,7 +156,7 @@ export function effectStyle(el: SlideElement): CSSProperties {
 /** Every effect off (효과 모두 없애기). */
 export const NO_EFFECTS: Partial<SlideElement> = {
   dropShadow: undefined, shadowKind: undefined, shadowOpts: undefined, glow: undefined, glowSize: undefined, glowAlpha: undefined,
-  reflection: undefined, reflectionOpts: undefined, softEdge: undefined, bevel: undefined, bevelKind: undefined, rotate3d: undefined, camera3d: undefined,
+  reflection: undefined, reflectionOpts: undefined, softEdge: undefined, bevel: undefined, bevelKind: undefined, rotate3d: undefined, camera3d: undefined, format3d: undefined,
 };
 
 function stripUndefined<T extends object>(o: T): Partial<T> {
@@ -162,7 +165,10 @@ function stripUndefined<T extends object>(o: T): Partial<T> {
 
 // ── Outline (shape.line) ────────────────────────────────────────────────────────────────────────
 
-/** Dash presets DeckCraft's shape.line takes, with PowerPoint's Korean names. */
+/**
+ * Every dash preset of the file format (ST_PresetLineDashVal), with PowerPoint's Korean names. The
+ * pattern is the SVG stroke-dasharray for a line `w` px thick: dot = w, dash = 3w (system) / 4w, long = 8w.
+ */
 export const DASHES: { id: NonNullable<SlideElement['dash']>; label: string; pattern: (w: number) => string | undefined }[] = [
   { id: 'solid', label: '실선', pattern: () => undefined },
   { id: 'sysDot', label: '둥근 점선', pattern: (w) => `${w} ${w}` },
@@ -170,6 +176,10 @@ export const DASHES: { id: NonNullable<SlideElement['dash']>; label: string; pat
   { id: 'dash', label: '파선', pattern: (w) => `${w * 4} ${w * 3}` },
   { id: 'dashDot', label: '파선-점선', pattern: (w) => `${w * 4} ${w * 2} ${w} ${w * 2}` },
   { id: 'lgDash', label: '긴 파선', pattern: (w) => `${w * 8} ${w * 3}` },
+  { id: 'lgDashDot', label: '긴 파선-점선', pattern: (w) => `${w * 8} ${w * 3} ${w} ${w * 3}` },
+  { id: 'lgDashDotDot', label: '긴 파선-점선-점선', pattern: (w) => `${w * 8} ${w * 3} ${w} ${w * 3} ${w} ${w * 3}` },
+  { id: 'sysDashDot', label: '사각 파선-점선', pattern: (w) => `${w * 3} ${w} ${w} ${w}` },
+  { id: 'sysDashDotDot', label: '사각 파선-점선-점선', pattern: (w) => `${w * 3} ${w} ${w} ${w} ${w} ${w}` },
   { id: 'dot', label: '점선', pattern: (w) => `${w} ${w * 2}` },
 ];
 export const dashPattern = (dash: SlideElement['dash'], w: number) => (DASHES.find((d) => d.id === (dash ?? 'solid')) ?? DASHES[0]).pattern(w);
@@ -190,3 +200,53 @@ export function arrowPath(kind: SlideElement['arrowEndKind']): { d: string; fill
   }
 }
 export const ARROW_SCALE: Record<NonNullable<SlideElement['arrowSize']>, number> = { sm: 3.5, med: 5, lg: 7 };
+
+export const CAPS: { id: LineCap; label: string }[] = [{ id: 'flat', label: '평면' }, { id: 'round', label: '둥글게' }, { id: 'square', label: '사각형' }];
+export const JOINS: { id: LineJoin; label: string }[] = [{ id: 'round', label: '둥글게' }, { id: 'bevel', label: '두리뭉실하게' }, { id: 'miter', label: '뾰족하게' }];
+export const COMPOUNDS: { id: CompoundLine; label: string }[] = [
+  { id: 'single', label: '단일' }, { id: 'double', label: '이중' }, { id: 'thickThin', label: '굵은 선, 가는 선' },
+  { id: 'thinThick', label: '가는 선, 굵은 선' }, { id: 'triple', label: '삼중' },
+];
+
+/** The cap an outline is drawn with: its own, else round for lines (as before) and flat for outlines. */
+export const capOf = (el: SlideElement, line: boolean): LineCap => el.cap ?? (line ? 'round' : 'flat');
+export const joinOf = (el: SlideElement): LineJoin => el.join ?? 'round';
+
+/** One drawing step of a compound line's mask (white shows the stroke, black hides it). */
+export type MaskOp = { op: 'stroke'; width: number; white: boolean } | { op: 'fill'; white: boolean } | { op: 'outside'; white: boolean };
+
+/**
+ * Compound lines (double, thick-thin, thin-thick, triple) as masks over a full-width stroke: each layer
+ * is the outline painted through its mask. Double and triple are symmetric about the path, so nested
+ * strokes cut them exactly; thick-thin / thin-thick put one line inside the outline and one outside,
+ * which only a closed shape has, so an open path draws them as a double line.
+ */
+export function compoundLayers(kind: CompoundLine | undefined, w: number, closed: boolean): { ops: MaskOp[] }[] | null {
+  if (!kind || kind === 'single' || w <= 0) return null;
+  const S = (width: number, white: boolean): MaskOp => ({ op: 'stroke', width, white });
+  if (kind === 'double' || (!closed && (kind === 'thickThin' || kind === 'thinThick'))) return [{ ops: [S(w, true), S(w / 3, false)] }];
+  if (kind === 'triple') return [{ ops: [S(w, true), S(w * 0.6, false), S(w * 0.2, true)] }];
+  // Radial position r from the outline (+ outside): thick = half the width, gap = a sixth, thin = a third.
+  const outer = (thin: boolean): { ops: MaskOp[] } => ({ ops: thin ? [S(w, true), { op: 'fill', white: false }, S(w / 3, false)] : [S(w, true), { op: 'fill', white: false }] });
+  const inner = (thin: boolean): { ops: MaskOp[] } => ({ ops: thin ? [S(w, true), { op: 'outside', white: false }, S(w / 3, false)] : [S(w, true), { op: 'outside', white: false }] });
+  return kind === 'thickThin' ? [outer(false), inner(true)] : [inner(false), outer(true)];
+}
+
+// ── Fill transparency ───────────────────────────────────────────────────────────────────────────
+
+const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
+/** The fill's opacity (1 − 채우기 투명도), apart from the object's own opacity. */
+export const fillOpacityOf = (el: SlideElement): number => 1 - clamp01(el.fillTransparency ?? 0);
+
+/** The gradient's stops: the explicit list, or the two colours (from `gradient`) at 0 and 100 %. */
+export function gradientStopsOf(el: SlideElement): GradientStop[] | null {
+  if (el.gradientStops && el.gradientStops.length >= 2) return [...el.gradientStops].sort((a, b) => a.pos - b.pos);
+  if (!el.gradient) return null;
+  return [{ pos: 0, color: el.gradient[0] }, { pos: 100, color: el.gradient[1] }];
+}
+
+/** Sets a gradient's stops, keeping `gradient` (first and last colour) in step for code that reads the pair. */
+export function withGradientStops(stops: GradientStop[]): Partial<SlideElement> {
+  const sorted = [...stops].sort((a, b) => a.pos - b.pos);
+  return { gradientStops: sorted, gradient: [sorted[0].color, sorted[sorted.length - 1].color] };
+}

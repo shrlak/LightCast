@@ -7,6 +7,7 @@ import { TextFormatPanel, type TextFormatValue } from './TextFormatPanel';
 import { changeCase, clearTextFormat } from '../../domain/textFormat';
 import { autoFitMode, autoFitValue } from '../../domain/textFit';
 import { AutoTextarea } from '../AutoTextarea';
+import { Format3dSection, FillSection, LineSection } from './ShapeFormatSections';
 import type { ChartData as ChartModel, TableData } from '../../engine';
 
 export interface TableRange { r: number; c: number; r1: number; c1: number }
@@ -190,6 +191,13 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
           {el.kind === 'shape' && (
             <label className="stack">도형 안 텍스트<AutoTextarea rows={2} value={el.text ?? ''} onChange={(e) => onChange({ text: e.target.value || undefined, runs: undefined, color: el.color ?? '#ffffff' })} /></label>
           )}
+          {el.kind === 'shape' && (
+            <>
+              <FillSection el={el} onChange={onChange} />
+              <LineSection el={el} onChange={onChange} />
+              <Format3dSection el={el} onChange={onChange} />
+            </>
+          )}
         </>
       )}
 
@@ -203,7 +211,7 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
         <label className="stack">이름 (선택 창)<input value={el.name ?? ''} onChange={(e) => onChange({ name: e.target.value || undefined })} /></label>
       </details>
 
-      <label className="ef-range">투명도<input type="range" min={0.1} max={1} step={0.05} value={el.opacity ?? 1} onChange={(e) => onChange({ opacity: Number(e.target.value) })} /></label>
+      <label className="ef-range" title="개체 전체(채우기·윤곽선·글자)의 불투명도">개체 불투명도<input type="range" min={0.1} max={1} step={0.05} value={el.opacity ?? 1} onChange={(e) => onChange({ opacity: Number(e.target.value) })} /></label>
       <div className="ef-grid">{num('x')}{num('y')}{num('w')}{num('h')}</div>
       <div className="row gap-xs">
         <button className="mini-btn" onClick={() => onChange({ x: Math.round((CANVAS_W - el.w) / 2) })}>가로 가운데</button>
