@@ -18,6 +18,10 @@ import { activeTextEditor } from '../RichTextEditor';
 import { Check, Dialog, Field, Num } from './dialogs';
 import { SMARTART_CATEGORIES, SMARTART_LAYOUT, SMARTART_STYLE, smartArtColorLabel } from './ko';
 import type { DialogKind, Ed } from './editor';
+import { GridGuidesDialog, ViewZoomDialog } from './viewDialogs';
+import { selectionUnits } from '../../domain/editOps';
+import { aspectLocked, fromCm, sizeUnit, toCm, type SizeSpec } from '../../domain/shapeOps';
+import { InsertDialogs } from './dialogsInsert';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
@@ -43,9 +47,10 @@ function HeaderFooterDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [dateText, setDateText] = useState(typeof f.date === 'string' ? f.date : new Date().toLocaleDateString());
   const [number, setNumber] = useState(!!f.slideNumber);
   const [footer, setFooter] = useState(!!f.text);
+  const [hideTitle, setHideTitle] = useState(!!f.hideOnTitle);
   const [text, setText] = useState(f.text ?? '');
   const value = () => {
-    const v = { ...(date ? { date: fixed ? dateText : true } : {}), ...(number ? { slideNumber: true } : {}), ...(footer && text.trim() ? { text: text.trim() } : {}) };
+    const v = { ...(date ? { date: fixed ? dateText : true } : {}), ...(number ? { slideNumber: true } : {}), ...(footer && text.trim() ? { text: text.trim() } : {}), ...(hideTitle ? { hideOnTitle: true } : {}) };
     return Object.keys(v).length ? v : undefined;
   };
   const apply = (all: boolean) => {
@@ -69,6 +74,7 @@ function HeaderFooterDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         <Check label="슬라이드 번호" checked={number} onChange={setNumber} />
         <Check label="바닥글" checked={footer} onChange={setFooter} />
         <div className="dlg-indent"><input disabled={!footer} value={text} placeholder="바닥글 텍스트" onChange={(e) => setText(e.target.value)} /></div>
+        <Check label="제목 슬라이드에는 표시 안 함" checked={hideTitle} onChange={setHideTitle} />
       </fieldset>
       <div className="ppt-dialog-buttons">
         <button type="button" disabled={!ed.slide || !ed.canEdit} onClick={() => apply(false)}>적용</button>
@@ -298,28 +304,47 @@ function PhotoAlbumDialog({ ed, onClose, edit }: { ed: Ed; onClose: () => void; 
 // ── Insert › Action ───────────────────────────────────────────────────────────────────────────
 function ActionDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const el = ed.selEls[0];
-  const a = el?.action ?? (el?.href ? { kind: 'url' as const, url: el.href } : undefined);
-  const [kind, setKind] = useState<ElementAction['kind'] | 'none'>(a?.kind ?? 'none');
-  const [slideId, setSlideId] = useState(a?.slideId ?? ed.p?.slides[0]?.id ?? '');
-  const [url, setUrl] = useState(a?.url ?? 'https://');
+  const [on, setOn] = useState<'click' | 'hover'>('click');
+  const initial = (w: 'click' | 'hover'): ElementAction | undefined => (w === 'hover' ? el?.hoverAction : el?.action ?? (el?.href ? { kind: 'url' as const, url: el.href } : undefined));
+  const [acts, setActs] = useState<Record<'click' | 'hover', ElementAction | undefined>>({ click: initial('click'), hover: initial('hover') });
+  const [tip, setTip] = useState(el?.tooltip ?? '');
+  const shows = ed.p?.customShows ?? [];
   if (!el || !ed.p) return <Dialog title="실행 설정" onClose={onClose}><p>동작을 지정할 개체를 고르세요.</p></Dialog>;
+  const a = acts[on];
+  const kind = a?.kind ?? 'none';
+  const put = (next: ElementAction | undefined) => setActs({ ...acts, [on]: next });
+  const pick = (k: string) => {
+    if (k === 'none') return put(undefined);
+    if (k === 'slide') return put({ kind: 'slide', slideId: a?.slideId ?? ed.p!.slides[0]?.id });
+    if (k === 'url') return put({ kind: 'url', url: a?.url ?? 'https://' });
+    if (k === 'customShow') return put({ kind: 'customShow', show: a?.show ?? shows[0]?.id });
+    put({ kind: k as ElementAction['kind'] });
+  };
   const ok = () => {
-    const action: ElementAction | undefined = kind === 'none' ? undefined : kind === 'slide' ? { kind, slideId } : kind === 'url' ? { kind, url: url.trim() } : { kind };
-    ed.setElements((els) => els.map((e) => (ed.selEls.some((s) => s.id === e.id) ? { ...e, action, href: undefined } : e)));
+    const clean = (x: ElementAction | undefined) => (x?.kind === 'url' ? { ...x, url: x.url?.trim() } : x?.kind === 'customShow' && !x.show ? undefined : x);
+    ed.setElements((els) => els.map((e) => (ed.selEls.some((s) => s.id === e.id) ? { ...e, action: clean(acts.click), hoverAction: clean(acts.hover), tooltip: tip.trim() || undefined, href: undefined } : e)));
     onClose();
   };
   return (
     <Dialog title="실행 설정" onClose={onClose} onOk={ok} okDisabled={!ed.canEdit}>
-      <b>마우스를 클릭할 때</b>
-      <label className="rb-check"><input type="radio" checked={kind === 'none'} onChange={() => setKind('none')} /> 없음</label>
-      <label className="rb-check"><input type="radio" checked={kind !== 'none'} onChange={() => setKind('next')} /> 하이퍼링크:</label>
-      <select disabled={kind === 'none'} value={kind === 'none' ? 'next' : kind} onChange={(e) => setKind(e.target.value as ElementAction['kind'])}>
+      <div className="dlg-row">
+        <button type="button" className={on === 'click' ? 'primary' : ''} onClick={() => setOn('click')}>마우스를 클릭할 때</button>
+        <button type="button" className={on === 'hover' ? 'primary' : ''} onClick={() => setOn('hover')}>마우스를 가져갈 때</button>
+      </div>
+      <label className="rb-check"><input type="radio" checked={kind === 'none'} onChange={() => pick('none')} /> 없음</label>
+      <label className="rb-check"><input type="radio" checked={kind !== 'none'} onChange={() => pick('next')} /> 하이퍼링크:</label>
+      <select disabled={kind === 'none'} value={kind === 'none' ? 'next' : kind} onChange={(e) => pick(e.target.value)}>
         <option value="next">다음 슬라이드</option><option value="prev">이전 슬라이드</option><option value="first">첫째 슬라이드</option><option value="last">마지막 슬라이드</option>
-        <option value="end">쇼 마침</option><option value="slide">슬라이드…</option><option value="url">URL…</option>
+        <option value="lastViewed">마지막으로 본 슬라이드</option><option value="end">쇼 마침</option><option value="customShow">재구성한 쇼…</option>
+        <option value="slide">슬라이드…</option><option value="url">URL…</option><option value="playMedia">미디어 재생</option>
       </select>
-      {kind === 'slide' && <select value={slideId} onChange={(e) => setSlideId(e.target.value)}>{ed.p.slides.map((s, i) => <option key={s.id} value={s.id}>{i + 1}. {(s.title || s.text.split('\n')[0] || s.group).slice(0, 40)}</option>)}</select>}
-      {kind === 'url' && <input value={url} onChange={(e) => setUrl(e.target.value)} />}
-      <p className="dlg-note">슬라이드 쇼(읽기용 보기)에서 개체를 클릭하면 실행됩니다.</p>
+      {kind === 'slide' && <select value={a?.slideId} onChange={(e) => put({ kind: 'slide', slideId: e.target.value })}>{ed.p.slides.map((s, i) => <option key={s.id} value={s.id}>{i + 1}. {(s.title || s.text.split('\n')[0] || s.group).slice(0, 40)}</option>)}</select>}
+      {kind === 'url' && <input value={a?.url ?? ''} onChange={(e) => put({ kind: 'url', url: e.target.value })} />}
+      {kind === 'customShow' && (shows.length
+        ? <select value={a?.show} onChange={(e) => put({ kind: 'customShow', show: e.target.value })}>{shows.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select>
+        : <p className="dlg-note">재구성한 쇼가 없습니다. 슬라이드 쇼 › 재구성한 쇼에서 먼저 만드세요.</p>)}
+      <Field label="화면 설명"><input value={tip} onChange={(e) => setTip(e.target.value)} /></Field>
+      <p className="dlg-note">슬라이드 쇼(읽기용 보기)에서 개체를 클릭하거나 마우스를 가져가면 실행됩니다.</p>
     </Dialog>
   );
 }
@@ -374,31 +399,6 @@ function OutlineDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
 }
 
 // ── View › Guides ─────────────────────────────────────────────────────────────────────────────
-function GuidesDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
-  const g = ed.p?.guides ?? { v: [], h: [] };
-  const set = (next: { v: number[]; h: number[] }) => ed.updatePres({ guides: next.v.length || next.h.length ? next : undefined });
-  const row = (axis: 'v' | 'h') => (
-    <fieldset className="dlg-set">
-      <legend>{axis === 'v' ? '세로 안내선 (왼쪽에서, pt)' : '가로 안내선 (위에서, pt)'}</legend>
-      {g[axis].map((x, i) => (
-        <div key={i} className="dlg-row">
-          <Num value={x / 2} min={0} max={(axis === 'v' ? CANVAS_W : CANVAS_H) / 2} onChange={(n) => set({ ...g, [axis]: g[axis].map((y, j) => (j === i ? Math.round(n * 2) : y)) })} />
-          <button type="button" onClick={() => set({ ...g, [axis]: g[axis].filter((_, j) => j !== i) })}>삭제</button>
-        </div>
-      ))}
-      <button type="button" disabled={!ed.p || !!ed.p.protected} onClick={() => { set({ ...g, [axis]: [...g[axis], (axis === 'v' ? CANVAS_W : CANVAS_H) / 2] }); if (!ed.view.guides) ed.setView({ ...ed.view, guides: true }); }}>＋ {axis === 'v' ? '세로' : '가로'} 안내선 추가</button>
-    </fieldset>
-  );
-  return (
-    <Dialog title="눈금 및 안내선" onClose={onClose}>
-      <Check label="화면에 그리기 안내선 표시" checked={!!ed.view.guides} onChange={(on) => ed.setView({ ...ed.view, guides: on })} />
-      <Check label="눈금 표시" checked={!!ed.view.grid} onChange={(on) => ed.setView({ ...ed.view, grid: on })} />
-      {row('v')}
-      {row('h')}
-    </Dialog>
-  );
-}
-
 // ── Review › Thesaurus ────────────────────────────────────────────────────────────────────────
 function ThesaurusDialog({ onClose }: { ed: Ed; onClose: () => void }) {
   const [word, setWord] = useState(() => window.getSelection()?.toString().trim().split(/\s+/)[0] ?? '');
@@ -427,13 +427,25 @@ function ZoomDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const p = ed.p;
   const [mode, setMode] = useState<'slide' | 'section' | 'summary'>('slide');
   const [picked, setPicked] = useState<string[]>([]);
+  // Zoom › Return to Zoom: on for section and summary zooms, off for slide zooms (as PowerPoint).
+  const [back, setBack] = useState<boolean | null>(null);
   if (!p || !ed.theme) return null;
   const theme = ed.theme;
+  const returns = back ?? mode !== 'slide';
   const secs = sections(p.slides);
   const zoomEl = (target: Slide, box: { x: number; y: number; w: number; h: number }): SlideElement => ({
     id: uid('el'), kind: 'zoom', ...box, targetSlideId: target.id, name: `확대/축소: ${target.title || target.group}`,
     zoomOf: { slide: target, theme, background: resolveBackground(target, p) },
+    ...(returns ? { zoomReturn: true, zoomEndSlideId: endOf(target) } : {}),
   });
+  // A section zoom returns after the section's last slide; the others after the slide itself.
+  const endOf = (target: Slide) => {
+    if (mode !== 'section') return target.id;
+    const at = p.slides.findIndex((x) => x.id === target.id);
+    let last = at;
+    while (last + 1 < p.slides.length && p.slides[last + 1].group === target.group) last++;
+    return p.slides[last].id;
+  };
   const grid = (targets: Slide[]) => {
     const n = targets.length, cols = Math.ceil(Math.sqrt(n)), rows = Math.ceil(n / cols);
     const cw = (CANVAS_W - 160) / cols, ch = (CANVAS_H - 260) / rows;
@@ -457,6 +469,7 @@ function ZoomDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
       <div className="dlg-tabs">
         {([['slide', '슬라이드 확대/축소'], ['section', '구역 확대/축소'], ['summary', '요약 확대/축소']] as const).map(([m, l]) => <button key={m} type="button" className={mode === m ? 'on' : ''} onClick={() => { setMode(m); setPicked([]); }}>{l}</button>)}
       </div>
+      <Check label="확대/축소로 돌아가기" checked={returns} onChange={setBack} />
       {mode === 'summary' && <p className="dlg-note">각 구역의 첫 슬라이드로 가는 확대/축소가 담긴 요약 슬라이드를 현재 슬라이드 다음에 만듭니다 (구역 {secs.length}개).</p>}
       {mode === 'section' && <div className="dlg-list">{secs.map((s) => <Check key={s.name + s.start} label={`${s.name} (${s.count}장)`} checked={picked.includes(s.name)} onChange={(on) => setPicked(on ? [...picked, s.name] : picked.filter((x) => x !== s.name))} />)}</div>}
       {mode === 'slide' && (
@@ -494,9 +507,14 @@ function PlaybackDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <Field label="종료 시간 (0 = 끝까지)"><Num value={v.end ?? 0} min={0} step={0.5} onChange={(n) => set({ end: n || undefined })} /></Field>
         </div>
       </fieldset>
-      <Check label="반복 재생" checked={!!v.loop} onChange={(on) => set({ loop: on || undefined })} />
+      <div className="dlg-cols">
+        <Check label="반복 재생" checked={!!v.loop} onChange={(on) => set({ loop: on || undefined })} />
+        <Check label="재생 후 되감기" checked={!!v.rewind} onChange={(on) => set({ rewind: on || undefined })} />
+        <Check label="쇼 동안 숨기기" checked={!!v.hideDuringShow} onChange={(on) => set({ hideDuringShow: on || undefined })} />
+        {audio ? <Check label="여러 슬라이드에서 재생" checked={!!v.acrossSlides} onChange={(on) => set({ acrossSlides: on || undefined })} />
+          : <Check label="전체 화면 재생" checked={!!v.fullScreen} onChange={(on) => set({ fullScreen: on || undefined })} />}
+      </div>
       {!audio && <Field label="포스터 프레임 (초 — 재생 전 보여 줄 장면)"><Num value={v.poster ?? 0} min={0} step={0.5} onChange={(n) => set({ poster: n || undefined })} /></Field>}
-      {audio && <Check label="쇼 동안 숨기기" checked={!!v.hideDuringShow} onChange={(on) => set({ hideDuringShow: on || undefined })} />}
     </Dialog>
   );
 }
@@ -512,10 +530,52 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'action': return <ActionDialog ed={ed} onClose={onClose} />;
     case 'reuse': return <ReuseDialog ed={ed} onClose={onClose} />;
     case 'outline': return <OutlineDialog ed={ed} onClose={onClose} />;
-    case 'guides': return <GuidesDialog ed={ed} onClose={onClose} />;
+    case 'guides': return <GridGuidesDialog ed={ed} onClose={onClose} />;
+    case 'viewZoom': return <ViewZoomDialog ed={ed} onClose={onClose} />;
     case 'thesaurus': return <ThesaurusDialog ed={ed} onClose={onClose} />;
     case 'zoom': return <ZoomDialog ed={ed} onClose={onClose} />;
     case 'audio': return <PlaybackDialog ed={ed} onClose={onClose} />;
-    default: return null;
+    case 'sizePosition': return <SizePositionDialog ed={ed} onClose={onClose} />;
+    default: return <InsertDialogs ed={ed} kind={kind} onClose={onClose} />;
   }
+}
+
+/** Shape Format › 크기 ⤡: position, size, scale (%), rotation and 가로 세로 비율 고정 (DeckCraft's shape.sizePosition). */
+function SizePositionDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
+  const units = selectionUnits(ed.elements, ed.selEls.map((e) => e.id));
+  const first = units[0];
+  const one = first && first.members.length === 1 ? ed.elements.find((e) => e.id === first.members[0]) : undefined;
+  const [v, setV] = useState(() => ({
+    x: toCm(first?.box.x ?? 0), y: toCm(first?.box.y ?? 0), w: toCm(first?.box.w ?? 0), h: toCm(first?.box.h ?? 0),
+    rot: one?.rotation ?? 0, scaleW: 100, scaleH: 100, lock: one ? aspectLocked(one) : false,
+  }));
+  const [edited, setEdited] = useState<Set<string>>(new Set());
+  const set = (k: keyof typeof v, n: number | boolean) => { setV((o) => ({ ...o, [k]: n })); setEdited((o) => new Set(o).add(k)); };
+  if (!first) return <Dialog title="크기 및 위치" onClose={onClose}><p>크기를 바꿀 개체를 고르세요.</p></Dialog>;
+  const apply = () => {
+    const has = (k: string) => edited.has(k);
+    // Only what was changed is written; scale (%) is relative to the size when the dialog opened.
+    const spec: SizeSpec = {
+      ...(has('x') ? { x: fromCm(v.x) } : {}), ...(has('y') ? { y: fromCm(v.y) } : {}),
+      ...(has('w') ? { w: fromCm(v.w) } : {}), ...(has('h') ? { h: fromCm(v.h) } : {}),
+      ...(has('rot') ? { rot: v.rot } : {}), ...(has('scaleW') ? { scaleW: v.scaleW } : {}), ...(has('scaleH') ? { scaleH: v.scaleH } : {}),
+      lockAspect: v.lock,
+    };
+    ed.setElements((els) => units.reduce((acc, u) => sizeUnit(acc, u.members, spec), els));
+    onClose();
+  };
+  return (
+    <Dialog title="크기 및 위치" onClose={onClose} onOk={apply}>
+      <div className="dlg-grid">
+        <Field label="높이 (cm)"><Num value={v.h} step={0.1} min={0.01} onChange={(n) => set('h', n)} /></Field>
+        <Field label="너비 (cm)"><Num value={v.w} step={0.1} min={0.01} onChange={(n) => set('w', n)} /></Field>
+        <Field label="회전 (°)"><Num value={v.rot} step={1} onChange={(n) => set('rot', n)} disabled={!one} /></Field>
+        <Field label="높이 비율 (%)"><Num value={v.scaleH} step={5} min={1} onChange={(n) => set('scaleH', n)} /></Field>
+        <Field label="너비 비율 (%)"><Num value={v.scaleW} step={5} min={1} onChange={(n) => set('scaleW', n)} /></Field>
+        <Check label="가로 세로 비율 고정" checked={v.lock} onChange={(b) => set('lock', b)} />
+        <Field label="가로 위치 (cm)"><Num value={v.x} step={0.1} onChange={(n) => set('x', n)} /></Field>
+        <Field label="세로 위치 (cm)"><Num value={v.y} step={0.1} onChange={(n) => set('y', n)} /></Field>
+      </div>
+    </Dialog>
+  );
 }

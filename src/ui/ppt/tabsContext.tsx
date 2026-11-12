@@ -4,25 +4,29 @@ import { useRef, useState, type CSSProperties } from 'react';
 import type { PictureAdjust, SlideElement } from '../../domain/types';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
-import { PICTURE_STYLE_IDS } from '../SlideCanvas';
-import { adjustPicture, colorAt } from './pictureTools';
+import { adjustPicture, colorAt, pictureSize } from './pictureTools';
+import { PICTURE_STYLES, REMOVE_BACKGROUND_LEVELS, RESET_PICTURE, SATURATION_STEPS, TRANSPARENCY_STEPS, naturalSize, pictureStylePatch, recolorLabel } from '../../domain/pictureFormat';
+import { lookCss } from '../pictureStyles';
+import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { EffectsMenu } from './tabsMain';
 import { pictureCatalog, type PictureSteps } from '../../engine';
 import { editTable, tableStyles, type ChartKind, type TableAction, type TableData } from '../../engine';
 import type { Ed } from './editor';
+import { PlaybackTab } from './tabPlayback';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canRegroup, regroupSelection, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
 import { shapeToPath, smoothCorners, warpCatalog, warpGuides } from '../../engine';
 import { WARP_LABEL, polyD, warpPreset } from '../../domain/textWarp';
-import { smartArtOwner } from '../../domain/smartArt';
-import { applyBorders, CELL_MARGINS, type BorderMode } from '../../domain/tableBorders';
-import type { CellBorder } from '../../engine';
+import { editSmartArt, smartArtOwner, type OutlineOp } from '../../domain/smartArt';
+import { aspectLocked, fromCm, sizeUnit, toCm, type SizeSpec } from '../../domain/shapeOps';
+import { applyBorders, CELL_MARGINS, editCells, setTrackSize, trackSizes, type BorderMode } from '../../domain/tableBorders';
+import type { CellBorder, TableCell } from '../../engine';
 import { layoutTable } from '../../engine';
 
-export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart';
-export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인' };
+export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart' | 'playback';
+export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인', playback: '재생' };
 
 /** The contextual tabs for what is selected. */
 export function contextTabs(ed: Ed): ContextTab[] {
@@ -31,6 +35,8 @@ export function contextTabs(ed: Ed): ContextTab[] {
   if (kinds.size === 1 && kinds.has('table')) return ['tableDesign', 'tableLayout'];
   if (kinds.size === 1 && kinds.has('chart')) return ['chart'];
   if (kinds.size === 1 && kinds.has('image')) return ['picture'];
+  // Video / Audio: their 서식 (shape) and 재생 tabs.
+  if ([...kinds].every((k) => k === 'audio' || k === 'video')) return ['shape', 'playback'];
   return ['shape'];
 }
 
@@ -67,18 +73,27 @@ function ArrangeGroup({ ed }: { ed: Ed }) {
   );
 }
 
+/** Set as Default Shape: the look new shapes take (fill, outline, effects, text colour and size). */
+function defaultLook(e: SlideElement): Partial<SlideElement> {
+  const keys = ['fill', 'stroke', 'strokeWidth', 'dash', 'gradient', 'gradientAngle', 'gradientType', 'fillImage', 'pattern', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'softEdge', 'reflection', 'reflectionOpts', 'bevel', 'bevelKind', 'rotate3d', 'camera3d', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'opacity', 'color', 'fontSize', 'fontFamily', 'bold', 'italic'] as const;
+  const out: Record<string, unknown> = {};
+  for (const k of keys) if (e[k] !== undefined) out[k] = e[k];
+  return out as Partial<SlideElement>;
+}
+
 function SizeGroup({ ed }: { ed: Ed }) {
   const one = ed.selEls.length === 1 ? ed.selEls[0] : null;
-  const set = (patch: Partial<SlideElement>) => one && ed.setElements((els) => els.map((e) => (e.id === one.id ? { ...e, ...patch, ...(e.kind === 'text' ? { autoFit: false } : {}) } : e)));
-  // Canvas pixels: a 1440-wide slide is 25.4 cm, so 1 cm ≈ 56.7 px.
-  const cm = (px: number) => (px / (1440 / 25.4)).toFixed(2);
-  const px = (v: string) => Math.max(1, Math.round(Number(v) * (1440 / 25.4)));
+  const locked = !!one && !!one.locked;
+  // 비율 고정: a size box then moves the other side too (DeckCraft's shape.resize lockAspect).
+  const lock = one ? aspectLocked(one) : false;
+  const set = (spec: SizeSpec) => one && ed.setElements((els) => sizeUnit(els, [one.id], spec));
   return (
-    <Group label="크기">
+    <Group label="크기" launcher={ed.selEls.length ? () => ed.setDialog('sizePosition') : undefined}>
       <Col>
-        <label className="rb-field">↕ 높이: <input type="number" step={0.1} disabled={!one} value={one ? cm(one.h) : ''} onChange={(e) => set({ h: px(e.target.value) })} /> cm</label>
-        <label className="rb-field">↔ 너비: <input type="number" step={0.1} disabled={!one} value={one ? cm(one.w) : ''} onChange={(e) => set({ w: px(e.target.value) })} /> cm</label>
-        <label className="rb-field">⟳ 회전: <input type="number" step={1} disabled={!one} value={one?.rotation ?? 0} onChange={(e) => set({ rotation: Number(e.target.value) || undefined })} /> °</label>
+        <label className="rb-field">↕ 높이: <input type="number" step={0.1} disabled={!one || locked} value={one ? toCm(one.h) : ''} onChange={(e) => set({ h: fromCm(Number(e.target.value)), lockAspect: lock })} /> cm</label>
+        <label className="rb-field">↔ 너비: <input type="number" step={0.1} disabled={!one || locked} value={one ? toCm(one.w) : ''} onChange={(e) => set({ w: fromCm(Number(e.target.value)), lockAspect: lock })} /> cm</label>
+        <label className="rb-field">⟳ 회전: <input type="number" step={1} disabled={!one || locked} value={one?.rotation ?? 0} onChange={(e) => set({ rot: Number(e.target.value) || 0, lockAspect: lock })} /> °</label>
+        <label className="rb-check" title="크기 상자가 가로 세로 비율을 유지합니다"><input type="checkbox" disabled={!one} checked={lock} onChange={(e) => set({ lockAspect: e.target.checked })} /> 비율 고정</label>
       </Col>
     </Group>
   );
@@ -130,11 +145,42 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
             ))}
           </>
         )} />
-        <Small icon="★" label="기본 도형으로 설정" title="새로 그리는 도형이 이 서식을 따릅니다" disabled={shapes.length !== 1} onClick={() => { const e = shapes[0]; ed.updatePres({ defaultShape: { fill: e.fill, stroke: e.stroke, strokeWidth: e.strokeWidth, gradient: e.gradient, gradientAngle: e.gradientAngle, dropShadow: e.dropShadow, glow: e.glow, color: e.color, fontSize: e.fontSize } }); ed.cmd.notify('새 도형이 이 서식으로 그려집니다'); }} />
+        <Small icon="★" label="기본 도형으로 설정" title="새로 그리는 도형이 이 서식을 따릅니다" disabled={shapes.length !== 1} onClick={() => { const e = shapes[0]; ed.updatePres({ defaultShape: defaultLook(e) }); ed.cmd.notify('새 도형이 이 서식으로 그려집니다'); }} />
       </Group>
       {smartArtOwner(ed.elements, ed.selEls) && (
         <Group label="SmartArt">
           <Big icon="⧉" label="텍스트 창 · 레이아웃" title="SmartArt의 텍스트, 레이아웃, 스타일, 색 바꾸기" onClick={() => ed.setDialog('smartArt')} />
+          {(() => {
+            const owner = smartArtOwner(ed.elements, ed.selEls);
+            const go = (op: OutlineOp) => {
+              if (!owner) return;
+              const r = editSmartArt(ed.elements, owner, ed.sel.find((id) => id !== owner.id) ?? ed.sel[0], op, ed.p?.colorScheme);
+              if (!r) return ed.cmd.notify('이 도형에는 적용할 수 없습니다');
+              ed.setElements(() => r.elements); ed.setSel(r.ids);
+            };
+            const off = !owner || !ed.canEdit;
+            return (
+              <>
+                <DropButton big icon="＋" label="도형 추가" disabled={off} render={(close) => (
+                  <>
+                    {([['after', '뒤에 도형 추가'], ['before', '앞에 도형 추가'], ['above', '위에 도형 추가'], ['below', '아래에 도형 추가'], ['assistant', '어시스턴트 추가']] as const).map(([position, l]) => (
+                      <MenuItem key={position} label={l} onClick={() => { go({ kind: 'add', position }); close(); }} />
+                    ))}
+                  </>
+                )} />
+                <Col>
+                  <Small icon="⇦" label="수준 올리기" disabled={off} onClick={() => go({ kind: 'promote' })} />
+                  <Small icon="⇨" label="수준 내리기" disabled={off} onClick={() => go({ kind: 'demote' })} />
+                  <Small icon="⇄" label="오른쪽에서 왼쪽" active={!!owner?.smartArt?.rtl} disabled={off} onClick={() => go({ kind: 'rtl' })} />
+                </Col>
+                <Col>
+                  <Small icon="▲" label="위로 이동" disabled={off} onClick={() => go({ kind: 'up' })} />
+                  <Small icon="▼" label="아래로 이동" disabled={off} onClick={() => go({ kind: 'down' })} />
+                  <Small icon="↺" label="그래픽 원래대로" disabled={off} onClick={() => go({ kind: 'reset' })} />
+                </Col>
+              </>
+            );
+          })()}
           <Big icon="🖼" label="그림 삽입" title="선택한 SmartArt 도형을 그림으로 채웁니다 (그림 레이아웃의 그림 자리)" disabled={ed.sel.length !== 1}
             onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*'; inp.onchange = () => { const f = inp.files?.[0]; if (!f) return; const id = uid('m'); void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image', backgroundHidden: true } }); ed.setElements((els) => els.map((e) => (e.id === ed.sel[0] ? { ...e, fillImage: id, pattern: undefined, gradient: undefined } : e))); }); }; inp.click(); }} />
           <DropButton big icon="⇄" label="변환" render={(close) => {
@@ -219,12 +265,7 @@ const ARTISTIC_LABEL: Record<string, string> = {
   artisticBlur: '흐리게', artisticPencilGrayscale: '연필 회색조', artisticLineDrawing: '선 그리기', artisticPhotocopy: '복사',
   artisticFilmGrain: '필름 입자', artisticCutout: '오려내기', artisticGlowEdges: '네온 가장자리',
 };
-const RECOLOR_LABEL = (id: string) => ({ none: '다시 칠하기 없음', grayscale: '회색조', sepia: '세피아', washout: '희미하게', bw25: '흑백: 25%', bw50: '흑백: 50%', bw75: '흑백: 75%' } as Record<string, string>)[id]
-  ?? id.replace(/accent(\d)(Dark|Light)/, (_, n, k) => `강조 ${n} ${k === 'Dark' ? '어둡게' : '밝게'}`);
-const PIC_STYLE_LABEL: Record<string, string> = {
-  simpleFrame: '단순형 프레임, 흰색', thickMatte: '두꺼운 매트, 검정', polaroid: '사진 테두리', shadowRect: '그림자 사각형', rounded: '둥근 대각선 모서리',
-  oval: '타원', softEdge: '부드러운 가장자리 사각형', reflected: '반사된 둥근 사각형', tilted: '원근감 있는 그림자', beveled: '입체 사각형',
-};
+const PIC_STYLE_TILE: CSSProperties = { width: 46, height: 34 };
 
 export function PictureFormatTab({ ed }: { ed: Ed }) {
   const pics = ed.selEls.filter((e) => e.kind === 'image');
@@ -261,10 +302,31 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
     ed.dispatch({ type: 'media/add', media: { id, name: file.name, type: 'image' } });
     set({ mediaId: id, picture: undefined, crop: undefined });
   };
+  const resetSize = async () => {
+    if (!p?.mediaId) return;
+    const size = await pictureSize(p.picture?.original ?? p.mediaId);
+    set({ ...RESET_PICTURE, ...(size ? naturalSize(p, size.w, size.h, CANVAS_W, CANVAS_H) : {}), rotation: undefined });
+  };
+  const pickTransparent = () => {
+    if (!p) return;
+    ed.setTool({ kind: 'eyedrop', id: p.id, onPick: (fx, fy) => void colorAt(p, fx, fy).then((c) => {
+      if (c === 'off') ed.cmd.notify('선택한 그림 위를 클릭하세요');
+      else if (c === 'clear') ed.cmd.notify('그림의 그 부분은 이미 투명합니다');
+      else if (c) void adjust({ transparentColor: c });
+    }) });
+  };
+  const styleOf = (id: string) => { const patch = pictureStylePatch(id); if (patch) set(patch); };
+  const gif = !!p && /\.gif$/i.test(ed.state.library.media.find((m) => m.id === p.mediaId)?.name ?? p.name ?? '');
   return (
     <>
       <Group label="조정">
-        <Big icon="✂" label={busy ? '처리 중…' : '배경 제거'} title="가장자리에서 이어진 배경을 투명하게 (엔진)" disabled={!p || busy} onClick={() => void adjust({ removeBackground: a?.removeBackground ? undefined : 20 })} active={!!a?.removeBackground} />
+        <DropButton big icon="✂" label={busy ? '처리 중…' : '배경 제거'} title="가장자리에서 이어진 배경을 투명하게 (엔진)" disabled={!p || busy} active={!!a?.removeBackground} split onMain={() => void adjust({ removeBackground: a?.removeBackground ? undefined : 20 })} render={(close) => (
+          <>
+            {REMOVE_BACKGROUND_LEVELS.map(([label, tol]) => <MenuItem key={tol} label={label} on={a?.removeBackground === tol} onClick={() => { void adjust({ removeBackground: tol }); close(); }} />)}
+            <MenuSep />
+            <MenuItem label="배경 제거 취소" disabled={!a?.removeBackground} onClick={() => { void adjust({ removeBackground: undefined }); close(); }} />
+          </>
+        )} />
         <DropButton big icon="☀" label="수정" disabled={!p || busy} wide render={(close) => (
           <>
             <MenuHead>선명도 조정</MenuHead>
@@ -278,13 +340,13 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
         <DropButton big icon="🎨" label="색" disabled={!p || busy} wide render={(close) => (
           <>
             <MenuHead>채도</MenuHead>
-            <div className="adj-grid">{[-1, -0.5, 0, 0.5, 1].map((v) => <button key={v} type="button" className={`mini-btn ${(a?.saturation ?? 0) === v ? 'on' : ''}`} onClick={() => { void adjust({ saturation: v || undefined }); close(); }}>{Math.round((1 + v) * 100)}%</button>)}</div>
+            <div className="adj-grid">{SATURATION_STEPS.map((m) => { const v = Math.round((m - 1) * 100) / 100; return <button key={m} type="button" className={`mini-btn ${Math.round((a?.saturation ?? 0) * 100) === Math.round(v * 100) ? 'on' : ''}`} onClick={() => { void adjust({ saturation: v || undefined }); close(); }}>채도: {Math.round(m * 100)}%</button>; })}</div>
             <MenuHead>색조</MenuHead>
             <div className="adj-grid">{[-0.6, -0.3, 0, 0.3, 0.6].map((v) => <button key={v} type="button" className={`mini-btn ${(a?.temperature ?? 0) === v ? 'on' : ''}`} onClick={() => { void adjust({ temperature: v || undefined }); close(); }}>{v < 0 ? '차갑게' : v > 0 ? '따뜻하게' : '그대로'} {v ? Math.abs(v * 100) : ''}</button>)}</div>
             <MenuHead>다시 칠하기</MenuHead>
-            <div className="recolor-list">{(cat?.recolor ?? []).map((r) => <MenuItem key={r} label={RECOLOR_LABEL(r)} on={(a?.recolor ?? 'none') === r} onClick={() => { void adjust({ recolor: r === 'none' ? undefined : r }); close(); }} />)}</div>
+            <div className="recolor-list">{(cat?.recolor ?? []).map((r) => <MenuItem key={r} label={recolorLabel(r)} on={(a?.recolor ?? 'none') === r} onClick={() => { void adjust({ recolor: r === 'none' ? undefined : r }); close(); }} />)}</div>
             <MenuSep />
-            <MenuItem label="투명한 색 설정 — 그림에서 클릭" onClick={() => { if (p) ed.setTool({ kind: 'eyedrop', id: p.id, onPick: (fx, fy) => void colorAt(p, fx, fy).then((c) => { if (c) void adjust({ transparentColor: c }); }) }); close(); }} />
+            <MenuItem label="투명한 색 설정 — 그림에서 클릭" onClick={() => { pickTransparent(); close(); }} />
             {a?.transparentColor && <MenuItem label="투명한 색 없애기" onClick={() => { void adjust({ transparentColor: undefined }); close(); }} />}
           </>
         )} />
@@ -294,26 +356,45 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
             {(cat?.artistic ?? []).map((x) => <MenuItem key={x} label={ARTISTIC_LABEL[x] ?? x} on={a?.artistic === x} onClick={() => { void adjust({ artistic: x }); close(); }} />)}
           </>
         )} />
-        <DropButton big icon="◐" label="투명도" disabled={!p} render={(close) => <>{[0, 15, 30, 50, 65, 80].map((t) => <MenuItem key={t} label={`투명도: ${t}%`} on={Math.round((1 - (p?.opacity ?? 1)) * 100) === t} onClick={() => { set({ opacity: 1 - t / 100 }); close(); }} />)}</>} />
+        <DropButton big icon="◐" label="투명도" disabled={!p} render={(close) => <>{TRANSPARENCY_STEPS.map((t) => <MenuItem key={t} label={`투명도: ${t}%`} on={Math.round((1 - (p?.opacity ?? 1)) * 100) === t} onClick={() => { set({ opacity: t ? 1 - t / 100 : undefined }); close(); }} />)}</>} />
         <Col>
-          <Small icon="🗜" label="그림 압축" title="긴 쪽을 1920픽셀로 줄여 파일을 작게" disabled={!p || busy} onClick={() => void adjust({}, { maxSide: 1920 })} />
-          <Small icon="🔁" label="그림 바꾸기" disabled={!p} onClick={() => fileRef.current?.click()} />
-          <Small icon="↺" label="그림 원래대로" disabled={!p || (!a && !p.crop && !p.pictureStyle && !p.maskShape)} onClick={() => { void adjust(null); set({ crop: undefined, pictureStyle: undefined, maskShape: undefined }); }} />
+          <Small icon="🗜" label="그림 압축" title="보여 주는 크기에 맞는 해상도로 줄이고 잘린 부분을 지웁니다" disabled={!ed.p || busy} onClick={() => ed.setDialog('compress')} />
+          <DropButton icon="🔁" label="그림 바꾸기" disabled={!p} split onMain={() => fileRef.current?.click()} render={(close) => <MenuItem label="파일에서…" onClick={() => { fileRef.current?.click(); close(); }} />} />
+          <DropButton icon="↺" label="그림 원래대로" disabled={!p} split onMain={() => set(RESET_PICTURE)} render={(close) => (
+            <>
+              <MenuItem label="그림 원래대로" onClick={() => { set(RESET_PICTURE); close(); }} />
+              <MenuItem label="그림 및 크기 다시 설정" onClick={() => { void resetSize(); close(); }} />
+            </>
+          )} />
+          {gif && <Small icon={p?.gifPaused ? '▶' : '❚❚'} label={p?.gifPaused ? 'GIF 재생' : 'GIF 일시 중지'} title="움직이는 GIF를 멈추거나 다시 재생" onClick={() => set({ gifPaused: p?.gifPaused ? undefined : true })} />}
         </Col>
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { void replace(e.target.files?.[0]); e.target.value = ''; }} />
       </Group>
       <Group label="그림 스타일">
         <DropButton big icon="🖼" label="빠른 스타일" disabled={!p} wide render={(close) => (
-          <div className="pic-style-grid">
-            <button type="button" className={`pic-style ${!p?.pictureStyle ? 'on' : ''}`} title="스타일 없음" onClick={() => { set({ pictureStyle: undefined }); close(); }}><span /></button>
-            {PICTURE_STYLE_IDS.map((id) => <button key={id} type="button" className={`pic-style ${p?.pictureStyle === id ? 'on' : ''}`} title={PIC_STYLE_LABEL[id] ?? id} onClick={() => { set({ pictureStyle: id }); close(); }}><span style={PICTURE_STYLE_PREVIEW[id]} /></button>)}
-          </div>
+          <>
+            <div className="pic-style-grid six">
+              {PICTURE_STYLES.map((s) => <button key={s.id} type="button" className={`pic-style ${p?.pictureStyle === s.id ? 'on' : ''}`} title={s.label} aria-label={s.label} onClick={() => { styleOf(s.id); close(); }}><span style={{ ...PIC_STYLE_TILE, ...lookCss(s.look, 46, 34) }} /></button>)}
+            </div>
+            <MenuSep />
+            <MenuItem label="그림 스타일 다시 설정" disabled={!p?.pictureStyle} onClick={() => { styleOf('none'); close(); }} />
+          </>
         )} />
         <Col>
-          <ColorButton icon={RI.outline} label="그림 테두리" title="그림 테두리" value={p?.stroke} onPick={(c) => set({ stroke: c, strokeWidth: p?.strokeWidth ?? 6 })} onNone={() => set({ stroke: undefined })} noneLabel="윤곽선 없음" />
+          <ColorButton icon={RI.outline} label="그림 테두리" title="그림 테두리" value={p?.stroke} onPick={(c) => set({ stroke: c, strokeWidth: p?.strokeWidth ?? 2 })} onNone={() => set({ stroke: undefined, strokeWidth: undefined, dash: undefined })} noneLabel="윤곽선 없음" extra={(close) => (
+            <>
+              <MenuHead>두께</MenuHead>
+              <div className="rb-chip-row">{[0.25, 0.5, 0.75, 1, 1.5, 2.25, 3, 4.5, 6].map((w) => <button key={w} type="button" className={`mini-btn ${p?.stroke && p.strokeWidth === w * 2 ? 'on' : ''}`} onClick={() => { set({ strokeWidth: w * 2, stroke: p?.stroke ?? '#000000' }); close(); }}>{w} pt</button>)}</div>
+              <MenuHead>대시</MenuHead>
+              {([['solid', '실선'], ['dot', '둥근 점선'], ['dash', '파선'], ['dashDot', '파선-점선']] as const).map(([d, l]) => <MenuItem key={d} label={l} on={(p?.dash ?? 'solid') === d} onClick={() => { set({ dash: d === 'solid' ? undefined : d, stroke: p?.stroke ?? '#000000', strokeWidth: p?.strokeWidth ?? 2 }); close(); }} />)}
+            </>
+          )} />
           <DropButton icon={RI.effects} label="그림 효과" disabled={!p} wide render={(close) => <EffectsMenu first={p} set={set} close={close} />} />
           <DropButton icon="▣" label="맞춤" render={(close) => <>{([['fill', '늘려서 채우기'], ['contain', '비율 유지 (전체)'], ['cover', '비율 유지 (꽉 차게)']] as const).map(([v, l]) => <MenuItem key={v} label={l} on={(p?.fit ?? 'contain') === v} onClick={() => { set({ fit: v }); close(); }} />)}</>} />
         </Col>
+      </Group>
+      <Group label="접근성">
+        <Big icon="💬" label="대체 텍스트" title="화면 낭독 프로그램이 읽어 줄 그림 설명" disabled={!p} onClick={() => ed.setDialog('altText')} />
       </Group>
       <ArrangeGroup ed={ed} />
       <Group label="크기">
@@ -325,6 +406,8 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
             <MenuHead>도형에 맞춰 자르기</MenuHead>
             <ShapeGallery compact onPick={(n) => { set({ maskShape: n === 'rect' ? undefined : n }); close(); }} />
             <MenuSep />
+            <MenuItem label="채우기" hint="상자를 그림으로 채우고 넘치는 부분은 자르기" onClick={() => { set({ fit: 'cover', crop: undefined }); close(); }} />
+            <MenuItem label="맞춤" hint="그림 전체를 상자 안에 보이기" onClick={() => { set({ fit: 'contain', crop: undefined }); close(); }} />
             <MenuItem label="자르기 없애기" onClick={() => { set({ crop: undefined, maskShape: undefined }); close(); }} />
           </>
         )} />
@@ -333,12 +416,6 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
     </>
   );
 }
-
-const PICTURE_STYLE_PREVIEW: Record<string, CSSProperties> = {
-  simpleFrame: { border: '3px solid #fff', boxShadow: '0 1px 3px rgba(0,0,0,.5)' }, thickMatte: { border: '5px solid #222' }, polaroid: { borderStyle: 'solid', borderColor: '#fff', borderWidth: '3px 3px 9px' },
-  shadowRect: { boxShadow: '3px 3px 5px rgba(0,0,0,.6)' }, rounded: { borderRadius: 8 }, oval: { borderRadius: '50%' }, softEdge: { WebkitMaskImage: 'radial-gradient(ellipse, #000 50%, transparent 75%)' },
-  reflected: { borderRadius: 4, WebkitBoxReflect: 'below 1px linear-gradient(transparent 50%, rgba(255,255,255,.4))' }, tilted: { transform: 'perspective(80px) rotateY(-14deg)' }, beveled: { boxShadow: 'inset 2px 2px 3px rgba(255,255,255,.6), inset -2px -2px 3px rgba(0,0,0,.4)' },
-};
 
 const STYLE_KIND: Record<string, string> = { none: '스타일 없음', grid: '표 눈금', light1: '밝은 스타일 1', light2: '밝은 스타일 2', medium2: '보통 스타일 2', medium4: '보통 스타일 4', dark1: '어두운 스타일 1' };
 const styleLabel = (id: string) => {
@@ -389,14 +466,24 @@ export function TableDesignTab({ ed }: { ed: Ed }) {
         <ColorButton icon={RI.fill} label="음영" title="선택한 셀 음영 (서식 창에서 셀 선택)" onPick={(col) => shade(col)} onNone={() => shade(undefined)} noneLabel="채우기 없음" />
         <DropButton icon="▦" label="테두리" title="선택한 셀의 테두리를 펜 색과 두께로" render={(close) => (
           <>
-            {([['bottom', '아래쪽 테두리'], ['top', '위쪽 테두리'], ['left', '왼쪽 테두리'], ['right', '오른쪽 테두리'], ['none', '테두리 없음'], ['all', '모든 테두리'], ['outside', '바깥쪽 테두리'], ['inside', '안쪽 테두리'], ['insideH', '안쪽 가로 테두리'], ['insideV', '안쪽 세로 테두리']] as [BorderMode, string][]).map(([m, l]) => (
+            {([['bottom', '아래쪽 테두리'], ['top', '위쪽 테두리'], ['left', '왼쪽 테두리'], ['right', '오른쪽 테두리'], ['none', '테두리 없음'], ['all', '모든 테두리'], ['outside', '바깥쪽 테두리'], ['inside', '안쪽 테두리'], ['insideH', '안쪽 가로 테두리'], ['insideV', '안쪽 세로 테두리'], ['diagDown', '하향 대각선 테두리'], ['diagUp', '상향 대각선 테두리']] as [BorderMode, string][]).map(([m, l]) => (
               <MenuItem key={m} label={l} onClick={() => { setTable(applyBorders(t, ed.cell, m, pen)); close(); }} />
             ))}
+          </>
+        )} />
+        <DropButton icon="✦" label="효과" title="표 효과: 셀 입체 효과 · 그림자 · 반사" render={(close) => (
+          <>
+            <MenuItem label="셀 입체 효과" on={!!t.cellBevel} onClick={() => { setTable({ ...t, cellBevel: !t.cellBevel || undefined }); close(); }} />
+            <MenuItem label="그림자" on={!!el.dropShadow} onClick={() => { ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, dropShadow: !e.dropShadow || undefined } : e))); close(); }} />
+            <MenuItem label="반사" on={!!el.reflection} onClick={() => { ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, reflection: !e.reflection || undefined } : e))); close(); }} />
           </>
         )} />
       </Group>
       <Group label="테두리 그리기">
         <Col>
+          <label className="rb-field">펜 스타일 <select value={pen.dash ?? 'solid'} onChange={(e) => setPen({ ...pen, dash: e.target.value === 'solid' ? undefined : (e.target.value as CellBorder['dash']) })}>
+            {([['solid', '실선'], ['dash', '파선'], ['dot', '점선'], ['dashDot', '파선-점선'], ['longDash', '긴 파선']] as const).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select></label>
           <label className="rb-field">펜 두께 <select value={pen.width} onChange={(e) => setPen({ ...pen, width: Number(e.target.value) })}>{[1, 1.5, 2, 3, 4.5, 6, 9, 12].map((w) => <option key={w} value={w}>{w / 2} pt</option>)}</select></label>
           <label className="rb-field">펜 색 <input type="color" value={pen.color} onChange={(e) => setPen({ ...pen, color: e.target.value })} /></label>
         </Col>
@@ -417,9 +504,32 @@ export function TableLayoutTab({ ed }: { ed: Ed }) {
     if (next) ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, table: next } : e)));
     if (a === 'merge' || a === 'deleteRow' || a === 'deleteCol') ed.setCell({ r: Math.min(r, r1), c: Math.min(c, c1), r1: Math.min(r, r1), c1: Math.min(c, c1) });
   };
-  const align = (al: 'left' | 'center' | 'right') => ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, table: { ...t, rows: t.rows.map((row, ri) => row.map((cell, ci) => (ri >= Math.min(r, r1) && ri <= Math.max(r, r1) && ci >= Math.min(c, c1) && ci <= Math.max(c, c1) ? { ...cell, align: al } : cell))) } } : e)));
+  const setT = (table: TableData, patch: Partial<SlideElement> = {}) => ed.setElements((els) => els.map((e) => (e.id === el.id ? { ...e, ...patch, table } : e)));
+  const cellsDo = (fn: (cell: TableCell) => TableCell) => setT(editCells(t, ed.cell, fn));
+  const align = (al: 'left' | 'center' | 'right' | 'justify') => cellsDo((cell) => ({ ...cell, align: al }));
+  const anchor = (a: 'top' | 'middle' | 'bottom') => cellsDo((cell) => ({ ...cell, anchor: a === 'middle' ? undefined : a }));
+  const here = t.rows[Math.min(r, r1)]?.[Math.min(c, c1)];
+  const nCols = Math.max(0, ...t.rows.map((x) => x.length));
+  // Cell Size › Height / Width of the selected row and column, in points (2 canvas px per pt).
+  const rowPx = trackSizes(t.heights, t.rows.length, el.h)[Math.min(r, r1)] ?? 0;
+  const colPx = trackSizes(t.cols, nCols, el.w)[Math.min(c, c1)] ?? 0;
+  const size = (axis: 'row' | 'col', pt: number) => {
+    if (!(pt > 0)) return;
+    const res = setTrackSize(t, axis, axis === 'row' ? Math.min(r, r1) : Math.min(c, c1), pt * 2, axis === 'row' ? el.h : el.w);
+    setT(res.table, axis === 'row' ? { h: res.total } : { w: res.total });
+  };
   return (
     <>
+      <Group label="표">
+        <DropButton big icon="⬚" label="선택" render={(close) => (
+          <>
+            <MenuItem label="셀 선택" onClick={() => { ed.setCell({ r: Math.min(r, r1), c: Math.min(c, c1), r1: Math.min(r, r1), c1: Math.min(c, c1) }); close(); }} />
+            <MenuItem label="열 선택" onClick={() => { ed.setCell({ r: 0, c: Math.min(c, c1), r1: t.rows.length - 1, c1: Math.max(c, c1) }); close(); }} />
+            <MenuItem label="행 선택" onClick={() => { ed.setCell({ r: Math.min(r, r1), c: 0, r1: Math.max(r, r1), c1: nCols - 1 }); close(); }} />
+            <MenuItem label="표 선택" onClick={() => { ed.setCell({ r: 0, c: 0, r1: t.rows.length - 1, c1: nCols - 1 }); close(); }} />
+          </>
+        )} />
+      </Group>
       <Group label="행 및 열">
         <DropButton big icon={RI.deleteIcon} label="삭제" render={(close) => (
           <>
@@ -438,6 +548,10 @@ export function TableLayoutTab({ ed }: { ed: Ed }) {
         <Big icon={RI.split} label="셀 분할" onClick={() => act('split')} />
       </Group>
       <Group label="셀 크기">
+        <Col>
+          <label className="rb-field" title="선택한 행의 높이 (pt)">↕ 높이: <input key={`h${r}-${rowPx}`} className="rb-num" type="number" min={4} step={1} defaultValue={Math.round(rowPx / 2 * 10) / 10} onBlur={(e) => size('row', Number(e.target.value))} onKeyDown={(e) => { if (e.key === 'Enter') size('row', Number((e.target as HTMLInputElement).value)); }} /></label>
+          <label className="rb-field" title="선택한 열의 너비 (pt)">↔ 너비: <input key={`w${c}-${colPx}`} className="rb-num" type="number" min={4} step={1} defaultValue={Math.round(colPx / 2 * 10) / 10} onBlur={(e) => size('col', Number(e.target.value))} onKeyDown={(e) => { if (e.key === 'Enter') size('col', Number((e.target as HTMLInputElement).value)); }} /></label>
+        </Col>
         <Col>
           <Small icon={RI.distributeRows} label="행 높이를 같게" onClick={() => act('distributeRows')} />
           <Small icon={RI.distributeCols} label="열 너비를 같게" onClick={() => act('distributeCols')} />
@@ -459,9 +573,24 @@ export function TableLayoutTab({ ed }: { ed: Ed }) {
           </>
         )} />
         <Col>
-          <Small icon="⯇" label="왼쪽 맞춤" onClick={() => align('left')} />
-          <Small icon="≡" label="가운데 맞춤" onClick={() => align('center')} />
-          <Small icon="⯈" label="오른쪽 맞춤" onClick={() => align('right')} />
+          <Small icon="⯇" label="왼쪽 맞춤" active={(here?.align ?? 'left') === 'left'} onClick={() => align('left')} />
+          <Small icon="≡" label="가운데 맞춤" active={here?.align === 'center'} onClick={() => align('center')} />
+          <Small icon="⯈" label="오른쪽 맞춤" active={here?.align === 'right'} onClick={() => align('right')} />
+        </Col>
+        <Col>
+          <Small icon="☰" label="양쪽 맞춤" active={here?.align === 'justify'} onClick={() => align('justify')} />
+          <Small icon="⤒" label="위쪽 맞춤" active={here?.anchor === 'top'} onClick={() => anchor('top')} />
+          <Small icon="↕" label="세로 가운데 맞춤" active={!here?.anchor || here.anchor === 'middle'} onClick={() => anchor('middle')} />
+        </Col>
+        <Col>
+          <Small icon="⤓" label="아래쪽 맞춤" active={here?.anchor === 'bottom'} onClick={() => anchor('bottom')} />
+          <DropButton icon="⟲" label="텍스트 방향" render={(close) => (
+            <>
+              {([['horz', '가로'], ['vert', '모든 텍스트 90도 회전'], ['vert270', '모든 텍스트 270도 회전'], ['stacked', '스택형']] as const).map(([d, l]) => (
+                <MenuItem key={d} label={l} on={(here?.dir ?? 'horz') === d} onClick={() => { cellsDo((cell) => ({ ...cell, dir: d === 'horz' ? undefined : d })); close(); }} />
+              ))}
+            </>
+          )} />
         </Col>
       </Group>
       <SizeGroup ed={ed} />
@@ -502,6 +631,7 @@ export function ChartDesignTab({ ed }: { ed: Ed }) {
 export function ContextTabBody({ tab, ed }: { tab: ContextTab; ed: Ed }) {
   if (tab === 'shape') return <ShapeFormatTab ed={ed} />;
   if (tab === 'picture') return <PictureFormatTab ed={ed} />;
+  if (tab === 'playback') return <PlaybackTab ed={ed} />;
   if (tab === 'tableDesign') return <TableDesignTab ed={ed} />;
   if (tab === 'tableLayout') return <TableLayoutTab ed={ed} />;
   return <ChartDesignTab ed={ed} />;

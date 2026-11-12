@@ -15,3 +15,8 @@ Every release, every time:
 ## Checks
 
 `npx tsc --noEmit -p .` and `npx vitest run` must pass before every push.
+
+## DeckCraft
+
+LightCast's editor follows DeckCraft. When DeckCraft changes, port the change; the routine and the last synced
+commit are in `docs/deckcraft-sync.md`.

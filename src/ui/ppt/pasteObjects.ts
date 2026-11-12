@@ -3,9 +3,10 @@
 // are read from its own clipboard format in the desktop app (exact positions, fonts and colours) or
 // from the HTML it writes; other programs' formatted text keeps its formatting.
 import type { MediaMeta, SlideElement, TextRun } from '../../domain/types';
-import { CLIP_TYPE, decodePayload, htmlToElements, objectsHtml, objectsText, payloadFromHtml, type ClipMedia, type ClipPayload } from '../../domain/clipboard';
+import { CLIP_TYPE, decodePayload, htmlMatchesText, htmlToElements, isOfficeHtml, objectsHtml, objectsText, payloadFromHtml, type ClipMedia, type ClipPayload } from '../../domain/clipboard';
 import { readGvml } from '../../domain/io/drawingml';
 import { cloneElements } from '../../domain/editOps';
+import { DUPLICATE_OFFSET } from '../../domain/shapeOps';
 import { getMedia, putMedia } from '../../domain/media';
 import { desktop } from '../../domain/desktop';
 import { uid } from '../../domain/lyrics';
@@ -137,7 +138,7 @@ async function fromLightCast(p: ClipPayload, existing: SlideElement[]): Promise<
   // On the slide they came from, copies are set off (again for each paste); elsewhere they keep their place.
   const taken = (dx: number) => p.elements.some((s) => existing.some((el) => el.kind === s.kind && Math.abs(el.x - (s.x + dx)) < 0.5 && Math.abs(el.y - (s.y + dx)) < 0.5));
   let off = 0;
-  while (taken(off) && off < 600) off += 30;
+  while (taken(off) && off < 600) off += DUPLICATE_OFFSET;
   return { elements: cloneElements(p.elements, off), media, from: 'freecast' };
 }
 
@@ -152,7 +153,8 @@ export async function clipboardToElements(src: ClipSource, existing: SlideElemen
   }
   if (own) result = await fromLightCast(own, existing);
   if (!result && desktop?.readOfficeClipboard) result = await fromPowerPoint();
-  if (!result && src.html) {
+  // Foreign HTML pastes only while it says the same words as the plain text (DeckCraft same_words); stale HTML is ignored.
+  if (!result && src.html && (text === undefined || !text.trim() || htmlMatchesText(src.html, text) || isOfficeHtml(src.html))) {
     const { elements, images } = htmlToElements(src.html);
     const media: MediaMeta[] = [];
     const pics: SlideElement[] = [];

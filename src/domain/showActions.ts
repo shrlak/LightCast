@@ -13,6 +13,18 @@ export function actionAt(slide: Slide | null | undefined, x: number, y: number):
   return els.find((e) => !e.hidden && (e.action || e.href || (e.kind === 'zoom' && e.targetSlideId)) && x >= e.x && x <= e.x + e.w && y >= e.y && y <= e.y + Math.max(e.h, 1)) ?? null;
 }
 
+/** The object under a canvas point that does something when pointed at (Action › Mouse Over) or shows a ScreenTip. */
+export function hoverAt(slide: Slide | null | undefined, x: number, y: number): SlideElement | null {
+  const els = [...(slide?.elements ?? [])].reverse();
+  return els.find((e) => !e.hidden && (e.hoverAction || e.tooltip) && x >= e.x && x <= e.x + e.w && y >= e.y && y <= e.y + Math.max(e.h, 1)) ?? null;
+}
+
+/** Where a show goes back to for "last slide viewed": the most recent other page in `history`. */
+export function lastViewed(history: number[], current: number): number | null {
+  for (let k = history.length - 1; k >= 0; k--) if (history[k] !== current) return history[k];
+  return null;
+}
+
 export function actionOf(el: SlideElement): ShowAction | null {
   if (el.kind === 'zoom' && el.targetSlideId) return { kind: 'zoom', slideId: el.targetSlideId };
   return el.action ?? (el.href ? { kind: 'url', url: el.href } : null);

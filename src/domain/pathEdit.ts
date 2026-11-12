@@ -225,3 +225,49 @@ export function deleteSegment(segs: Seg[], i: number): Seg[] {
   const end = s.pts[s.pts.length - 1];
   return [...segs.slice(0, i), { cmd: 'M', pts: [end] }, ...segs.slice(i + 1)];
 }
+
+/** The Bézier handle slots of the anchor ending segment `i`: incoming (this segment's 2nd control) and outgoing (the next one's 1st). */
+function handleSlots(segs: Seg[], i: number): { inc: [number, number] | null; out: [number, number] | null } {
+  return { inc: segs[i]?.cmd === 'C' ? [i, 1] : null, out: segs[i + 1]?.cmd === 'C' ? [i + 1, 0] : null };
+}
+
+/** A point's type read from its handles, as DeckCraft does: smooth (in line, equal), straight (in line) or corner. */
+export function pointKind(segs: Seg[], i: number): 'smooth' | 'straight' | 'corner' {
+  const s = segs[i];
+  if (!s || s.cmd === 'Z') return 'corner';
+  const v = s.pts[s.pts.length - 1];
+  const { inc, out } = handleSlots(segs, i);
+  if (!inc || !out) return 'corner';
+  const a = segs[inc[0]].pts[inc[1]], b = segs[out[0]].pts[out[1]];
+  const da = [a[0] - v[0], a[1] - v[1]], db = [b[0] - v[0], b[1] - v[1]];
+  const la = Math.hypot(da[0], da[1]), lb = Math.hypot(db[0], db[1]);
+  if (la < 1e-6 || lb < 1e-6) return 'corner';
+  const cos = (da[0] * db[0] + da[1] * db[1]) / (la * lb);
+  if (cos > -0.9998) return 'corner';
+  return Math.abs(la - lb) <= 0.01 * Math.max(la, lb) ? 'smooth' : 'straight';
+}
+
+/**
+ * Handle `out` (else the incoming one) of the anchor ending segment `i` moved to `p` (path units);
+ * the other handle follows the point's type — mirrored for smooth, kept in line for straight, left
+ * alone for corner (DeckCraft's set_handle). `kind` overrides the type read from the handles.
+ */
+export function setHandle(segs: Seg[], i: number, out: boolean, p: [number, number], kind?: 'smooth' | 'straight' | 'corner'): Seg[] {
+  const k = kind ?? pointKind(segs, i);
+  const slots = handleSlots(segs, i);
+  const mine = out ? slots.out : slots.inc, other = out ? slots.inc : slots.out;
+  const s = segs[i];
+  if (!mine || !s || s.cmd === 'Z') return segs;
+  const v = s.pts[s.pts.length - 1];
+  const next = segs.map((x) => ({ ...x, pts: x.pts.map((q) => [...q] as [number, number]) }));
+  next[mine[0]].pts[mine[1]] = p;
+  if (other && k !== 'corner') {
+    const q = next[other[0]].pts[other[1]];
+    const d = [p[0] - v[0], p[1] - v[1]], l = Math.hypot(d[0], d[1]);
+    if (l > 1e-9) {
+      const lo = k === 'smooth' ? l : Math.hypot(q[0] - v[0], q[1] - v[1]);
+      next[other[0]].pts[other[1]] = [v[0] - (d[0] / l) * lo, v[1] - (d[1] / l) * lo];
+    }
+  }
+  return next;
+}

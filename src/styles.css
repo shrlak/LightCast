@@ -1912,3 +1912,62 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 /* Animation Pane: the paragraph steps of a 단락별로 build, under their effect. */
 .anim-list li.anim-sub { padding-top: 2px; padding-bottom: 2px; font-size: 11.5px; }
 .anim-list li.anim-sub .anim-name { padding-left: 14px; color: #605e5c; white-space: nowrap; text-overflow: ellipsis; }
+
+/* Home › Font: the font combobox (theme fonts, then every font, each in its own face). */
+.ppt-font-picker { display: inline-flex; align-items: center; flex: 1 1 130px; min-width: 110px; border: 1px solid #c8c6c4; border-radius: 3px; background: #fff; height: 26px; }
+.ppt-font-picker input.ppt-font { border: none !important; height: 24px; padding: 0 4px; background: transparent; min-width: 0; width: 100%; font-size: 13px; }
+.font-menu { max-height: 360px; overflow-y: auto; min-width: 220px; }
+.font-menu .ppt-menu-head { padding: 4px 10px; font-size: 11px; font-weight: 700; color: var(--pp, #1f8a52); background: #f3f6f4; }
+.font-menu .font-item { font-size: 15px; display: flex; justify-content: space-between; gap: 12px; white-space: nowrap; }
+.font-menu .font-role { font-family: system-ui, sans-serif; font-size: 11px; color: #777; }
+/* Typing on a selected box: the hidden field an input method composes in (CanvasEditor `sink`). */
+.ce-ime-sink { position: absolute; width: 1px; height: 1.2em; padding: 0; border: 0; margin: 0; opacity: 0; resize: none; overflow: hidden; pointer-events: none; caret-color: transparent; background: transparent; color: transparent; z-index: 0; }
+.ac-list > button { display: grid; grid-template-columns: 1fr 1.6fr; gap: 8px; }
+/* Review › Comments: every slide's threads, initials, the focused one (Previous / Next). */
+.comment-slide { padding: 6px 12px 2px; font-size: 11.5px; font-weight: 600; color: #605e5c; }
+.comment-slide.on { color: var(--pp, #1f8a52); }
+.comment-list li { cursor: pointer; }
+.comment-list li.focus { background: #eef7f1; box-shadow: inset 3px 0 0 var(--pp, #1f8a52); }
+.comment-head { align-items: center; }
+.comment-avatar { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--pp, #1f8a52); color: #fff; font-size: 10.5px; font-weight: 700; flex: none; }
+.comment-avatar.sm { width: 16px; height: 16px; font-size: 8.5px; margin-right: 4px; vertical-align: middle; }
+.comment-anchor { display: block; color: #605e5c; font-size: 11px; margin-top: 2px; }
+.comment-empty { padding: 10px 12px; }
+.spell-opt { margin: 8px 10px; font-size: 12px; }
+
+/* View › Guides: drag a drawing guide (off the slide deletes it). */
+.ce-root.on-guide-v { cursor: col-resize; }
+.ce-root.on-guide-h { cursor: row-resize; }
+.ce-guide.ce-user.dragging { border-style: solid; border-color: #fde718; }
+.ce-guide-tip { position: absolute; z-index: 6; pointer-events: none; background: #1f8a52; color: #fff; font-size: 11px; padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+
+/* View › 슬라이드 노트 (Notes Page view), 회색조, 확대/축소 and grid dialogs. */
+.notes-page-view { flex: 1; overflow: auto; padding: 24px; background: #e6e6e6; display: flex; justify-content: center; align-items: flex-start; }
+.notes-page { width: min(640px, 100%); min-height: 860px; background: #fff; box-shadow: 0 2px 10px rgba(0,0,0,.18); padding: 40px 50px; display: flex; flex-direction: column; gap: 24px; box-sizing: border-box; flex: none; }
+.notes-page-head, .notes-page-foot { display: flex; justify-content: space-between; font-size: 11px; color: #605e5c; min-height: 14px; }
+.notes-page-slide { border: 1px solid #c8c6c4; }
+.notes-page-text { flex: 1; min-height: 260px; resize: none; border: 1px dashed #c8c6c4; padding: 10px; font-size: 14px; line-height: 1.5; color: #222; }
+.notes-page-text:focus { outline: 2px solid var(--pp, #1f8a52); border-color: transparent; }
+.ppt-canvas.grayscale, .notes-page.grayscale .notes-page-slide, .ppt-left.grayscale .ppt-thumb-frame { filter: grayscale(1); }
+.zoom-dlg { display: flex; gap: 16px; align-items: flex-start; }
+.zoom-dlg .dlg-set { display: flex; flex-direction: column; gap: 4px; }
+.dlg-error { color: #b03030; font-size: 12px; margin: 6px 0 0; }
+.dlg-num { width: 70px; }
+/* Shapes parity: line end handles, connection sites, locked frames. */
+.ce-h.ce-line-end { cursor: crosshair; z-index: 3; }
+.ce-site { position: absolute; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #fff; border: 1.5px solid #5f5f5f; pointer-events: none; z-index: 3; }
+.ce-site.on { background: var(--pp, #1f8a52); border-color: #fff; width: 12px; height: 12px; margin: -6px 0 0 -6px; }
+.ce-frame.locked { border-style: dashed; }
+.ce-frame.locked::after { content: "🔒"; position: absolute; right: -4px; top: -22px; font-size: 13px; }
+
+.bevel-grid { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 8px; max-width: 320px; }
+.bevel-grid .mini-btn.on, .effects-menu .mini-btn.on { background: var(--pp-yellow, #fde718); }
+.sel-list li.drop-above { box-shadow: inset 0 2px 0 var(--pp, #1f8a52); }
+.sel-list li.drop-below { box-shadow: inset 0 -2px 0 var(--pp, #1f8a52); }
+.sel-list li[draggable="true"] { cursor: grab; }
+/* Picture Format › Picture Styles: DeckCraft's 24 styles, six to a row, drawn on a small landscape. */
+.pic-style-grid.six { grid-template-columns: repeat(6, 64px); }
+.pic-style-grid.six .pic-style span { background: linear-gradient(165deg, #d9efe2 0 55%, #2e9e66 55% 100%); }
+/* 재생 tab: seconds boxes for fades. */
+.rb-secs { width: 44px; margin: 0 2px; }
+.bgstyle-grid { display: grid; grid-template-columns: repeat(4, 44px); gap: 6px; padding: 8px; } /* Design › Background Styles */

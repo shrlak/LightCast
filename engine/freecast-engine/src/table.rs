@@ -31,6 +31,9 @@ pub struct TableIn {
     /// Table Layout › Cell Margins (left, top, right, bottom; kept through edits).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub margins: Option<serde_json::Value>,
+    /// Anything else LightCast keeps on the table, carried through edits untouched.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -57,6 +60,9 @@ pub struct CellIn {
     /// Table Design › Borders drawn on this cell's sides (LightCast draws them; kept through edits).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub borders: Option<serde_json::Value>,
+    /// The cell's other settings (vertical alignment, text direction…), kept through edits.
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 fn is_one(v: &u32) -> bool {
@@ -157,6 +163,7 @@ fn from_dc(d: &Table, orig: &TableIn) -> TableIn {
                         bold: base.bold,
                         align: base.align,
                         borders: base.borders,
+                        extra: base.extra,
                     }
                 })
                 .collect()

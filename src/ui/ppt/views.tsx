@@ -1,16 +1,18 @@
 // Views and dialogs of the PowerPoint window: 찾기 / 바꾸기, 개요 보기, 여러 슬라이드, 읽기용 보기,
 // transition and animation previews, and the 파일 (backstage) view.
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent, type ReactNode } from 'react';
-import type { Presentation, Slide, SlideElement } from '../../domain/types';
+import type { ElementAction, Slide, SlideElement } from '../../domain/types';
 import { CANVAS_W } from '../../domain/canvas';
-import { actionAt } from '../../domain/showActions';
+import { actionAt, hoverAt, lastViewed } from '../../domain/showActions';
+import { playMedia } from './mediaControl';
 export { actionAt };
 import { sequence } from '../../domain/arrangement';
 import { resolveBackground } from '../../domain/autoBackground';
-import { findText, replaceText, type TextItem } from '../../engine';
+import { findText } from '../../engine';
+import { findItems, parseFindKey, replaceMatches } from '../../domain/findReplace';
 import { SlideCanvas } from '../SlideCanvas';
 import { printHtml } from '../printHtml';
-import type { LiveBuild } from '../../domain/animations';
+import { clickTrigger, triggerObjects, type LiveBuild } from '../../domain/animations';
 import type { Ed } from './editor';
 import { ACCEPT } from './commands';
 import { RI } from './ribbonParts';
@@ -18,21 +20,8 @@ import { TRANSITION } from './ko';
 import { PrintRun, PropertiesForm, type PrintMode } from './printing';
 
 // ── Find and replace ──────────────────────────────────────────────────────────────────────────
-type Key = { slideId: string; field: 'text' | 'title' | 'subtext' | 'notes' | 'el'; elementId?: string };
-const keyOf = (k: Key) => [k.slideId, k.field, k.elementId ?? ''].join('|');
-const parseKey = (s: string): Key => { const [slideId, field, elementId] = s.split('|'); return { slideId, field: field as Key['field'], elementId: elementId || undefined }; };
-
-function textItems(p: Presentation): TextItem[] {
-  const out: TextItem[] = [];
-  for (const s of p.slides) {
-    if (s.title) out.push({ key: keyOf({ slideId: s.id, field: 'title' }), text: s.title });
-    if (s.text) out.push({ key: keyOf({ slideId: s.id, field: 'text' }), text: s.text });
-    if (s.subtext) out.push({ key: keyOf({ slideId: s.id, field: 'subtext' }), text: s.subtext });
-    for (const el of s.elements ?? []) if (el.text) out.push({ key: keyOf({ slideId: s.id, field: 'el', elementId: el.id }), text: el.text });
-    if (s.notes) out.push({ key: keyOf({ slideId: s.id, field: 'notes' }), text: s.notes });
-  }
-  return out;
-}
+// What is searched and how a replacement keeps the formatting: domain/findReplace (DeckCraft text.find /
+// text.replace — slide text, objects, table cells and notes).
 
 /** Home › Editing › Find / Replace, searched by the engine across the whole presentation. */
 export function FindReplaceDialog({ ed, replace: startReplace, onClose }: { ed: Ed; replace: boolean; onClose: () => void }) {
@@ -44,43 +33,29 @@ export function FindReplaceDialog({ ed, replace: startReplace, onClose }: { ed: 
   const [at, setAt] = useState(-1);
   const [msg, setMsg] = useState('');
   const p = ed.p;
-  const hits = useMemo(() => (p && q ? findText(textItems(p), q, { matchCase, wholeWord: whole }) : []), [p, q, matchCase, whole]);
+  const hits = useMemo(() => (p && q ? findText(findItems(p), q, { matchCase, wholeWord: whole }) : []), [p, q, matchCase, whole]);
   const go = (i: number) => {
     if (!hits.length || !p) return setMsg(q ? '찾는 항목이 없습니다.' : '');
     const n = ((i % hits.length) + hits.length) % hits.length;
     setAt(n);
-    const k = parseKey(hits[n].key);
+    const k = parseFindKey(hits[n].key);
     ed.cmd.setSlideId(k.slideId);
     if (k.elementId) setTimeout(() => ed.setSel([k.elementId!]), 0);
     setMsg(`${n + 1} / ${hits.length}`);
   };
-  const apply = (items: TextItem[]) => {
-    if (!p) return;
-    const by = new Map(items.map((i) => [i.key, i.text]));
-    const slides = p.slides.map((s) => {
-      let next: Slide = s;
-      for (const [key, text] of by) {
-        const k = parseKey(key);
-        if (k.slideId !== s.id) continue;
-        if (k.field === 'el') next = { ...next, elements: next.elements?.map((e) => (e.id === k.elementId ? { ...e, text, runs: undefined, paragraphs: e.paragraphs ? text.split('\n').map((t, i) => ({ ...e.paragraphs![Math.min(i, e.paragraphs!.length - 1)], text: t, runs: undefined })) : undefined } : e)) };
-        else next = { ...next, [k.field]: text };
-      }
-      return next;
-    });
-    ed.updatePres({ slides });
-  };
   const one = () => {
     if (!p || at < 0 || !hits[at]) return go(0);
-    const h = hits[at];
-    const res = replaceText(textItems(p), q, r, { matchCase, wholeWord: whole, onlyKey: h.key, onlyStart: h.start });
-    apply(res.items);
-    setMsg(res.count ? '1개를 바꿨습니다.' : '');
+    ed.updatePres({ slides: replaceMatches(p.slides, [hits[at]], r) });
+    setMsg('1개를 바꿨습니다.');
+    // The next match is where this one was (the list is searched again).
+    setAt(at - 1);
   };
   const all = () => {
     if (!p) return;
-    const res = replaceText(textItems(p), q, r, { matchCase, wholeWord: whole });
-    apply(res.items);
-    setMsg(`${res.count}개 항목을 바꿨습니다.`);
+    if (!hits.length) return setMsg('찾는 항목이 없습니다.');
+    ed.updatePres({ slides: replaceMatches(p.slides, hits, r) });
+    setMsg(`${hits.length}개 항목을 바꿨습니다.`);
+    setAt(-1);
   };
   return (
     <div className="ppt-dialog" role="dialog" aria-label={replace ? '바꾸기' : '찾기'}>
@@ -168,11 +143,18 @@ export function SlideSorter({ ed }: { ed: Ed }) {
  */
 export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: () => void; ids?: string[]; rehearse?: boolean }) {
   const p = ed.p;
+  // Action › Custom Show: the show's slides, then back to the slide that started it.
+  const [custom, setCustom] = useState<{ ids: string[]; back: number } | null>(null);
   const pages = useMemo(() => {
     if (!p) return [];
     const all = sequence(p).filter((x) => !x.slide.disabled);
-    return ids ? ids.map((id) => all.find((x) => x.slide.id === id)).filter((x): x is (typeof all)[number] => !!x) : all;
-  }, [p, ids]);
+    const only = custom?.ids ?? ids;
+    return only ? only.map((id) => all.find((x) => x.slide.id === id)).filter((x): x is (typeof all)[number] => !!x) : all;
+  }, [p, ids, custom]);
+  /** Pages shown, for Action › Last Slide Viewed. */
+  const history = useRef<number[]>([]);
+  const hovered = useRef<string | null>(null);
+  const [tip, setTip] = useState<string | undefined>();
   const start = ids || rehearse ? 0 : Math.max(0, pages.findIndex((x) => x.slide.id === ed.slide?.id));
   const [i, setI] = useState(start);
   const [build, setBuild] = useState<LiveBuild | null>(null);
@@ -195,17 +177,34 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     void import('../../domain/animations').then(({ initialBuild }) => setBuild(ed.p?.showSetup?.noAnimation ? null : initialBuild(slide, Date.now()) ?? null));
   }, [slide, ed.p?.showSetup?.noAnimation]);
   const record = () => { if (rehearse && slide) times.current[slide.id] = (times.current[slide.id] ?? 0) + (Date.now() - shownAt.current) / 1000; };
-  const finish = () => { record(); if (rehearse) setEnded(true); else onClose(); };
-  const goTo = (n: number) => { if (n === i) return; record(); if (n >= pages.length) return finish(); setI(Math.max(0, n)); };
-  const next = async () => {
+  const finish = () => {
+    record();
+    if (custom) { const back = custom.back; setCustom(null); setI(back); return; }
+    if (rehearse) setEnded(true); else onClose();
+  };
+  // Insert › Zoom › Return to Zoom: after the zoomed-to slide (or section) the show comes back here.
+  const zoomBack = useRef<{ from: number; endId: string } | null>(null);
+  const goTo = (n: number) => { if (n === i) return; record(); if (n >= pages.length) return finish(); history.current.push(i); setI(Math.max(0, n)); };
+  const forward = () => {
+    const z = zoomBack.current;
+    if (z && slide?.id === z.endId) { zoomBack.current = null; return goTo(z.from); }
+    goTo(i + 1);
+  };
+  /** Next: the next build, else the next slide (a mouse click only when the slide allows it). */
+  const next = async (mouse = false) => {
     const { advanceBuild } = await import('../../domain/animations');
     const b = slide && !ed.p?.showSetup?.noAnimation ? advanceBuild(slide, build ?? undefined, Date.now()) : null;
-    if (b) setBuild(b); else goTo(i + 1);
+    if (b) setBuild(b);
+    else if (!(mouse && transition?.advanceOnClick === false)) forward();
   };
   const prev = () => goTo(i - 1);
-  const act = (el: SlideElement) => {
-    if (el.kind === 'zoom' && el.targetSlideId) { const n = pages.findIndex((x) => x.slide.id === el.targetSlideId); if (n >= 0) goTo(n); return; }
-    const a = el.action ?? (el.href ? { kind: 'url' as const, url: el.href } : null);
+  const act = (el: SlideElement, over?: ElementAction) => {
+    if (!over && el.kind === 'zoom' && el.targetSlideId) {
+      const n = pages.findIndex((x) => x.slide.id === el.targetSlideId);
+      if (n >= 0) { zoomBack.current = el.zoomReturn ? { from: i, endId: el.zoomEndSlideId ?? el.targetSlideId } : null; goTo(n); }
+      return;
+    }
+    const a = over ?? el.action ?? (el.href ? { kind: 'url' as const, url: el.href } : null);
     if (!a) return;
     if (a.kind === 'next') goTo(i + 1);
     else if (a.kind === 'prev') goTo(i - 1);
@@ -214,15 +213,42 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     else if (a.kind === 'end') finish();
     else if (a.kind === 'slide') { const n = pages.findIndex((x) => x.slide.id === a.slideId); if (n >= 0) goTo(n); }
     else if (a.kind === 'url' && a.url) window.open(a.url, '_blank', 'noopener');
+    else if (a.kind === 'lastViewed') { const n = lastViewed(history.current, i); if (n != null) { record(); setI(n); } }
+    else if (a.kind === 'customShow') {
+      const cs = p?.customShows?.find((c) => c.id === a.show);
+      if (cs?.slideIds.length && !custom) { record(); history.current.push(i); setCustom({ ids: cs.slideIds, back: i }); setI(0); }
+    } else if (a.kind === 'playMedia') playMedia(el, ed.dispatch);
+  };
+  const onStageMove = (e: MouseEvent<HTMLDivElement>) => {
+    const r = stage.current?.querySelector('.slide-canvas, .canvas, div')?.getBoundingClientRect();
+    if (!r?.width) return;
+    const k = CANVAS_W / r.width;
+    const x = (e.clientX - r.left) * k, y = (e.clientY - r.top) * k;
+    const over = hoverAt(slide, x, y);
+    const click = actionAt(slide, x, y);
+    setTip(over?.tooltip ?? click?.tooltip);
+    // Mouse Over fires once as the pointer enters the object.
+    if (over?.id !== hovered.current) {
+      hovered.current = over?.id ?? null;
+      if (over?.hoverAction) act(over, over.hoverAction);
+    }
   };
   const onStageClick = (e: MouseEvent<HTMLDivElement>) => {
     const r = stage.current?.querySelector('.slide-canvas, .canvas, div')?.getBoundingClientRect() ?? stage.current?.getBoundingClientRect();
     if (r && r.width) {
       const k = CANVAS_W / r.width;
-      const hit = actionAt(slide, (e.clientX - r.left) * k, (e.clientY - r.top) * k);
+      const [x, y] = [(e.clientX - r.left) * k, (e.clientY - r.top) * k];
+      // Animations › Trigger: a click on a trigger object plays its sequence (a link on it still goes).
+      if (slide && !ed.p?.showSetup?.noAnimation) {
+        const ids = triggerObjects(slide);
+        const on = [...(slide.elements ?? [])].reverse().find((el) => ids.includes(el.id) && !el.hidden && x >= el.x && x <= el.x + el.w && y >= el.y && y <= el.y + Math.max(el.h, 1));
+        const b = on && clickTrigger(slide, build, on.id, Date.now());
+        if (b) { setBuild(b); const hit = actionAt(slide, x, y); if (hit?.id === on!.id) act(hit); return; }
+      }
+      const hit = actionAt(slide, x, y);
       if (hit) return act(hit);
     }
-    void next();
+    void next(true);
   };
   if (!p || !ed.theme) return null;
   if (ended) {
@@ -253,9 +279,9 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
       if (e.key === 'End') goTo(pages.length - 1);
       if (e.key === 'Escape') finish();
     }} onClick={onStageClick}>
-      <div className="reading-stage" ref={stage}><SlideCanvas slide={slide} theme={ed.theme} background={slide ? resolveBackground(slide, p) : null} bgEffect={p.bgEffect} transition={transition} build={build} animate number={i + 1} /></div>
+      <div className="reading-stage" ref={stage} title={tip} onMouseMove={onStageMove}><SlideCanvas slide={slide} theme={ed.theme} background={slide ? resolveBackground(slide, p) : null} bgEffect={p.bgEffect} transition={transition} build={build} animate number={i + 1} /></div>
       <div className="reading-bar" onClick={(e) => e.stopPropagation()}>
-        <span>{p.title}{ids ? ' · 재구성한 쇼' : ''}</span><span className="grow" />
+        <span>{p.title}{ids || custom ? ' · 재구성한 쇼' : ''}</span><span className="grow" />
         {rehearse && <span className="rehearse-clock">⏱ {Math.floor(onSlide / 60)}:{String(Math.floor(onSlide % 60)).padStart(2, '0')}</span>}
         <button type="button" onClick={prev}>◀</button><span>슬라이드 {i + 1} / {pages.length}</span><button type="button" onClick={() => void next()}>▶</button>
         <button type="button" onClick={finish}>{rehearse ? '예행 연습 마침 (Esc)' : '읽기용 보기 닫기 (Esc)'}</button>
@@ -413,6 +439,25 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         )}
       </main>
       {printing && p && <PrintRun ed={ed} mode={printing} onDone={() => setPrinting(null)} />}
+    </div>
+  );
+}
+
+// ── Notes Page view ───────────────────────────────────────────────────────────────────────────
+/** View › 슬라이드 노트 (DeckCraft view.notesPage): the slide on a page with its notes under it, to edit. */
+export function NotesPageView({ ed, grayscale, onNotes }: { ed: Ed; grayscale?: boolean; onNotes: (notes: string | undefined) => void }) {
+  const p = ed.p, s = ed.slide;
+  if (!p || !s || !ed.theme) return <div className="ppt-empty"><p>프레젠테이션을 고르세요.</p></div>;
+  const m = p.notesMaster;
+  const n = p.slides.indexOf(s) + 1;
+  return (
+    <div className="notes-page-view">
+      <div className={`notes-page ${grayscale ? 'grayscale' : ''}`}>
+        <div className="notes-page-head"><span>{m?.header}</span><span>{m?.date ? new Date().toLocaleDateString() : ''}</span></div>
+        <div className="notes-page-slide"><SlideCanvas slide={s} theme={ed.theme} background={resolveBackground(s, p)} /></div>
+        <textarea className="notes-page-text" disabled={!ed.canEdit} placeholder="텍스트를 입력하십시오" value={s.notes ?? ''} onChange={(e) => onNotes(e.target.value || undefined)} />
+        <div className="notes-page-foot"><span>{m?.footer}</span><span>{m?.pageNumber !== false ? n : ''}</span></div>
+      </div>
     </div>
   );
 }

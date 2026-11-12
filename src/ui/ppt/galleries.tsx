@@ -1,5 +1,5 @@
 // The Shapes and Icons menus: every preset shape (drawn by the engine) by category, Lucide icons.
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { iconCatalog, shapeCatalog, shapeGeometry, type ShapeCategory } from '../../engine';
 import { SHAPE_CATEGORY, shapeLabel } from './ko';
 import { MenuHead } from './ribbonParts';
@@ -17,8 +17,16 @@ export function ShapeThumb({ name, size = 20 }: { name: string; size?: number })
 }
 
 /** The Shapes gallery: `recent` first, then every category. */
-export function ShapeGallery({ onPick, compact, onFreeform }: { onPick: (name: string) => void; compact?: boolean; /** Freeform: Shape / Scribble (Lines). */ onFreeform?: (scribble: boolean) => void }) {
+/**
+ * `keep`: the shape was double-clicked (lock drawing mode: the tool stays on until Esc). Freeform:
+ * Shape / Scribble and Curve (Lines) go to `onFreeform`.
+ */
+export function ShapeGallery({ onPick, compact, onFreeform }: { onPick: (name: string, keep?: boolean) => void; compact?: boolean; onFreeform?: (scribble: boolean, curve?: boolean) => void }) {
   const cat = shapeCatalog();
+  // A click waits a moment so a double-click (lock drawing mode) can still arrive before the menu closes.
+  const pending = useRef<number | undefined>(undefined);
+  const click = (name: string) => { window.clearTimeout(pending.current); pending.current = window.setTimeout(() => onPick(name), 220); };
+  const dbl = (name: string) => { window.clearTimeout(pending.current); onPick(name, true); };
   const groups = useMemo(() => {
     const m = new Map<ShapeCategory, typeof cat>();
     for (const p of cat) {
@@ -35,11 +43,12 @@ export function ShapeGallery({ onPick, compact, onFreeform }: { onPick: (name: s
           <MenuHead>{SHAPE_CATEGORY[c]}</MenuHead>
           <div className="shape-grid">
             {c === 'lines' && onFreeform && <>
+              <button type="button" className="shape-cell" title="곡선 (클릭으로 점 찍기, 두 번 클릭 또는 Enter로 끝)" onClick={() => onFreeform(false, true)}><svg width="20" height="20" viewBox="0 0 20 20"><path d="M2 16 C4 2 10 2 11 10 S16 18 18 4" fill="none" stroke="#3a5f8f" strokeWidth="1.5" /></svg></button>
               <button type="button" className="shape-cell" title="자유형: 도형 (클릭으로 점 찍기, 시작점을 누르면 닫힘, 두 번 클릭하면 끝)" onClick={() => onFreeform(false)}><svg width="20" height="20" viewBox="0 0 20 20"><path d="M2 16 L6 4 L11 12 L18 3 L16 17 Z" fill="#dbe7f6" stroke="#3a5f8f" /></svg></button>
               <button type="button" className="shape-cell" title="자유형: 자유 곡선 (끌어서 그리기)" onClick={() => onFreeform(true)}><svg width="20" height="20" viewBox="0 0 20 20"><path d="M2 14 C5 2 8 18 11 8 S17 4 18 12" fill="none" stroke="#3a5f8f" strokeWidth="1.5" /></svg></button>
             </>}
             {list.map((p) => (
-              <button key={p.name} type="button" className="shape-cell" title={shapeLabel(p.name, p.label)} onClick={() => onPick(p.name)}><ShapeThumb name={p.name} /></button>
+              <button key={p.name} type="button" className="shape-cell" title={`${shapeLabel(p.name, p.label)} (두 번 클릭: 그리기 모드 잠금)`} onClick={() => click(p.name)} onDoubleClick={() => dbl(p.name)}><ShapeThumb name={p.name} /></button>
             ))}
           </div>
         </div>

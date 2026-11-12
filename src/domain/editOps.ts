@@ -5,6 +5,7 @@
 import type { Slide, SlideAnimation, SlideElement } from './types';
 import { CANVAS_H, CANVAS_W } from './canvas';
 import { uid } from './lyrics';
+import { DUPLICATE_OFFSET, freeformPath, movableIds } from './shapeOps';
 import {
   connectShapes, mergeShapes, type MergeMode, type PathShape,
   alignBoxes, boundsOf, distributeBoxes, flipBoxes, newTable, orderIds, recognizeInk, rotateBoxes, shapeCatalog, smoothInk,
@@ -44,6 +45,9 @@ export function selectionUnits(els: Elements, sel: string[]): { box: EBox; membe
   return out;
 }
 
+/** The units an edit may move, size or turn: a locked object (or a group holding one) stays put. */
+const freeUnits = (els: Elements, sel: string[]) => selectionUnits(els, sel).filter((u) => movableIds(els, u.members).length === u.members.length);
+
 const moveBy = (els: Elements, deltas: Map<string, { dx: number; dy: number }>): Elements =>
   els.map((e) => { const d = deltas.get(e.id); return d && (d.dx || d.dy) ? { ...e, x: Math.round(e.x + d.dx), y: Math.round(e.y + d.dy) } : e; });
 
@@ -55,14 +59,14 @@ function applyUnitDeltas(els: Elements, units: { box: EBox; members: string[] }[
 
 /** 맞춤: one object (or 슬라이드에 맞춤) aligns to the slide, several align to each other. */
 export function alignSelection(els: Elements, sel: string[], edge: AlignEdge, toSlide = false): Elements {
-  const units = selectionUnits(els, sel);
+  const units = freeUnits(els, sel);
   if (!units.length) return els;
   return applyUnitDeltas(els, units, alignBoxes(units.map((u) => u.box), edge, toSlide || units.length < 2 ? 'slide' : 'selection'));
 }
 
 /** 가로 / 세로 간격을 동일하게. */
 export function distributeSelection(els: Elements, sel: string[], dir: 'horizontal' | 'vertical', toSlide = false): Elements {
-  const units = selectionUnits(els, sel);
+  const units = freeUnits(els, sel);
   if (!units.length) return els;
   return applyUnitDeltas(els, units, distributeBoxes(units.map((u) => u.box), dir, toSlide || units.length < 3 ? 'slide' : 'selection'));
 }
@@ -111,7 +115,7 @@ export const canUngroup = (els: Elements, sel: string[]) => els.some((e) => sel.
 /** 회전: 오른쪽 / 왼쪽으로 90도. A group turns about its own centre. */
 export function rotateSelection(els: Elements, sel: string[], by: number): Elements {
   let next = els;
-  for (const u of selectionUnits(els, sel)) {
+  for (const u of freeUnits(els, sel)) {
     const members = next.filter((e) => u.members.includes(e.id));
     const placed = rotateBoxes(members.map(boxOf), by, members.length > 1);
     next = next.map((e) => { const p = placed.find((x) => x.id === e.id); return p ? { ...e, x: Math.round(p.x), y: Math.round(p.y), rotation: p.rot || undefined } : e; });
@@ -122,7 +126,7 @@ export function rotateSelection(els: Elements, sel: string[], by: number): Eleme
 /** 상하 / 좌우 대칭. */
 export function flipSelection(els: Elements, sel: string[], axis: 'horizontal' | 'vertical'): Elements {
   let next = els;
-  for (const u of selectionUnits(els, sel)) {
+  for (const u of freeUnits(els, sel)) {
     const members = next.filter((e) => u.members.includes(e.id));
     const placed = flipBoxes(members.map(boxOf), axis, members.length > 1);
     next = next.map((e) => {
@@ -136,7 +140,7 @@ export function flipSelection(els: Elements, sel: string[], axis: 'horizontal' |
 }
 
 export function nudgeSelection(els: Elements, sel: string[], dx: number, dy: number): Elements {
-  const ids = expandSelection(els, sel);
+  const ids = freeUnits(els, sel).flatMap((u) => u.members);
   return els.map((e) => (ids.includes(e.id) ? { ...e, x: e.x + dx, y: e.y + dy } : e));
 }
 
@@ -148,8 +152,9 @@ export function deleteSelection(slide: Slide, sel: string[]): Partial<Slide> {
   return { elements: elements.length ? elements : undefined, animations: animations?.length ? animations : undefined };
 }
 
-/** Copies of `source` with fresh ids (groups stay grouped among themselves), moved by `offset`. */
-export function cloneElements(source: Elements, offset = 0): Elements {
+/** Copies of `source` with fresh ids (groups stay grouped among themselves), moved by `offset` (or [dx, dy]). */
+export function cloneElements(source: Elements, offset: number | [number, number] = 0): Elements {
+  const [ox, oy] = typeof offset === 'number' ? [offset, offset] : offset;
   const groups = new Map<string, string>();
   return source.map((e) => {
     let groupId = e.groupId;
@@ -157,15 +162,16 @@ export function cloneElements(source: Elements, offset = 0): Elements {
       if (!groups.has(groupId)) groups.set(groupId, uid('g'));
       groupId = groups.get(groupId);
     }
-    return { ...e, id: uid('el'), groupId, x: e.x + offset, y: e.y + offset };
+    return { ...e, id: uid('el'), groupId, x: e.x + ox, y: e.y + oy };
   });
 }
 
-/** 복제 (Ctrl+D): the copies and their ids, to select. */
-export function duplicateSelection(els: Elements, sel: string[]): { elements: Elements; ids: string[] } {
+/** 복제 (Ctrl+D): the copies and their ids, to select, set off by `offset` (12 pt; see shapeOps.duplicateOffset). */
+export function duplicateSelection(els: Elements, sel: string[], offset: [number, number] = [DUPLICATE_OFFSET, DUPLICATE_OFFSET]): { elements: Elements; ids: string[]; pairs: [string, string][] } {
   const ids = expandSelection(els, sel);
-  const copies = cloneElements(els.filter((e) => ids.includes(e.id)), 30);
-  return { elements: [...els, ...copies], ids: copies.map((c) => c.id) };
+  const sources = els.filter((e) => ids.includes(e.id));
+  const copies = cloneElements(sources, offset);
+  return { elements: [...els, ...copies], ids: copies.map((c) => c.id), pairs: sources.map((e, i) => [e.id, copies[i].id]) };
 }
 
 /** The look Format Painter (서식 복사) carries from one object to another. */
@@ -314,14 +320,17 @@ export function mergeSelection(els: Elements, sel: string[], mode: MergeMode): {
 }
 
 /** A freeform (clicked / dragged points, canvas pixels) as a shape: closed and filled, or an open line. */
-export function makeFreeform(points: [number, number][], closed: boolean, look: Partial<SlideElement> = {}): SlideElement | null {
+export function makeFreeform(points: [number, number][], closed: boolean, look: Partial<SlideElement> = {}, smooth = false): SlideElement | null {
   if (points.length < 2) return null;
   const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
   const x = Math.min(...xs), y = Math.min(...ys);
   const w = Math.max(1, Math.max(...xs) - x), h = Math.max(1, Math.max(...ys) - y);
-  const d = points.map((p, i) => `${i ? 'L' : 'M'}${Math.round((p[0] - x) * 10) / 10} ${Math.round((p[1] - y) * 10) / 10}`).join(' ') + (closed ? ' Z' : '');
+  // Curve: a smooth line through the clicked points (DeckCraft's freeform_path).
+  const d = smooth
+    ? freeformPath(points.map((p) => [p[0] - x, p[1] - y]), closed, true)
+    : points.map((p, i) => `${i ? 'L' : 'M'}${Math.round((p[0] - x) * 10) / 10} ${Math.round((p[1] - y) * 10) / 10}`).join(' ') + (closed ? ' Z' : '');
   return {
-    id: uid('el'), kind: 'shape', x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), path: d, pathW: w, pathH: h, name: closed ? '자유형: 도형' : '자유형: 자유 곡선',
+    id: uid('el'), kind: 'shape', x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), path: d, pathW: w, pathH: h, name: smooth ? '곡선' : closed ? '자유형: 도형' : '자유형: 자유 곡선',
     ...(closed ? { fill: '#2E6FD8', stroke: '#1B4FA8', strokeWidth: 3 } : { fill: 'transparent', stroke: '#ffffff', strokeWidth: 6 }), ...look,
   };
 }

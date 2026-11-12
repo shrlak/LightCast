@@ -77,7 +77,7 @@ export function SlideEditorModal({ state, dispatch, presentation: p, slideId, sl
       <div className="modal slide-editor-modal" role="dialog" aria-modal="true" aria-label="슬라이드별 편집" onKeyDown={(e) => {
         if (e.key === 'Escape') { e.stopPropagation(); onClose(); return; }
         const target = e.target as HTMLElement;
-        if (e.defaultPrevented || e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey || target.isContentEditable || target.closest('input,textarea,select')) return;
+        if (e.defaultPrevented || e.nativeEvent.isComposing || e.metaKey || e.ctrlKey || e.altKey || target.isContentEditable || (target.closest('input,textarea,select') && !target.closest('[data-ime-sink]'))) return;
         if ((e.key === 'Backspace' || e.key === 'Delete') && target.closest('.slide-editor-list, .ce-root') && !selectedElement) {
           e.preventDefault(); e.stopPropagation();
           if (!e.repeat) remove();

@@ -79,7 +79,8 @@ const KEYS: Record<string, Action> = {
 
 function isTyping(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
-  return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName));
+  // The slide canvas's hidden typing field (CanvasEditor `sink`) is not typing.
+  return !!el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName)) && !el.closest('[data-ime-sink]');
 }
 
 function download(name: string, data: string, type: string) {

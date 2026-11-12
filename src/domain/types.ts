@@ -1,6 +1,8 @@
 export type HAlign = 'left' | 'center' | 'right' | 'justify';
 /** Bullets or numbering in front of each line (PowerPoint's 글머리 기호 / 번호 매기기). */
-export type ListStyle = 'bullet' | 'circle' | 'square' | 'check' | 'arrow' | 'number' | 'number-paren' | 'roman' | 'alpha' | 'hangul';
+export type ListStyle = 'bullet' | 'circle' | 'square' | 'check' | 'arrow' | 'number' | 'number-paren' | 'roman' | 'alpha' | 'hangul'
+  /** DeckCraft's other bullets (□ ◆ – ★) and numbering schemes (i. a. a)). */
+  | 'box' | 'diamond' | 'dash' | 'star' | 'roman-lower' | 'alpha-lower' | 'alpha-lower-paren';
 export type VAlign = 'top' | 'middle' | 'bottom';
 
 /** Text styling, sized against the 1440x1080 (4:3) canvas. */
@@ -61,7 +63,9 @@ export type MediaFit = 'cover' | 'contain' | 'fill';
 export type Background =
   | { kind: 'color'; value: string }
   | { kind: 'gradient'; value: string }
-  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean }
+  | { kind: 'media'; mediaId: string; mediaType: 'image' | 'video'; fit?: MediaFit; loop?: boolean; /** Format Background › Transparency, 0–1. */ transparency?: number }
+  /** Format Background › Pattern fill (domain/patterns). */
+  | { kind: 'pattern'; preset: string; fg: string; bg: string }
   /** Built-in image shipped with the app (the church's template backgrounds). */
   | { kind: 'image'; url: string; fit?: MediaFit }
   | { kind: 'camera'; deviceId: string; label: string }
@@ -107,7 +111,9 @@ export interface MediaMeta {
 
 /** 'table', 'chart', 'icon' and 'ink' are drawn by the Rust engine (src/engine), as are preset shapes. */
 export type ElementKind = 'text' | 'image' | 'shape' | 'video' | 'camera' | 'qr' | 'table' | 'chart' | 'icon' | 'ink' | 'audio' | 'zoom';
-export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot';
+export type DashStyle = 'solid' | 'dash' | 'dot' | 'dashDot' | 'lgDash' | 'sysDash' | 'sysDot';
+/** Shape Outline › Arrows: the arrowhead drawn at a line's end (DeckCraft's LineEnd kinds). */
+export type ArrowKind = 'triangle' | 'stealth' | 'diamond' | 'oval' | 'arrow';
 
 /** A stretch of text inside a line with its own character formatting (see domain/richText). */
 export interface TextRun {
@@ -129,9 +135,12 @@ export interface TextRun {
 
 /** What clicking an object does in a slide show (Insert › Action). */
 export interface ElementAction {
-  kind: 'next' | 'prev' | 'first' | 'last' | 'slide' | 'url' | 'end';
+  /** lastViewed: back to the slide shown before; customShow: play custom show `show` and come back; playMedia: play the object's own audio / video. */
+  kind: 'next' | 'prev' | 'first' | 'last' | 'slide' | 'url' | 'end' | 'lastViewed' | 'customShow' | 'playMedia';
   slideId?: string;
   url?: string;
+  /** customShow: the custom show's id. */
+  show?: string;
 }
 
 /** Playback (video / audio objects). */
@@ -147,10 +156,16 @@ export interface MediaPlayback {
   end?: number;
   fadeIn?: number;
   fadeOut?: number;
-  /** Audio: hide the icon during the show. */
+  /** Hide the object during the show while it is not playing (audio icon, video). */
   hideDuringShow?: boolean;
   /** Video poster frame, seconds. */
   poster?: number;
+  /** Rewind after playing: back to the start (or poster frame) when it ends. */
+  rewind?: boolean;
+  /** Play across slides: audio keeps playing after its slide is left. */
+  acrossSlides?: boolean;
+  /** Play full screen: a video fills the slide while it plays. */
+  fullScreen?: boolean;
 }
 
 /** Picture Format adjustments; the shown picture is made from `original` by the engine. */
@@ -216,8 +231,14 @@ export interface SlideElement {
   paragraphs?: ElementParagraph[];
   /** Character formatting of a box without `paragraphs`: the runs of each line of `text`. */
   runs?: TextRun[][];
-  /** Grow the box to fit its text, preserving font sizes (default on). */
-  autoFit?: boolean;
+  /**
+   * Format Shape › 텍스트 상자 › 자동 맞춤: false 자동 맞춤 안 함, 'shrink' 넘치면 텍스트 크기 조정,
+   * 'resize' 도형을 텍스트 크기에 맞춤 (PowerPoint / DeckCraft, domain/textFit). true / unset is
+   * LightCast's fit for template boxes: grow inside the slide, preserving font sizes.
+   */
+  autoFit?: boolean | 'shrink' | 'resize';
+  /** 'shrink' boxes: the scale their text is drawn at so it fits (PowerPoint's normAutofit fontScale, 0.1–1). */
+  fontScale?: number;
   /** PowerPoint text options, as on the slide text (see Theme). */
   underline?: boolean;
   strike?: boolean;
@@ -276,6 +297,10 @@ export interface SlideElement {
   alt?: string;
   /** A link opened when the object is clicked in a slide show. */
   href?: string;
+  /** Insert › Link › ScreenTip: shown when the pointer rests on the object in a slide show. */
+  tooltip?: string;
+  /** Insert › Action › Mouse Over: what pointing at the object does in a slide show. */
+  hoverAction?: ElementAction;
   table?: import('../engine').TableData;
   chart?: import('../engine').ChartData;
   /** Lucide icon name ('icon' objects). */
@@ -283,13 +308,29 @@ export interface SlideElement {
   /** Glued connector: its ends follow these objects' connection sites. */
   connect?: { from?: { id: string; site: number }; to?: { id: string; site: number } };
   /** Shape effects beyond shadow / glow. */
-  shadowKind?: 'outer' | 'inner' | 'perspective';
+  shadowKind?: 'outer' | 'inner' | 'perspective' | 'bottom' | 'center';
+  /** Format Shape › Shadow: colour, transparency (0–1), blur and distance (canvas px), angle (°). */
+  shadowOpts?: { color?: string; transparency?: number; blur?: number; dist?: number; dir?: number };
   glowSize?: number;
+  /** Glow transparency 0–1 (default 0.6, PowerPoint's 60%). */
+  glowAlpha?: number;
   reflection?: boolean;
-  /** 3-D rotation in degrees (x tilts forward, y turns sideways). */
-  rotate3d?: { x: number; y: number };
+  /** Reflection variations: size (0–1 of the object shown), transparency (0–1), distance (px). */
+  reflectionOpts?: { size?: number; transparency?: number; dist?: number };
+  /** 3-D rotation in degrees (x tilts forward, y turns sideways, z turns in the slide); `persp` draws it in perspective. */
+  rotate3d?: { x: number; y: number; z?: number; persp?: boolean };
+  /** The 3-D rotation preset picked (DeckCraft's camera presets), shown as chosen in the gallery. */
+  camera3d?: string;
   bevel?: boolean;
-  /** Selection pane lock: cannot be selected or moved on the slide. */
+  /** Bevel preset (circle, relaxedInset, cross, coolSlant, angle, softRound, convex, slope, divot, riblet, hardEdge, artDeco). */
+  bevelKind?: string;
+  /** Arrowhead kinds and size (default triangle, medium) where `arrowStart` / `arrowEnd` are on. */
+  arrowStartKind?: ArrowKind;
+  arrowEndKind?: ArrowKind;
+  arrowSize?: 'sm' | 'med' | 'lg';
+  /** Size and Position › 가로 세로 비율 고정 (pictures default to on). */
+  lockAspect?: boolean;
+  /** Selection pane lock: selectable and formattable, but not moved, sized or turned on the slide. */
   locked?: boolean;
   /** Placed by the slide master (kept in step with it; not selectable on the slide). */
   master?: boolean;
@@ -298,15 +339,20 @@ export interface SlideElement {
   picture?: PictureAdjust;
   /** Picture Styles preset. */
   pictureStyle?: string;
+  /** An animated GIF held on its first frame (DeckCraft media.gifPlay). */
+  gifPaused?: boolean;
   /** Picture Format › Crop › Crop to Shape: the preset the picture is cut to. */
   maskShape?: string;
   playback?: MediaPlayback;
   action?: ElementAction;
   /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */
   targetSlideId?: string;
+  /** Zoom › Return to Zoom: after `zoomEndSlideId` (default the target) the show comes back to the zoom's slide. */
+  zoomReturn?: boolean;
+  zoomEndSlideId?: string;
   zoomOf?: { slide: Slide; theme: Theme; background: Background | null };
-  /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it). */
-  smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number } };
+  /** SmartArt: the diagram this object belongs to (one member, `smartArt.owner`, keeps it); `rtl`: Right to Left. */
+  smartArt?: { kind: string; style: string; colors: string; nodes: { text: string; level: number }[]; box: { x: number; y: number; w: number; h: number }; rtl?: boolean };
   /** Text effects. */
   caps?: 'all' | 'small';
   /** WordArt › Text Effects › Transform: the text follows this path. */
@@ -345,7 +391,12 @@ export interface SlideAnimation {
   start: 'click' | 'with' | 'after';
   durationMs: number;
   delayMs: number;
+  /** Timing › Repeat: times played (unset/1 = once); `REPEAT_UNTIL_CLICK` = until the next click. */
   repeat?: number;
+  /** Timing › Rewind when done playing: the object goes back to how it was before the effect. */
+  rewind?: boolean;
+  /** Trigger › On Click of: the object (id) whose click plays this effect, outside the slide's clicks. */
+  trigger?: string;
   /** Motion Paths › Custom Path: `M 0 0 L dx dy …` in slide fractions from where the object sits. */
   path?: string;
   /**
@@ -363,6 +414,8 @@ export interface SlideComment {
   at: number;
   resolved?: boolean;
   replies?: { author: string; text: string; at: number }[];
+  /** The object it was written on (selected when the comment was added), as DeckCraft anchors it. */
+  elementId?: string;
 }
 
 /** Things a slide does when it goes live (ProPresenter "slide actions"). */
@@ -425,6 +478,10 @@ export interface Slide {
 export interface SlideFooter {
   /** true: today's date; a string: that fixed text. */
   date?: boolean | string;
+  /** Header & Footer › Don't show on title slide. */
+  hideOnTitle?: boolean;
+  /** Date & Time format of an updating date (insertTools DATE_FORMATS id); the locale date when absent. */
+  dateFormat?: string;
   slideNumber?: boolean;
   text?: string;
 }
@@ -462,6 +519,12 @@ export interface Transition {
   option?: string;
   /** Transitions › Sound: an audio file from the media library played as the slide comes on. */
   sound?: string;
+  /** Sound › Loop Until Next Sound. */
+  soundLoop?: boolean;
+  /** Sound › [Stop Previous Sound]: the slide stops a sound still playing. */
+  stopSound?: boolean;
+  /** Timing › On Mouse Click; `false`: a click no longer moves to the next slide (animations still play). */
+  advanceOnClick?: boolean;
 }
 
 export interface Presentation {

@@ -169,6 +169,46 @@ fn a_by_paragraph_build_takes_a_click_per_paragraph() {
 }
 
 #[test]
+fn a_triggered_effect_plays_on_its_own_sequence() {
+    // "t" fades in on a click on the button "b"; "p" is on the slide's clicks.
+    let spec = json!({
+        "anims": [
+            {"elementId": "p", "effect": "fade", "class": "entrance", "start": "click", "durationMs": 500},
+            {"elementId": "t", "effect": "fade", "class": "entrance", "start": "click", "durationMs": 500, "trigger": "b"},
+            {"elementId": "t", "effect": "spin", "class": "emphasis", "start": "click", "durationMs": 1000, "trigger": "b", "rewind": true, "repeat": 4294967295u32}
+        ],
+        "boxes": [{"id": "t", "x": 100, "y": 100, "w": 400, "h": 200}, {"id": "p", "x": 600, "y": 600, "w": 300, "h": 200}, {"id": "b", "x": 0, "y": 900, "w": 200, "h": 100}],
+        "slideW": 1440, "slideH": 1080
+    });
+    let mut req = spec.clone();
+    req["op"] = json!("anim.prepare");
+    let p = ok(req);
+    assert_eq!(p["steps"], 1, "triggered effects are not slide clicks");
+    assert_eq!(p["triggers"][0]["elementId"], "b");
+    assert_eq!(p["triggers"][0]["steps"], 2);
+    assert!(p["effects"].as_array().unwrap().iter().any(|e| e["trigger"] == "b"));
+    assert!(p["effects"].as_array().unwrap().iter().any(|e| e["trigger"].is_null()));
+    let key = p["key"].as_str().unwrap().to_string();
+    let main_done = ok(json!({"op": "anim.sample", "key": key, "step": 1, "t": 0.0}));
+    assert_eq!(main_done["t"]["visible"], false, "not played until the trigger is clicked");
+    let clicked = ok(json!({"op": "anim.sample", "key": key, "step": 1, "t": 0.0, "triggers": [{"elementId": "b", "step": 1, "t": 0.0}]}));
+    assert_eq!(clicked["t"]["visible"], true);
+}
+
+#[test]
+fn table_cells_keep_their_other_settings_through_edits() {
+    let mut t = ok(json!({"op": "table.edit", "table": {}, "action": "new", "r": 2, "c": 2}));
+    t["rows"][1][1]["anchor"] = json!("bottom");
+    t["rows"][1][1]["dir"] = json!("vert270");
+    t["effect"] = json!("bevel");
+    let ins = ok(json!({"op": "table.edit", "table": t, "action": "insertRowAbove", "r": 0, "c": 0}));
+    assert_eq!(ins["rows"][2][1]["anchor"], "bottom");
+    assert_eq!(ins["rows"][2][1]["dir"], "vert270");
+    assert_eq!(ins["effect"], "bevel");
+    assert!(ins["rows"][0][1].get("anchor").is_none(), "a new row takes no look from its neighbours");
+}
+
+#[test]
 fn transitions_give_frames() {
     let cat = ok(json!({"op": "transition.catalog"}));
     assert!(cat.as_array().unwrap().len() >= 45);

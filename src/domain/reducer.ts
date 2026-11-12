@@ -3,7 +3,7 @@ import { exclusivePresentationMedia } from './mediaCleanup';
 import { deletedServices, isServicePlaylist } from './sunday/cleanup';
 import { isSaturdayDawnName, saturdayDawnImageCleanup } from './saturdayDawn';
 import type {
-  Arrangement, Background, Library, MacroStep, MediaMeta, MessageTemplate, Macro, Playlist, PlaylistItem,
+  Arrangement, Background, Library, MacroStep, MediaMeta, MediaPlayback, MessageTemplate, Macro, Playlist, PlaylistItem,
   Presentation, Prop, RetreatLook, Schedule, Screen, Slide, SlideAction, SundaySettings, Theme, Timer, DeviceIdentity, DeviceRegistration, ActivityEntry,
 } from './types';
 import { retreatBackground } from './motion';
@@ -28,7 +28,8 @@ interface HistoryPosition { before: Cursor | null; after: Cursor | null }
 
 export interface AppState extends NavState {
   selectedId: string | null;
-  audio: { mediaId: string | null; nonce: number };
+  /** `loop`: Transitions › Sound › Loop Until Next Sound. */
+  audio: { mediaId: string | null; nonce: number; playback?: MediaPlayback; slideId?: string; loop?: boolean };
   /** Position in the looping announcements layer. */
   announce: { presentationId: string; seq: number } | null;
   past: Library[];
@@ -102,7 +103,8 @@ type DomainAction =
   | { type: 'live/message'; message: string | null }
   | { type: 'live/outputTimer'; id: string | null }
   | { type: 'live/video'; playing?: boolean; restart?: boolean }
-  | { type: 'audio/play'; mediaId: string | null }
+  /** `playback`: an audio object's own settings (trim, fades, volume, loop); `slideId`: the slide it stops leaving, unless it plays across slides. */
+  | { type: 'audio/play'; mediaId: string | null; playback?: MediaPlayback; slideId?: string }
   | { type: 'live/logo'; on?: boolean }
   | { type: 'library/logo'; mediaId: string | null }
   | { type: 'live/stageMessage'; message: string | null }
@@ -176,8 +178,16 @@ function live(s: AppState, c: Cursor, now?: number): AppState {
   if (next.playlistIndex !== s.playlistIndex && next.cursor) next = { ...next, selectedId: next.cursor.presentationId };
   // Transitions › Sound, or an audio object set to play by itself: the operator's player starts it.
   const shown = next.live.slide;
-  const sound = shown?.transition?.sound ?? shown?.elements?.find((e) => e.kind === 'audio' && e.mediaId && e.playback?.autoplay && !e.hidden)?.mediaId;
-  if (sound) next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1 } };
+  const obj = shown?.elements?.find((e) => e.kind === 'audio' && e.mediaId && e.playback?.autoplay && !e.hidden);
+  const sound = shown?.transition?.sound ?? obj?.mediaId;
+  if (sound) {
+    const own = !shown?.transition?.sound && obj ? obj : undefined;
+    next = { ...next, audio: { mediaId: sound, nonce: next.audio.nonce + 1, ...(own?.playback ? { playback: own.playback } : {}), ...(own && !own.playback?.acrossSlides ? { slideId: shown!.id } : {}), ...(shown?.transition?.sound === sound && shown.transition.soundLoop ? { loop: true } : {}) } };
+  }
+  // [Stop Previous Sound]: the slide silences a sound still playing.
+  else if (shown?.transition?.stopSound && next.audio.mediaId) next = { ...next, audio: { mediaId: null, nonce: next.audio.nonce + 1 } };
+  // An audio object stops when its slide is left unless it plays across slides (DeckCraft media.options acrossSlides).
+  else if (next.audio.slideId && next.audio.slideId !== shown?.id) next = { ...next, audio: { mediaId: null, nonce: next.audio.nonce + 1 } };
   const actions = next.live.slide?.actions;
   if (actions?.length) next = runActions(next, actions, now ?? 0);
   if (now != null && next.cursor && next.cursor.presentationId !== prevPres) {
@@ -503,7 +513,7 @@ function core(s: AppState, a: Action): AppState {
     case 'sunday/settings':
       return setLib(s, { sunday: { ...lib.sunday, ...a.patch } });
     case 'library/replace':
-      return { ...createInitialState(keepProtectedMaterials({ ...a.library, cloudResetId: lib.cloudResetId ?? a.library.cloudResetId, protectionChanges: mergeProtectionChanges(lib, a.library) }, protectionWinners(lib), [lib])), past: [...s.past, s.library].slice(-60), pastPositions: [...s.pastPositions, { before: s.cursor, after: null }].slice(-60) };
+      return { ...createInitialState(keepProtectedMaterials({ ...a.library, cloudResetId: lib.cloudResetId ?? a.library.cloudResetId, protectionChanges: mergeProtectionChanges(lib, a.library) }, protectionWinners(lib), [lib])), past: [...s.past, s.library].slice(-HISTORY_DEPTH), pastPositions: [...s.pastPositions, { before: s.cursor, after: null }].slice(-HISTORY_DEPTH) };
     case 'device/register':
       return setLib(s, { devices: [...(lib.devices ?? []).filter((d) => d.id !== a.device.id), a.device] });
     case 'activity/record':
@@ -551,7 +561,7 @@ function core(s: AppState, a: Action): AppState {
         live: { ...s.live, video: { playing: a.playing ?? s.live.video.playing, restart: s.live.video.restart + (a.restart ? 1 : 0) } },
       };
     case 'audio/play':
-      return { ...s, audio: { mediaId: a.mediaId, nonce: s.audio.nonce + 1 } };
+      return { ...s, audio: { mediaId: a.mediaId, nonce: s.audio.nonce + 1, ...(a.mediaId && a.playback ? { playback: a.playback } : {}), ...(a.mediaId && a.slideId ? { slideId: a.slideId } : {}) } };
     case 'live/logo':
       return { ...s, live: { ...s.live, logo: a.on ?? !s.live.logo, logoMediaId: lib.logoMediaId } };
     case 'library/logo':
@@ -600,6 +610,9 @@ function core(s: AppState, a: Action): AppState {
 }
 
 /** Actions that change the library but should not be undoable. */
+/** Undo steps kept (PowerPoint allows up to 150; DeckCraft keeps 500 with a byte budget, which a whole-library snapshot cannot do). */
+export const HISTORY_DEPTH = 150;
+
 const NO_HISTORY = new Set<Action['type']>(['trash/expire', 'trash/purge', 'device/register', 'activity/record', 'timer/op', 'macro/run', 'usage/clear', 'library/replace', 'schedule/ran', 'slide/runActions', 'online/songs', 'songs/dedupe', 'live/videoClock', 'library/merge']);
 
 function historyKey(a: Action): string {
@@ -622,10 +635,10 @@ function reduceState(s: AppState, a: Action): AppState {
     if (!from.length) return s;
     const library = from[from.length - 1];
     const rest = from.slice(0, -1);
-    const other = [...(a.type === 'undo' ? s.future : s.past), s.library].slice(-60);
+    const other = [...(a.type === 'undo' ? s.future : s.past), s.library].slice(-HISTORY_DEPTH);
     const positions = a.type === 'undo' ? s.pastPositions : s.futurePositions;
     const position = positions.at(-1);
-    const otherPositions = [...(a.type === 'undo' ? s.futurePositions : s.pastPositions), position ?? { before: s.cursor, after: s.cursor }].slice(-60);
+    const otherPositions = [...(a.type === 'undo' ? s.futurePositions : s.pastPositions), position ?? { before: s.cursor, after: s.cursor }].slice(-HISTORY_DEPTH);
     const next = { ...s, library, lastKey: null, ...(a.type === 'undo'
       ? { past: rest, future: other, pastPositions: positions.slice(0, -1), futurePositions: otherPositions }
       : { past: other, future: rest, pastPositions: otherPositions, futurePositions: positions.slice(0, -1) }) };
@@ -665,8 +678,8 @@ function reduceState(s: AppState, a: Action): AppState {
   const coalesce = !slideList && key === s.lastKey && (a.type === 'theme/upsert' || a.type.endsWith('/update') || a.type.endsWith('/upsert'));
   return syncLive({
     ...next,
-    past: coalesce ? s.past : [...s.past, s.library].slice(-60),
-    pastPositions: coalesce ? s.pastPositions.map((p, i, all) => i === all.length - 1 ? { ...p, after: next.cursor } : p) : [...s.pastPositions, { before: s.cursor, after: next.cursor }].slice(-60),
+    past: coalesce ? s.past : [...s.past, s.library].slice(-HISTORY_DEPTH),
+    pastPositions: coalesce ? s.pastPositions.map((p, i, all) => i === all.length - 1 ? { ...p, after: next.cursor } : p) : [...s.pastPositions, { before: s.cursor, after: next.cursor }].slice(-HISTORY_DEPTH),
     future: [],
     futurePositions: [],
     lastKey: key,
