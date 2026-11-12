@@ -267,7 +267,7 @@ export interface SlideElement {
   /** The group this object was in before Ungroup (Arrange › Regroup puts it back). */
   prevGroupId?: string;
   /** A layout placeholder: shows a prompt in the editor while empty (Slide Master › Insert Placeholder). */
-  placeholder?: 'title' | 'body' | 'text' | 'picture';
+  placeholder?: 'title' | 'body' | 'text' | 'picture' | 'content' | 'chart' | 'table' | 'media' | 'date' | 'footer' | 'slideNumber';
   /** Name shown in the Selection pane. */
   name?: string;
   /** Hidden in the Selection pane: kept on the slide, not drawn. */
@@ -510,7 +510,7 @@ export interface Presentation {
   /** Design › Variants › Colors: the engine colour scheme tables, charts and the colour picker use. */
   colorScheme?: string;
   /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
-  master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[] };
+  master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[]; /** Master › Preserve: kept even when no slide uses it. */ preserve?: boolean };
   /** Slide Show › Set Up Slide Show. */
   showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean };
   /** Slide Show › Custom Slide Show: named lists of slides. */

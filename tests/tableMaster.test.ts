@@ -2,6 +2,8 @@
 import { describe, expect, it } from 'vitest';
 import { newTable, type TableData } from '../src/engine';
 import { drawTableLine, eraseTableLine } from '../src/domain/drawTable';
+import { deleteLayoutBlocker, duplicateLayout, insertLayout, makePlaceholder, placeholderState, setPlaceholders, slideFromLayout, withMaster } from '../src/domain/master';
+import type { MasterLayout, Slide } from '../src/domain/types';
 
 /** The grid as text: o = a cell, M = a merged cell's anchor, . = covered. */
 const grid = (t: TableData) => t.rows.map((r) => r.map((c) => (c.hMerge || c.vMerge ? '.' : (c.span ?? 1) > 1 || (c.rowSpan ?? 1) > 1 ? 'M' : 'o')).join('')).join('/');
@@ -40,5 +42,57 @@ describe('Draw Table eraser', () => {
     expect(eraseTableLine(m, 200, 100, [150, 50], 6)).toBeNull();
     const all = eraseTableLine(m, 200, 100, [100, 75], 6)!;
     expect(grid(all)).toBe('M./M.');
+  });
+});
+
+describe('Slide Master placeholders', () => {
+  it('turns title and footer placeholders on and off like Master Layout', () => {
+    let els = setPlaceholders([], { title: true, date: true, footer: true, slideNumber: true });
+    expect(placeholderState(els)).toEqual({ title: true, text: false, date: true, footer: true, slideNumber: true });
+    expect(els.find((e) => e.placeholder === 'slideNumber')!.text).toBe('{slide}');
+    // Already on: nothing is added twice.
+    expect(setPlaceholders(els, { title: true }).length).toBe(els.length);
+    els = setPlaceholders(els, { date: false, footer: false, slideNumber: false });
+    expect(placeholderState(els)).toMatchObject({ title: true, date: false, footer: false, slideNumber: false });
+    expect(setPlaceholders(els, { title: false })).toEqual([]);
+  });
+  it("copies the master's own placeholder with a new id and no prompt text", () => {
+    const master = [{ ...makePlaceholder('title'), text: 'Master title', x: 5 }];
+    const [t] = setPlaceholders([], { title: true }, master);
+    expect(t).toMatchObject({ placeholder: 'title', x: 5, text: '' });
+    expect(t.id).not.toBe(master[0].id);
+  });
+  it('makes the Insert Placeholder variants', () => {
+    for (const k of ['content', 'chart', 'table', 'media', 'picture', 'date'] as const) expect(makePlaceholder(k).placeholder).toBe(k);
+    expect(makePlaceholder('chart').kind).toBe('shape');
+  });
+  it('keeps placeholders off slides: not copied from the master, footers not from the layout', () => {
+    const slide: Slide = { id: 's', group: 'g', text: '' };
+    expect(withMaster(slide, [makePlaceholder('title'), { id: 'logo', kind: 'shape', x: 0, y: 0, w: 1, h: 1 }]).elements?.map((e) => e.id)).toEqual(['master:logo']);
+    const layout: MasterLayout = { id: 'l', name: 'L', elements: [makePlaceholder('title'), makePlaceholder('slideNumber')] };
+    expect(slideFromLayout(layout, 'g').elements?.map((e) => e.placeholder)).toEqual(['title']);
+  });
+});
+
+describe('Slide Master layouts', () => {
+  const L = (id: string): MasterLayout => ({ id, name: id, elements: [makePlaceholder('title')] });
+  it("inserts after the current layout, kept, with the master's title", () => {
+    const r = insertLayout([L('a'), L('b')], [], 'a');
+    expect(r.layouts.map((l) => (l.id === r.id ? 'new' : l.id))).toEqual(['a', 'new', 'b']);
+    expect(r.layouts[1]).toMatchObject({ preserve: true, name: '사용자 지정 레이아웃 3' });
+    expect(r.layouts[1].elements[0].placeholder).toBe('title');
+  });
+  it('duplicates a layout with new ids', () => {
+    const ls = [L('a'), L('b')];
+    const r = duplicateLayout(ls, 'a')!;
+    expect(r.layouts.map((l) => l.name)).toEqual(['a', '1_a', 'b']);
+    expect(r.layouts[1].elements[0].id).not.toBe(ls[0].elements[0].id);
+    expect(duplicateLayout(ls, 'x')).toBeNull();
+  });
+  it('refuses to delete a layout in use or the last one', () => {
+    const slides: Slide[] = [{ id: 's', group: 'g', text: '', layoutId: 'a' }];
+    expect(deleteLayoutBlocker([L('a'), L('b')], slides, 'a')).toMatch(/슬라이드/);
+    expect(deleteLayoutBlocker([L('a')], [], 'a')).toMatch(/하나/);
+    expect(deleteLayoutBlocker([L('a'), L('b')], slides, 'b')).toBeNull();
   });
 });

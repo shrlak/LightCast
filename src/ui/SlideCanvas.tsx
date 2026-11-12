@@ -4,7 +4,7 @@ import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextRun,
 import { lineRuns, slideLineRuns } from '../domain/richText';
 import { morphFrame, smooth } from '../domain/morph';
 import { DEFAULT_TAB, decimalAt, layoutTabLine, splitRunsAtTabs } from '../domain/tabStops';
-import { PLACEHOLDER_PROMPT } from '../domain/master';
+import { FRAME_PLACEHOLDERS, PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
 import { INDENT_PX, listMarkers } from '../domain/textFormat';
@@ -284,11 +284,11 @@ export function ElementView({ el }: { el: SlideElement }) {
   const show = useContext(ShowContext);
   if (el.hidden) return null;
   // An empty layout placeholder: its prompt while editing, nothing in the slide show.
-  if (el.placeholder && (el.placeholder === 'picture' || !el.text)) {
+  if (el.placeholder && (el.placeholder in FRAME_PLACEHOLDERS || !el.text)) {
     if (show) return null;
     return (
-      <div className={`placeholder-prompt ${el.placeholder}`} style={{ ...box, fontSize: el.placeholder === 'title' ? Math.min(el.fontSize ?? 64, 64) : Math.min(el.fontSize ?? 48, 44), textAlign: el.align ?? 'left', justifyContent: el.placeholder === 'picture' || el.align === 'center' ? 'center' : 'flex-start', alignItems: el.vAlign === 'top' ? 'flex-start' : 'center' }}>
-        <span>{el.placeholder === 'picture' ? '🖼 ' : ''}{PLACEHOLDER_PROMPT[el.placeholder]}</span>
+      <div className={`placeholder-prompt ${el.placeholder}`} style={{ ...box, fontSize: el.placeholder === 'title' ? Math.min(el.fontSize ?? 64, 64) : Math.min(el.fontSize ?? 48, 44), textAlign: el.align ?? 'left', justifyContent: el.placeholder in FRAME_PLACEHOLDERS || el.align === 'center' ? 'center' : 'flex-start', alignItems: el.vAlign === 'top' ? 'flex-start' : 'center' }}>
+        <span>{FRAME_PLACEHOLDERS[el.placeholder] ? `${FRAME_PLACEHOLDERS[el.placeholder]} ` : ''}{PLACEHOLDER_PROMPT[el.placeholder]}</span>
       </div>
     );
   }
