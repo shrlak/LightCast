@@ -15,9 +15,10 @@ import {
 } from '../../domain/editOps';
 import { layoutTable } from '../../engine';
 import { drawLine, eraseLine } from '../../domain/tableBorders';
-import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, insertPoint, moveAnchor, moveControl, nearestOnPath, openPath, parsePath, setPointType, setSegmentType, shiftPath, writePath, type Seg } from '../../domain/pathEdit';
-import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
-import { adjOf, geometryOf, isLinePreset, presetOf } from '../EngineElements';
+import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, insertPoint, moveAnchor, nearestOnPath, setHandle, openPath, parsePath, setPointType, setSegmentType, shiftPath, writePath, type Seg } from '../../domain/pathEdit';
+import { boundsOf, hitBox, marqueeIds, resizeBox, rotateBoxes, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
+import { aspectLocked, clickBox, constrain45, cycleSelection, drawBox, duplicateOffset, FINE_NUDGE, freeformPath, lineEnds, moveLineEnd, movableIds, NUDGE, resizeFlip, scribbleCloses, selectAllIds, type LastDuplicate, type Pt } from '../../domain/shapeOps';
+import { adjOf, geometryOf, isLinePreset, isLineShape, presetOf } from '../EngineElements';
 import { RichTextEditor } from '../RichTextEditor';
 import { Ruler } from './Ruler';
 import { clipboardToElements, copyObjectsToClipboard, lastCopiedObjects, sourceOf } from './pasteObjects';
@@ -31,13 +32,14 @@ type Box = { x: number; y: number; w: number; h: number };
 
 /** What a pointer press on the slide does when a ribbon tool is on (Insert › Shapes, Draw). */
 export type CanvasTool =
-  | { kind: 'shape'; name: string }
+  /** `keep`: stays on after drawing (double-click in the Shapes gallery: lock drawing mode). */
+  | { kind: 'shape'; name: string; keep?: boolean }
   | { kind: 'pen'; color: string; width: number; highlighter?: boolean; toShape?: boolean }
   | { kind: 'eraser' }
   /** 서식 복사: the next object clicked takes this look (kept on with a double-click in the ribbon). */
   | { kind: 'painter'; style: CopiedStyle; keep?: boolean }
   /** Insert › Shapes › Freeform: Shape (click points, close at the start) or Freeform: Scribble (drag). */
-  | { kind: 'freeform'; scribble?: boolean }
+  | { kind: 'freeform'; scribble?: boolean; /** Curve: a smooth line through the clicked points. */ curve?: boolean }
   /** Picture Format › Crop: the handles cut the picture instead of scaling it. */
   | { kind: 'crop'; id: string }
   /** Shape Format › Edit Shape › Edit Points. */
@@ -61,10 +63,11 @@ export interface ViewOptions {
 type Drag =
   | { mode: 'move'; ids: string[]; startX: number; startY: number; orig: Map<string, Box>; moved: boolean; copy: boolean; clickedText: string | null }
   | { mode: 'resize'; ids: string[]; handle: Handle; startX: number; startY: number; unit: EBox; orig: Map<string, Box & { rot: number }>; moved: boolean }
-  | { mode: 'rotate'; id: string; unit: EBox; moved: boolean }
+  | { mode: 'rotate'; id: string; ids: string[]; unit: EBox; moved: boolean }
+  | { mode: 'lineEnd'; id: string; end: 0 | 1; moved: boolean; glue?: { id: string; site: number } | null }
   | { mode: 'adjust'; id: string; index: number; moved: boolean }
   | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number; add: boolean }
-  | { mode: 'draw'; x0: number; y0: number; x1: number; y1: number }
+  | { mode: 'draw'; x0: number; y0: number; x1: number; y1: number; square?: boolean; fromCenter?: boolean }
   | { mode: 'ink'; points: [number, number][] }
   | { mode: 'point'; id: string; seg: number; startX: number; startY: number; moved: boolean; base?: string }
   | { mode: 'ctrl'; id: string; seg: number; which: 0 | 1; startX: number; startY: number; moved: boolean }
@@ -109,7 +112,6 @@ export const objectClipboard = () => lastCopiedObjects();
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 const HANDLE_POS: Record<Handle, [number, number]> = { nw: [0, 0], n: [0.5, 0], ne: [1, 0], e: [1, 0.5], se: [1, 1], s: [0.5, 1], sw: [0, 1], w: [0, 0.5] };
 const CURSOR: Record<Handle, string> = { nw: 'nwse-resize', se: 'nwse-resize', ne: 'nesw-resize', sw: 'nesw-resize', n: 'ns-resize', s: 'ns-resize', e: 'ew-resize', w: 'ew-resize' };
-const KEEP_ASPECT = new Set(['image', 'icon', 'qr', 'camera', 'video']);
 
 /** A point in an object's own (unrotated, unflipped) coordinates. */
 function toLocal(el: SlideElement, x: number, y: number): [number, number] {
@@ -143,7 +145,13 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const k = width / CANVAS_W || 1;
   const [session, setSession] = useState<{ slideId: string; id: string } | null>(null);
   const identity = slide.sourceSlideId ?? slide.id;
-  const [preview, setPreview] = useState<Map<string, Box & { rot?: number; adj?: number[] }> | null>(null);
+  const [preview, setPreview] = useState<Map<string, Box & { rot?: number; adj?: number[]; flipH?: boolean; flipV?: boolean }> | null>(null);
+  /** Connection sites shown while drawing a line or dragging its end, and the one it would glue to. */
+  const [sites, setSites] = useState<{ pts: Pt[]; glue: Pt | null } | null>(null);
+  /** Where the pointer is while a freeform / curve is being clicked out (the rubber band). */
+  const [hoverPt, setHoverPt] = useState<Pt | null>(null);
+  /** The copies the last Duplicate made: duplicating them again repeats how far they were moved. */
+  const lastDup = useRef<LastDuplicate | null>(null);
   const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
   const [band, setBand] = useState<Box | null>(null);
   const [inkPath, setInkPath] = useState<[number, number][] | null>(null);
@@ -159,8 +167,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const theme = slideTheme(baseTheme, slide);
   const elements = useAutoTextBoxes(slide.elements ?? [], readOnly || isPdfSlide(slide) ? undefined : (elements) => onChange({ elements }), isFrontSlide(slide));
   const visible = useMemo(() => elements.filter((e) => !e.hidden), [elements]);
-  /** What a click can pick: not locked (Selection pane) and not the slide master's. */
-  const pickable = useMemo(() => visible.filter((e) => !e.locked && !e.master), [visible]);
+  /** What a click can pick: not the slide master's. A locked object is picked (to format it) but does not move. */
+  const pickable = useMemo(() => visible.filter((e) => !e.master), [visible]);
   const [freePts, setFreePts] = useState<[number, number][] | null>(null);
   /** Custom Path being drawn (starts at the object's centre). */
   const [pathPts, setPathPts] = useState<[number, number][] | null>(null);
@@ -208,7 +216,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const elOf = (id: string) => elements.find((e) => e.id === id);
   const shownEl = (el: SlideElement): SlideElement => {
     const p = preview?.get(el.id);
-    return p ? { ...el, x: p.x, y: p.y, w: p.w, h: p.h, ...(p.rot !== undefined ? { rotation: p.rot } : {}), ...(p.adj ? { adj: p.adj } : {}) } : el;
+    return p ? { ...el, x: p.x, y: p.y, w: p.w, h: p.h, ...(p.rot !== undefined ? { rotation: p.rot } : {}), ...(p.adj ? { adj: p.adj } : {}), ...('flipH' in p ? { flipH: p.flipH, flipV: p.flipV } : {}) } : el;
   };
   const setElements = (next: SlideElement[]) => onChange({ elements: next.length ? routeConnectors(next) : undefined });
   // Motion paths follow their objects while they are dragged (preset ones are traced by the engine, so only when something changed).
@@ -268,6 +276,21 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     return [(e.clientX - r.left) / k, (e.clientY - r.top) / k];
   };
   const focusRoot = () => ref.current?.focus({ preventScroll: true });
+
+  /**
+   * The connection sites of the shape near (x, y) (not `exclude`, not a line) and the site within
+   * glue range, which a line end drawn or dragged there snaps and glues to.
+   */
+  const siteInfo = (x: number, y: number, exclude?: string): { pts: Pt[]; glue: { id: string; site: number; pt: Pt } | null } | null => {
+    for (const o of [...pickable].reverse()) {
+      if (o.id === exclude || (o.kind !== 'shape' && o.kind !== 'text' && o.kind !== 'image') || isLineShape(o)) continue;
+      const pts = shapeSites(pathShapeOf(o)) as Pt[];
+      const i = pts.findIndex((pt) => Math.hypot(pt[0] - x, pt[1] - y) < 24);
+      if (i >= 0) return { pts, glue: { id: o.id, site: i, pt: pts[i] } };
+      if (hitBox([boxOf(o)], x, y, 24)) return { pts, glue: null };
+    }
+    return null;
+  };
 
   const onRootDown = (e: RPointerEvent) => {
     // Edit Points takes the right button too (its point / segment menu).
@@ -401,18 +424,20 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       next = [hit];
       onSelect(next);
     }
-    const ids = expandSelection(elements, next.length ? next : [hit]);
+    const all = expandSelection(elements, next.length ? next : [hit]);
+    // A locked object is selected but stays where it is.
+    const ids = movableIds(elements, all);
     const el = elOf(hit);
     drag.current = {
       mode: 'move', ids, startX: x, startY: y, moved: false, copy: false,
       orig: new Map(ids.map((id) => { const o = elOf(id)!; return [id, { x: o.x, y: o.y, w: o.w, h: o.h }]; })),
-      clickedText: already && ids.length === 1 && (el?.kind === 'text' || (el?.kind === 'shape' && !!el.text)) ? hit : el?.kind === 'text' && ids.length === 1 && !el.groupId ? hit : null,
+      clickedText: already && all.length === 1 && (el?.kind === 'text' || (el?.kind === 'shape' && !!el.text)) ? hit : el?.kind === 'text' && all.length === 1 && !el.groupId ? hit : null,
     };
   };
 
   const startHandle = (e: RPointerEvent, handle: Handle) => {
     e.stopPropagation();
-    if (e.button !== 0 || units.length !== 1) return;
+    if (e.button !== 0 || units.length !== 1 || movableIds(elements, units[0].members).length !== units[0].members.length) return;
     focusRoot();
     const [x, y] = pointer(e);
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
@@ -425,10 +450,19 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   };
   const startRotate = (e: RPointerEvent) => {
     e.stopPropagation();
-    if (e.button !== 0 || units.length !== 1 || units[0].members.length !== 1) return;
+    if (e.button !== 0 || units.length !== 1 || movableIds(elements, units[0].members).length !== units[0].members.length) return;
     focusRoot();
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    drag.current = { mode: 'rotate', id: units[0].members[0], unit: units[0].box, moved: false };
+    // A group turns as one, about its centre.
+    drag.current = { mode: 'rotate', id: units[0].members[0], ids: units[0].members, unit: units[0].box, moved: false };
+  };
+  /** A line's end handle: drag it to move that end (Shift: 45° steps; it glues to a connection site). */
+  const startLineEnd = (e: RPointerEvent, id: string, end: 0 | 1) => {
+    e.stopPropagation();
+    if (e.button !== 0 || elOf(id)?.locked) return;
+    focusRoot();
+    (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    drag.current = { mode: 'lineEnd', id, end, moved: false };
   };
   const startAdjust = (e: RPointerEvent, id: string, index: number) => {
     e.stopPropagation();
@@ -439,18 +473,52 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
 
   const onMove = (e: RPointerEvent) => {
     const d = drag.current;
-    if (!d) return;
+    const lineTool = tool?.kind === 'shape' && isLinePreset(tool.name);
+    if (!d) {
+      // Hovering with a line tool shows the sites a line can glue to; a freeform shows its rubber band.
+      if (lineTool) { const [x, y] = pointer(e); const i = siteInfo(x, y); setSites(i ? { pts: i.pts, glue: i.glue?.pt ?? null } : null); }
+      if (tool?.kind === 'freeform' && freePts) setHoverPt(pointer(e));
+      return;
+    }
     const [x, y] = pointer(e);
+    if (d.mode === 'draw' && lineTool) {
+      // A line: Shift keeps it to 45° steps; an end near a connection site snaps onto it.
+      let q: Pt = e.shiftKey ? constrain45([d.x0, d.y0], [x, y]) : [x, y];
+      const i = siteInfo(q[0], q[1]);
+      if (i?.glue) q = i.glue.pt;
+      setSites(i ? { pts: i.pts, glue: i.glue?.pt ?? null } : null);
+      d.x1 = q[0]; d.y1 = q[1];
+      setBand({ x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) });
+      return;
+    }
     if (d.mode === 'marquee' || d.mode === 'draw') {
       d.x1 = x; d.y1 = y;
-      if (d.mode === 'draw' && e.shiftKey) {
-        const s = Math.max(Math.abs(x - d.x0), Math.abs(y - d.y0));
-        d.x1 = d.x0 + Math.sign(x - d.x0 || 1) * s; d.y1 = d.y0 + Math.sign(y - d.y0 || 1) * s;
+      if (d.mode === 'draw') {
+        // Shift: square / circle; Ctrl: out from where the drag started.
+        d.square = e.shiftKey; d.fromCenter = e.ctrlKey || e.metaKey;
+        setBand(drawBox(d.x0, d.y0, x, y, { square: d.square, fromCenter: d.fromCenter }));
+        return;
       }
       setBand({ x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) });
       return;
     }
+    if (d.mode === 'lineEnd') {
+      const el = elOf(d.id);
+      if (!el) return;
+      const [p0, p1] = lineEnds({ ...el, rot: el.rotation });
+      let q: Pt = e.shiftKey ? constrain45(d.end === 0 ? p1 : p0, [x, y]) : [x, y];
+      const i = siteInfo(q[0], q[1], el.id);
+      if (i?.glue) q = i.glue.pt;
+      setSites(i ? { pts: i.pts, glue: i.glue?.pt ?? null } : null);
+      d.moved = true;
+      d.glue = i?.glue ? { id: i.glue.id, site: i.glue.site } : null;
+      const b = moveLineEnd(el, d.end, q);
+      setPreview(new Map([[el.id, { x: b.x, y: b.y, w: b.w, h: b.h, rot: 0, flipH: b.flipH, flipV: b.flipV }]]));
+      return;
+    }
     if (d.mode === 'ink') {
+      // Curve takes clicked points only; Freeform: Shape scribbles while the button is down.
+      if (tool?.kind === 'freeform' && tool.curve) { setHoverPt([x, y]); return; }
       d.points.push([Math.round(x * 10) / 10, Math.round(y * 10) / 10]);
       if (tool?.kind === 'freeform' && !tool.scribble) { if (d.points.length > 2) setFreePts((pts) => [...(pts ?? []), [x, y]]); return; }
       // Custom Path: a drag draws freehand, like Scribble.
@@ -467,7 +535,14 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       if (!el?.path) return;
       d.moved = true;
       const sx = (el.pathW ?? el.w) / Math.max(1, el.w), sy = (el.pathH ?? el.h) / Math.max(1, el.h);
-      setPointPreview({ id: el.id, path: writePath(moveControl(parsePath(el.path), d.seg, d.which, (x - d.startX) * sx, (y - d.startY) * sy)) });
+      const segs = parsePath(el.path);
+      const from = segs[d.seg]?.pts[d.which];
+      if (!from) return;
+      // which 1: the incoming handle of the point ending this segment; 0: the outgoing one of the point before.
+      const anchor = d.which === 1 ? d.seg : d.seg - 1;
+      // Shift, Ctrl or Alt held makes the point smooth, straight or corner (as in PowerPoint); else it keeps its type.
+      const kind = e.shiftKey ? 'smooth' : e.ctrlKey || e.metaKey ? 'straight' : e.altKey ? 'corner' : undefined;
+      setPointPreview({ id: el.id, path: writePath(setHandle(segs, anchor, d.which === 0, [from[0] + (x - d.startX) * sx, from[1] + (y - d.startY) * sy], kind)) });
       return;
     }
     if (d.mode === 'point') {
@@ -501,13 +576,20 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       d.moved = true;
       const one = d.ids.length === 1 ? elOf(d.ids[0]) : null;
       const corner = d.handle.length === 2;
-      const keep = e.shiftKey !== (corner && !!one && KEEP_ASPECT.has(one.kind));
+      const keep = e.shiftKey !== (corner && !!one && aspectLocked(one));
       const unit = one ? { ...d.unit, rot: one.rotation ?? 0 } : d.unit;
+      const cropping = !!one && tool?.kind === 'crop' && tool.id === one.id;
+      if (one && !cropping) {
+        // Dragging past the opposite edge flips the object (DeckCraft's resize_box).
+        const f = resizeFlip({ ...unit, flipH: one.flipH, flipV: one.flipV }, d.handle, dx, dy, keep, e.ctrlKey || e.metaKey, 4);
+        setPreview(new Map([[one.id, { x: Math.round(f.x), y: Math.round(f.y), w: Math.round(f.w), h: Math.round(f.h), flipH: f.flipH, flipV: f.flipV }]]));
+        return;
+      }
       const r = resizeBox(unit, d.handle, dx, dy, keep, e.ctrlKey || e.metaKey, 4);
       if (!r) return;
       if (one) {
         setPreview(new Map([[one.id, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) }]]));
-        if (tool?.kind === 'crop' && tool.id === one.id) cropDraft.current = cropFor(one, r);
+        if (cropping) cropDraft.current = cropFor(one, r);
       } else {
         // A group scales its members with it.
         const sxk = r.w / Math.max(1, d.unit.w), syk = r.h / Math.max(1, d.unit.h);
@@ -516,6 +598,14 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
           return [id, { x: Math.round(r.x + (o.x - d.unit.x) * sxk), y: Math.round(r.y + (o.y - d.unit.y) * syk), w: Math.max(1, Math.round(o.w * sxk)), h: Math.max(1, Math.round(o.h * syk)) }];
         })));
       }
+      return;
+    }
+    if (d.mode === 'rotate' && d.ids.length > 1) {
+      const a = rotateTo({ ...d.unit, rot: 0 }, x, y, e.shiftKey);
+      if (a === null) return;
+      d.moved = true;
+      const placed = rotateBoxes(d.ids.map((id) => boxOf(elOf(id)!)), a, true);
+      setPreview(new Map(placed.map((p) => { const o = elOf(p.id)!; return [p.id, { x: Math.round(p.x), y: Math.round(p.y), w: o.w, h: o.h, rot: p.rot }]; })));
       return;
     }
     if (d.mode === 'rotate') {
@@ -542,10 +632,24 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     setGuides({ v: [], h: [] });
     setBand(null);
     if (!d) return;
+    if (d.mode !== 'ink') setSites(null);
+    if (d.mode === 'lineEnd') {
+      const p = preview?.get(d.id);
+      setPreview(null);
+      const el = elOf(d.id);
+      if (!p || !el || !d.moved) return;
+      // The dragged end glues to the site it was dropped on (or comes unglued).
+      const key = d.end === 0 ? 'from' : 'to';
+      const connect = { ...el.connect, [key]: d.glue ?? undefined };
+      const next: SlideElement = { ...el, x: p.x, y: p.y, w: p.w, h: p.h, flipH: p.flipH, flipV: p.flipV, rotation: undefined, connect: connect.from || connect.to ? connect : undefined };
+      setElements(elements.map((x2) => (x2.id === el.id ? next : x2)));
+      return;
+    }
     if (d.mode === 'marquee') {
       const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
       if (r.w < 3 && r.h < 3) return;
-      const ids = expandSelection(elements, marqueeIds(pickable.map(boxOf), r));
+      // Wholly inside the box, not hidden and not locked (DeckCraft).
+      const ids = expandSelection(elements, marqueeIds(pickable.filter((el) => !el.locked).map(boxOf), r));
       onSelect(d.add ? [...new Set([...selected.filter((s) => s !== SLIDE_TEXT), ...ids])] : ids);
       return;
     }
@@ -576,8 +680,10 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     if (d.mode === 'ink' && tool?.kind === 'freeform') {
       setInkPath(null);
       if (tool.scribble) {
-        const made = makeInk(d.points, defaultShape?.stroke ?? '#ffffff', defaultShape?.strokeWidth ?? 6, false);
-        if (made) { const el: SlideElement = { ...made, kind: 'shape', fill: 'transparent', name: '자유형: 자유 곡선' }; setElements([...elements, el]); onSelect([el.id]); }
+        // A scribble that ends where it began closes into a filled shape.
+        const closed = scribbleCloses(d.points);
+        const made = closed ? makeFreeform(d.points, true, defaultShape) : makeInk(d.points, defaultShape?.stroke ?? '#ffffff', defaultShape?.strokeWidth ?? 6, false);
+        if (made) { const el: SlideElement = closed ? made : { ...made, kind: 'shape', fill: 'transparent', name: '자유형: 자유 곡선' }; setElements([...elements, el]); onSelect([el.id]); }
         onToolDone?.();
       }
       return;
@@ -596,20 +702,26 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       };
       const base = makeShape(tool.name);
       const from = near(d.x0, d.y0), to = near(d.x1, d.y1);
-      const el: SlideElement = { ...base, ...lineBox(d.x0, d.y0, d.x1, d.y1), ...(from || to ? { connect: { from, to } } : {}) };
+      // A start on a connection site begins exactly there.
+      const s0 = from ? (siteInfo(d.x0, d.y0)?.glue?.pt ?? [d.x0, d.y0]) : [d.x0, d.y0];
+      const el: SlideElement = { ...(defaultShape ? { ...base, ...lineLook(defaultShape) } : base), ...lineBox(s0[0], s0[1], d.x1, d.y1), ...(from || to ? { connect: { from, to } } : {}) };
       setElements([...elements, el]);
       onSelect([el.id]);
-      onToolDone?.();
+      if (!tool.keep) onToolDone?.();
       return;
     }
     if (d.mode === 'draw' && tool?.kind === 'shape') {
-      const r = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
-      // A click without a drag puts a default-sized shape there.
-      const el = r.w < 6 && r.h < 6 ? (() => { const m = makeShape(tool.name); return { ...m, x: Math.round(d.x0 - m.w / 2), y: Math.round(d.y0 - m.h / 2) }; })() : makeShape(tool.name, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
-      const styled = el.kind === 'shape' && defaultShape ? { ...el, ...defaultShape } : el;
+      const r = drawBox(d.x0, d.y0, d.x1, d.y1, { square: d.square, fromCenter: d.fromCenter });
+      const click = Math.hypot(d.x1 - d.x0, d.y1 - d.y0) < 6;
+      const line = isLinePreset(tool.name);
+      // A click without a drag puts a 72 pt shape at the click (a text box: its usual size, centred there).
+      const el = click
+        ? tool.name === 'textBox' ? (() => { const m = makeShape(tool.name); return { ...m, x: Math.round(d.x0 - m.w / 2), y: Math.round(d.y0 - m.h / 2) }; })() : makeShape(tool.name, clickBox(d.x0, d.y0, line))
+        : makeShape(tool.name, { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h) });
+      const styled = el.kind === 'shape' && defaultShape ? { ...el, ...(line ? lineLook(defaultShape) : defaultShape) } : el;
       setElements([...elements, styled]);
       onSelect([styled.id]);
-      onToolDone?.();
+      if (!tool.keep) onToolDone?.();
       if (styled.kind === 'text') setSession({ slideId: identity, id: styled.id });
       return;
     }
@@ -632,7 +744,15 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         const copies = cloneElements(elements.filter((el) => d.ids.includes(el.id))).map((c, i) => { const b = p.get(d.ids[i]); return b ? { ...c, x: b.x, y: b.y } : c; });
         setElements([...elements, ...copies]);
         onSelect(copies.map((c) => c.id));
-      } else setElements(elements.map((el) => { const b = p.get(el.id); return b ? { ...el, x: b.x, y: b.y } : el; }));
+      } else {
+        // A connector moved away from objects that stay put comes unglued at those ends (DeckCraft).
+        const unglue = (c: SlideElement['connect']) => {
+          if (!c) return c;
+          const n = { from: c.from && p.has(c.from.id) ? c.from : undefined, to: c.to && p.has(c.to.id) ? c.to : undefined };
+          return n.from || n.to ? n : undefined;
+        };
+        setElements(elements.map((el) => { const b = p.get(el.id); return b ? { ...el, x: b.x, y: b.y, ...(el.connect ? { connect: unglue(el.connect) } : {}) } : el; }));
+      }
       return;
     }
     const p = preview;
@@ -642,7 +762,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       const b = p.get(el.id);
       if (!b) return el;
       const cropped = tool?.kind === 'crop' && tool.id === el.id && cropDraft.current ? { crop: cropDraft.current, fit: 'fill' as const } : {};
-      const next = { ...el, x: b.x, y: b.y, w: b.w, h: b.h, ...(b.rot !== undefined ? { rotation: b.rot || undefined } : {}), ...(b.adj ? { adj: b.adj } : {}), ...cropped };
+      const next = { ...el, x: b.x, y: b.y, w: b.w, h: b.h, ...(b.rot !== undefined ? { rotation: b.rot || undefined } : {}), ...(b.adj ? { adj: b.adj } : {}), ...('flipH' in b ? { flipH: b.flipH, flipV: b.flipV } : {}), ...cropped };
       // A text box sized by hand keeps that size, as PowerPoint's "Do not autofit".
       return d.mode === 'resize' && el.kind === 'text' ? { ...next, autoFit: false } : next;
     }));
@@ -659,7 +779,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   };
   const finishFreeform = (pts: [number, number][], closed: boolean) => {
     setFreePts(null);
-    const el = makeFreeform(pts, closed, defaultShape);
+    setHoverPt(null);
+    const el = makeFreeform(pts, closed, defaultShape, tool?.kind === 'freeform' && !!tool.curve);
     if (el) { setElements([...elements, el]); onSelect([el.id]); }
     onToolDone?.();
   };
@@ -697,7 +818,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   // ── Keyboard and clipboard ──────────────────────────────────────────────────────────────────
   const onKeyDown = (e: RKeyboardEvent) => {
     if (editing) return;
-    if (e.key === 'Escape' && tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); e.preventDefault(); e.stopPropagation(); return; }
+    // Esc during a point or handle drag in Edit Points puts it back as it was.
+    const dr = drag.current;
+    if (e.key === 'Escape' && (dr?.mode === 'point' || dr?.mode === 'ctrl')) { drag.current = null; setPointPreview(null); e.preventDefault(); e.stopPropagation(); return; }
+    // Enter or Esc ends a freeform or curve (open), as a double-click does.
+    if ((e.key === 'Escape' || e.key === 'Enter') && tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); e.preventDefault(); e.stopPropagation(); return; }
     if (tool?.kind === 'motionPath' && (e.key === 'Enter' || e.key === 'Escape')) {
       // Enter ends the path, Esc drops it.
       if (e.key === 'Enter' && pathPts) finishMotionPath(pathPts, false);
@@ -708,29 +833,33 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
     const handled = () => { e.preventDefault(); e.stopPropagation(); };
-    if (mod && key === 'a' && !e.shiftKey) { onSelect(visible.map((el) => el.id)); return handled(); }
+    // Select All leaves hidden and locked objects out (DeckCraft's edit.selectAll).
+    if (mod && key === 'a' && !e.shiftKey) { onSelect(selectAllIds(elements)); return handled(); }
+    // Tab / Shift+Tab: the next / previous object, a group once; from nothing, the first / last.
+    if (key === 'tab' && !mod) { const next = cycleSelection(elements, sel, !e.shiftKey); if (next) onSelect([next]); return handled(); }
     if (!sel.length) {
       if (key === 'escape' && tool) { onToolDone?.(); return handled(); }
       return;
     }
     if (mod && key === 'g' && !e.shiftKey) { setElements(groupSelection(elements, sel)); return handled(); }
     if (mod && key === 'g' && e.shiftKey) { setElements(ungroupSelection(elements, sel)); return handled(); }
-    if (mod && key === 'd') { const r = duplicateSelection(elements, sel); setElements(r.elements); onSelect(r.ids); return handled(); }
+    if (mod && key === 'd') {
+      // Duplicating the last copies again repeats how far they were moved (DeckCraft #966).
+      const r = duplicateSelection(elements, sel, duplicateOffset(elements, sel, lastDup.current));
+      lastDup.current = { pairs: r.pairs };
+      setElements(r.elements); onSelect(r.ids); return handled();
+    }
     if (mod && e.shiftKey && (e.key === '}' || e.key === ']')) { setElements(orderSelection(elements, sel, 'front')); return handled(); }
     if (mod && e.shiftKey && (e.key === '{' || e.key === '[')) { setElements(orderSelection(elements, sel, 'back')); return handled(); }
-    const step = mod ? 1 : e.shiftKey ? 30 : 10;
+    if (mod && !e.shiftKey && e.key === ']') { setElements(orderSelection(elements, sel, 'forward')); return handled(); }
+    if (mod && !e.shiftKey && e.key === '[') { setElements(orderSelection(elements, sel, 'backward')); return handled(); }
+    // Arrows: 6 pt; Ctrl or Alt: 1 pt; Shift: a big step. Locked objects stay.
+    const step = mod || e.altKey ? FINE_NUDGE : e.shiftKey ? 30 : NUDGE;
     const nudge = ({ arrowleft: [-step, 0], arrowright: [step, 0], arrowup: [0, -step], arrowdown: [0, step] } as Record<string, number[]>)[key];
     if (nudge) { setElements(nudgeSelection(elements, sel, nudge[0], nudge[1])); return handled(); }
     if (key === 'delete' || key === 'backspace') {
       if (onLockedDelete) onLockedDelete();
       else { onChange(deleteSelection(slide, sel)); onSelect([]); }
-      return handled();
-    }
-    if (key === 'tab') {
-      const order = visible.map((el) => el.id);
-      const at = order.indexOf(sel[sel.length - 1]);
-      const next = order[(at + (e.shiftKey ? -1 : 1) + order.length) % order.length];
-      if (next) onSelect([next]);
       return handled();
     }
     if (key === 'enter' || key === 'f2') { if (sel.length === 1) startEditing(sel[0]); return handled(); }
@@ -772,7 +901,11 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const frame: { box: Box; rot: number } | null = singleEl
     ? { box: { x: singleEl.x, y: singleEl.y, w: singleEl.w, h: singleEl.h }, rot: singleEl.rotation ?? 0 }
     : single ? (() => { const b = boundsOf(single.members.map((id) => boxOf(shownEl(elOf(id)!)))); return b ? { box: b, rot: 0 } : null; })() : null;
-  const adjustHandles = singleEl && singleEl.kind === 'shape' && !editing ? geometryOf(singleEl)?.handles ?? [] : [];
+  /** A locked object (or a group holding one) shows its frame but no handles. */
+  const frameLocked = !!single && movableIds(elements, single.members).length !== single.members.length;
+  /** A line shows its two end handles instead of a frame. */
+  const lineEl = singleEl && isLineShape(singleEl) ? singleEl : null;
+  const adjustHandles = singleEl && singleEl.kind === 'shape' && !editing && !frameLocked && !lineEl ? geometryOf(singleEl)?.handles ?? [] : [];
   const editEl = editing && editing !== SLIDE_TEXT ? elOf(editing) : null;
 
   const editor = (() => {
@@ -847,14 +980,18 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
             {badges?.[el.id] && <span className="ce-badge">{badges[el.id].join(',')}</span>}
           </div>;
         })}
-        {frame && !editing && tool?.kind !== 'points' && (
-          <div className={`ce-frame ${single && single.members.length > 1 ? 'group' : ''} ${tool?.kind === 'crop' && singleEl?.id === tool.id ? 'crop' : ''}`} style={at(frame.box, frame.rot)}>
-            {HANDLES.map((h) => (
+        {frame && !editing && tool?.kind !== 'points' && !lineEl && (
+          <div className={`ce-frame ${single && single.members.length > 1 ? 'group' : ''} ${tool?.kind === 'crop' && singleEl?.id === tool.id ? 'crop' : ''} ${frameLocked ? 'locked' : ''}`} style={at(frame.box, frame.rot)} title={frameLocked ? '잠긴 개체 (선택 창에서 잠금 해제)' : undefined}>
+            {!frameLocked && HANDLES.map((h) => (
               <span key={h} className={`ce-h ce-h-${h}`} style={{ left: `${HANDLE_POS[h][0] * 100}%`, top: `${HANDLE_POS[h][1] * 100}%`, cursor: CURSOR[h] }} onPointerDown={(e) => startHandle(e, h)} />
             ))}
-            {singleEl && <span className="ce-rot" title="회전 (Shift: 15°씩)" onPointerDown={startRotate} />}
+            {!frameLocked && <span className="ce-rot" title="회전 (Shift: 15°씩)" onPointerDown={startRotate} />}
           </div>
         )}
+        {lineEl && !editing && !frameLocked && lineEnds({ ...lineEl, rot: lineEl.rotation }).map((p, i) => (
+          <span key={i} className="ce-h ce-line-end" title="끝점 끌기 (Shift: 45°씩, 연결점에 붙음)" style={{ left: p[0] * k, top: p[1] * k }} onPointerDown={(e) => startLineEnd(e, lineEl.id, i as 0 | 1)} />
+        ))}
+        {sites && sites.pts.map((p, i) => <span key={`site${i}`} className={`ce-site ${sites.glue && sites.glue[0] === p[0] && sites.glue[1] === p[1] ? 'on' : ''}`} style={{ left: p[0] * k, top: p[1] * k }} />)}
         {singleEl && adjustHandles.map((h) => {
           const [sx, sy] = toSlide(singleEl, h.x, h.y);
           return <span key={h.index} className="ce-adj" title="모양 조정" style={{ left: sx * k, top: sy * k }} onPointerDown={(e) => startAdjust(e, singleEl.id, h.index)} />;
@@ -862,11 +999,17 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         {guides.v.map((x) => <div key={`v${x}`} className="ce-guide ce-guide-v" style={{ left: x * k }} />)}
         {guides.h.map((y) => <div key={`h${y}`} className="ce-guide ce-guide-h" style={{ top: y * k }} />)}
         {band && <div className={`ce-band ${tool?.kind === 'shape' ? 'draw' : ''}`} style={at(band)} />}
-        {freePts && tool?.kind === 'freeform' && (
-          <svg className="ce-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
-            <polyline points={freePts.map((p) => p.join(',')).join(' ')} fill="none" stroke="#0078d4" strokeWidth={3} strokeDasharray="8 5" />
-          </svg>
-        )}
+        {freePts && tool?.kind === 'freeform' && (() => {
+          // The points so far and a rubber band to the pointer; a curve is drawn smooth through them.
+          const pts: Pt[] = hoverPt ? [...freePts, hoverPt] : freePts;
+          return (
+            <svg className="ce-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
+              {tool.curve && pts.length > 1
+                ? <path d={freeformPath(pts, false, true)} fill="none" stroke="#0078d4" strokeWidth={3} strokeDasharray="8 5" />
+                : <polyline points={pts.map((p) => p.join(',')).join(' ')} fill="none" stroke="#0078d4" strokeWidth={3} strokeDasharray="8 5" />}
+            </svg>
+          );
+        })()}
         {!pathPts && pathOverlays.map((o) => <MotionPathMarks key={o.id} points={o.points} closed={o.closed} k={k} />)}
         {pathPts && tool?.kind === 'motionPath' && <MotionPathMarks points={pathPts} closed={false} k={k} drawing />}
         {inkPath && tool?.kind === 'freeform' && tool.scribble && (
@@ -925,6 +1068,15 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       </div>
     </div>
   );
+}
+
+/** What a new line takes from Set as Default Shape: its outline, not the fill. */
+function lineLook(d: Partial<SlideElement>): Partial<SlideElement> {
+  const out: Partial<SlideElement> = {};
+  for (const k of ['stroke', 'strokeWidth', 'dash', 'arrowStart', 'arrowEnd', 'arrowStartKind', 'arrowEndKind', 'arrowSize', 'dropShadow', 'shadowKind', 'shadowOpts', 'glow', 'glowSize', 'glowAlpha', 'opacity'] as const) {
+    if (d[k] !== undefined) (out as Record<string, unknown>)[k] = d[k];
+  }
+  return out;
 }
 
 /** A motion path on the editing canvas, as PowerPoint draws it: dashed, a green arrowhead where it starts and a red one where it ends. */

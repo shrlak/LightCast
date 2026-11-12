@@ -310,7 +310,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
       <Group label="그리기">
         <Gallery rows={3} className="rb-shape-strip">
           {QUICK_SHAPES.map((n) => <button key={n} type="button" className="shape-cell" title={shapeLabel(n, shapeCatalog().find((p) => p.name === n)?.label ?? n)} onClick={() => !blocked(ed) && ed.setTool({ kind: 'shape', name: n })}><ShapeThumb name={n} size={16} /></button>)}
-          <DropButton icon={<span className="rb-more">▾</span>} title="모든 도형" render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} wide />
+          <DropButton icon={<span className="rb-more">▾</span>} title="모든 도형" render={(close) => <ShapeGallery onPick={(n, keep) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n, keep }); close(); }} onFreeform={(scribble, curve) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble, curve }); close(); }} />} wide />
         </Gallery>
         <DropButton big icon={RI.arrange} label="정렬" render={(close) => <ArrangeMenu ed={ed} close={close} />} />
         <ShapeStyleButtons ed={ed} big />
@@ -443,7 +443,7 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
         )} />
       </Group>
       <Group label="일러스트레이션">
-        <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n }); close(); }} onFreeform={(scribble) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble }); close(); }} />} />
+        <DropButton big icon={RI.shapes} label="도형" wide render={(close) => <ShapeGallery onPick={(n, keep) => { if (!blocked(ed)) ed.setTool({ kind: 'shape', name: n, keep }); close(); }} onFreeform={(scribble, curve) => { if (!blocked(ed)) ed.setTool({ kind: 'freeform', scribble, curve }); close(); }} />} />
         <DropButton big icon={RI.icons} label="아이콘" wide render={(close) => <IconGallery onPick={(n) => { add(makeIcon(n)); close(); }} />} />
         <Big icon="⧉" label="SmartArt" title="SmartArt 그래픽 삽입" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('smartArt')} />
         <DropButton big icon={RI.chart} label="차트" render={(close) => <>{CHARTS.map(([k, l]) => <MenuItem key={k} label={l} onClick={() => { add(makeChart(k)); close(); }} />)}</>} />

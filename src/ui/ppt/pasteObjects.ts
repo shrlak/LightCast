@@ -6,6 +6,7 @@ import type { MediaMeta, SlideElement, TextRun } from '../../domain/types';
 import { CLIP_TYPE, decodePayload, htmlToElements, objectsHtml, objectsText, payloadFromHtml, type ClipMedia, type ClipPayload } from '../../domain/clipboard';
 import { readGvml } from '../../domain/io/drawingml';
 import { cloneElements } from '../../domain/editOps';
+import { DUPLICATE_OFFSET } from '../../domain/shapeOps';
 import { getMedia, putMedia } from '../../domain/media';
 import { desktop } from '../../domain/desktop';
 import { uid } from '../../domain/lyrics';
@@ -137,7 +138,7 @@ async function fromLightCast(p: ClipPayload, existing: SlideElement[]): Promise<
   // On the slide they came from, copies are set off (again for each paste); elsewhere they keep their place.
   const taken = (dx: number) => p.elements.some((s) => existing.some((el) => el.kind === s.kind && Math.abs(el.x - (s.x + dx)) < 0.5 && Math.abs(el.y - (s.y + dx)) < 0.5));
   let off = 0;
-  while (taken(off) && off < 600) off += 30;
+  while (taken(off) && off < 600) off += DUPLICATE_OFFSET;
   return { elements: cloneElements(p.elements, off), media, from: 'freecast' };
 }
 
