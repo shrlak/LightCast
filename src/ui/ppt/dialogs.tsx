@@ -9,6 +9,7 @@ import { SINGLE_SPACING } from '../../domain/textFormat';
 import { autoFitMode, autoFitValue } from '../../domain/textFit';
 import { formatAllRuns } from '../../domain/richText';
 import { activeTextEditor } from '../RichTextEditor';
+import { AutoCorrectDialog } from './autoCorrectDialog';
 import { textTarget, type DialogKind, type Ed } from './editor';
 import { MoreDialogs } from './dialogsMore';
 import { MasterView } from './MasterView';
@@ -292,6 +293,7 @@ export function Dialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; onClo
   if (kind === 'inspect') return <InspectDialog ed={ed} onClose={onClose} />;
   if (kind === 'language') return <LanguageDialog ed={ed} onClose={onClose} />;
   if (kind === 'tabs') return <TabsDialog ed={ed} onClose={onClose} />;
+  if (kind === 'autocorrect') return <AutoCorrectDialog onClose={onClose} />;
   if (kind === 'compare') return <CompareDialog ed={ed} onClose={onClose} />;
   return <MoreDialogs ed={ed} kind={kind} onClose={onClose} />;
 }

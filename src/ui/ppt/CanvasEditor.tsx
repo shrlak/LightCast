@@ -1,6 +1,7 @@
 import { isFrontSlide } from '../../domain/frontLayout';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ClipboardEvent as RClipboardEvent, type KeyboardEvent as RKeyboardEvent, type PointerEvent as RPointerEvent } from 'react';
-import type { Background, BackgroundEffect, Slide, SlideElement, TextRun, Theme } from '../../domain/types';
+import { flushSync } from 'react-dom';
+import type { Background, BackgroundEffect, ListStyle, Slide, SlideElement, TextRun, Theme } from '../../domain/types';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { SlideCanvas, slideTheme } from '../SlideCanvas';
 import { useWidth } from '../hooks';
@@ -20,7 +21,7 @@ import { drawLine, eraseLine } from '../../domain/tableBorders';
 import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, insertPoint, moveAnchor, moveControl, nearestOnPath, openPath, parsePath, setPointType, setSegmentType, shiftPath, writePath, type Seg } from '../../domain/pathEdit';
 import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
 import { adjOf, geometryOf, isLinePreset, presetOf } from '../EngineElements';
-import { RichTextEditor } from '../RichTextEditor';
+import { RichTextEditor, type EditStart, type EditorControl } from '../RichTextEditor';
 import { Ruler } from './Ruler';
 import { clipboardToElements, copyObjectsToClipboard, lastCopiedObjects, sourceOf } from './pasteObjects';
 import { desktop } from '../../domain/desktop';
@@ -143,7 +144,19 @@ function toSlide(el: SlideElement, lx: number, ly: number): [number, number] {
 export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, onAddMedia, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, pickPicture, motionPaths }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const k = width / CANVAS_W || 1;
-  const [session, setSession] = useState<{ slideId: string; id: string } | null>(null);
+  /** The box being typed in, and how typing started there (caret at a click, a word, or waiting for an input method). */
+  const [session, setSession] = useState<{ slideId: string; id: string; start?: EditStart; standby?: boolean } | null>(null);
+  const editorControl = useRef<EditorControl | null>(null);
+  /**
+   * Typing on a selected box goes through this hidden field, which has the focus whenever the canvas
+   * does: an input method (Korean) composes only in an editable field, and a composition can't move
+   * between fields. The field's text is shown in the box (`show`) until the input method is idle,
+   * then the box's editor takes over (`take`), as DeckCraft's type_text / compose_text do.
+   */
+  const sink = useRef<HTMLTextAreaElement>(null);
+  const sinkComposing = useRef(false);
+  /** A pointer press settles whatever the field had: text it commits on losing focus is not typing. */
+  const sinkMuted = useRef(false);
   const identity = slide.sourceSlideId ?? slide.id;
   const [preview, setPreview] = useState<Map<string, Box & { rot?: number; adj?: number[] }> | null>(null);
   const [guides, setGuides] = useState<{ v: number[]; h: number[] }>({ v: [], h: [] });
@@ -233,16 +246,19 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   };
 
   // ── Typing ──────────────────────────────────────────────────────────────────────────────────
-  const startEditing = (id: string) => {
+  const canType = (id: string) => {
     const el = elOf(id);
-    if (id !== SLIDE_TEXT && el?.kind !== 'text' && el?.kind !== 'shape') return;
-    if (el?.kind === 'shape' && /line|Connector/i.test(el.shape ?? '')) return;
-    setSession({ slideId: identity, id });
+    if (id !== SLIDE_TEXT && el?.kind !== 'text' && el?.kind !== 'shape') return false;
+    return !(el?.kind === 'shape' && /line|Connector/i.test(el.shape ?? ''));
+  };
+  const startEditing = (id: string, how?: { start?: EditStart; standby?: boolean }) => {
+    if (!canType(id)) return;
+    setSession({ slideId: identity, id, ...how });
     onSelect([id]);
   };
   /** A text box just drawn: left empty, it goes away when typing ends, as in PowerPoint. */
   const freshBox = useRef<string | null>(null);
-  const stopEditing = () => {
+  const stopEditing = (how?: 'escape') => {
     flushText();
     setSession(null);
     const fresh = freshBox.current;
@@ -251,6 +267,38 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       const el = latestEls.current.find((e) => e.id === fresh);
       if (el && el.kind === 'text' && !(el.text ?? '').trim()) latestBody.current.onChange({ elements: latestEls.current.filter((e) => e.id !== fresh) });
     }, 0);
+    // Esc leaves the box selected with the canvas focused: Esc again deselects, Delete deletes it.
+    if (how === 'escape') focusRoot();
+  };
+  /** The one box typing on the canvas would go into (DeckCraft's type_text: exactly one selected). */
+  const typeTarget = (): string | null => {
+    if (readOnly || tool || selected.length !== 1) return null;
+    const id = selected[0];
+    if (id === SLIDE_TEXT) return hasSlideText ? id : null;
+    const el = elOf(id);
+    return el && !el.locked && canType(id) ? id : null;
+  };
+  const sinkInput = () => {
+    const t = sink.current;
+    if (!t || !t.value) return;
+    if (sinkMuted.current || document.activeElement !== t) { if (!sinkComposing.current) t.value = ''; return; }
+    if (!editorControl.current) {
+      const id = typeTarget();
+      if (!id) { if (!sinkComposing.current) t.value = ''; return; }
+      flushSync(() => startEditing(id, { standby: true }));
+    }
+    if (sinkComposing.current) editorControl.current?.show(t.value);
+    else {
+      const text = t.value;
+      t.value = '';
+      editorControl.current?.take(text);
+    }
+  };
+  const onAutoList = (id: string) => (list: ListStyle | undefined) => {
+    const el = latestEls.current.find((e) => e.id === id);
+    if (!el || (list && el.list)) return false;
+    latestBody.current.onChange({ elements: latestEls.current.map((e) => (e.id === id ? { ...e, list } : e)) });
+    return true;
   };
   // Picking a drawing tool (text box, shape, pen…) ends typing, as in PowerPoint.
   const toolKind = tool?.kind;
@@ -277,11 +325,13 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     const r = ref.current!.getBoundingClientRect();
     return [(e.clientX - r.left) / k, (e.clientY - r.top) / k];
   };
-  const focusRoot = () => ref.current?.focus({ preventScroll: true });
+  const focusRoot = () => (sink.current ?? ref.current)?.focus({ preventScroll: true });
 
   const onRootDown = (e: RPointerEvent) => {
     // Edit Points takes the right button too (its point / segment menu).
     if (e.button !== 0 && !(e.button === 2 && tool?.kind === 'points')) return;
+    sinkMuted.current = true;
+    if (sink.current) sink.current.value = '';
     if (editing) stopEditing();
     focusRoot();
     const [x, y] = pointer(e);
@@ -392,7 +442,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       if (hasSlideText && x >= textBox.x && x <= textBox.x + textBox.w && y >= textBox.y && y <= textBox.y + textBox.h) {
         // The browser would move focus to the canvas after this and end the typing straight away.
         e.preventDefault();
-        startEditing(SLIDE_TEXT);
+        startEditing(SLIDE_TEXT, { start: { point: [e.clientX, e.clientY] } });
         return;
       }
       const add = e.shiftKey || e.ctrlKey || e.metaKey;
@@ -634,7 +684,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     if (d.mode === 'move') {
       if (!d.moved) {
         // A click on text (no drag) puts the cursor in it, as in PowerPoint.
-        if (d.clickedText && !(e.shiftKey || e.ctrlKey || e.metaKey)) startEditing(d.clickedText);
+        if (d.clickedText && !(e.shiftKey || e.ctrlKey || e.metaKey)) startEditing(d.clickedText, { start: { point: [e.clientX, e.clientY] } });
         return;
       }
       const p = preview;
@@ -709,6 +759,9 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   // ── Keyboard and clipboard ──────────────────────────────────────────────────────────────────
   const onKeyDown = (e: RKeyboardEvent) => {
     if (editing) return;
+    // An input method composing in the typing field (Korean) owns its keys.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (e.target === sink.current) sinkMuted.current = false;
     if (e.key === 'Escape' && tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); e.preventDefault(); e.stopPropagation(); return; }
     if (tool?.kind === 'motionPath' && (e.key === 'Enter' || e.key === 'Escape')) {
       // Enter ends the path, Esc drops it.
@@ -797,6 +850,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
           <div className="ce-edit-box" style={{ left: textBox.x, top: textBox.y, width: textBox.w, minHeight: textBox.h, justifyContent: theme.vAlign === 'top' ? 'flex-start' : theme.vAlign === 'bottom' ? 'flex-end' : 'center' }}>
             <RichTextEditor key={`${identity}:slide`} lines={lines} lang={slide.lang} noProof={slide.noProof} base={{ fontSize: theme.fontSize, bold: theme.fontWeight >= 700, italic: !!theme.italic, color: theme.color, fontFamily: theme.fontFamily }}
               style={{ fontFamily: theme.fontFamily, fontSize: theme.fontSize, fontWeight: theme.fontWeight, color: theme.color, textAlign: theme.align, lineHeight: theme.lineHeight }}
+              start={session?.start} standby={session?.standby} control={editorControl}
               onChange={(l) => typed(SLIDE_TEXT, l)} onDone={stopEditing} />
           </div>
         </div>
@@ -826,6 +880,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         }}>
           <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof}
             style={{ ...rest, ...shrinkStyle, tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, textAlign: editEl.align ?? 'center', textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+            start={session?.start} standby={session?.standby} control={editorControl} onAutoList={onAutoList(editEl.id)}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>
       </div>
@@ -833,7 +888,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   })();
 
   return (
-    <div className={`ce-root ${tool ? `tool-${tool.kind}` : ''}`} ref={ref} tabIndex={0} onKeyDown={onKeyDown} onPointerDown={onRootDown} onPointerMove={onMove} onPointerUp={onUp} onContextMenuCapture={(e) => { if (tool?.kind === 'points') { e.preventDefault(); e.stopPropagation(); } }}
+    <div className={`ce-root ${tool ? `tool-${tool.kind}` : ''}`} ref={ref} tabIndex={0} onKeyDown={onKeyDown} onFocus={(e) => { if (e.target === ref.current) focusRoot(); }} onPointerDown={onRootDown} onPointerMove={onMove} onPointerUp={onUp} onContextMenuCapture={(e) => { if (tool?.kind === 'points') { e.preventDefault(); e.stopPropagation(); } }}
       onCopy={(e) => onCopy(e)} onCut={(e) => onCopy(e, true)} onPaste={onPaste} onDoubleClick={(e) => {
         const [x, y] = pointer(e);
         if (tool?.kind === 'freeform' && freePts) { finishFreeform(freePts, false); return; }
@@ -848,9 +903,19 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
           });
           return;
         }
-        if (hit) startEditing(hit);
+        if (!hit) return;
+        // A double-click selects the word there (DeckCraft's text.selectWord), in a box being typed in or not yet.
+        if (editing === hit && editorControl.current) editorControl.current.wordAt(e.clientX, e.clientY);
+        else startEditing(hit, { start: { point: [e.clientX, e.clientY], word: true } });
       }}>
       <SlideCanvas slide={shown} theme={baseTheme} background={background} bgEffect={bgEffect} />
+      {/* Where typing on a selected box starts (see `sink`); placed on the box so an input method's candidate window opens there. */}
+      <textarea ref={sink} className="ce-ime-sink" data-ime-sink="" aria-label="선택한 개체에 입력" tabIndex={-1} spellCheck={false}
+        style={{ left: (frame?.box.x ?? 0) * k, top: (frame?.box.y ?? 0) * k }}
+        onCompositionStart={() => { sinkComposing.current = true; sinkMuted.current = false; }}
+        onCompositionEnd={() => { sinkComposing.current = false; window.setTimeout(() => { if (!sinkComposing.current) sinkInput(); }, 0); }}
+        onInput={sinkInput} onBlur={() => { sinkMuted.current = true; }} onFocus={() => { sinkMuted.current = false; }}
+        onPointerDown={(e) => e.stopPropagation()} />
       <div className="ce-overlay">
         {view?.grid && <div className="ce-grid" style={{ backgroundSize: `${30 * k}px ${30 * k}px` }} />}
         {view?.guides && <><div className="ce-guide ce-guide-v ce-fixed" style={{ left: (CANVAS_W / 2) * k }} /><div className="ce-guide ce-guide-h ce-fixed" style={{ top: (CANVAS_H / 2) * k }} /></>}

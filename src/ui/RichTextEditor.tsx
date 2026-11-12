@@ -5,12 +5,14 @@
 // While a box is being typed in, the ribbon's and Format pane's font buttons act on the selected
 // characters through `activeTextEditor` (the selection is remembered when focus moves to a ribbon
 // control, such as the font size box).
-import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ClipboardEvent as RClipboardEvent, type KeyboardEvent as RKeyboardEvent } from 'react';
-import type { TextRun } from '../domain/types';
+import { useEffect, useLayoutEffect, useRef, type CSSProperties, type ClipboardEvent as RClipboardEvent, type FormEvent, type KeyboardEvent as RKeyboardEvent, type MouseEvent as RMouseEvent } from 'react';
+import type { ListStyle, TextRun } from '../domain/types';
 import { insertLines, normalizeRuns, sliceLines, withBoxFormat, type RunFormat } from '../domain/richText';
 import { CLIP_TYPE, pastedLines, runsHtml } from '../domain/clipboard';
 import { formatSpan, stepFontSize } from '../domain/textFormat';
 import { runStyle } from './runStyle';
+import { deleteWord, paraDown, paraUp, paragraphRange, toOffset, toPos, wordMove, wordRange, type Pos } from '../domain/textEditing';
+import { autoCorrectAt, autoCorrectPrefs, smartQuote } from '../domain/autoCorrect';
 
 export interface RichTextApi {
   /** Is part of the text selected (formatting then applies to it rather than the whole box)? */
@@ -167,6 +169,51 @@ function pointAt(root: HTMLElement, offset: number): [Node, number] {
   return [root, root.childNodes.length];
 }
 
+/** The character offset under a screen point (null: not over the editor's text). */
+function offsetAtPoint(root: HTMLElement, x: number, y: number): number | null {
+  const doc = document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null };
+  let node: Node | null = null, off = 0;
+  const pos = doc.caretPositionFromPoint?.(x, y);
+  if (pos) { node = pos.offsetNode; off = pos.offset; } else {
+    const r = document.caretRangeFromPoint?.(x, y);
+    if (r) { node = r.startContainer; off = r.startOffset; }
+  }
+  if (!node || !root.contains(node)) return null;
+  return offsetOf(root, node, off);
+}
+
+/** The paragraphs' plain text. */
+const parasOf = (lines: TextRun[][]) => lines.map((l) => l.map((r) => r.text).join(''));
+
+/** Select [anchor → focus] (flat offsets) in the editor, keeping the direction. */
+function selectFlat(root: HTMLElement, anchor: number, focus = anchor) {
+  const [na, oa] = pointAt(root, anchor), [nf, of] = pointAt(root, focus);
+  const s = window.getSelection();
+  if (!s) return;
+  if (s.setBaseAndExtent) s.setBaseAndExtent(na, oa, nf, of);
+  else { const r = document.createRange(); r.setStart(na, oa); r.collapse(true); s.removeAllRanges(); s.addRange(r); s.extend?.(nf, of); }
+}
+
+const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+
+/** How the typing session starts (DeckCraft's text.edit): the caret at a clicked point, the word there selected, or everything selected. */
+export interface EditStart {
+  /** Screen point clicked (clientX, clientY): the caret goes there. */
+  point?: [number, number];
+  /** Double-click: select the word at `point`. */
+  word?: boolean;
+}
+
+/** What the canvas does with the editor from outside: the input-method hand-off and word selection. */
+export interface EditorControl {
+  /** Typing on a selected box: show `text` in place of the box's text while an input method composes elsewhere. */
+  show(text: string): void;
+  /** …then take over: `text` replaces the box's text, the caret after it, and typing goes on here. */
+  take(text: string): void;
+  /** Select the word at a screen point (double-click). */
+  wordAt(x: number, y: number): void;
+}
+
 /** Split the lines' runs at [a, b) and give that part `patch` (undefined values clear a format). */
 export function formatRange(lines: TextRun[][], a: number, b: number, patch: (r: TextRun) => RunFormat): TextRun[][] {
   let at = 0;
@@ -209,33 +256,48 @@ interface Props {
   base: { fontSize: number; bold: boolean; italic: boolean; color: string; fontFamily?: string; underline?: boolean; strike?: boolean; highlight?: string };
   style: CSSProperties;
   onChange: (lines: TextRun[][]) => void;
-  onDone: () => void;
+  /** Typing ends (Esc: `escape`, focus moved away: no argument). */
+  onDone: (how?: 'escape') => void;
   /** Selection only formats plain text (the slide's own lyrics keep one style per line). */
   plain?: boolean;
   /** Review › Language: the proofing language, and no spelling check. */
   lang?: string;
   noProof?: boolean;
+  /** Where the caret goes when typing starts (default: the end of the text). */
+  start?: EditStart;
+  /** Typing on a selected box with an input method: the editor waits (unfocused) for `control.take`. */
+  standby?: boolean;
+  control?: { current: EditorControl | null };
+  /** AutoFormat's automatic list: make the box a list (undefined: take it off); false when the box can't. */
+  onAutoList?: (list: ListStyle | undefined) => boolean;
 }
 
 /** The editable text box. Mounted for one typing session. */
-export function RichTextEditor({ lines, base, style, onChange, onDone, plain, lang, noProof }: Props) {
+export function RichTextEditor({ lines, base, style, onChange, onDone, plain, lang, noProof, start, standby, control, onAutoList }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const sel = useRef<[number, number]>([0, 0]);
-  const latest = useRef({ onChange, onDone, base });
-  latest.current = { onChange, onDone, base };
+  const latest = useRef({ onChange, onDone, base, onAutoList });
+  latest.current = { onChange, onDone, base, onAutoList };
+  /** Our own edits (AutoCorrect, word deletion) are not typing: their input events are not corrected again. */
+  const busy = useRef(false);
+  /** The list AutoFormat just started (Backspace right after puts the typed lead back), and the text it left. */
+  const autoList = useRef<{ para: number; typed: string; text: string } | null>(null);
 
   useLayoutEffect(() => {
     const root = ref.current!;
     render(root, lines.length ? lines : [[]]);
-    root.focus();
-    // The caret goes to the end, as a click into PowerPoint's text puts it in the text.
-    const range = document.createRange();
-    range.selectNodeContents(root);
-    range.collapse(false);
-    window.getSelection()?.removeAllRanges();
-    window.getSelection()?.addRange(range);
     const total = lines.reduce((n, l) => n + l.reduce((m, r) => m + r.text.length, 0), 0) + Math.max(0, lines.length - 1);
     sel.current = [total, total];
+    if (standby) return;
+    root.focus();
+    // DeckCraft's text.edit: the caret where the text was clicked (a double-click selects the word
+    // there); from the keyboard (Enter / F2) at the end of the text.
+    const at = start?.point ? offsetAtPoint(root, start.point[0], start.point[1]) : null;
+    if (at !== null && start?.word) {
+      const paras = parasOf(lines);
+      const [a, b] = wordRange(paras, toPos(paras, at));
+      selectFlat(root, toOffset(paras, a), toOffset(paras, b));
+    } else selectFlat(root, at ?? total);
     // Mounted once per typing session; later text comes from the DOM itself.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -307,6 +369,146 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
     };
   }, [plain]);
 
+  // A layout effect: the canvas hands text over right after mounting the editor (flushSync).
+  useLayoutEffect(() => {
+    if (!control) return;
+    const root = ref.current!;
+    // Typing on a selected box replaces its text with the first character's formatting (DeckCraft's type_text).
+    const { text: _t, ...fmt } = lines.flat()[0] ?? { text: '' };
+    const put = (text: string) => {
+      render(root, text ? [[{ ...fmt, text }]] : [[]]);
+      latest.current.onChange(readLines(root));
+    };
+    const ctl: EditorControl = {
+      // Never touch the DOM while it has focus: an input method may be composing in it.
+      show: (text) => { if (document.activeElement !== root) put(text); },
+      take: (text) => {
+        if (document.activeElement !== root) put(text);
+        root.focus();
+        selectFlat(root, text.length);
+        notify();
+      },
+      wordAt: (x, y) => { if (!pickAt(x, y, 2)) root.focus(); },
+    };
+    control.current = ctl;
+    return () => { if (control.current === ctl) control.current = null; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [control]);
+
+  /** The live selection as flat offsets: where it is anchored and where the caret is. */
+  const liveSel = (): { anchor: number; focus: number } | null => {
+    const root = ref.current!;
+    const s = window.getSelection();
+    if (!s || !s.rangeCount || !s.anchorNode || !s.focusNode || !root.contains(s.anchorNode)) return null;
+    return { anchor: offsetOf(root, s.anchorNode, s.anchorOffset), focus: offsetOf(root, s.focusNode, s.focusOffset) };
+  };
+  /** Replace [a, b) through the browser's own editing, so Ctrl+Z undoes it like typing. */
+  const replaceFlat = (a: number, b: number, text: string) => {
+    const root = ref.current!;
+    selectFlat(root, a, b);
+    busy.current = true;
+    try {
+      if (text) document.execCommand('insertText', false, text);
+      else if (a !== b) document.execCommand('delete');
+    } finally { busy.current = false; }
+  };
+
+  /** Double-click: the word at the point (DeckCraft's text.selectWord); triple-click: the paragraph with its mark. */
+  const pickAt = (x: number, y: number, clicks: number): boolean => {
+    const root = ref.current!;
+    const at = offsetAtPoint(root, x, y);
+    if (at === null) return false;
+    const paras = parasOf(readLines(root));
+    const p = toPos(paras, at);
+    const [a, b] = clicks === 2 ? wordRange(paras, p) : paragraphRange(paras, p[0]);
+    root.focus();
+    selectFlat(root, toOffset(paras, a), toOffset(paras, b));
+    return true;
+  };
+
+  /**
+   * DeckCraft's text keys that the browser does differently: Ctrl+←/→ by PowerPoint's word stops,
+   * Ctrl+↑/↓ by paragraph, Ctrl+Backspace / Ctrl+Delete by word with smart spacing (Option on the
+   * Mac). Shift extends the selection. True when the key was handled.
+   */
+  const textKey = (e: RKeyboardEvent): boolean => {
+    const word = isMac ? e.altKey && !e.metaKey && !e.ctrlKey : e.ctrlKey && !e.altKey && !e.metaKey;
+    if (!word || !['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backspace', 'Delete'].includes(e.key)) return false;
+    const root = ref.current!;
+    const cur = liveSel();
+    if (!cur) return false;
+    let paras = parasOf(readLines(root));
+    const lo = Math.min(cur.anchor, cur.focus), hi = Math.max(cur.anchor, cur.focus);
+    const pos = (o: number) => toPos(paras, o);
+    e.preventDefault();
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      if (e.shiftKey) return true;
+      // From the start of a selection, leaving the rest of it (PowerPoint for Windows).
+      const r = deleteWord(paras, pos(lo), e.key === 'Delete');
+      for (const ed of r.edits) {
+        replaceFlat(toOffset(paras, ed.from), toOffset(paras, ed.to), ed.text);
+        paras = parasOf(readLines(root));
+      }
+      selectFlat(root, toOffset(paras, r.caret));
+      return true;
+    }
+    // Ctrl+arrows with a selection go on from its start (left) or end (right).
+    const at = pos(cur.focus);
+    let to: Pos;
+    if (e.key === 'ArrowLeft') to = wordMove(paras, pos(e.shiftKey ? cur.focus : lo), false);
+    else if (e.key === 'ArrowRight') to = wordMove(paras, pos(e.shiftKey ? cur.focus : hi), true);
+    else if (isMac) to = e.key === 'ArrowUp' ? [at[0], 0] : [at[0], paras[at[0]]?.length ?? 0];
+    else to = e.key === 'ArrowUp' ? paraUp(paras, at) : paraDown(paras, at);
+    const f = toOffset(paras, to);
+    selectFlat(root, e.shiftKey ? cur.anchor : f, f);
+    return true;
+  };
+
+  /** After a character was typed: smart quotes, AutoCorrect and AutoFormat's lists (DeckCraft's text.insert). */
+  const afterTyping = (data: string) => {
+    const root = ref.current!;
+    const prefs = autoCorrectPrefs();
+    const cur = liveSel();
+    if (!cur || cur.anchor !== cur.focus) return;
+    const lines = readLines(root);
+    const paras = parasOf(lines);
+    const [pi, ch] = toPos(paras, cur.focus);
+    const line = paras[pi] ?? '';
+    const typing = [...data].length === 1;
+    if (typing && prefs.smartQuotes && (data === '"' || data === "'")) {
+      const q = smartQuote(data, ch >= 2 ? line[ch - 2] : undefined);
+      if (q !== data) { replaceFlat(cur.focus - 1, cur.focus, q); selectFlat(root, cur.focus); }
+      return;
+    }
+    const act = autoCorrectAt(prefs, line, ch, typing);
+    if (!act) return;
+    const base = toOffset(paras, [pi, 0]);
+    if (act.kind === 'replace') {
+      replaceFlat(base + act.start, base + act.end, act.text);
+      selectFlat(root, cur.focus + act.text.length - (act.end - act.start));
+    } else if (act.kind === 'ordinal') {
+      if (plain || runAt(lines, base + act.start)?.baseline === 'super') return;
+      render(root, formatRange(lines, base + act.start, base + act.end, () => ({ baseline: 'super' })));
+      selectFlat(root, cur.focus);
+    } else if (paras.length === 1 && latest.current.onAutoList?.(act.list)) {
+      // LightCast's lists belong to the whole box: a box of this one paragraph becomes the list.
+      replaceFlat(base, base + act.end, '');
+      autoList.current = { para: pi, typed: act.typed, text: parasOf(readLines(root)).join('\n') };
+    }
+  };
+
+  const onInput = (e: FormEvent) => {
+    const ev = e.nativeEvent as InputEvent;
+    // Never while an input method composes (Korean), nor for our own edits.
+    if (!busy.current && !ev.isComposing && ev.inputType === 'insertText' && ev.data) afterTyping(ev.data);
+    latest.current.onChange(readLines(ref.current!));
+  };
+
+  const onMouseDown = (e: RMouseEvent) => {
+    if (e.button !== 0 || e.detail < 2 || e.shiftKey) return;
+    if (pickAt(e.clientX, e.clientY, Math.min(3, e.detail))) e.preventDefault();
+  };
+
   /** Copy / cut the selected characters with their formatting (and the box's, where they have none). */
   const copyOut = (e: RClipboardEvent, cut: boolean) => {
     e.stopPropagation();
@@ -327,7 +529,23 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
 
   const onKeyDown = (e: RKeyboardEvent) => {
     e.stopPropagation();
-    if (e.key === 'Escape') { e.preventDefault(); latest.current.onDone(); return; }
+    // The input method has the keys while it composes (Korean): nothing here may break its syllable.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    const list = autoList.current;
+    if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) autoList.current = null;
+    if (e.key === 'Escape') { e.preventDefault(); latest.current.onDone('escape'); return; }
+    // Backspace right after AutoFormat started a list puts the typed lead back.
+    if (list && e.key === 'Backspace' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+      const cur = liveSel();
+      const paras = parasOf(readLines(ref.current!));
+      if (cur && cur.anchor === cur.focus && cur.focus === toOffset(paras, [list.para, 0]) && paras.join('\n') === list.text) {
+        e.preventDefault();
+        latest.current.onAutoList?.(undefined);
+        replaceFlat(cur.focus, cur.focus, list.typed);
+        return;
+      }
+    }
+    if (textKey(e)) return;
     // Tab types a tab (it goes to the box's next tab stop) instead of leaving the box.
     if (e.key === 'Tab' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) { e.preventDefault(); document.execCommand('insertText', false, '\t'); return; }
     const mod = e.ctrlKey || e.metaKey;
@@ -359,8 +577,10 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
       spellCheck={spell && !noProof}
       lang={lang}
       style={style}
-      onInput={() => onChange(readLines(ref.current!))}
+      onInput={onInput}
       onKeyDown={onKeyDown}
+      onMouseDown={onMouseDown}
+      onDoubleClick={(e) => e.stopPropagation()}
       onCopy={(e) => copyOut(e, false)}
       onCut={(e) => copyOut(e, true)}
       onPaste={(e) => {

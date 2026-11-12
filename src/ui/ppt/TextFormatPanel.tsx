@@ -130,7 +130,7 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onS
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || document.querySelector('.modal-backdrop')) return;
       const t = e.target as HTMLElement | null;
-      if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return;
+      if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName)) && !t.closest('[data-ime-sink]')) return;
       const { f: cur, onChange: set, step: grow, onClear: clear } = latest.current;
       const k = e.key.toLowerCase();
       // Grow / Shrink Font: Ctrl+] / Ctrl+[ and Ctrl+Shift+> / Ctrl+Shift+< (DeckCraft's Cmd+Shift+. / ,).
