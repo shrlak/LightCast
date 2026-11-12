@@ -68,7 +68,8 @@ export function shrinkScale(fits: (scale: number) => boolean): number {
  * does not wrap takes the text's width too.
  */
 export function resizeToText(el: Pick<SlideElement, 'x' | 'y' | 'w' | 'h' | 'wrap'>, need: { w: number; h: number }): { x: number; y: number; w: number; h: number } {
-  const w = el.wrap === false ? Math.max(MIN_FIT_W, Math.ceil(need.w)) : el.w;
+  // DeckCraft's fit_width adds 1 pt so the last glyph never wraps or clips.
+  const w = el.wrap === false ? Math.max(MIN_FIT_W, Math.ceil(need.w) + 2) : el.w;
   return { x: el.x, y: el.y, w, h: Math.max(MIN_FIT_H, Math.ceil(need.h)) };
 }
 

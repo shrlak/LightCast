@@ -98,7 +98,7 @@ describe('text box autofit (Format Shape › 텍스트 상자, DeckCraft format.
   it('Resize shape to fit text: the height follows the text (grows and shrinks), top-left kept; no wrap → width too', () => {
     expect(resizeToText(box(), { w: 380, h: 520.2 })).toEqual({ x: 100, y: 200, w: 400, h: 521 });
     expect(resizeToText(box(), { w: 380, h: 80 })).toEqual({ x: 100, y: 200, w: 400, h: 80 });
-    expect(resizeToText(box({ wrap: false }), { w: 912.4, h: 80 })).toEqual({ x: 100, y: 200, w: 913, h: 80 });
+    expect(resizeToText(box({ wrap: false }), { w: 912.4, h: 80 })).toEqual({ x: 100, y: 200, w: 915, h: 80 });
     // DeckCraft's minimum: 8 pt high, 20 pt wide.
     expect(resizeToText(box({ wrap: false }), { w: 3, h: 2 })).toEqual({ x: 100, y: 200, w: 40, h: 16 });
   });
