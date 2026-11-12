@@ -430,6 +430,8 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
                 <span key={`${r}-${c}`} className={`tp-cell ${r < hover[0] && c < hover[1] ? 'on' : ''}`} onMouseEnter={() => setHover([r + 1, c + 1])} onClick={() => { add(makeTable(r + 1, c + 1)); close(); }} />
               )))}
             </div>
+            <MenuSep />
+            <MenuItem label="표 그리기" hint="끌어서 표를 그리고, 표 안을 끌어 나눕니다" onClick={() => { if (!blocked(ed)) ed.setTool({ kind: 'tableDraw' }); close(); }} />
           </div>
         )} />
       </Group>

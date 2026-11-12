@@ -400,8 +400,8 @@ export function TableDesignTab({ ed }: { ed: Ed }) {
           <label className="rb-field">펜 두께 <select value={pen.width} onChange={(e) => setPen({ ...pen, width: Number(e.target.value) })}>{[1, 1.5, 2, 3, 4.5, 6, 9, 12].map((w) => <option key={w} value={w}>{w / 2} pt</option>)}</select></label>
           <label className="rb-field">펜 색 <input type="color" value={pen.color} onChange={(e) => setPen({ ...pen, color: e.target.value })} /></label>
         </Col>
-        <Big icon="✎" label="표 그리기" title="셀 안을 끌어 선을 그리면 셀이 나뉩니다" active={ed.tool?.kind === 'tableDraw' && !ed.tool.erase} onClick={() => ed.setTool(ed.tool?.kind === 'tableDraw' && !ed.tool.erase ? null : { kind: 'tableDraw', id: el.id })} />
-        <Big icon="⌫" label="지우개" title="셀 사이의 선을 클릭하면 두 셀이 합쳐집니다" active={ed.tool?.kind === 'tableDraw' && !!ed.tool.erase} onClick={() => ed.setTool(ed.tool?.kind === 'tableDraw' && ed.tool.erase ? null : { kind: 'tableDraw', id: el.id, erase: true })} />
+        <Big icon="✎" label="표 그리기" title="표 안을 끌어 선을 그리면 지나는 셀이 나뉩니다 (표 밖을 끌면 새 표). Esc로 끝" active={ed.tool?.kind === 'tableDraw' && !ed.tool.erase} onClick={() => ed.setTool(ed.tool?.kind === 'tableDraw' && !ed.tool.erase ? null : { kind: 'tableDraw' })} />
+        <Big icon="⌫" label="지우개" title="셀 사이의 선을 클릭하면 두 셀이 합쳐집니다" active={ed.tool?.kind === 'tableDraw' && !!ed.tool.erase} onClick={() => ed.setTool(ed.tool?.kind === 'tableDraw' && ed.tool.erase ? null : { kind: 'tableDraw', erase: true })} />
       </Group>
     </>
   );

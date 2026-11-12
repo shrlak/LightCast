@@ -13,8 +13,8 @@ import {
   orderSelection, pasteStyle, selectionUnits, ungroupSelection, type CopiedStyle,
   lineBox, makeFreeform, pathShapeOf, routeConnectors,
 } from '../../domain/editOps';
-import { layoutTable } from '../../engine';
-import { drawLine, eraseLine } from '../../domain/tableBorders';
+import { drawTableLine, eraseTableLine } from '../../domain/drawTable';
+import { makeTable } from '../../domain/editOps';
 import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, insertPoint, moveAnchor, moveControl, nearestOnPath, openPath, parsePath, setPointType, setSegmentType, shiftPath, writePath, type Seg } from '../../domain/pathEdit';
 import { boundsOf, hitBox, marqueeIds, resizeBox, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
 import { adjOf, geometryOf, isLinePreset, presetOf } from '../EngineElements';
@@ -42,8 +42,12 @@ export type CanvasTool =
   | { kind: 'crop'; id: string }
   /** Shape Format › Edit Shape › Edit Points. */
   | { kind: 'points'; id: string }
-  /** Table Design › Draw Table (drag to split a cell) / Eraser (click a line between cells). */
-  | { kind: 'tableDraw'; id: string; erase?: boolean }
+  /**
+   * Insert › Table › Draw Table / Table Design › Draw Table: a drag inside a table draws a line that splits the cells
+   * it crosses, a drag elsewhere draws a new one-cell table; Eraser: a click on a line merges the cells either side.
+   * `id` pins the tool to one table; without it any table under the pointer counts.
+   */
+  | { kind: 'tableDraw'; id?: string; erase?: boolean }
   /** Picture Format › Color › Set Transparent Color: the next click on the picture picks the colour. */
   | { kind: 'eyedrop'; id: string; onPick: (fx: number, fy: number) => void }
   /** Animations › Motion Paths › Custom Path for object `id`: drawn like Freeform: Shape (`add`: Add Animation). */
@@ -68,7 +72,8 @@ type Drag =
   | { mode: 'ink'; points: [number, number][] }
   | { mode: 'point'; id: string; seg: number; startX: number; startY: number; moved: boolean; base?: string }
   | { mode: 'ctrl'; id: string; seg: number; which: 0 | 1; startX: number; startY: number; moved: boolean }
-  | { mode: 'tdraw'; id: string; r: number; c: number; cx: number; cy: number; cw: number; ch: number; x0: number; y0: number };
+  | { mode: 'tdraw'; id: string; x0: number; y0: number }
+  | { mode: 'tnew'; x0: number; y0: number };
 
 interface Props {
   slide: Slide;
@@ -167,7 +172,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const [pointPreview, setPointPreview] = useState<{ id: string; path: string } | null>(null);
   /** Edit Points: the anchor picked (its Bézier handles show) and the right-click menu. */
   const [ptSel, setPtSel] = useState<number | null>(null);
-  const [tablePreview, setTablePreview] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [tablePreview, setTablePreview] = useState<{ x0: number; y0: number; x1: number; y1: number; frame?: boolean } | null>(null);
   const [ptMenu, setPtMenu] = useState<{ x: number; y: number; seg: number; onSegment: boolean } | null>(null);
   const editing = session?.slideId === identity && (session.id === SLIDE_TEXT || elements.some((el) => el.id === session.id)) ? session.id : null;
   const defaultTextBox: Box = { x: theme.padding, y: theme.padding, w: CANVAS_W - theme.padding * 2, h: CANVAS_H - theme.padding * 2 };
@@ -343,25 +348,18 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       onToolDone?.();
     }
     if (tool?.kind === 'tableDraw') {
-      const el = elOf(tool.id);
-      if (!el?.table) { onToolDone?.(); return; }
-      const lx = x - el.x, ly = y - el.y;
-      const cells = layoutTable(el.table, el.w, el.h);
-      const cell = cells.find((c) => lx >= c.x - 6 && lx <= c.x + c.w + 6 && ly >= c.y - 6 && ly <= c.y + c.h + 6);
-      if (!cell) { onToolDone?.(); return; }
+      // The table under the pointer (the front-most one; with a pinned table, only that one).
+      const slop = tool.erase ? 10 / k : 0;
+      const el = [...visible].reverse().find((t) => t.kind === 'table' && t.table && (!tool.id || t.id === tool.id) && x >= t.x - slop && x <= t.x + t.w + slop && y >= t.y - slop && y <= t.y + t.h + slop);
       if (tool.erase) {
-        // The line nearest the click: the cell's right or bottom edge (or the neighbour's).
-        const tol = 10 / k;
-        const near = cells.flatMap((c) => [
-          { c, side: 'r' as const, d: Math.abs(lx - (c.x + c.w)) + (ly < c.y || ly > c.y + c.h ? 1e9 : 0) },
-          { c, side: 'b' as const, d: Math.abs(ly - (c.y + c.h)) + (lx < c.x || lx > c.x + c.w ? 1e9 : 0) },
-        ]).filter((h) => h.d < tol).sort((a, b) => a.d - b.d)[0];
-        const next = near && eraseLine(el.table, near.c.r, near.c.c, near.side);
-        if (next) setElements(elements.map((e) => (e.id === el.id ? { ...e, table: next } : e)));
+        // Click a line between two cells: they become one. Elsewhere does nothing.
+        const next = el?.table && eraseTableLine(el.table, el.w, el.h, [x - el.x, y - el.y], 10 / k);
+        if (el && next) setElements(elements.map((e) => (e.id === el.id ? { ...e, table: next } : e)));
         return;
       }
-      drag.current = { mode: 'tdraw', id: el.id, r: cell.r, c: cell.c, cx: cell.x, cy: cell.y, cw: cell.w, ch: cell.h, x0: lx, y0: ly };
-      setTablePreview({ x0: x, y0: y, x1: x, y1: y });
+      if (el?.table) drag.current = { mode: 'tdraw', id: el.id, x0: x - el.x, y0: y - el.y };
+      else drag.current = { mode: 'tnew', x0: x, y0: y };
+      setTablePreview({ x0: x, y0: y, x1: x, y1: y, frame: !el });
       return;
     }
     if (tool?.kind === 'pen') { drag.current = { mode: 'ink', points: [[x, y]] }; setInkPath([[x, y]]); return; }
@@ -458,7 +456,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       setInkPath([...d.points]);
       return;
     }
-    if (d.mode === 'tdraw') {
+    if (d.mode === 'tdraw' || d.mode === 'tnew') {
       setTablePreview((p) => (p ? { ...p, x1: x, y1: y } : p));
       return;
     }
@@ -549,19 +547,26 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
       onSelect(d.add ? [...new Set([...selected.filter((s) => s !== SLIDE_TEXT), ...ids])] : ids);
       return;
     }
+    if (d.mode === 'tnew') {
+      // Draw Table outside any table: the dragged rectangle becomes a table of one cell, to divide with the pencil.
+      setTablePreview(null);
+      const [x, y] = pointer(e);
+      const [w, h] = [Math.abs(x - d.x0), Math.abs(y - d.y0)];
+      const made = w >= 16 && h >= 16 ? makeTable(1, 1) : null;
+      if (made) {
+        const el = { ...made, x: Math.round(Math.min(x, d.x0)), y: Math.round(Math.min(y, d.y0)), w: Math.round(w), h: Math.round(h) };
+        setElements([...elements, el]);
+        onSelect([el.id]);
+      }
+      return;
+    }
     if (d.mode === 'tdraw') {
       setTablePreview(null);
       const el = elOf(d.id);
       if (!el?.table) return;
       const [x, y] = pointer(e);
-      const lx = x - el.x, ly = y - el.y;
-      const dx = Math.abs(lx - d.x0), dy = Math.abs(ly - d.y0);
-      if (Math.max(dx, dy) < 12) return;
-      // A mostly vertical stroke splits the cell into columns where it was drawn, a horizontal one into rows.
-      const next = dy > dx
-        ? drawLine(el.table, d.r, d.c, 'v', ((d.x0 + lx) / 2 - d.cx) / d.cw)
-        : drawLine(el.table, d.r, d.c, 'h', ((d.y0 + ly) / 2 - d.cy) / d.ch);
-      if (next) setElements(elements.map((e) => (e.id === el.id ? { ...e, table: next } : e)));
+      const next = drawTableLine(el.table, el.w, el.h, [d.x0, d.y0], [x - el.x, y - el.y]);
+      if (next) setElements(elements.map((e2) => (e2.id === el.id ? { ...e2, table: next } : e2)));
       return;
     }
     if (d.mode === 'point' || d.mode === 'ctrl') {
@@ -911,7 +916,9 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         })()}
         {tablePreview && (
           <svg className="ce-handles-svg" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`}>
-            <line x1={tablePreview.x0} y1={tablePreview.y0} x2={tablePreview.x1} y2={tablePreview.y1} stroke="#0078d4" strokeWidth={2 / k} strokeDasharray={`${6 / k} ${4 / k}`} />
+            {tablePreview.frame
+              ? <rect x={Math.min(tablePreview.x0, tablePreview.x1)} y={Math.min(tablePreview.y0, tablePreview.y1)} width={Math.abs(tablePreview.x1 - tablePreview.x0)} height={Math.abs(tablePreview.y1 - tablePreview.y0)} fill="none" stroke="#fde718" strokeWidth={2 / k} strokeDasharray={`${6 / k} ${4 / k}`} />
+              : <line x1={tablePreview.x0} y1={tablePreview.y0} x2={tablePreview.x1} y2={tablePreview.y1} stroke="#fde718" strokeWidth={3 / k} strokeDasharray={`${6 / k} ${4 / k}`} />}
           </svg>
         )}
         {customGuides?.v.map((x, i) => <div key={`cgv${i}`} className="ce-guide ce-guide-v ce-user" style={{ left: x * k }} />)}
