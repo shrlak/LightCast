@@ -110,12 +110,15 @@ export function TellMe({ ed, actions, tabs, ctx, go }: { ed: Ed; actions: Ribbon
       b.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
       b.click();
       if (!e.via) return;
-      const menu = body.querySelector(MENU);
-      const item = menu && findMenuItem(menu, e);
-      if (!item || item.hasAttribute('disabled')) { if (menu) b.click(); return unavailable(); }
-      item.click();
-      // A menu the item left open is closed again (the arrow toggles).
-      setTimeout(() => { if (body.querySelector(MENU)) b.click(); }, 80);
+      // The menu is drawn on the next frame (React renders the click after it returns), so it is read then.
+      requestAnimationFrame(() => {
+        const menu = body.querySelector(MENU);
+        const item = menu && findMenuItem(menu, e);
+        if (!item || item.hasAttribute('disabled')) { if (menu) b.click(); return unavailable(); }
+        item.click();
+        // A menu the item left open is closed again (the arrow toggles).
+        setTimeout(() => { if (body.querySelector(MENU)) b.click(); }, 80);
+      });
     };
     requestAnimationFrame(press);
   };
