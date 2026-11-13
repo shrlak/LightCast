@@ -12,7 +12,7 @@ import { desktop } from '../../domain/desktop';
 import { uid } from '../../domain/lyrics';
 import { isMetafileName, pictureBlob } from '../../domain/metafile/image';
 import { svgPictureBox } from './svgInsert';
-import { SVG_MIME, looksLikeSvg } from '../../domain/svgPicture';
+import { SVG_MIME, isSvgzName, looksLikeSvg } from '../../domain/svgPicture';
 
 /** What a paste found on the clipboard. */
 export interface ClipSource { custom?: string; html?: string; text?: string; images: Blob[] }
@@ -72,7 +72,7 @@ export function sourceOf(data: DataTransfer): ClipSource {
     custom: data.getData(CLIP_TYPE) || undefined,
     html: data.getData('text/html') || undefined,
     text: data.getData('text/plain') || undefined,
-    images: Array.from(data.files ?? []).filter((f) => f.type.startsWith('image/') || isMetafileName(f.name)),
+    images: Array.from(data.files ?? []).filter((f) => f.type.startsWith('image/') || isMetafileName(f.name) || isSvgzName(f.name)),
   };
 }
 

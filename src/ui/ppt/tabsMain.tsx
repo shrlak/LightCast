@@ -212,7 +212,7 @@ function FillExtras({ ed, first, set, close }: { ed: Ed; first?: SlideElement; s
       <MenuHead>투명도</MenuHead>
       <div className="rb-chip-row" title="채우기만 투명하게 (개체 불투명도와는 별개)"><input type="range" min={0} max={100} step={5} value={Math.round((first?.fillTransparency ?? 0) * 100)} onChange={(e) => set({ fillTransparency: Number(e.target.value) ? Number(e.target.value) / 100 : undefined })} /><input type="number" min={0} max={100} step={5} style={{ width: 52 }} value={Math.round((first?.fillTransparency ?? 0) * 100)} onChange={(e) => set({ fillTransparency: Math.max(0, Math.min(100, Number(e.target.value))) / 100 || undefined })} />%</div>
       <MenuItem icon="🖼" label="그림…" onClick={() => file.current?.click()} />
-      <input ref={file} type="file" accept="image/*,.wmf,.emf" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={file} type="file" accept="image/*,.wmf,.emf,.svgz" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
       <MenuHead>그라데이션</MenuHead>
       <div className="grad-grid">
         {GRADIENTS.map(([a, b, l]) => (['linear', 'radial'] as const).map((t) => (
@@ -517,7 +517,7 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
         )} />
       </Group>
       <Group label="이미지">
-        <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*,.wmf,.emf'; fileRef.current.click(); } }} />
+        <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*,.wmf,.emf,.svgz'; fileRef.current.click(); } }} />
         <DropButton big icon="🖼" label="사진 앨범" disabled={!ed.p} split onMain={() => ed.setDialog('photoAlbum')} render={(close) => (
           <>
             <MenuItem label="새 사진 앨범…" onClick={() => { ed.setDialog('photoAlbum'); close(); }} />

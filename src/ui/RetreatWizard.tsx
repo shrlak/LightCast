@@ -269,7 +269,7 @@ export function RetreatWizard({ state, dispatch, onClose, notify }: Props) {
                   <summary className="row gap-s">
                     <input className="plain strong" value={m.name} onChange={(e) => setMeeting(m.id, { name: e.target.value })} onClick={(e) => e.stopPropagation()} />
                     <input type="date" value={m.date} onChange={(e) => setMeeting(m.id, { date: e.target.value })} onClick={(e) => e.stopPropagation()} />
-                    <label className="small" onClick={(e) => e.stopPropagation()}>설교 포스터 <input type="file" accept="image/*,.wmf,.emf" onChange={(e) => setPoster(m, e.target.files?.[0])} /></label>
+                    <label className="small" onClick={(e) => e.stopPropagation()}>설교 포스터 <input type="file" accept="image/*,.wmf,.emf,.svgz" onChange={(e) => setPoster(m, e.target.files?.[0])} /></label>
                     {m.posterMediaId && <span className="ok small">✓ poster</span>}
                     <button className="mini-btn danger" onClick={(e) => { e.preventDefault(); setD((x) => ({ ...x, meetings: x.meetings.filter((y) => y.id !== m.id) })); }}>집회 삭제</button>
                   </summary>

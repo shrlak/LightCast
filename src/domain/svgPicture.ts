@@ -160,12 +160,98 @@ export function looksLikeSvg(type: string | undefined, name?: string, head?: str
   return !!head && (!type || /^(text\/(xml|plain)|application\/xml)$/i.test(type)) && /^\s*(?:<\?xml[^>]*>\s*)?(?:<!--[\s\S]*?-->\s*)*(?:<!DOCTYPE[^>]*>\s*)?<svg[\s/>]/i.test(head);
 }
 
-/** The blob to store for a picture: an SVG is replaced by its sanitized source (typed image/svg+xml); anything else passes unchanged. */
+/** Compressed SVG (.svgz): gzip around an SVG. */
+export const isSvgzName = (name: string | undefined | null) => /\.svgz$/i.test(name ?? '');
+/** Largest SVG source kept after decompression (a gzip bomb stops here). */
+export const MAX_SVG_BYTES = 16e6;
+const hasGzipMagic = (u8: Uint8Array) => u8.length > 18 && u8[0] === 0x1f && u8[1] === 0x8b && u8[2] === 8;
+
+/** Gunzips with the browser's (and Node's) DecompressionStream, stopping past `max` bytes. Null when it is missing or the data is bad. */
+async function gunzipNative(u8: Uint8Array, max: number): Promise<Uint8Array | null> {
+  if (typeof DecompressionStream === 'undefined') return null;
+  try {
+    const reader = new Blob([u8 as BlobPart]).stream().pipeThrough(new DecompressionStream('gzip')).getReader();
+    const parts: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.length;
+      if (total > max) { await reader.cancel().catch(() => undefined); return null; }
+      parts.push(value);
+    }
+    const out = new Uint8Array(total);
+    let o = 0;
+    for (const c of parts) { out.set(c, o); o += c.length; }
+    return out;
+  } catch { return null; }
+}
+
+/**
+ * Gunzips without DecompressionStream: the deflate stream inside the gzip is wrapped in a one-entry
+ * zip (same compression) and read back with JSZip, which carries its own inflate. The size is checked
+ * against the gzip trailer first, and JSZip rejects data that does not match it.
+ */
+async function gunzipViaZip(u8: Uint8Array, max: number): Promise<Uint8Array | null> {
+  if (!hasGzipMagic(u8)) return null;
+  const flg = u8[3];
+  let p = 10;
+  if (flg & 4) p += 2 + (u8[p] | (u8[p + 1] << 8));
+  for (const bit of [8, 16]) if (flg & bit) { while (p < u8.length && u8[p] !== 0) p++; p++; }
+  if (flg & 2) p += 2;
+  const trailer = u8.length - 8;
+  if (p >= trailer) return null;
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const crc = dv.getUint32(trailer, true), size = dv.getUint32(trailer + 4, true);
+  if (size > max) return null;
+  const data = u8.subarray(p, trailer);
+  const zip = new Uint8Array(30 + 1 + data.length + 46 + 1 + 22);
+  const z = new DataView(zip.buffer);
+  const local = (): void => {
+    z.setUint32(0, 0x04034b50, true); z.setUint16(4, 20, true); z.setUint16(8, 8, true);
+    z.setUint32(14, crc, true); z.setUint32(18, data.length, true); z.setUint32(22, size, true); z.setUint16(26, 1, true);
+    zip[30] = 0x61;
+    zip.set(data, 31);
+  };
+  local();
+  const c = 31 + data.length;
+  z.setUint32(c, 0x02014b50, true); z.setUint16(c + 4, 20, true); z.setUint16(c + 6, 20, true); z.setUint16(c + 10, 8, true);
+  z.setUint32(c + 16, crc, true); z.setUint32(c + 20, data.length, true); z.setUint32(c + 24, size, true); z.setUint16(c + 28, 1, true);
+  zip[c + 46] = 0x61;
+  const e = c + 47;
+  z.setUint32(e, 0x06054b50, true); z.setUint16(e + 8, 1, true); z.setUint16(e + 10, 1, true); z.setUint32(e + 12, 47, true); z.setUint32(e + 16, c, true);
+  try {
+    const { default: JSZip } = await import('jszip');
+    const out = await (await JSZip.loadAsync(zip)).file('a')?.async('uint8array');
+    return out && out.length <= max ? out : null;
+  } catch { return null; }
+}
+
+/** The bytes of a gzip file unpacked (at most `max` bytes); null when they are not gzip or cannot be unpacked. */
+export async function gunzip(bytes: Uint8Array, max = MAX_SVG_BYTES): Promise<Uint8Array | null> {
+  if (!hasGzipMagic(bytes)) return null;
+  return (await gunzipNative(bytes, max)) ?? (await gunzipViaZip(bytes, max));
+}
+/** Test hook: the zip-wrapping fallback on its own. */
+export const gunzipFallback = gunzipViaZip;
+
+/** The blob to store for a picture: an SVG (also gzip-compressed .svgz) is replaced by its sanitized source (typed image/svg+xml); anything else passes unchanged. */
 export async function prepareMediaBlob(blob: Blob): Promise<Blob> {
   const typed = (blob.type || '').toLowerCase();
+  const name = (blob as File).name;
+  const gz = isSvgzName(name) || /gzip|svg\+xml-compressed/.test(typed) || typed === '' || typed === 'application/octet-stream';
+  if (gz && blob.size >= 19 && blob.size <= 16e6) {
+    try {
+      const head = new Uint8Array(await blob.slice(0, 3).arrayBuffer());
+      if (head[0] === 0x1f && head[1] === 0x8b) {
+        const raw = await gunzip(new Uint8Array(await blob.arrayBuffer()));
+        const clean = raw ? sanitizeSvg(new TextDecoder('utf-8').decode(raw)) : null;
+        return clean ? new Blob([clean], { type: SVG_MIME }) : blob;
+      }
+    } catch { return blob; }
+  }
   const maybe = typed.startsWith(SVG_MIME) || typed === '' || typed === 'text/xml' || typed === 'application/xml' || typed === 'text/plain';
   if (!maybe || blob.size > 16e6) return blob;
-  const name = (blob as File).name;
   let text: string;
   try { text = await blob.text(); } catch { return blob; }
   if (!looksLikeSvg(blob.type, name, text.slice(0, 2048))) return blob;

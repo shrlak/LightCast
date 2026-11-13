@@ -172,7 +172,7 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
 
   return (
     <div className="stack">
-      <input ref={photoRef} type="file" accept="image/*,.wmf,.emf" multiple hidden onChange={(e) => readPhotos(e.target.files)} />
+      <input ref={photoRef} type="file" accept="image/*,.wmf,.emf,.svgz" multiple hidden onChange={(e) => readPhotos(e.target.files)} />
       <div className="two-col">
         <div className="card stack">
           <h3>콘티 PDF</h3>
