@@ -55,7 +55,7 @@ if (!relaunching && !app.requestSingleInstanceLock()) app.quit();
 
 // ---------- settings ----------
 const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
-let settings = { networkRemote: false, internetRemote: false, remoteLinkId: '', remoteLinkSecret: '', teamLinkId: '', teamLinkSecret: '', ai: {}, outputDisplays: {} };
+let settings = { networkRemote: false, internetRemote: false, remoteLinkId: '', remoteLinkSecret: '', teamLinkId: '', teamLinkSecret: '', ai: {}, outputDisplays: {}, presenterDisplay: null };
 
 function loadSettings() {
   try {
@@ -65,14 +65,14 @@ function loadSettings() {
       if (raw.aiEnc && safeStorage.isEncryptionAvailable()) ai = JSON.parse(safeStorage.decryptString(Buffer.from(raw.aiEnc, 'base64')));
       else if (raw.aiPlain) ai = raw.aiPlain;
     } catch { /* An unavailable AI keychain must not discard either permanent link. */ }
-    settings = { networkRemote: !!raw.networkRemote, internetRemote: !!raw.internetRemote, remoteLinkId: typeof raw.remoteLinkId === 'string' ? raw.remoteLinkId : '', remoteLinkSecret: typeof raw.remoteLinkSecret === 'string' ? raw.remoteLinkSecret : '', teamLinkId: typeof raw.teamLinkId === 'string' ? raw.teamLinkId : '', teamLinkSecret: typeof raw.teamLinkSecret === 'string' ? raw.teamLinkSecret : '', ai, outputDisplays: raw.outputDisplays ?? {} };
+    settings = { networkRemote: !!raw.networkRemote, internetRemote: !!raw.internetRemote, remoteLinkId: typeof raw.remoteLinkId === 'string' ? raw.remoteLinkId : '', remoteLinkSecret: typeof raw.remoteLinkSecret === 'string' ? raw.remoteLinkSecret : '', teamLinkId: typeof raw.teamLinkId === 'string' ? raw.teamLinkId : '', teamLinkSecret: typeof raw.teamLinkSecret === 'string' ? raw.teamLinkSecret : '', ai, outputDisplays: raw.outputDisplays ?? {}, presenterDisplay: typeof raw.presenterDisplay === 'number' ? raw.presenterDisplay : null };
   } catch {
     // first run
   }
 }
 
 function saveSettings() {
-  const out = { networkRemote: settings.networkRemote, internetRemote: settings.internetRemote, remoteLinkId: settings.remoteLinkId, remoteLinkSecret: settings.remoteLinkSecret, teamLinkId: settings.teamLinkId, teamLinkSecret: settings.teamLinkSecret, outputDisplays: settings.outputDisplays };
+  const out = { networkRemote: settings.networkRemote, internetRemote: settings.internetRemote, remoteLinkId: settings.remoteLinkId, remoteLinkSecret: settings.remoteLinkSecret, teamLinkId: settings.teamLinkId, teamLinkSecret: settings.teamLinkSecret, outputDisplays: settings.outputDisplays, presenterDisplay: settings.presenterDisplay };
   // AI proxy address and optional own Gemini / OpenRouter keys, encrypted with the OS keychain.
   if (Object.keys(settings.ai ?? {}).length) {
     if (safeStorage.isEncryptionAvailable()) out.aiEnc = safeStorage.encryptString(JSON.stringify(settings.ai)).toString('base64');
@@ -386,6 +386,7 @@ ipcMain.handle('desktop:info', (e) => {
     computerName: os.hostname(),
     displays: displayList(),
     outputDisplays: settings.outputDisplays,
+    presenterDisplay: settings.presenterDisplay,
     ai: { proxyUrl: settings.ai.proxyUrl ?? '', hasGeminiKey: !!settings.ai.geminiKey, hasOpenrouterKey: !!settings.ai.openrouterKey },
     networkRemote: settings.networkRemote,
     lanUrls: settings.networkRemote ? lanAddresses().map((ip) => `http://${ip}:${PORT}`) : [],
@@ -449,7 +450,26 @@ ipcMain.handle('desktop:present', (e, url) => {
   const before = new Set(viewWindows.values());
   const win = openView(url, undefined, true);
   if (win && !before.has(win)) showKey = [...viewWindows].find(([, w]) => w === win)?.[0] ?? null;
+  moveConsoleToPresenterDisplay();
 });
+/** 슬라이드 쇼 › 모니터: which display shows the audience (null: automatic) and which the presenter view (null: where the console is). */
+ipcMain.handle('desktop:setShowDisplays', (e, audienceId, presenterId) => {
+  if (!fromMain(e)) return;
+  const ids = new Set(screen.getAllDisplays().map((d) => d.id));
+  if (typeof audienceId === 'number' && ids.has(audienceId)) settings.outputDisplays.output = audienceId;
+  else delete settings.outputDisplays.output;
+  settings.presenterDisplay = typeof presenterId === 'number' && ids.has(presenterId) ? presenterId : null;
+  saveSettings();
+});
+/** The console (presenter view) goes to its chosen display when a show starts, if that display is still connected. */
+function moveConsoleToPresenterDisplay() {
+  const display = screen.getAllDisplays().find((d) => d.id === settings.presenterDisplay);
+  if (!display || !mainWindow || mainWindow.isDestroyed()) return;
+  if (screen.getDisplayMatching(mainWindow.getBounds()).id === display.id) return;
+  if (mainWindow.isFullScreen()) mainWindow.setFullScreen(false);
+  mainWindow.setBounds(display.workArea);
+  mainWindow.maximize();
+}
 ipcMain.handle('desktop:endShow', (e) => {
   if (fromMain(e)) closeShow();
 });
@@ -560,7 +580,13 @@ app.whenReady().then(async () => {
   }
   const notify = () => mainWindow?.webContents.send('desktop:displays', displayList());
   screen.on('display-added', notify);
-  screen.on('display-removed', notify);
+  screen.on('display-removed', (_e, removed) => {
+    // A saved choice for a display that is gone stops applying; the renderer says so and falls back.
+    if (settings.presenterDisplay === removed.id) { settings.presenterDisplay = null; saveSettings(); }
+    for (const [k, v] of Object.entries(settings.outputDisplays)) if (v === removed.id) delete settings.outputDisplays[k];
+    saveSettings();
+    notify();
+  });
   if (SMOKE) smokeTest();
 });
 

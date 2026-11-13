@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   readOfficeClipboard: () => ipcRenderer.invoke('desktop:readOfficeClipboard'),
   openView: (url, displayId) => ipcRenderer.invoke('desktop:openView', url, displayId),
   present: (url) => ipcRenderer.invoke('desktop:present', url),
+  setShowDisplays: (audienceId, presenterId) => ipcRenderer.invoke('desktop:setShowDisplays', audienceId, presenterId),
   endShow: () => ipcRenderer.invoke('desktop:endShow'),
   setOnTop: (on) => ipcRenderer.invoke('desktop:setOnTop', on),
   setAiConfig: (patch) => ipcRenderer.invoke('desktop:setAiConfig', patch),

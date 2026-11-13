@@ -2085,3 +2085,25 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .chart-data-edit td.cd-chk input { width: auto; min-width: 0; }
 
 @media (prefers-reduced-motion: reduce) { .remote-handset button, .remote-slides > button { transition: none; } .remote-handset button:active:not(:disabled), .remote-slides > button:active:not(:disabled) { transform: none; } }
+
+/* Review › 버전 기록 */
+.ppt-dialog.center:has(.vh) { width: min(920px, calc(100vw - 32px)); }
+.vh { display: grid; grid-template-columns: 220px 1fr; gap: 12px; min-height: 320px; }
+.vh-list { display: flex; flex-direction: column; gap: 8px; max-height: 60vh; overflow: auto; }
+.vh-list ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.vh-list li button { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border: 1px solid #c8c6c4; border-radius: 4px; background: #fff; }
+.vh-list li button.on { border-color: #1f7a3a; background: #e6f4ea; box-shadow: inset 3px 0 0 #f2c200; }
+.vh-compare { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.vh-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.vh-bar .primary { margin-left: auto; }
+.vh-head { display: grid; grid-template-columns: 1fr 96px 1fr; text-align: center; font-size: 12px; }
+.vh-rows { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; }
+.vh-row { display: grid; grid-template-columns: 1fr 96px 1fr; gap: 8px; align-items: center; padding: 6px; border-radius: 4px; border: 1px solid #e1dfdd; text-align: center; }
+.vh-row.changed { background: #fff8d6; border-color: #f2c200; }
+.vh-row.removed { background: #fdecea; }
+.vh-row.added { background: #e6f4ea; }
+.vh-mid { display: flex; flex-direction: column; gap: 4px; align-items: center; font-size: 12px; }
+.vh-tag { font-weight: 600; color: #1f7a3a; }
+.vh-thumb { aspect-ratio: 4 / 3; background: #fff; border: 1px solid #c8c6c4; position: relative; overflow: hidden; }
+.vh-thumb.vh-none { display: grid; place-items: center; color: #8a8886; font-size: 12px; background: #f3f2f1; }
+@media (max-width: 700px) { .vh { grid-template-columns: 1fr; } }

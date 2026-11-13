@@ -16,6 +16,7 @@ import { MasterView } from './MasterView';
 import { TabsDialog } from './dialogsTabs';
 import { InspectDialog, PageMasterDialog } from './printing';
 import { CompareDialog, LanguageDialog } from './reviewPanes';
+import { VersionHistoryDialog } from './VersionHistory';
 
 export function Dialog({ title, onClose, onOk, okLabel = '확인', okDisabled, wide, children }: { title: string; onClose: () => void; onOk?: () => void; okLabel?: string; okDisabled?: boolean; wide?: boolean; children: ReactNode }) {
   return (
@@ -315,6 +316,7 @@ export function Dialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; onClo
   if (kind === 'tabs') return <TabsDialog ed={ed} onClose={onClose} />;
   if (kind === 'autocorrect') return <AutoCorrectDialog onClose={onClose} />;
   if (kind === 'compare') return <CompareDialog ed={ed} onClose={onClose} />;
+  if (kind === 'versionHistory') return <VersionHistoryDialog ed={ed} onClose={onClose} />;
   return <MoreDialogs ed={ed} kind={kind} onClose={onClose} />;
 }
 
