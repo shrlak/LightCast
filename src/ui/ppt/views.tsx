@@ -21,6 +21,7 @@ import { PropertiesForm } from './printing';
 import { PrintPanel } from './printPanel';
 import { InfoStats } from './infoPanel';
 import { ExportPanel } from './exportPanel';
+import { ExportMorePanel } from './exportMorePanel';
 
 // ── Find and replace ──────────────────────────────────────────────────────────────────────────
 // What is searched and how a replacement keeps the formatting: domain/findReplace (DeckCraft text.find /
@@ -417,6 +418,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <>
             <h1>내보내기</h1>
             <ExportPanel ed={ed} onPdf={() => setPage('print')} />
+            <ExportMorePanel ed={ed} />
             <h2>다른 형식</h2>
             <div className="bs-cards">
               <Card icon="📊" title="PowerPoint 프레젠테이션" text=".pptx" onClick={() => run(cmd.exportPlaylistPptx)} />
