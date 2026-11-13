@@ -224,11 +224,19 @@ export interface MediaPlayback {
   bookmarks?: { name: string; t: number }[];
 }
 
+/**
+ * Marks painted in 배경 제거, compact: points are flat [x0, y0, x1, y1, …] in thousandths of the picture's width and height,
+ * the brush radius `r` in ten-thousandths of its short side, `k` the kind (keep / remove) and `tol` the tolerance (0–100).
+ */
+export interface CutoutMarks { tol: number; strokes: { k: 'k' | 'r'; r: number; p: number[] }[] }
+
 /** Picture Format adjustments; the shown picture is made from `original` by the engine. */
 export interface PictureAdjust {
   original: string;
   /** 배경 제거 with marks: the media id of the cut-out picture the other adjustments start from. */
   cutout?: string;
+  /** The 배경 제거 marks and tolerance behind `cutout`, kept so the dialog reopens with them (cleared by 그림 원래대로). */
+  cutoutMarks?: CutoutMarks;
   removeBackground?: number;
   transparentColor?: string;
   brightness?: number;

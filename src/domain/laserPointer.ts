@@ -51,3 +51,13 @@ export function edgeLaserPosition(p: LaserPoint, edge: { part: 'none' | 'left' |
   const heightFrac = (slideW / regionW) * (slideH / slideW) / screenAspect;
   return { x: fx, y: 0.5 + (p.y - 0.5) * heightFrac };
 }
+
+/** A finger dragging over the slide preview on a phone: the point held inside the slide (a drag that strays off the edge keeps pointing at the edge). */
+export function laserPointClamped(rect: { left: number; top: number; width: number; height: number }, clientX: number, clientY: number): LaserPoint | null {
+  if (!rect.width || !rect.height) return null;
+  const c = (n: number) => Math.min(1, Math.max(0, n));
+  return { x: c((clientX - rect.left) / rect.width), y: c((clientY - rect.top) / rect.height) };
+}
+
+/** A laser message the relay passed on from a phone that holds the remote controls (it carries `remote: true`). */
+export const isRemoteLaser = (m: unknown): boolean => !!m && typeof m === 'object' && (m as { type?: unknown }).type === 'laser' && (m as { remote?: unknown }).remote === true;

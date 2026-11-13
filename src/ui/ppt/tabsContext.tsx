@@ -6,7 +6,7 @@ import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { adjustPicture, colorAt, pictureSize, storeCutout } from './pictureTools';
 import { BackgroundRemovalDialog } from './backgroundRemoval';
-import { PICTURE_STYLES, REMOVE_BACKGROUND_LEVELS, RESET_PICTURE, SATURATION_STEPS, TRANSPARENCY_STEPS, naturalSize, pictureStylePatch, recolorLabel } from '../../domain/pictureFormat';
+import { PICTURE_STYLES, REMOVE_BACKGROUND_LEVELS, SATURATION_STEPS, TRANSPARENCY_STEPS, naturalSize, pictureStylePatch, recolorLabel, resetPicturePatch } from '../../domain/pictureFormat';
 import { lookCss } from '../pictureStyles';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { EffectsMenu } from './tabsMain';
@@ -307,10 +307,12 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
     ed.dispatch({ type: 'media/add', media: { id, name: file.name, type: 'image' } });
     set({ mediaId: id, picture: undefined, crop: undefined });
   };
+  // 그림 원래대로: the picture's own file again, with its adjustments — and the 배경 제거 marks kept with them — gone.
+  const resetPicture = () => ed.setElements((els) => els.map((e) => (pics.some((x) => x.id === e.id) ? { ...e, ...resetPicturePatch(e) } : e)));
   const resetSize = async () => {
     if (!p?.mediaId) return;
     const size = await pictureSize(p.picture?.original ?? p.mediaId);
-    set({ ...RESET_PICTURE, ...(size ? naturalSize(p, size.w, size.h, CANVAS_W, CANVAS_H) : {}), rotation: undefined });
+    set({ ...resetPicturePatch(p), ...(size ? naturalSize(p, size.w, size.h, CANVAS_W, CANVAS_H) : {}), rotation: undefined });
   };
   const pickTransparent = () => {
     if (!p) return;
@@ -324,8 +326,8 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
   const gif = !!p && /\.gif$/i.test(ed.state.library.media.find((m) => m.id === p.mediaId)?.name ?? p.name ?? '');
   return (
     <>
-      {marking && p && <BackgroundRemovalDialog picture={p} onClose={() => setMarking(false)} onApply={async (rgba, w, h) => {
-        const r = await storeCutout(p, rgba, w, h, ed.dispatch);
+      {marking && p && <BackgroundRemovalDialog picture={p} onClose={() => setMarking(false)} onApply={async (rgba, w, h, marks) => {
+        const r = await storeCutout(p, rgba, w, h, ed.dispatch, marks);
         if (!r) { ed.cmd.notify('그림을 처리하지 못했습니다'); return; }
         ed.setElements((els) => els.map((e) => (e.id === p.id ? { ...e, ...r } : e)));
         setMarking(false);
@@ -335,8 +337,8 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
           <>
             {REMOVE_BACKGROUND_LEVELS.map(([label, tol]) => <MenuItem key={tol} label={label} on={a?.removeBackground === tol} onClick={() => { void adjust({ removeBackground: tol }); close(); }} />)}
             <MenuSep />
-            <MenuItem label="유지/제거할 영역 표시…" disabled={!p} onClick={() => { setMarking(true); close(); }} />
-            <MenuItem label="표시한 배경 제거 취소" disabled={!a?.cutout} onClick={() => { void adjust({ cutout: undefined }); close(); }} />
+            <MenuItem label={a?.cutoutMarks?.strokes.length ? '표시한 영역 다시 보기·고치기…' : '유지/제거할 영역 표시…'} disabled={!p} onClick={() => { setMarking(true); close(); }} />
+            <MenuItem label="표시한 배경 제거 취소" disabled={!a?.cutout} onClick={() => { void adjust({ cutout: undefined, cutoutMarks: undefined }); close(); }} />
             <MenuItem label="배경 제거 취소" disabled={!a?.removeBackground} onClick={() => { void adjust({ removeBackground: undefined }); close(); }} />
           </>
         )} />
@@ -373,9 +375,9 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
         <Col>
           <Small icon="🗜" label="그림 압축" title="보여 주는 크기에 맞는 해상도로 줄이고 잘린 부분을 지웁니다" disabled={!ed.p || busy} onClick={() => ed.setDialog('compress')} />
           <DropButton icon="🔁" label="그림 바꾸기" disabled={!p} split onMain={() => fileRef.current?.click()} render={(close) => <MenuItem label="파일에서…" onClick={() => { fileRef.current?.click(); close(); }} />} />
-          <DropButton icon="↺" label="그림 원래대로" disabled={!p} split onMain={() => set(RESET_PICTURE)} render={(close) => (
+          <DropButton icon="↺" label="그림 원래대로" disabled={!p} split onMain={resetPicture} render={(close) => (
             <>
-              <MenuItem label="그림 원래대로" onClick={() => { set(RESET_PICTURE); close(); }} />
+              <MenuItem label="그림 원래대로" onClick={() => { resetPicture(); close(); }} />
               <MenuItem label="그림 및 크기 다시 설정" onClick={() => { void resetSize(); close(); }} />
             </>
           )} />

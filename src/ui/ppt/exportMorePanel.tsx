@@ -1,13 +1,15 @@
 // File › Export › 동영상 만들기 / 애니메이션 GIF / 개요 내보내기. Slides are drawn with slideToImage (the same
 // picture the PNG export makes). The video is made the fast way when the browser has WebCodecs (VideoEncoder + our own
-// MP4 / WebM muxer, many times faster than real time); otherwise, and whenever the deck's recorded narration track is
-// included, it is recorded in real time with canvas.captureStream + MediaRecorder (MP4 where Chromium can write it, else WebM).
+// MP4 / WebM muxer, many times faster than real time), narration included (decoded, mixed to one track aligned to the
+// slides, encoded with AudioEncoder: AAC in MP4, Opus in WebM); otherwise, and when there is no AudioEncoder for the
+// narration, it is recorded in real time with canvas.captureStream + MediaRecorder (MP4 where Chromium can write it, else WebM).
 import { useEffect, useRef, useState } from 'react';
 import { encodeGif } from '../../domain/gifEncoder';
 import { buildOutline, outlineToRtf, outlineToText } from '../../domain/outlineExport';
 import { DEFAULT_SECONDS, GIF_SIZES, VIDEO_SIZES, clampSeconds, gifDelayCs, pickVideoType, slideDurations } from '../../domain/videoExport';
 import { printPages } from '../../domain/filePrint';
-import { mediaUrl } from '../../domain/media';
+import { hasNarrationAudio, type FastAudioCodec } from '../../domain/narrationMix';
+import { buildNarrationMix, encodeNarration, fastAudioCodec, type NarrationMix } from '../narrationAudio';
 import { slideToImage } from '../slideImage';
 import { exportFastVideo, fastVideoCodec } from '../fastVideoExport';
 import type { FastCodec } from '../../domain/videoMux';
@@ -46,6 +48,7 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
   const [oNotes, setONotes] = useState(false);
   const [oHidden, setOHidden] = useState(false);
   const [fastCodec, setFastCodec] = useState<FastCodec | null>(null);
+  const [audioCodec, setAudioCodec] = useState<FastAudioCodec | null>(null);
   const [vFast, setVFast] = useState(true);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [videoRunning, setVideoRunning] = useState(false);
@@ -57,22 +60,28 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
     fastVideoCodec(vDims.width, vDims.height).then((c) => { if (live) setFastCodec(c); }).catch(() => undefined);
     return () => { live = false; };
   }, [vDims.width, vDims.height]);
+  useEffect(() => {
+    let live = true;
+    setAudioCodec(null);
+    if (fastCodec) fastAudioCodec(fastCodec.container).then((c) => { if (live) setAudioCodec(c); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [fastCodec]);
   if (!p || !ed.theme) return null;
   const theme = ed.theme;
   const pages = printPages(p, { range: '', includeHidden: false }).pages;
-  const hasAudio = !!p.timeline?.audioMediaId;
+  const hasAudio = hasNarrationAudio(p);
   const fail = (e: unknown) => setMsg(e instanceof Error ? e.message : String(e));
 
   const makeVideo = async () => {
     setMsg(null);
-    const withAudio = vAudio && !!p.timeline?.audioMediaId;
-    // The fast way cannot carry the recorded narration track yet; with it, the video is recorded in real time.
-    const fast = vFast && !!fastCodec && !withAudio ? fastCodec : null;
+    const withAudio = vAudio && hasAudio;
+    // The fast way carries the narration when the browser can encode it (AudioEncoder); else the video is recorded in real time.
+    const fast = vFast && !!fastCodec && (!withAudio || !!audioCodec) ? fastCodec : null;
     if (!videoType && !fast) { setMsg('이 컴퓨터에서는 동영상을 만들 수 없습니다 (MediaRecorder 미지원).'); return; }
     cancelled.current = false;
     setProgress(null);
     setVideoRunning(true);
-    let audioEl: HTMLAudioElement | null = null, actx: AudioContext | null = null;
+    let audioSrc: AudioBufferSourceNode | null = null, actx: AudioContext | null = null;
     try {
       const size = VIDEO_SIZES.find((s) => s.id === vSize)!;
       const secs = slideDurations(p, pages.map((x) => x.slide), vSecs, vSaved);
@@ -82,20 +91,34 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
         setBusy(`${i + 1} / ${pages.length} 그리는 중…`);
         bitmaps.push(await toBitmap(await slideToImage(p, pages[i].slide, slideTheme(theme, pages[i].slide), size.width, 'png')));
       }
+      // The narration, mixed to one track aligned to each slide's start (both ways use it).
+      let mix: NarrationMix | null = null;
+      if (withAudio) {
+        setBusy('내레이션을 준비하는 중…');
+        mix = await buildNarrationMix(p, pages.map((x) => x.slide), secs);
+      }
       if (fast) {
-        const started = performance.now();
-        setBusy('빠르게 만드는 중…');
-        const blob = await exportFastVideo({
-          bitmaps, seconds: secs, width: size.width, height: size.height, codec: fast, bitrate: size.width >= 1440 ? 6_000_000 : 3_000_000,
-          onProgress: (done, total) => { setProgress({ done, total }); setBusy(`빠르게 만드는 중… ${Math.round((done / total) * 100)}%`); },
-          isCancelled: () => cancelled.current,
-        });
-        bitmaps.forEach((b) => b.close());
-        if (!blob) { setMsg('동영상 만들기를 취소했습니다. 파일은 저장하지 않았습니다.'); return; }
-        const total = secs.reduce((a, b) => a + b, 0);
-        save(`${baseName(p.title)}.${fast.ext}`, blob);
-        setMsg(`${fast.label} 동영상을 저장했습니다 (${bitmaps.length}장, ${Math.round(total)}초 분량을 ${Math.max(1, Math.round((performance.now() - started) / 1000))}초 만에 만들었습니다).`);
-        return;
+        try {
+          const started = performance.now();
+          setBusy('빠르게 만드는 중…');
+          const audio = mix && audioCodec ? await encodeNarration(mix, audioCodec, () => cancelled.current) : null;
+          if (cancelled.current) { setMsg('동영상 만들기를 취소했습니다. 파일은 저장하지 않았습니다.'); return; }
+          const blob = await exportFastVideo({
+            bitmaps, seconds: secs, width: size.width, height: size.height, codec: fast, audio, bitrate: size.width >= 1440 ? 6_000_000 : 3_000_000,
+            onProgress: (done, total) => { setProgress({ done, total }); setBusy(`빠르게 만드는 중… ${Math.round((done / total) * 100)}%`); },
+            isCancelled: () => cancelled.current,
+          });
+          if (!blob) { setMsg('동영상 만들기를 취소했습니다. 파일은 저장하지 않았습니다.'); return; }
+          bitmaps.forEach((b) => b.close());
+          const total = secs.reduce((a, b) => a + b, 0);
+          save(`${baseName(p.title)}.${fast.ext}`, blob);
+          setMsg(`${fast.label} 동영상을 저장했습니다 (${bitmaps.length}장, ${Math.round(total)}초 분량을 ${Math.max(1, Math.round((performance.now() - started) / 1000))}초 만에 만들었습니다${audio ? ', 녹음된 내레이션 포함' : ''}).`);
+          return;
+        } catch (e) {
+          // The narration could not be encoded here: record in real time instead (the pictures are still drawn).
+          if (!withAudio || !videoType) throw e;
+          setProgress(null);
+        }
       }
       if (!videoType) return;
       const canvas = document.createElement('canvas');
@@ -105,23 +128,23 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
       draw(0);
       const stream = canvas.captureStream(30);
       let narrated = false;
-      if (withAudio && p.timeline?.audioMediaId) {
-        const url = await mediaUrl(p.timeline.audioMediaId);
-        if (url) {
-          audioEl = new Audio(url);
-          actx = new AudioContext();
-          const dest = actx.createMediaStreamDestination();
-          actx.createMediaElementSource(audioEl).connect(dest);
-          dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
-          narrated = true;
-        }
+      if (mix) {
+        actx = new AudioContext();
+        const buf = actx.createBuffer(mix.channels.length, mix.channels[0].length, mix.sampleRate);
+        mix.channels.forEach((c, i) => buf.copyToChannel(c as Float32Array<ArrayBuffer>, i));
+        audioSrc = actx.createBufferSource();
+        audioSrc.buffer = buf;
+        const dest = actx.createMediaStreamDestination();
+        audioSrc.connect(dest);
+        dest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+        narrated = true;
       }
       const rec = new MediaRecorder(stream, { mimeType: videoType.mime, videoBitsPerSecond: size.width >= 1440 ? 8_000_000 : 4_000_000 });
       const chunks: Blob[] = [];
       rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
       const done = new Promise<void>((res) => { rec.onstop = () => res(); });
       rec.start(500);
-      if (audioEl) void audioEl.play().catch(() => undefined);
+      audioSrc?.start();
       const total = secs.reduce((a, b) => a + b, 0);
       let elapsed = 0;
       for (let i = 0; i < bitmaps.length; i++) {
@@ -148,7 +171,7 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
     } catch (e) {
       fail(e);
     } finally {
-      audioEl?.pause();
+      try { audioSrc?.stop(); } catch { /* not started */ }
       void actx?.close();
       setBusy(null);
       setProgress(null);
@@ -198,11 +221,11 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
 
   const none = pages.length === 0;
   const withAudioNow = vAudio && hasAudio;
-  const fastOn = vFast && !!fastCodec && !withAudioNow;
+  const fastOn = vFast && !!fastCodec && (!withAudioNow || !!audioCodec);
   const fastNote = fastOn
-    ? `${fastCodec!.label} 형식으로 빠르게 만듭니다 (동영상 길이보다 훨씬 짧게 걸립니다).`
+    ? `${fastCodec!.label} 형식으로 빠르게 만듭니다${withAudioNow ? ` (녹음된 내레이션은 ${audioCodec!.id === 'aac' ? 'AAC' : 'Opus'} 소리로 함께 넣습니다)` : ''} (동영상 길이보다 훨씬 짧게 걸립니다).`
     : videoType
-      ? `${videoType.label} 형식으로 저장합니다${videoType.ext === 'webm' ? ' (이 컴퓨터에서는 MP4를 만들 수 없어 WebM으로 저장합니다)' : ''}. 만드는 데 동영상 길이만큼 걸립니다${withAudioNow && fastCodec ? ' (녹음된 내레이션을 넣으면 실시간으로 녹화합니다)' : ''}.`
+      ? `${videoType.label} 형식으로 저장합니다${videoType.ext === 'webm' ? ' (이 컴퓨터에서는 MP4를 만들 수 없어 WebM으로 저장합니다)' : ''}. 만드는 데 동영상 길이만큼 걸립니다${withAudioNow && fastCodec && !audioCodec ? ' (이 컴퓨터에서는 내레이션 소리를 빠르게 만들 수 없어 실시간으로 녹화합니다)' : ''}.`
       : '이 컴퓨터에서는 동영상을 만들 수 없습니다.';
   return (
     <div className="bs-export bs-export-more">

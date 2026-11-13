@@ -182,3 +182,6 @@ export function pictureStylePatch(id: string): Partial<SlideElement> | null {
   if (!look) return null;
   return { ...clear, pictureStyle: id, ...(look.rot !== undefined ? { rotation: look.rot } : {}) };
 }
+
+/** The patch for 그림 원래대로 on one picture: its own file again (the original behind the adjustments), and all adjustments — the 배경 제거 marks too — gone. */
+export const resetPicturePatch = (el: Pick<SlideElement, 'picture'>): Partial<SlideElement> => ({ ...RESET_PICTURE, ...(el.picture?.original ? { mediaId: el.picture.original } : {}) });

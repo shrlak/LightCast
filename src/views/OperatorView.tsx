@@ -26,6 +26,8 @@ import { ActivityModal } from '../ui/ActivityModal';
 import { FindPalette } from '../ui/FindPalette';
 import { RestorePointsModal } from '../ui/RestorePointsModal';
 import { useLiveBroadcast, useRelay } from '../ui/hooks';
+import { isRemoteLaser } from '../domain/laserPointer';
+import { sendRemoteLaser } from '../ui/ppt/showTools';
 import { liveActionFor, noteVisit, showHistory } from '../domain/showActions';
 import { SlideEditorModal } from '../ui/SlideEditorModal';
 import { isSong } from '../domain/templates/fill';
@@ -276,6 +278,8 @@ export function OperatorView() {
     }
     if (m.type === 'remote-control') setRemoteControl(m as unknown as RemoteControlState);
     if (m.type === 'remotes') setRemotes(Number(m.count) || 0);
+    // The laser dot from the phone that holds the controls: drawn on the audience screens (and passed on to audience devices).
+    if (m.type === 'laser' && isRemoteLaser(m)) { sendRemoteLaser(m); return; }
     if (m.type !== 'command' || !m.command) return;
     if (modalRef.current === 'rehearsal') { rehearsalCommandRef.current?.(m.command as Record<string, unknown>); return; }
     let c = m.command as Action & { now?: number };

@@ -4,7 +4,7 @@
 // change starts again from it and Reset Picture brings it back.
 import type { Dispatch } from 'react';
 import type { Action } from '../../domain/reducer';
-import type { PictureAdjust, SlideElement } from '../../domain/types';
+import type { CutoutMarks, PictureAdjust, SlideElement } from '../../domain/types';
 import { getMedia, putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { processPicture, type PictureSteps } from '../../engine';
@@ -141,7 +141,7 @@ export async function originalPixels(el: SlideElement): Promise<{ data: Uint8Cla
  * Keep a cut-out made with the marking tool as the shown picture (a PNG with transparency). The
  * original stays, so Reset Picture brings it back; later adjustments start from the cut-out.
  */
-export async function storeCutout(el: SlideElement, rgba: Uint8ClampedArray, w: number, h: number, dispatch: Dispatch<Action>): Promise<Partial<SlideElement> | null> {
+export async function storeCutout(el: SlideElement, rgba: Uint8ClampedArray, w: number, h: number, dispatch: Dispatch<Action>, marks?: CutoutMarks): Promise<Partial<SlideElement> | null> {
   if (el.kind !== 'image' || !el.mediaId) return null;
   const png = await toPng(rgba, w, h);
   if (!png) return null;
@@ -149,5 +149,6 @@ export async function storeCutout(el: SlideElement, rgba: Uint8ClampedArray, w: 
   const id = uid('m');
   await putMedia(id, png);
   dispatch({ type: 'media/add', media: { id, name: '배경을 제거한 그림.png', type: 'image', backgroundHidden: true } });
-  return { mediaId: id, picture: { ...(el.picture ?? {}), original, cutout: id, removeBackground: undefined } };
+  // The marks stay with the picture, so the dialog can open on them again (Reset Picture clears them with the rest).
+  return { mediaId: id, picture: { ...(el.picture ?? {}), original, cutout: id, cutoutMarks: marks, removeBackground: undefined } };
 }

@@ -6,6 +6,8 @@ import { teamRequests } from './teamRequests.mjs';
 import { remoteControl } from './remoteControl.mjs';
 import { isPublicHost } from './tunnel.mjs';
 
+/** The least time between two laser dots from one phone (ms). */
+const LASER_MIN_MS = 25;
 const PIN = process.env.FREECAST_REMOTE_PIN || '';
 const COMMANDS = new Set([
   'live/next', 'live/prev', 'live/clearAll', 'live/clearText', 'live/clearBackground', 'live/toggleBlack',
@@ -120,11 +122,25 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
         broadcast(rehearsal, (c) => c.role === 'remote');
         return;
       }
-      if (ws.role === 'host' && msg?.type === 'laser') {
-        // The presenter's laser dot (0-1 across the slide), or off: passed on to audience viewers, never kept.
+      if (msg?.type === 'laser' && (ws.role === 'host' || ws.role === 'remote')) {
+        // A laser dot (0-1 across the slide), or off: passed on, never kept. From the presenter's computer it goes to audience
+        // viewers and to the phones' slide previews; from the phone that holds the controls it goes to the computer only,
+        // which shows it on the audience screens as its own dot. Anyone else (a phone without the controls) is ignored.
         const ok01 = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
-        if (msg.off === true) broadcast(JSON.stringify({ type: 'laser', off: true }), (c) => c.role === 'viewer');
-        else if (ok01(msg.x) && ok01(msg.y)) broadcast(JSON.stringify({ type: 'laser', x: msg.x, y: msg.y }), (c) => c.role === 'viewer');
+        const fromPhone = ws.role === 'remote';
+        if (fromPhone && !control.owns(ws)) return;
+        const off = msg.off === true;
+        if (!off && !(ok01(msg.x) && ok01(msg.y))) return;
+        if (fromPhone) {
+          // At most about 40 dots a second per phone; "off" goes through once per dot sequence.
+          const now = Date.now();
+          if (off ? !ws.laserOn : now - (ws.laserAt ?? 0) < LASER_MIN_MS) return;
+          ws.laserOn = !off;
+          if (!off) ws.laserAt = now;
+        }
+        const out = JSON.stringify(off ? { type: 'laser', off: true } : { type: 'laser', x: msg.x, y: msg.y });
+        if (fromPhone) broadcast(JSON.stringify({ ...JSON.parse(out), remote: true }), (c) => c.role === 'host');
+        else broadcast(out, (c) => c.role === 'viewer' || c.role === 'remote' || c.role === 'team');
         return;
       }
       if (ws.role === 'host' && msg?.type === 'caption') {

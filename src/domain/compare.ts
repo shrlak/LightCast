@@ -1,6 +1,7 @@
 // Review › Compare (DeckCraft review.accept): the differences between this presentation and another
 // version of it, as revisions that can be accepted one by one (or all) into this one.
 import type { Presentation, Slide, SlideElement } from './types';
+import { matchSlides } from './slideMatch';
 
 export type Revision =
   | { id: string; kind: 'slideInsert'; slide: Slide; after: string | null; label: string }
@@ -26,14 +27,16 @@ function elementChange(a: SlideElement, b: SlideElement): string | null {
   return parts.length ? parts.join(', ') : null;
 }
 
-/** What `other` has that `mine` does not: slides matched by id, then by position. */
+/** What `other` has that `mine` does not: slides matched by id, then import source, then text, then (if nothing lines up) by position. */
 export function compare(mine: Presentation, other: Presentation): Revision[] {
   const out: Revision[] = [];
-  const byId = new Map(mine.slides.map((s) => [s.id, s]));
   const used = new Set<string>();
+  // Slides line up by id, then (a presentation re-imported from the same file) by import source, then by title and text;
+  // when nothing lines up at all, by position.
+  const found = new Map(matchSlides(mine.slides, other.slides).map((x) => [x.old, x.cur]));
   const pairs: [Slide | null, Slide, number][] = other.slides.map((o, i) => {
-    let m = byId.get(o.id) ?? null;
-    if (!m && !other.slides.some((x) => byId.has(x.id))) m = mine.slides[i] ?? null;
+    const at = found.size ? found.get(i) : i;
+    const m = at === undefined ? null : mine.slides[at] ?? null;
     if (m) used.add(m.id);
     return [m, o, i];
   });

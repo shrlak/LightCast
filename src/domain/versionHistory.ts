@@ -3,10 +3,15 @@
 // src/ui/ppt/VersionHistory.tsx and the snapshots come from restorePoints.ts.
 import type { Library, Presentation, Slide } from './types';
 import { compare, type Revision } from './compare';
+import { matchSlides, type MatchBasis } from './slideMatch';
 
 export type RowStatus = 'same' | 'changed' | 'removed' | 'added';
-/** One line of the side-by-side list: the slide as it was (old) and as it is now (cur). */
-export interface VersionRow { id: string; status: RowStatus; old?: Slide; cur?: Slide; /** 1-based positions. */ oldNo?: number; curNo?: number }
+/**
+ * One line of the side-by-side list: the slide as it was (old) and as it is now (cur). `basis` says how the two were
+ * lined up (by id; or, for a presentation re-imported from the same file, by import source or by text); `id` is the
+ * current slide's id (the old one's for a removed slide).
+ */
+export interface VersionRow { id: string; status: RowStatus; old?: Slide; cur?: Slide; /** 1-based positions. */ oldNo?: number; curNo?: number; basis?: MatchBasis }
 
 /** The presentation of this id in a snapshot's library. */
 export function presentationIn(lib: Library | null | undefined, current: Pick<Presentation, 'id'>): Presentation | undefined {
@@ -14,26 +19,36 @@ export function presentationIn(lib: Library | null | undefined, current: Pick<Pr
 }
 
 const same = (a: Slide, b: Slide) => JSON.stringify(a) === JSON.stringify(b);
+// A re-import makes new ids for the slide and its objects: only what is on the slide counts.
+const sameContent = (a: Slide, b: Slide) => {
+  const strip = (k: string, v: unknown) => (k === 'id' || k === 'sourceSlideId' ? undefined : v);
+  return JSON.stringify(a, strip) === JSON.stringify(b, strip);
+};
 
-/** Slides of both versions lined up by id: current order, removed slides placed after their old neighbour. */
+/** Slides of both versions lined up (by id; else import source; else text): current order, removed slides placed after their old neighbour. */
 export function alignSlides(current: Presentation, old: Presentation): VersionRow[] {
-  const curIds = new Set(current.slides.map((s) => s.id));
-  const oldById = new Map(old.slides.map((s, i) => [s.id, { s, i }]));
+  const ms = matchSlides(current.slides, old.slides);
+  const byCur = new Map(ms.map((m) => [m.cur, m]));
+  const byOld = new Map(ms.map((m) => [m.old, m]));
   const rows: VersionRow[] = [];
-  const removedAfter = new Map<string | null, Slide[]>();
+  const removedAfter = new Map<string | null, { s: Slide; i: number }[]>();
   let prev: string | null = null;
-  for (const s of old.slides) {
-    if (curIds.has(s.id)) prev = s.id;
-    else removedAfter.set(prev, [...(removedAfter.get(prev) ?? []), s]);
-  }
+  old.slides.forEach((s, i) => {
+    const m = byOld.get(i);
+    if (m) prev = current.slides[m.cur].id;
+    else removedAfter.set(prev, [...(removedAfter.get(prev) ?? []), { s, i }]);
+  });
   const pushRemoved = (key: string | null) => {
-    for (const s of removedAfter.get(key) ?? []) rows.push({ id: s.id, status: 'removed', old: s, oldNo: oldById.get(s.id)!.i + 1 });
+    for (const { s, i } of removedAfter.get(key) ?? []) rows.push({ id: s.id, status: 'removed', old: s, oldNo: i + 1 });
   };
   pushRemoved(null);
   current.slides.forEach((s, i) => {
-    const o = oldById.get(s.id);
-    if (!o) rows.push({ id: s.id, status: 'added', cur: s, curNo: i + 1 });
-    else rows.push({ id: s.id, status: same(o.s, s) ? 'same' : 'changed', old: o.s, cur: s, oldNo: o.i + 1, curNo: i + 1 });
+    const m = byCur.get(i);
+    if (!m) rows.push({ id: s.id, status: 'added', cur: s, curNo: i + 1 });
+    else {
+      const o = old.slides[m.old];
+      rows.push({ id: s.id, status: (m.basis === 'id' ? same(o, s) : sameContent(o, s)) ? 'same' : 'changed', old: o, cur: s, oldNo: m.old + 1, curNo: i + 1, basis: m.basis });
+    }
     pushRemoved(s.id);
   });
   return rows;
@@ -44,16 +59,21 @@ export const differences = (current: Presentation, old: Presentation): Revision[
 
 export const changedCount = (rows: VersionRow[]) => rows.filter((r) => r.status !== 'same').length;
 
-/** The current slides with one slide put back as it was (re-inserted where it used to be if it was deleted). */
-export function restoreSlide(current: Presentation, old: Presentation, slideId: string): Slide[] {
+/**
+ * The current slides with one slide put back as it was (re-inserted where it used to be if it was deleted). `curId` is
+ * the current slide it lines up with when that has another id (a re-imported presentation): it is replaced, keeping its id.
+ */
+export function restoreSlide(current: Presentation, old: Presentation, slideId: string, curId?: string): Slide[] {
   const o = old.slides.find((s) => s.id === slideId);
   if (!o) return current.slides;
-  if (current.slides.some((s) => s.id === slideId)) return current.slides.map((s) => (s.id === slideId ? o : s));
-  // After the nearest earlier slide of the old version that still exists.
+  const target = curId ?? slideId;
+  if (current.slides.some((s) => s.id === target)) return current.slides.map((s) => (s.id === target ? (target === o.id ? o : { ...o, id: target }) : s));
+  // After the nearest earlier slide of the old version that still exists (or lines up with one of the current ones).
+  const toCur = new Map(matchSlides(current.slides, old.slides).map((m) => [m.old, m.cur]));
   let index = 0;
   for (let i = old.slides.indexOf(o) - 1; i >= 0; i--) {
-    const found = current.slides.findIndex((s) => s.id === old.slides[i].id);
-    if (found >= 0) { index = found + 1; break; }
+    const found = toCur.get(i);
+    if (found !== undefined) { index = found + 1; break; }
   }
   const out = [...current.slides];
   out.splice(index, 0, o);
