@@ -12,6 +12,7 @@ import { fromPptxVert } from '../textFormat';
 import { child, find, kids, local, parseMarkup, path, type MNode } from './markup';
 import { BEVELS, CAMERAS } from '../shapeEffects';
 import { LIGHTINGS, LIGHT_DIRS, MATERIALS, patch3d } from '../shape3d';
+import { shrinkBulletPicture } from '../pictureBullet';
 
 export const EMU_PER_PX = 6350;
 const px = (emu: string | undefined, dflt = 0) => (emu === undefined || emu === '' || !Number.isFinite(Number(emu)) ? dflt : Number(emu) / EMU_PER_PX);
@@ -144,9 +145,9 @@ function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, th
   };
 }
 
-interface Para { runs: Run[]; align?: HAlign; list?: ListStyle; lineHeight?: number; lineExactPx?: number; before?: number; after?: number; empty: Run }
+interface Para { runs: Run[]; align?: HAlign; list?: ListStyle; bulletPicture?: string; lineHeight?: number; lineExactPx?: number; before?: number; after?: number; empty: Run }
 
-function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme): Para[] {
+function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme, bulletPicture?: (rId: string) => string | undefined): Para[] {
   const lst = child(txBody, 'lstStyle');
   const scale = Number(path(txBody, 'bodyPr', 'normAutofit')?.attrs.fontScale ?? 100000) / 100000;
   return kids(txBody, 'p').map((p) => {
@@ -169,9 +170,12 @@ function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme): Para[]
     const pct = path(pPr, 'lnSpc', 'spcPct')?.attrs.val;
     const lnPts = path(pPr, 'lnSpc', 'spcPts')?.attrs.val;
     const auto = child(pPr, 'buAutoNum')?.attrs.type;
-    const list: ListStyle | undefined = child(pPr, 'buNone') ? undefined : auto ? AUTONUM[auto] ?? 'number' : child(pPr, 'buChar') ? (/[○◦]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'circle' : /[■▪§]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'square' : /[✓ü]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'check' : /[➢Ø→]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'arrow' : 'bullet') : undefined;
+    // 그림 글머리 기호 (a:buBlip): the picture it points at, already shrunk; without a usable picture it is a plain bullet.
+    const blipRid = path(pPr, 'buBlip', 'blip')?.attrs['r:embed'];
+    const picture = blipRid ? bulletPicture?.(blipRid) : undefined;
+    const list: ListStyle | undefined = child(pPr, 'buNone') ? undefined : child(pPr, 'buBlip') ? (picture ? 'picture' : 'bullet') : auto ? undefined : auto ? AUTONUM[auto] ?? 'number' : child(pPr, 'buChar') ? (/[○◦]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'circle' : /[■▪§]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'square' : /[✓ü]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'check' : /[➢Ø→]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'arrow' : 'bullet') : undefined;
     const algn = pPr?.attrs.algn ?? lvlPr?.attrs.algn;
-    return { runs, align: algn ? ALIGN[algn] : undefined, list, lineHeight: pct ? (Number(pct) / 100000) * 1.2 : undefined, lineExactPx: lnPts ? (Number(lnPts) / 100) * 2 : undefined, before: spc('spcBef'), after: spc('spcAft'), empty };
+    return { runs, align: algn ? ALIGN[algn] : undefined, list, bulletPicture: list === 'picture' ? picture : undefined, lineHeight: pct ? (Number(pct) / 100000) * 1.2 : undefined, lineExactPx: lnPts ? (Number(lnPts) / 100) * 2 : undefined, before: spc('spcBef'), after: spc('spcAft'), empty };
   });
 }
 
@@ -211,6 +215,7 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
     highlight: own.highlight as string | undefined,
     align: aligns[0],
     list: lp?.list,
+    ...(lp?.list === 'picture' && lp.bulletPicture ? { bulletPicture: lp.bulletPicture } : {}),
     lineHeight: lp?.lineHeight,
     ...(lp?.lineExactPx ? { lineExact: { mode: 'exact' as const, px: lp.lineExactPx } } : {}),
     spaceBefore: lp?.before,
@@ -252,6 +257,8 @@ export interface DmlContext {
   theme: DmlTheme;
   /** A picture's relationship id → the LightCast media id it was stored under. */
   media?: (rId: string) => string | undefined;
+  /** A picture bullet's (a:buBlip) relationship id → the small PNG data URL it becomes (`bulletPicture`). */
+  bulletPicture?: (rId: string) => string | undefined;
 }
 
 function fillFields(spPr: MNode | null, style: MNode | null, ctx: DmlContext): Partial<SlideElement> {
@@ -367,7 +374,7 @@ function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string)
   const line = lineFields(spPr, style, ctx);
   const fontRef = child(style, 'fontRef');
   const d: TextDefaults = { size: 36, color: colorIn(fontRef, ctx.theme)?.hex ?? ctx.theme.colors.dk1, font: fontRef?.attrs.idx === 'major' ? 'major' : 'minor' };
-  const paras = txBody ? readParagraphs(txBody, d, ctx.theme) : [];
+  const paras = txBody ? readParagraphs(txBody, d, ctx.theme, ctx.bulletPicture) : [];
   const hasText = paras.some((p) => p.runs.some((r) => r.text && r.text !== '\v'));
   const bodyPr = child(txBody, 'bodyPr');
   const anchor = bodyPr?.attrs.anchor;
@@ -465,7 +472,7 @@ export function keepOnSlide(els: SlideElement[], W = 1440, H = 1080): SlideEleme
 export interface GvmlResult { elements: SlideElement[]; media: { rId: string; id: string; name: string; blob: Blob }[] }
 
 /** PowerPoint's "Art::GVML ClipFormat" package → objects and the pictures they use (to be stored). */
-export async function readGvml(bytes: ArrayBuffer | Uint8Array, newMediaId: () => string = () => uid('m')): Promise<GvmlResult | null> {
+export async function readGvml(bytes: ArrayBuffer | Uint8Array, newMediaId: () => string = () => uid('m'), shrink: (blob: Blob) => Promise<string | null> = shrinkBulletPicture): Promise<GvmlResult | null> {
   let zip: JSZip;
   try { zip = await JSZip.loadAsync(bytes); } catch { return null; }
   const names = Object.keys(zip.files);
@@ -477,6 +484,13 @@ export async function readGvml(bytes: ArrayBuffer | Uint8Array, newMediaId: () =
   const relsName = drawing.replace(/([^/]+)$/, '_rels/$1.rels');
   const rels = zip.file(relsName) ? parseMarkup(await zip.file(relsName)!.async('string')) : null;
   const media: GvmlResult['media'] = [];
+  // Pictures that only serve as bullets (a:buBlip) become `bulletPicture`s, not media of the file.
+  const parsed = parseMarkup(xml);
+  const uses = (rId: string, nodes: MNode[]) => nodes.filter((b) => b.attrs['r:embed'] === rId).length;
+  const allBlips = find(parsed, 'blip');
+  const bulletBlips = find(parsed, 'buBlip').flatMap((n) => find(n, 'blip'));
+  const bulletIds = new Set(bulletBlips.map((b) => b.attrs['r:embed']));
+  const bullets = new Map<string, string>();
   for (const r of rels ? find(rels, 'Relationship') : []) {
     if (!/\/image$/.test(r.attrs.Type ?? '')) continue;
     const target = new URL(r.attrs.Target, `http://x/${drawing}`).pathname.slice(1);
@@ -485,8 +499,14 @@ export async function readGvml(bytes: ArrayBuffer | Uint8Array, newMediaId: () =
     const ext = target.split('.').pop()?.toLowerCase() ?? 'png';
     const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : ext === 'emf' || ext === 'wmf' ? '' : 'image/png';
     if (!type) continue;
-    media.push({ rId: r.attrs.Id, id: newMediaId(), name: target.split('/').pop() ?? 'image', blob: new Blob([await f.async('arraybuffer')], { type }) });
+    const blob = new Blob([await f.async('arraybuffer')], { type });
+    if (bulletIds.has(r.attrs.Id)) {
+      const url = await shrink(blob);
+      if (url) bullets.set(r.attrs.Id, url);
+      if (uses(r.attrs.Id, allBlips) <= uses(r.attrs.Id, bulletBlips)) continue;
+    }
+    media.push({ rId: r.attrs.Id, id: newMediaId(), name: target.split('/').pop() ?? 'image', blob });
   }
-  const elements = drawingToElements(xml, { theme, media: (rId) => media.find((m) => m.rId === rId)?.id });
+  const elements = drawingToElements(xml, { theme, media: (rId) => media.find((m) => m.rId === rId)?.id, bulletPicture: (rId) => bullets.get(rId) });
   return { elements: keepOnSlide(elements), media };
 }

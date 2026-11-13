@@ -14,6 +14,10 @@ export interface CommandEntry {
   keywords?: string[];
   /** For a command inside a drop-down: the label of the ribbon button that opens that drop-down. */
   via?: string;
+  /** The item to choose inside that drop-down (its label as the menu shows it). */
+  pick?: string;
+  /** Seen in an earlier index but not offered now (its drop-down is unavailable until something is selected). */
+  stale?: boolean;
   disabled?: boolean;
 }
 
@@ -69,7 +73,7 @@ export function scoreText(text: string, query: string): number {
 export function scoreEntry(e: CommandEntry, query: string): number {
   const label = scoreText(e.label, query);
   const words = Math.max(0, ...(e.keywords ?? []).map((k) => scoreText(k, query) * 0.8));
-  const where = Math.max(scoreText(e.group ?? '', query), scoreText(e.tab, query)) * 0.4;
+  const where = Math.max(scoreText(e.group ?? '', query), scoreText(e.tab, query), scoreText(e.via ?? '', query)) * 0.4;
   // "홈 글머리": the tab / group and the label, typed together.
   const combined = scoreText(`${e.tab}${e.group ?? ''}${e.label}`, query) * 0.5;
   return Math.max(label, words, where, combined) - (e.disabled ? 0.5 : 0);
@@ -109,11 +113,52 @@ export const commandId = (tab: string, group: string | undefined, label: string)
  * (`via`) that opens its menu; choosing it opens that menu. (Picture bullets: 홈 › 글머리 기호 › 그림 글머리 기호.)
  */
 export const MENU_COMMANDS: CommandEntry[] = [
-  { id: commandId('홈', '단락', '그림 글머리 기호'), label: '그림 글머리 기호', tab: '홈', group: '단락', via: '글머리 기호', keywords: ['picture bullet', 'bullet picture', '글머리 그림', '이미지 글머리 기호'] },
+  { id: commandId('홈', '단락', '그림 글머리 기호'), label: '그림 글머리 기호', tab: '홈', group: '단락', via: '글머리 기호', pick: '그림 글머리 기호', keywords: ['picture bullet', 'bullet picture', '글머리 그림', '이미지 글머리 기호'] },
 ];
 
 /** The ribbon's own entries first, then the drop-down commands it cannot list (not twice if the ribbon has them). */
 export function withMenuCommands(entries: CommandEntry[]): CommandEntry[] {
   const have = new Set(entries.map((e) => normalizeQuery(e.label)));
   return [...entries, ...MENU_COMMANDS.filter((m) => !have.has(normalizeQuery(m.label)))];
+}
+
+// ── Items of the ribbon's drop-downs (shapes, colours, fonts, chart types, bullets…) ─────────────────────
+
+/** An item of an open drop-down, as the ribbon draws it. */
+export interface MenuItemInfo { label: string; disabled?: boolean }
+
+/** A menu item's name: no tool tip hint "(두 번 클릭 …)", no trailing "…"; '' when it has no letters (a swatch of markers). */
+export function menuItemLabel(raw: string | null | undefined): string {
+  const t = commandLabel(raw, '')
+    .replace(/\s+\([^()]*\)\s*$/, '')
+    .replace(/\s*(…|\.{3})\s*$/, '')
+    .trim();
+  return /[\p{L}\p{N}]/u.test(t) && t.length <= 40 ? t : '';
+}
+
+/**
+ * The commands inside one drop-down, found by opening it: one entry per item. `via` is the button that opens it,
+ * so choosing the entry opens that menu and picks the item. A bare number (a font size) keeps its button's name.
+ */
+export function menuCommands(tab: string, opener: { label: string; group?: string }, items: MenuItemInfo[]): CommandEntry[] {
+  const out: CommandEntry[] = [];
+  const seen = new Set<string>();
+  for (const it of items) {
+    const label = it.label.trim();
+    if (!label) continue;
+    const shown = /^[\d.,\s]+$/.test(label) ? `${opener.label} ${label}` : label;
+    const id = commandId(tab, opener.group, `${opener.label}›${shown}`);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, label: shown, tab, group: opener.group, via: opener.label, pick: label, keywords: [`${opener.label} ${label}`], disabled: it.disabled });
+  }
+  return out;
+}
+
+/** The entries of a fresh index, plus the earlier ones it no longer offers (greyed: their menu needs a selection). */
+export function keepKnown(known: Map<string, CommandEntry>, fresh: CommandEntry[]): CommandEntry[] {
+  const now = new Set(fresh.map((e) => e.id));
+  for (const e of fresh) known.set(e.id, e);
+  const gone = [...known.values()].filter((e) => !now.has(e.id) && e.via).map((e) => ({ ...e, disabled: true, stale: true }));
+  return [...fresh, ...gone];
 }

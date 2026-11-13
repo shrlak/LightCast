@@ -61,3 +61,40 @@ export function patchBulletXml(xml: string, count: number): { xml: string; used:
   }
   return { xml: out, used };
 }
+
+// ── PPTX import ─────────────────────────────────────────────────────────────────────────────
+
+/** Without a canvas (no browser), a picture is only kept as it is when it is already about this small. */
+const UNSHRUNK_MAX_BYTES = 32 * 1024;
+
+const blobToDataUrl = async (blob: Blob): Promise<string | null> => {
+  try {
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    let bin = '';
+    for (const b of bytes) bin += String.fromCharCode(b);
+    return `data:${blob.type};base64,${btoa(bin)}`;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * The picture of an a:buBlip as a small PNG data URL (longest side {@link BULLET_PICTURE_PX}, never enlarged),
+ * like a picture chosen in the app; null when it cannot be read or is too big to take as it is.
+ */
+export async function shrinkBulletPicture(blob: Blob): Promise<string | null> {
+  if (!isBulletPictureFile({ type: blob.type, size: blob.size })) return null;
+  try {
+    if (typeof createImageBitmap === 'function' && typeof document !== 'undefined') {
+      const bmp = await createImageBitmap(blob);
+      const { w, h } = bulletPictureSize(bmp.width, bmp.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d')?.drawImage(bmp, 0, 0, w, h);
+      bmp.close();
+      return canvas.toDataURL('image/png');
+    }
+  } catch { /* fall through to the picture as it is */ }
+  return blob.size <= UNSHRUNK_MAX_BYTES ? blobToDataUrl(blob) : null;
+}

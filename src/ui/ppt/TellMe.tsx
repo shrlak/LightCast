@@ -2,14 +2,14 @@
 // to it; typing finds ribbon commands by their Korean or English name; Enter (or a click) runs the chosen one.
 // The commands are read off the ribbon itself (every tab is drawn once, out of sight), so nothing is listed twice.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { searchCommands, withMenuCommands, type CommandEntry } from '../../domain/commandSearch';
+import { keepKnown, searchCommands, withMenuCommands, type CommandEntry } from '../../domain/commandSearch';
 import type { Ed } from './editor';
 import type { RibbonActions } from './Ribbon';
 import { HomeTab, InsertTab, DrawTab } from './tabsMain';
 import { DesignTab, TransitionsTab, AnimationsTab } from './tabsShow';
 import { SlideShowTab, ReviewTab, ViewTab, WorshipTab, ToolsTab } from './tabsMore';
 import { ContextTabBody, type ContextTab } from './tabsContext';
-import { findButton, scanRibbon } from './commandIndex';
+import { MENU, findButton, findMenuItem, findOpener, scanMenus, scanRibbon } from './commandIndex';
 
 const FIND_LIBRARY = '__find-library__';
 
@@ -35,12 +35,19 @@ function TabBody({ tab, ed, actions, ctx }: { tab: string; ed: Ed; actions: Ribb
 function Indexer({ tabs, ed, actions, ctx, onDone }: { tabs: string[]; ed: Ed; actions: RibbonActions; ctx: ContextTab[]; onDone: (e: CommandEntry[]) => void }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const t = setTimeout(() => {
+    let stopped = false;
+    // The drop-downs' items are drawn only while a menu is open: every menu is opened (out of sight) and read.
+    const t = setTimeout(async () => {
       const root = host.current;
       if (!root) return;
-      onDone(tabs.flatMap((tab) => scanRibbon(root.querySelector(`[data-tab="${tab}"]`) ?? root, tab)));
+      const all: CommandEntry[] = [];
+      for (const tab of tabs) {
+        const body = root.querySelector(`[data-tab="${tab}"]`) ?? root;
+        all.push(...scanRibbon(body, tab), ...(await scanMenus(body, tab, () => stopped)));
+      }
+      if (!stopped) onDone(all);
     }, 0);
-    return () => clearTimeout(t);
+    return () => { stopped = true; clearTimeout(t); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
@@ -57,10 +64,12 @@ export function TellMe({ ed, actions, tabs, ctx, go }: { ed: Ed; actions: Ribbon
   const [at, setAt] = useState(0);
   const [entries, setEntries] = useState<CommandEntry[] | null>(null);
   const [indexing, setIndexing] = useState(false);
-  const key = tabs.join() + '|' + ctx.join();
+  // What the menus offer depends on what is selected, so a new selection means a new index (read when the box is next used).
+  const key = tabs.join() + '|' + ctx.join() + '|' + ed.sel.join();
+  const known = useRef(new Map<string, CommandEntry>());
   const lastKey = useRef(key);
   // A contextual tab that came or went changes what there is to find.
-  useEffect(() => { if (lastKey.current !== key) { lastKey.current = key; setEntries(null); } }, [key]);
+  useEffect(() => { if (lastKey.current !== key) { lastKey.current = key; setEntries(null); setIndexing(open || !!q.trim()); } }, [key]);
 
   // Alt+Q / Ctrl+Alt+Q: to the box (`code`, so a Korean keyboard layout works too).
   useEffect(() => {
@@ -75,7 +84,7 @@ export function TellMe({ ed, actions, tabs, ctx, go }: { ed: Ed; actions: Ribbon
   }, []);
 
   const wake = () => { setOpen(true); if (!entries && !indexing) setIndexing(true); };
-  const done = useCallback((e: CommandEntry[]) => { setEntries(e); setIndexing(false); }, []);
+  const done = useCallback((e: CommandEntry[]) => { setEntries(keepKnown(known.current, e)); setIndexing(false); }, []);
 
   const results = useMemo<CommandEntry[]>(() => {
     const hits = entries ? searchCommands(withMenuCommands(entries), q) : [];
@@ -91,14 +100,22 @@ export function TellMe({ ed, actions, tabs, ctx, go }: { ed: Ed; actions: Ribbon
     go(e.tab);
     // The tab draws on the next frames; then its button is pressed (a drop-down command opens its menu).
     let tries = 0;
+    const unavailable = () => ed.cmd.notify(`'${e.label}'은(는) 지금 사용할 수 없습니다 — 먼저 개체나 글을 선택하세요`);
     const press = () => {
       const body = document.querySelector('.ribbon .rb-body');
-      const b = body && findButton(body, e);
-      if (b) {
-        if (b.hasAttribute('disabled')) return ed.cmd.notify(`'${e.label}'은(는) 지금 사용할 수 없습니다`);
-        b.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
-        b.click();
-      } else if (++tries < 8) requestAnimationFrame(press);
+      // A command inside a drop-down: its menu is opened and the item chosen (a picture bullet opens the file picker).
+      const b = body && (e.via ? findOpener(body, e) : findButton(body, e));
+      if (!b) return ++tries < 8 ? void requestAnimationFrame(press) : e.via ? unavailable() : undefined;
+      if (b.hasAttribute('disabled')) return unavailable();
+      b.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+      b.click();
+      if (!e.via) return;
+      const menu = body.querySelector(MENU);
+      const item = menu && findMenuItem(menu, e);
+      if (!item || item.hasAttribute('disabled')) { if (menu) b.click(); return unavailable(); }
+      item.click();
+      // A menu the item left open is closed again (the arrow toggles).
+      setTimeout(() => { if (body.querySelector(MENU)) b.click(); }, 80);
     };
     requestAnimationFrame(press);
   };
@@ -137,12 +154,12 @@ export function TellMe({ ed, actions, tabs, ctx, go }: { ed: Ed; actions: Ribbon
               className={`pp-tellme-item ${i === at ? 'on' : ''} ${r.disabled ? 'off' : ''}`}
               onMouseDown={(ev) => { ev.preventDefault(); run(r); }} onMouseEnter={() => setAt(i)}>
               <span className="pp-tellme-label">{r.label}</span>
-              {r.id !== FIND_LIBRARY && <span className="pp-tellme-where">{r.tab}{r.group ? ` › ${r.group}` : ''}</span>}
+              {r.id !== FIND_LIBRARY && <span className="pp-tellme-where">{r.tab}{r.group ? ` › ${r.group}` : ''}{r.via ? ` › ${r.via}` : ''}</span>}
             </li>
           ))}
         </ul>
       )}
-      {indexing && <Indexer tabs={tabs} ed={ed} actions={actions} ctx={ctx} onDone={done} />}
+      {indexing && <Indexer key={key} tabs={tabs} ed={ed} actions={actions} ctx={ctx} onDone={done} />}
     </div>
   );
 }
