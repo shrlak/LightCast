@@ -9,6 +9,7 @@ import { contentServer, DEFAULT_SERVER, setContentServer } from '../domain/onlin
 import { FEATURES, loadFeatures, setFeature, type FeatureId } from '../domain/features';
 import { X32SettingsCard } from './X32SettingsCard';
 import type { X32Settings } from '../domain/x32';
+import { ImportedFontsManager } from './ppt/FontImport';
 
 export type SettingsPage = 'general' | 'outputs' | 'remote' | 'ai' | 'devices';
 
@@ -106,6 +107,9 @@ function GeneralPage({ desk, onFeatures }: { desk: ReturnType<typeof useDesktopI
         <dl className="shortcut-list">
           {SHORTCUTS.map(([k, label]) => <div key={k}><dt><kbd>{k}</kbd></dt><dd>{label}</dd></div>)}
         </dl>
+      </Card>
+      <Card title="글꼴" hint="내 컴퓨터의 글꼴 파일을 가져오면 편집 화면과 모든 출력 화면에서 쓸 수 있습니다. 글꼴의 저작권 · 사용 허가를 확인하세요.">
+        <ImportedFontsManager />
       </Card>
       <Card title="🧪 실험 기능" hint="아직 기본으로 켜지 않은 기능입니다. 이 컴퓨터에서만 켜고 끕니다.">
         {FEATURES.map((f) => (

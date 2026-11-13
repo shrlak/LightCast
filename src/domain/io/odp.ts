@@ -1,5 +1,6 @@
 // OpenDocument Presentation (.odp): read into LightCast slides, and write a valid minimal file back.
 // Pure logic — pictures go in and out through callbacks so tests need no browser storage.
+import { splitWeightedFace, weightPatch } from '../fontWeight';
 import JSZip from 'jszip';
 import type { DocProperties, ElementParagraph, HAlign, Presentation, Slide, SlideElement, TextRun } from '../types';
 import type { TableData } from '../../engine';
@@ -70,13 +71,20 @@ function textProps(p: Props): Omit<TextRun, 'text'> {
   if (size) out.fontSize = Math.round(Number(size[1]) * PX_PER_PT);
   else { const cm = /^[\d.]+(cm|mm|in)$/.test(p['fo:font-size'] ?? '') ? lengthToCm(p['fo:font-size']) : undefined; if (cm) out.fontSize = Math.round((cm / 2.54) * 72 * PX_PER_PT); }
   if (p['fo:font-weight'] === 'bold' || Number(p['fo:font-weight']) >= 600) out.bold = true;
+  const numericWeight = Number(p['fo:font-weight']);
+  if (numericWeight >= 100 && numericWeight <= 900 && numericWeight !== 400 && numericWeight !== 700) Object.assign(out, weightPatch(numericWeight));
   if (p['fo:font-style'] === 'italic' || p['fo:font-style'] === 'oblique') out.italic = true;
   const color = colorOf(p['fo:color']);
   if (color) out.color = color;
   if (p['style:text-underline-style'] && p['style:text-underline-style'] !== 'none') out.underline = true;
   if (p['style:text-line-through-style'] && p['style:text-line-through-style'] !== 'none') out.strike = true;
   const family = (p['fo:font-family'] ?? p['style:font-name'] ?? '').replace(/^['"]|['"]$/g, '');
-  if (family) out.fontFamily = family;
+  if (family) {
+    // "Noto Sans KR Light" → the family and weight 300 (names of families that have such weights only).
+    const split = splitWeightedFace(family);
+    out.fontFamily = split.family;
+    if (split.weight !== undefined && out.weight === undefined) Object.assign(out, weightPatch(split.weight));
+  }
   const pos = /^(super|sub|-?\d+%)/.exec(p['style:text-position'] ?? '')?.[1];
   if (pos === 'super' || (pos && parseInt(pos, 10) > 0)) out.baseline = 'super';
   else if (pos === 'sub' || (pos && parseInt(pos, 10) < 0)) out.baseline = 'sub';

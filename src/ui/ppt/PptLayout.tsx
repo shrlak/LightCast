@@ -52,6 +52,7 @@ import { Backstage, FindReplaceDialog, NotesPageView, OutlineView, PlayPreview, 
 import { zoomStep } from '../../domain/viewOptions';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
 import { isMetafileName } from '../../domain/metafile/image';
+import { MissingFontsNotice } from './FontImport';
 
 /** Status bar lock: a closed padlock when locked; the shackle swung open outward when unlocked. */
 function LockIcon({ locked }: { locked: boolean }) {
@@ -411,6 +412,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
         setLinking(false);
       }} />}
       <Ribbon ed={ed} actions={actions} />
+      <MissingFontsNotice deck={p} deckKey={p?.id} />
       <div className="ppt-body">
         <aside className={`ppt-left ${view.grayscale ? 'grayscale' : ''}`}>
           <div className="ppt-left-tabs">

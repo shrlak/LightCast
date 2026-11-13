@@ -80,8 +80,9 @@ describe('pptx round trip', () => {
     zip.file('ppt/_rels/presentation.xml.rels', '<Relationships><Relationship Id="rId9" Target="fonts/font1.fntdata"/></Relationships>');
     zip.file('ppt/fonts/font1.fntdata', new Uint8Array(100).fill(9));
     const r = await readEmbeddedFonts(await zip.generateAsync({ type: 'uint8array' }));
-    expect(r).toEqual({ fonts: [], skipped: 1 });
-    expect(await readEmbeddedFonts(new Uint8Array([1, 2, 3]))).toEqual({ fonts: [], skipped: 0 });
+    expect(r).toMatchObject({ fonts: [], skipped: 1 });
+    expect(r.skippedFonts[0]).toMatchObject({ family: 'X' });
+    expect(await readEmbeddedFonts(new Uint8Array([1, 2, 3]))).toEqual({ fonts: [], skipped: 0, skippedFonts: [] });
   });
   it('leaves a file that already lists fonts alone', async () => {
     const zip = newZip();

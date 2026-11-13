@@ -8,6 +8,7 @@ import { pptxVert } from '../textFormat';
 import { sequence } from '../arrangement';
 import { getMedia } from '../media';
 import { pptxWeightedFont } from '../fonts';
+import { pptxFontForTheme } from '../fontWeight';
 import { containBox, isSvgBlob, svgForPptx, svgIntrinsicSize } from '../svgPicture';
 import { svgToPngBlob } from '../svgRaster';
 import { qrDataUrl } from './qr';
@@ -277,6 +278,12 @@ function weightedFace(family: string, own: { bold?: boolean; weight?: number }, 
   return pptxWeightedFont(family, own, inherited);
 }
 const fontFace = (t: Theme) => pptxFont(t.fontFamily);
+/** A paragraph's bold flag, and its font when its weight (Light …) differs from the box's: PowerPoint picks weights by family name. */
+function paragraphFace(p: { bold?: boolean; weight?: number }, el: { bold?: boolean; weight?: number }, family: string, box: { face: string }): { bold: boolean | undefined; fontFace?: string } {
+  if (p.weight === undefined) return { bold: p.bold ?? el.bold };
+  const f = weightedFace(family, p, el);
+  return { bold: f.bold, ...(f.face !== box.face ? { fontFace: f.face } : {}) };
+}
 
 /*
  * What keeps the exported slides looking like the screen:
@@ -317,14 +324,17 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
     const color = theme.color.replace('#', '');
     const valign = theme.vAlign === 'middle' ? 'middle' : theme.vAlign;
     const runs: PptxGenJS.TextProps[] = [];
-    if (slide.title) runs.push({ text: slide.title, options: { bold: true, fontSize: theme.fontSize * 0.72 * 0.5, lineSpacing: linePts(theme.fontSize * 0.72, theme.lineHeight), breakLine: true } });
+    // Theme weight (Light … Black): the family gets its weight name where PowerPoint has such a font; otherwise Bold from 700 as before.
+    const lyricFace = pptxFontForTheme(fontFace(theme), theme.fontWeight);
+    const plainFace = lyricFace.face !== fontFace(theme) ? { fontFace: fontFace(theme) } : {};
+    if (slide.title) runs.push({ text: slide.title, options: { ...plainFace, bold: true, fontSize: theme.fontSize * 0.72 * 0.5, lineSpacing: linePts(theme.fontSize * 0.72, theme.lineHeight), breakLine: true } });
     for (const line of slide.text.split('\n')) {
-      runs.push({ text: stripBold(line), options: { bold: /^\*\*.*\*\*$/.test(line) || theme.fontWeight >= 700, lineSpacing: linePts(theme.fontSize, theme.lineHeight), breakLine: true } });
+      runs.push({ text: stripBold(line), options: { bold: /^\*\*.*\*\*$/.test(line) || lyricFace.bold, lineSpacing: linePts(theme.fontSize, theme.lineHeight), breakLine: true } });
     }
     if (slide.subtext) {
       const sub = theme.fontSize * (theme.subScale ?? 0.62);
       for (const line of slide.subtext.split('\n')) {
-        runs.push({ text: line, options: { fontSize: sub * 0.5, color: (theme.subColor ?? theme.color).replace('#', ''), lineSpacing: linePts(sub, theme.lineHeight), breakLine: true } });
+        runs.push({ text: line, options: { ...plainFace, fontSize: sub * 0.5, color: (theme.subColor ?? theme.color).replace('#', ''), lineSpacing: linePts(sub, theme.lineHeight), breakLine: true } });
       }
     }
     // A trailing paragraph would put an empty line below the lyrics and shift the
@@ -332,7 +342,7 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
     if (p.lyricsCentered && slide.group !== 'Title' && runs.length) runs[runs.length - 1].options = { ...runs[runs.length - 1].options, breakLine: false };
     s.addText(runs, {
       x: layout.box.x * PX, y: layout.box.y * PX, w: layout.box.w * PX, h: layout.box.h * PX,
-      fontFace: fontFace(theme), fontSize: theme.fontSize * 0.5, color, italic: theme.italic, underline: theme.underline ? { style: 'sng' } : undefined,
+      fontFace: lyricFace.face, fontSize: theme.fontSize * 0.5, color, italic: theme.italic, underline: theme.underline ? { style: 'sng' } : undefined,
       ...textOptions(theme, pptx),
       margin: NO_MARGIN, lang: langOf(`${slide.title ?? ''}${slide.text}${slide.subtext ?? ''}`),
       align: pptxAlign(theme.align), valign,
@@ -359,7 +369,7 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
           const parts = runs[i] ?? [{ text: line || ' ' }];
           return parts.flatMap((r, k) => { const rf = weightedFace(r.fontFamily ?? elFamily, r, el); return r.text.split('\u000b').map((piece, j) => ({ text: piece, options: { ...(j > 0 ? { softBreakBefore: true } : {}), ...(r.link ? { hyperlink: { url: r.link } } : {}), fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: rf.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), fontFace: r.fontFamily || rf.face !== boxFace.face ? rf.face : undefined, highlight: r.highlight?.replace('#', ''), strike: r.strike ? ('sngStrike' as const) : undefined, superscript: r.baseline === 'super' || undefined, subscript: r.baseline === 'sub' || undefined, breakLine: k === parts.length - 1 && i < richLines.length - 1 && j === r.text.split('\u000b').length - 1 } })); });
         });
-        const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: exactPts(p.fontSize ?? el.fontSize ?? 64), bold: p.bold ?? el.bold, italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: pptxAlign(p.align ?? el.align), breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
+        const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: exactPts(p.fontSize ?? el.fontSize ?? 64), ...paragraphFace(p, el, elFamily, boxFace), italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: pptxAlign(p.align ?? el.align), breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
         s.addText(content, { ...box, fontFace: boxFace.face, lineSpacing: el.paragraphs?.length ? undefined : exactPts(el.fontSize ?? 64), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: boxFace.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el, pptx), align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
       } else if (el.kind === 'image' && el.mediaId) {
         const svg = await svgSource(el.mediaId);
@@ -397,10 +407,10 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
 export async function exportPptx(lib: Library, source: { playlist: Playlist } | { presentation: Presentation }, fileName: string) {
   const pptx = await buildPptx(lib, source);
   const name = fileName.endsWith('.pptx') ? fileName : `${fileName}.pptx`;
-  if (!embedFontsPref()) return void (await pptx.writeFile({ fileName: name }));
+  if (!embedFontsPref()) { await pptx.writeFile({ fileName: name }); return { missingFonts: [] as string[], embedded: [] as string[] }; }
   // 글꼴 포함: the fonts the deck uses that this computer has files for go into the file (the rest are listed in the result).
   const blob = await pptx.write({ outputType: 'blob' }) as Blob;
-  const { blob: withFonts, missing } = await embedUsedFonts(blob, 'playlist' in source ? lib.presentations : source.presentation);
+  const { blob: withFonts, missing, embedded } = await embedUsedFonts(blob, 'playlist' in source ? lib.presentations : source.presentation);
   const a = document.createElement('a');
   a.href = URL.createObjectURL(withFonts);
   a.download = name;
@@ -408,7 +418,7 @@ export async function exportPptx(lib: Library, source: { playlist: Playlist } | 
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  return { missingFonts: missing };
+  return { missingFonts: missing, embedded };
 }
 
 /** The deck as PowerPoint will get it (in playlist order when given). */

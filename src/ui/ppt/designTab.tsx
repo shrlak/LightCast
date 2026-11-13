@@ -17,6 +17,8 @@ import { uid } from '../../domain/lyrics';
 import { SlideCanvas } from '../SlideCanvas';
 import type { Ed } from './editor';
 import { Dialog, Field } from './dialogs';
+import { FontImportButton, useImportedFonts } from './FontImport';
+import { importedFamilies } from '../../domain/importedFonts';
 
 // ---------------------------------------------------------------- the galleries' custom lists
 
@@ -113,6 +115,7 @@ export function ThemeFontsDialog({ ed, onClose }: { ed: Ed; onClose: () => void 
   const [minor, setMinor] = useState(editing?.minor ?? cur?.minor ?? '맑은 고딕');
   const [name, setName] = useState(editing?.name ?? nextCustomName(all.map((s) => s.name)));
   const clean = cleanName(name);
+  const importedNow = useImportedFonts().length ? importedFamilies() : [];
   const clash = all.some((s) => s.name === clean && s.id !== editing?.id);
   const save = () => {
     const item: CustomFontScheme = { id: editing?.id ?? uid('fs'), name: clean, major: major.trim(), minor: minor.trim() };
@@ -124,13 +127,14 @@ export function ThemeFontsDialog({ ed, onClose }: { ed: Ed; onClose: () => void 
   };
   return (
     <Dialog title={editing ? '테마 글꼴 편집' : '새 테마 글꼴 만들기'} onClose={onClose} onOk={save} okLabel="저장" okDisabled={!clean || !major.trim() || !minor.trim()}>
-      <datalist id="theme-font-names">{FONT_NAMES.map((f) => <option key={f} value={f} />)}</datalist>
+      <datalist id="theme-font-names">{[...new Set([...importedNow, ...FONT_NAMES])].map((f) => <option key={f} value={f} />)}</datalist>
       <Field label="제목 글꼴"><input list="theme-font-names" value={major} onChange={(e) => setMajor(e.target.value)} /></Field>
       <Field label="본문 글꼴"><input list="theme-font-names" value={minor} onChange={(e) => setMinor(e.target.value)} /></Field>
       <div className="font-preview">
         <div style={{ fontFamily: officeFont(major || '맑은 고딕'), fontSize: 26, fontWeight: 700 }}>제목 글꼴 — 주님을 찬양해 Aa</div>
         <div style={{ fontFamily: officeFont(minor || '맑은 고딕'), fontSize: 17 }}>본문 글꼴 — 우리는 주님의 백성이요 Aa 123</div>
       </div>
+      <FontImportButton className="btn small" label="글꼴 가져오기…" />
       <Field label="이름"><input value={name} maxLength={40} onChange={(e) => setName(e.target.value)} /></Field>
       <p className="muted small">{clash ? '같은 이름의 사용자 지정 글꼴이 있어 저장하면 바뀝니다. ' : ''}저장하면 모든 슬라이드의 제목과 본문 글꼴이 바뀌고 디자인 › 글꼴 목록에 남습니다.</p>
     </Dialog>

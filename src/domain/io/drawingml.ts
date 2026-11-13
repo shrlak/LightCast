@@ -8,6 +8,7 @@ import type { DashStyle, ElementParagraph, HAlign, ListStyle, SlideElement, Text
 import { uid } from '../lyrics';
 import { normalizeRuns } from '../richText';
 import { officeFont } from '../fonts';
+import { splitWeightedFace, weightPatch } from '../fontWeight';
 import { fromPptxVert } from '../textFormat';
 import { child, find, kids, local, parseMarkup, path, type MNode } from './markup';
 import { BEVELS, CAMERAS } from '../shapeEffects';
@@ -131,11 +132,16 @@ function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, th
   const hl = child(rPr, 'highlight');
   const bl = Number(attr('baseline') ?? 0);
   const b = attr('b'), i = attr('i'), u = attr('u'), st = attr('strike');
-  const family = resolveFace(face, theme, d.font, ea);
+  const resolved = resolveFace(face, theme, d.font, ea);
+  // "Noto Sans KR Light" is the family "Noto Sans KR" at weight 300 (only for families that have such weights).
+  const split = resolved ? splitWeightedFace(resolved) : undefined;
+  const family = split?.family;
+  const wp = split?.weight !== undefined ? weightPatch(split.weight) : undefined;
   return {
     text,
     fontSize: Math.round((sz ? (Number(sz) / 100) * 2 : d.size) * scale * 10) / 10,
-    bold: b !== undefined ? b === '1' || b === 'true' : d.bold,
+    bold: wp ? (b !== undefined ? b === '1' || b === 'true' : wp.bold) : b !== undefined ? b === '1' || b === 'true' : d.bold,
+    weight: wp?.weight,
     italic: i !== undefined ? i === '1' || i === 'true' : d.italic,
     underline: u && u !== 'none' ? true : undefined,
     strike: st && st !== 'noStrike' ? true : undefined,
@@ -180,7 +186,7 @@ function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme, bulletP
   });
 }
 
-const RUN_KEYS = ['fontSize', 'bold', 'italic', 'underline', 'strike', 'baseline', 'color', 'highlight', 'fontFamily'] as const;
+const RUN_KEYS = ['fontSize', 'bold', 'weight', 'italic', 'underline', 'strike', 'baseline', 'color', 'highlight', 'fontFamily'] as const;
 
 /** Paragraphs → the element's text, its own formatting (that of most of its text) and runs for the rest. */
 export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Partial<SlideElement> {
@@ -197,6 +203,8 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
     // A run that is not bold / italic inside a bold / italic box says so.
     if (own.bold && !r.bold) out.bold = false;
     if (own.italic && !r.italic) out.italic = false;
+    // A run without the box's weight says its own plain / bold look.
+    if (own.weight !== undefined && r.weight === undefined) out.bold = !!r.bold;
     return out;
   };
   const text = lines.map((l) => l.runs.map((r) => r.text).join('')).join('\n');
@@ -210,6 +218,7 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
     color: own.color as string | undefined,
     fontFamily: own.fontFamily as string | undefined,
     bold: (own.bold as boolean | undefined) || undefined,
+    weight: own.weight as number | undefined,
     italic: (own.italic as boolean | undefined) || undefined,
     underline: (own.underline as boolean | undefined) || undefined,
     strike: (own.strike as boolean | undefined) || undefined,

@@ -4,9 +4,11 @@
 // (not modal: the slide stays visible) and acts on the selection when it opens.
 import { useMemo, useState, type ReactNode } from 'react';
 import type { SlideElement } from '../../domain/types';
-import { FONT_OPTIONS } from '../../domain/fonts';
+import { FONT_OPTIONS, officeFont } from '../../domain/fonts';
 import { availableWeights, weightLabel, weightPatch } from '../../domain/fontWeight';
 import { declaredFaces } from './FontWeightPicker';
+import { FontImportButton, useImportedFonts } from './FontImport';
+import { importedFamilies } from '../../domain/importedFonts';
 import { SINGLE_SPACING } from '../../domain/textFormat';
 import { autoFitMode, autoFitValue } from '../../domain/textFit';
 import { formatAllRuns } from '../../domain/richText';
@@ -64,6 +66,7 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [caps, setCaps] = useState(first?.caps);
   const [spacing, setSpacing] = useState((v?.letterSpacing ?? 0) / 2);
   const [tab, setTab] = useState<'font' | 'spacing'>('font');
+  const importedNow = useImportedFonts();
   if (!t || !v) return <Dialog title="글꼴" onClose={onClose}><p>서식을 바꿀 텍스트를 고르세요.</p></Dialog>;
   const ok = () => {
     const italic = style === 'italic' || style === 'boldItalic';
@@ -97,7 +100,8 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
               <select value={family} onChange={(e) => setFamily(e.target.value)}>
                 <option value="">테마 글꼴</option>
                 {FONT_OPTIONS.map((o) => <option key={o.label} value={o.family}>{o.label}</option>)}
-                {family && !FONT_OPTIONS.some((o) => o.family === family) && <option value={family}>{family.split(',')[0].replace(/"/g, '')}</option>}
+                {importedNow.length > 0 && <optgroup label="가져온 글꼴">{importedFamilies().map((n) => <option key={`imp-${n}`} value={officeFont(n)}>{n}</option>)}</optgroup>}
+                {family && !FONT_OPTIONS.some((o) => o.family === family) && !importedFamilies().some((n) => officeFont(n) === family) && <option value={family}>{family.split(',')[0].replace(/"/g, '')}</option>}
               </select>
             </Field>
             <Field label="글꼴 스타일">
@@ -105,6 +109,7 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             </Field>
             <Field label="크기 (pt)"><Num value={size} min={1} max={400} step={0.5} onChange={setSize} /></Field>
           </div>
+          <div className="dlg-grid3"><FontImportButton className="btn small" label="글꼴 가져오기…" /></div>
           <div className="dlg-grid3">
             <Field label="글꼴 굵기">
               <select value={weight ?? ''} onChange={(e) => setWeight(e.target.value ? Number(e.target.value) : undefined)} aria-label="글꼴 굵기">
