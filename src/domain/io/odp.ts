@@ -6,26 +6,17 @@ import type { TableData } from '../../engine';
 import { CANVAS_H, CANVAS_W } from '../canvas';
 import { uid } from '../lyrics';
 import { childNamed, childrenNamed, elementsOf, escapeXml, parseXml, textOf, type XNode } from './miniXml';
+import { gradientCss, parseGradient } from '../backgroundFormat';
+import {
+  IDENTITY, applyPoint, gradientToLc, hexColor, isIdentity, lcToGradient, lengthToCm, mul, parseAngle, parseTransform, readTransition,
+  rotationTransform, transformBox, transitionAttrs, type Mat, type OdfGradient,
+} from './odpGeometry';
+
+export { hexColor, lengthToCm };
 
 export const ODP_MIME = 'application/vnd.oasis.opendocument.presentation';
 
 // ── Units ─────────────────────────────────────────────────────────────────────────────────────
-/** Length in an ODF unit → centimetres (undefined when it is not a length). */
-export function lengthToCm(v: string | undefined): number | undefined {
-  const m = /^\s*(-?[\d.]+)\s*(cm|mm|in|pt|pc|px)?\s*$/i.exec(v ?? '');
-  if (!m) return undefined;
-  const n = Number(m[1]);
-  if (!Number.isFinite(n)) return undefined;
-  switch ((m[2] ?? 'cm').toLowerCase()) {
-    case 'mm': return n / 10;
-    case 'in': return n * 2.54;
-    case 'pt': return (n * 2.54) / 72;
-    case 'pc': return (n * 2.54) / 6;
-    case 'px': return (n * 2.54) / 96;
-    default: return n;
-  }
-}
-
 const DEFAULT_PAGE = { w: 28, h: 21 }; // cm: a 4:3 slide, the shape LightCast slides have
 const PX_PER_PT = CANVAS_W / 720; // 10 in slide = 720 pt = 1440 canvas px
 const fmtCm = (px: number, perPx: number) => `${Math.round(px * perPx * 1000) / 1000}cm`;
@@ -34,7 +25,7 @@ const fmtCm = (px: number, perPx: number) => `${Math.round(px * perPx * 1000) / 
 type Props = Record<string, string>;
 interface StyleDef { family: string; parent?: string; props: Props }
 
-function readStyles(root: XNode | undefined, into: Map<string, StyleDef>) {
+function readStyles(root: XNode | undefined, into: Map<string, StyleDef>, gradients: Map<string, OdfGradient>) {
   if (!root) return;
   const scan = (n: XNode) => {
     for (const s of elementsOf(n)) {
@@ -43,6 +34,14 @@ function readStyles(root: XNode | undefined, into: Map<string, StyleDef>) {
         for (const p of elementsOf(s)) if (/^style:.*-properties$/.test(p.name)) Object.assign(props, p.attrs);
         const name = s.attrs['style:name'] ?? `#default:${s.attrs['style:family']}`;
         into.set(`${s.attrs['style:family'] ?? ''}:${name}`, { family: s.attrs['style:family'] ?? '', parent: s.attrs['style:parent-style-name'], props });
+      } else if (s.name === 'draw:gradient' && s.attrs['draw:name']) {
+        const start = colorOf(s.attrs['draw:start-color']), end = colorOf(s.attrs['draw:end-color']);
+        const stops = elementsOf(s).filter((c) => c.name === 'loext:gradient-stop').flatMap((c) => {
+          const color = colorOf(c.attrs['svg:stop-color']);
+          const off = /^([\d.]+)(%?)$/.exec(c.attrs['svg:offset'] ?? '');
+          return color && off ? [{ pos: Math.round(Number(off[1]) * (off[2] ? 1 : 100) * 10) / 10, color }] : [];
+        });
+        if ((start && end) || stops.length >= 2) gradients.set(s.attrs['draw:name'], { style: s.attrs['draw:style'] ?? 'linear', start: start ?? stops[0].color, end: end ?? stops[stops.length - 1].color, angle: parseAngle(s.attrs['draw:angle']), ...(stops.length >= 2 ? { stops } : {}) });
       } else if (s.name === 'office:styles' || s.name === 'office:automatic-styles' || s.name === 'office:master-styles') scan(s);
     }
   };
@@ -104,6 +103,7 @@ interface Ctx {
   /** cm → canvas px, per axis. */
   kx: number; ky: number;
   images: Map<string, string>;
+  gradients: Map<string, OdfGradient>;
 }
 
 type Line = { runs: TextRun[]; align?: HAlign; list: boolean };
@@ -187,16 +187,28 @@ function applyText(el: SlideElement, lines: Line[]) {
 }
 
 interface Box { x: number; y: number; w: number; h: number }
-function boxOf(ctx: Ctx, n: XNode): Box | undefined {
+interface Placed extends Box { rotation?: number; flipH?: boolean; flipV?: boolean }
+
+/** Where an object sits on the slide in canvas pixels, with its own and its groups' draw:transform applied. */
+function boxOf(ctx: Ctx, n: XNode, m: Mat): Placed | undefined {
   const g = (k: string) => lengthToCm(n.attrs[k]);
-  let x = g('svg:x'), y = g('svg:y'), w = g('svg:width'), h = g('svg:height');
   if (n.name === 'draw:line' || n.name === 'draw:connector') {
     const x1 = g('svg:x1'), y1 = g('svg:y1'), x2 = g('svg:x2'), y2 = g('svg:y2');
     if (x1 === undefined || y1 === undefined || x2 === undefined || y2 === undefined) return undefined;
-    x = Math.min(x1, x2); y = Math.min(y1, y2); w = Math.abs(x2 - x1); h = Math.abs(y2 - y1);
+    const [ax, ay] = applyPoint(m, x1, y1), [bx, by] = applyPoint(m, x2, y2);
+    const out: Placed = { x: Math.round(Math.min(ax, bx) * ctx.kx), y: Math.round(Math.min(ay, by) * ctx.ky), w: Math.max(1, Math.round(Math.abs(bx - ax) * ctx.kx)), h: Math.max(1, Math.round(Math.abs(by - ay) * ctx.ky)) };
+    if (bx < ax) out.flipH = true;
+    if (by < ay) out.flipV = true;
+    return out;
   }
+  const moved = !isIdentity(m);
+  const x = g('svg:x') ?? (moved ? 0 : undefined), y = g('svg:y') ?? (moved ? 0 : undefined), w = g('svg:width'), h = g('svg:height');
   if (x === undefined || y === undefined || w === undefined || h === undefined) return undefined;
-  return { x: Math.round(x * ctx.kx), y: Math.round(y * ctx.ky), w: Math.max(1, Math.round(w * ctx.kx)), h: Math.max(1, Math.round(h * ctx.ky)) };
+  const t = transformBox(m, { x, y, w, h });
+  const pw = Math.max(1, Math.round(t.w * ctx.kx)), ph = Math.max(1, Math.round(t.h * ctx.ky));
+  const out: Placed = { x: Math.round(t.cx * ctx.kx - pw / 2), y: Math.round(t.cy * ctx.ky - ph / 2), w: pw, h: ph };
+  if (t.rotation) out.rotation = t.rotation;
+  return out;
 }
 
 const SHAPES: Record<string, string> = { rectangle: 'rect', ellipse: 'ellipse', 'round-rectangular': 'roundRect', diamond: 'diamond', 'isosceles-triangle': 'triangle', 'right-triangle': 'rtTriangle', 'mso-spt20': 'line', pentagon: 'homePlate', 'star5': 'star5', 'heart': 'heart', 'right-arrow': 'rightArrow' };
@@ -205,9 +217,15 @@ function graphicStyle(ctx: Ctx, n: XNode): Props {
   return { ...resolveStyle(ctx.styles, 'graphic', n.attrs['draw:style-name']), ...resolveStyle(ctx.styles, 'presentation', n.attrs['presentation:style-name']) };
 }
 
-function shapeStyle(el: SlideElement, g: Props) {
-  if (g['draw:fill'] === 'solid' && colorOf(g['draw:fill-color'])) el.fill = colorOf(g['draw:fill-color']);
-  else el.fill = 'transparent';
+/** A solid or gradient fill from graphic properties (undefined when the object has none). */
+function fillOf(ctx: Ctx, g: Props): Partial<SlideElement> | undefined {
+  if (g['draw:fill'] === 'solid' && colorOf(g['draw:fill-color'])) return { fill: colorOf(g['draw:fill-color']) };
+  const def = g['draw:fill'] === 'gradient' ? ctx.gradients.get(g['draw:fill-gradient-name'] ?? '') : undefined;
+  return def ? gradientToLc(def) : undefined;
+}
+
+function shapeStyle(ctx: Ctx, el: SlideElement, g: Props) {
+  Object.assign(el, fillOf(ctx, g) ?? { fill: 'transparent' });
   if (g['draw:stroke'] !== 'none' && colorOf(g['svg:stroke-color'])) {
     el.stroke = colorOf(g['svg:stroke-color']);
     const w = lengthToCm(g['svg:stroke-width']);
@@ -289,11 +307,19 @@ async function readImage(ctx: Ctx, href: string, box: Box, name?: string): Promi
   return el;
 }
 
-async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[]) {
+interface Walk { m: Mat; group?: { id: string; name?: string }; /** Master page: leave out placeholders (title, footer, page number…). */ master?: boolean }
+
+async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Walk = { m: IDENTITY }) {
   for (const n of elementsOf(parent)) {
-    if (n.name === 'draw:g' || n.name === 'draw:a') { await readShapes(ctx, n, out); continue; }
-    const box = boxOf(ctx, n);
-    if (!box) continue;
+    const m = mul(walk.m, parseTransform(n.attrs['draw:transform'] ?? n.attrs['svg:transform']));
+    // A group is flattened into the slide: its members keep their own place (transforms applied) and stay grouped.
+    if (n.name === 'draw:g') { await readShapes(ctx, n, out, { ...walk, m, group: walk.group ?? { id: uid('g'), name: n.attrs['draw:name'] } }); continue; }
+    if (n.name === 'draw:a') { await readShapes(ctx, n, out, walk); continue; }
+    if (walk.master && (n.attrs['presentation:class'] || n.attrs['presentation:placeholder'] === 'true')) continue;
+    const placed = boxOf(ctx, n, m);
+    if (!placed) continue;
+    const { rotation, flipH, flipV, ...box } = placed;
+    const first = out.length;
     const name = n.attrs['draw:name'];
     if (n.name === 'draw:frame') {
       const textBox = childNamed(n, 'draw:text-box');
@@ -310,7 +336,7 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[]) {
         const g = graphicStyle(ctx, n);
         const va = g['draw:textarea-vertical-align'];
         if (va === 'top' || va === 'bottom' || va === 'middle') el.vAlign = va;
-        if (g['draw:fill'] === 'solid' && colorOf(g['draw:fill-color'])) el.fill = colorOf(g['draw:fill-color']);
+        Object.assign(el, fillOf(ctx, g));
         if (el.text || el.fill) out.push(el);
       }
     } else if (/^draw:(rect|ellipse|circle|custom-shape|line|connector|polygon)$/.test(n.name)) {
@@ -318,15 +344,18 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[]) {
       const shape = n.name === 'draw:ellipse' || n.name === 'draw:circle' ? 'ellipse' : n.name === 'draw:line' || n.name === 'draw:connector' ? 'line' : n.name === 'draw:rect' ? ((n.attrs['draw:corner-radius'] ?? n.attrs['svg:rx']) ? 'roundRect' : 'rect') : SHAPES[type ?? ''] ?? 'rect';
       const el: SlideElement = { id: uid('el'), kind: 'shape', shape, ...box };
       if (name) el.name = name;
-      shapeStyle(el, graphicStyle(ctx, n));
+      shapeStyle(ctx, el, graphicStyle(ctx, n));
       if (shape === 'line') {
-        const x1 = lengthToCm(n.attrs['svg:x1']), x2 = lengthToCm(n.attrs['svg:x2']), y1 = lengthToCm(n.attrs['svg:y1']), y2 = lengthToCm(n.attrs['svg:y2']);
-        if (x1 !== undefined && x2 !== undefined && x2 < x1) el.flipH = true;
-        if (y1 !== undefined && y2 !== undefined && y2 < y1) el.flipV = true;
+        if (flipH) el.flipH = true;
+        if (flipV) el.flipV = true;
         el.stroke ??= '#000000';
       }
       applyText(el, textLines(ctx, n));
       out.push(el);
+    }
+    for (const el of out.slice(first)) {
+      if (rotation && el.kind !== 'table') el.rotation = rotation;
+      if (walk.group) { el.groupId = walk.group.id; if (walk.group.name) el.groupName = walk.group.name; }
     }
   }
 }
@@ -344,8 +373,9 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   const stylesRoot = stylesXml ? parseXml(stylesXml) : undefined;
 
   const styles = new Map<string, StyleDef>();
-  readStyles(stylesRoot, styles);
-  readStyles(childNamed(content, 'office:automatic-styles'), styles);
+  const gradients = new Map<string, OdfGradient>();
+  readStyles(stylesRoot, styles, gradients);
+  readStyles(childNamed(content, 'office:automatic-styles'), styles, gradients);
   const masterPages = new Map<string, XNode>();
   for (const mp of stylesRoot ? childrenNamed(childNamed(stylesRoot, 'office:master-styles') ?? { name: '', attrs: {}, children: [] }, 'style:master-page') : []) masterPages.set(mp.attrs['style:name'], mp);
 
@@ -357,18 +387,41 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   const lp = layout ? childNamed(layout, 'style:page-layout-properties') : undefined;
   const pw = lengthToCm(lp?.attrs['fo:page-width']), ph = lengthToCm(lp?.attrs['fo:page-height']);
   if (pw && ph) page = { w: pw, h: ph };
-  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map() };
+  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), gradients };
 
   const body = childNamed(childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] }, 'office:presentation');
   if (!body) throw new Error('OpenDocument 파일에 슬라이드가 없습니다.');
   const slides: Slide[] = [];
+  // Objects on a master page (logos, lines, plain text) become background shapes at the bottom of each slide that shows it.
+  const masterObjects = new Map<string, SlideElement[]>();
+  const masterElements = async (name: string): Promise<SlideElement[]> => {
+    let list = masterObjects.get(name);
+    if (!list) {
+      list = [];
+      const mp = masterPages.get(name);
+      if (mp) await readShapes(ctx, mp, list, { m: IDENTITY, master: true });
+      for (const el of list) el.name = `마스터: ${el.name ?? el.kind}`;
+      masterObjects.set(name, list);
+    }
+    return list.map((el) => ({ ...structuredClone(el), id: uid('el') }));
+  };
   for (const pg of childrenNamed(body, 'draw:page')) {
     const elements: SlideElement[] = [];
+    const own = resolveStyle(styles, 'drawing-page', pg.attrs['draw:style-name']);
+    const pageStyle = { ...resolveStyle(styles, 'drawing-page', masterPages.get(pg.attrs['draw:master-page-name'] ?? '')?.attrs['draw:style-name']), ...own };
+    if (own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name']) elements.push(...await masterElements(pg.attrs['draw:master-page-name']));
     await readShapes(ctx, pg, elements);
     const slide: Slide = { id: uid('s'), group: '', text: '', elements };
-    const pageStyle = { ...resolveStyle(styles, 'drawing-page', masterPages.get(pg.attrs['draw:master-page-name'] ?? '')?.attrs['draw:style-name']), ...resolveStyle(styles, 'drawing-page', pg.attrs['draw:style-name']) };
-    const bg = colorOf(pageStyle['draw:fill-color']);
-    if (pageStyle['draw:fill'] === 'solid' && bg) slide.background = { kind: 'color', value: bg };
+    const fill = fillOf(ctx, pageStyle);
+    if (pageStyle['draw:fill'] === 'solid' && fill?.fill) slide.background = { kind: 'color', value: fill.fill };
+    else if (fill?.gradient) slide.background = { kind: 'gradient', value: gradientCss({ type: fill.gradientType === 'radial' ? 'radial' : 'linear', angle: fill.gradientAngle ?? 90, from: fill.gradient[0], to: fill.gradient[1] }) };
+    // Hidden slide, transition and automatic advance.
+    const flags = { ...own, ...pg.attrs };
+    if (flags['presentation:visibility'] === 'hidden' || flags['draw:display'] === 'none' || flags['draw:display'] === 'false' || flags['presentation:display'] === 'false') slide.disabled = true;
+    const filter = (function find(n: XNode): XNode | undefined { for (const c of elementsOf(n)) { if (c.name === 'anim:transitionFilter') return c; const f = find(c); if (f) return f; } return undefined; })(pg);
+    const timing = readTransition({ ...own, ...pg.attrs, ...(filter ? { 'smil:type': filter.attrs['smil:type'], 'smil:dur': filter.attrs['smil:dur'] } : {}) });
+    if (timing.transition) slide.transition = timing.transition;
+    if (timing.autoAdvance) slide.autoAdvance = timing.autoAdvance;
     const notes = childNamed(pg, 'presentation:notes');
     if (notes) {
       const text = elementsOf(notes).filter((f) => f.name === 'draw:frame' && f.attrs['presentation:class'] === 'notes')
@@ -399,24 +452,7 @@ export interface OdpWriteOptions {
   loadMedia: (id: string) => Promise<{ bytes: Uint8Array; mime: string } | null> | { bytes: Uint8Array; mime: string } | null;
 }
 
-const NS = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"';
-
-/** Any CSS colour LightCast stores → #rrggbb, or undefined when transparent / unknown. */
-export function hexColor(c: string | undefined): string | undefined {
-  if (!c) return undefined;
-  const h = /^#([0-9a-f]{3})$/i.exec(c);
-  if (h) return `#${[...h[1]].map((x) => x + x).join('')}`.toLowerCase();
-  if (HEX.test(c)) return c.toLowerCase();
-  const rgb = /^rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+%?))?\s*\)$/i.exec(c);
-  if (rgb) {
-    const a = rgb[4] === undefined ? 1 : rgb[4].endsWith('%') ? parseFloat(rgb[4]) / 100 : Number(rgb[4]);
-    if (a === 0) return undefined;
-    return `#${[rgb[1], rgb[2], rgb[3]].map((v) => Math.min(255, Number(v)).toString(16).padStart(2, '0')).join('')}`;
-  }
-  if (c === 'white') return '#ffffff';
-  if (c === 'black') return '#000000';
-  return undefined;
-}
+const NS = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:smil="urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0"';
 
 /** Text with spaces / tabs the way ODF needs them (text:s, text:tab). */
 function odfText(s: string): string {
@@ -504,13 +540,38 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
   };
   const K = 28 / CANVAS_W; // canvas px → cm
   const geo = (b: Box) => `svg:x="${fmtCm(b.x, K)}" svg:y="${fmtCm(b.y, K)}" svg:width="${fmtCm(b.w, K)}" svg:height="${fmtCm(b.h, K)}"`;
-  const imageXml = (path: string, b: Box, name: string, style: string) => `<draw:frame draw:style-name="${style}" draw:name="${escapeXml(name)}" ${geo(b)}><draw:image xlink:href="${path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame>`;
+  /** Position attributes: svg:x / y / width / height, or a draw:transform when the object is turned. */
+  const place = (b: Box, rot?: number) => {
+    if (!rot || Math.abs(rot % 360) < 0.005) return geo(b);
+    return `svg:width="${fmtCm(b.w, K)}" svg:height="${fmtCm(b.h, K)}" draw:transform="${rotationTransform((b.x + b.w / 2) * K, (b.y + b.h / 2) * K, b.w * K, b.h * K, rot)}"`;
+  };
+  const gradients: string[] = [];
+  const gradientNames = new Map<string, string>();
+  const gradientName = (g: OdfGradient): string => {
+    const key = `${g.style}|${g.start}|${g.end}|${g.angle}`;
+    let name = gradientNames.get(key);
+    if (!name) {
+      name = `Gradient${gradientNames.size + 1}`;
+      gradientNames.set(key, name);
+      gradients.push(`<draw:gradient draw:name="${name}" draw:display-name="${name}" draw:style="${g.style}" draw:start-color="${g.start}" draw:end-color="${g.end}" draw:start-intensity="100%" draw:end-intensity="100%" draw:angle="${g.angle}deg" draw:border="0%"${g.style === 'radial' ? ' draw:cx="50%" draw:cy="50%"' : ''}/>`);
+    }
+    return name;
+  };
+  /** draw:fill attributes of a solid, gradient or empty fill. */
+  const fillAttrs = (el: SlideElement): string => {
+    const gr = lcToGradient(el);
+    if (gr) return `draw:fill="gradient" draw:fill-gradient-name="${gradientName(gr)}"`;
+    const fill = hexColor(el.fill);
+    return `draw:fill="${fill ? 'solid' : 'none'}"${fill ? ` draw:fill-color="${fill}"` : ''}`;
+  };
+  const imageXml = (path: string, b: Box, name: string, style: string, rot?: number) => `<draw:frame draw:style-name="${style}" draw:name="${escapeXml(name)}" ${place(b, rot)}><draw:image xlink:href="${path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame>`;
   const plainFrame = st.name('graphic', 'gr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>');
   let shapeNo = 0;
 
   const pages: string[] = [];
   for (const [i, slide] of p.slides.entries()) {
     const parts: string[] = [];
+    const rendered: { el: SlideElement; xml: string }[] = [];
     const bg = slide.background;
     if (bg?.kind === 'media' && bg.mediaType === 'image') {
       const path = await pic(bg.mediaId);
@@ -523,9 +584,10 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     for (const el of elements) {
       const b: Box = { x: el.x, y: el.y, w: Math.max(1, el.w), h: Math.max(1, el.h) };
       const name = el.name ?? `${el.kind} ${++shapeNo}`;
+      const parts: string[] = [];
       if (el.kind === 'image' && el.mediaId) {
         const path = await pic(el.mediaId);
-        if (path) parts.push(imageXml(path, b, name, plainFrame));
+        if (path) parts.push(imageXml(path, b, name, plainFrame, el.rotation));
       } else if (el.kind === 'table' && el.table) {
         const t = el.table;
         const sum = (a: number[]) => a.reduce((x, y) => x + y, 0) || 1;
@@ -541,29 +603,47 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
         }).join('')}</table:table-row>`).join('');
         parts.push(`<draw:frame draw:style-name="${plainFrame}" draw:name="${escapeXml(name)}" ${geo(b)}><table:table table:name="${escapeXml(name)}">${t.cols.map((w) => `<table:table-column table:style-name="${colStyle(w)}"/>`).join('')}${rows}</table:table></draw:frame>`);
       } else if (el.kind === 'shape') {
-        const fill = hexColor(el.fill);
         const stroke = hexColor(el.stroke);
         const sw = el.stroke ? ` svg:stroke-width="${Math.round(((el.strokeWidth ?? 4) / PX_PER_PT / 72 * 2.54) * 1000) / 1000}cm"` : '';
-        const g = `<style:graphic-properties draw:fill="${fill ? 'solid' : 'none'}"${fill ? ` draw:fill-color="${fill}"` : ''} draw:stroke="${stroke ? 'solid' : 'none'}"${stroke ? ` svg:stroke-color="${stroke}"${sw}` : ''}${el.vAlign ? ` draw:textarea-vertical-align="${el.vAlign}"` : ''}/>`;
+        const g = `<style:graphic-properties ${fillAttrs(el)} draw:stroke="${stroke ? 'solid' : 'none'}"${stroke ? ` svg:stroke-color="${stroke}"${sw}` : ''}${el.vAlign ? ` draw:textarea-vertical-align="${el.vAlign}"` : ''}/>`;
         const style = st.name('graphic', 'gr', g);
         const shape = el.shape ?? (el.ellipse ? 'ellipse' : el.radius ? 'roundRect' : 'rect');
         const body = el.text ? paragraphsXml(st, elementLines(el)) : '';
         if (shape === 'line') {
-          const [x1, x2] = el.flipH ? [b.x + b.w, b.x] : [b.x, b.x + b.w];
-          const [y1, y2] = el.flipV ? [b.y + b.h, b.y] : [b.y, b.y + b.h];
+          let [x1, x2] = el.flipH ? [b.x + b.w, b.x] : [b.x, b.x + b.w];
+          let [y1, y2] = el.flipV ? [b.y + b.h, b.y] : [b.y, b.y + b.h];
+          if (el.rotation) {
+            // A line is written by its end points, so a turned one has them turned about its centre.
+            const th = (el.rotation * Math.PI) / 180, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+            const turn = (x: number, y: number): [number, number] => [cx + (x - cx) * Math.cos(th) - (y - cy) * Math.sin(th), cy + (x - cx) * Math.sin(th) + (y - cy) * Math.cos(th)];
+            [x1, y1] = turn(x1, y1);
+            [x2, y2] = turn(x2, y2);
+          }
           parts.push(`<draw:line draw:style-name="${style}" draw:name="${escapeXml(name)}" svg:x1="${fmtCm(x1, K)}" svg:y1="${fmtCm(y1, K)}" svg:x2="${fmtCm(x2, K)}" svg:y2="${fmtCm(y2, K)}">${body}</draw:line>`);
         } else {
           const type = Object.entries(SHAPES).find(([, v]) => v === shape)?.[0] ?? 'rectangle';
-          parts.push(`<draw:custom-shape draw:style-name="${style}" draw:name="${escapeXml(name)}" ${geo(b)}>${body}<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="${type}"/></draw:custom-shape>`);
+          parts.push(`<draw:custom-shape draw:style-name="${style}" draw:name="${escapeXml(name)}" ${place(b, el.rotation)}>${body}<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="${type}"/></draw:custom-shape>`);
         }
       } else if (el.kind === 'text' && el.text) {
-        const fill = hexColor(el.fill);
-        const style = st.name('graphic', 'gr', `<style:graphic-properties draw:stroke="none" draw:fill="${fill ? 'solid' : 'none'}"${fill ? ` draw:fill-color="${fill}"` : ''} draw:textarea-vertical-align="${el.vAlign ?? 'top'}"/>`);
-        parts.push(`<draw:frame draw:style-name="${style}" draw:name="${escapeXml(name)}" ${geo(b)}><draw:text-box>${paragraphsXml(st, elementLines(el))}</draw:text-box></draw:frame>`);
+        const style = st.name('graphic', 'gr', `<style:graphic-properties draw:stroke="none" ${fillAttrs(el)} draw:textarea-vertical-align="${el.vAlign ?? 'top'}"/>`);
+        parts.push(`<draw:frame draw:style-name="${style}" draw:name="${escapeXml(name)}" ${place(b, el.rotation)}><draw:text-box>${paragraphsXml(st, elementLines(el))}</draw:text-box></draw:frame>`);
       }
+      if (parts.length) rendered.push({ el, xml: parts.join('') });
+    }
+    // Objects that were grouped stay grouped: a run of neighbours with the same group id becomes one draw:g.
+    for (let k = 0; k < rendered.length; ) {
+      const gid = rendered[k].el.groupId;
+      let end = k + 1;
+      while (gid && end < rendered.length && rendered[end].el.groupId === gid) end++;
+      const xml = rendered.slice(k, end).map((r) => r.xml).join('');
+      parts.push(gid && end - k > 1 ? `<draw:g${rendered[k].el.groupName ? ` draw:name="${escapeXml(rendered[k].el.groupName!)}"` : ''}>${xml}</draw:g>` : xml);
+      k = end;
     }
     const bgColor = bg?.kind === 'color' ? hexColor(bg.value) : undefined;
-    const dp = st.name('drawing-page', 'dp', bgColor ? `<style:drawing-page-properties draw:fill="solid" draw:fill-color="${bgColor}"/>` : '<style:drawing-page-properties draw:fill="none"/>');
+    const bgSpec = bg?.kind === 'gradient' ? parseGradient(bg.value) : null;
+    const bgGradient = bgSpec ? lcToGradient({ gradient: [bgSpec.from, bgSpec.to], gradientAngle: bgSpec.angle, gradientType: bgSpec.type }) : null;
+    const bgFill = bgGradient ? `draw:fill="gradient" draw:fill-gradient-name="${gradientName(bgGradient)}"` : bgColor ? `draw:fill="solid" draw:fill-color="${bgColor}"` : 'draw:fill="none"';
+    const dp = st.name('drawing-page', 'dp', `<style:drawing-page-properties ${bgFill}${slide.disabled ? ' presentation:visibility="hidden"' : ''}${transitionAttrs(slide.transition, slide.autoAdvance)}/>`);
     const notes = slide.notes
       ? `<presentation:notes><draw:frame presentation:class="notes" draw:style-name="${plainFrame}" ${geo({ x: 90, y: 700, w: 1260, h: 300 })}><draw:text-box>${slide.notes.split('\n').map((l) => `<text:p>${odfText(l)}</text:p>`).join('')}</draw:text-box></draw:frame></presentation:notes>`
       : '';
@@ -571,7 +651,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
   }
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content ${NS} office:version="1.3"><office:automatic-styles>${st}</office:automatic-styles><office:body><office:presentation>${pages.join('')}</office:presentation></office:body></office:document-content>`;
-  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style></office:styles><office:automatic-styles><style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="28cm" fo:page-height="21cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"/></office:master-styles></office:document-styles>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}</office:styles><office:automatic-styles><style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="28cm" fo:page-height="21cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"/></office:master-styles></office:document-styles>`;
   const pr = p.properties ?? {};
   const meta = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-meta ${NS} office:version="1.3"><office:meta><dc:title>${escapeXml(pr.title ?? p.title)}</dc:title>${pr.subject ? `<dc:subject>${escapeXml(pr.subject)}</dc:subject>` : ''}${pr.author ? `<meta:initial-creator>${escapeXml(pr.author)}</meta:initial-creator><dc:creator>${escapeXml(pr.author)}</dc:creator>` : ''}${pr.comments ? `<dc:description>${escapeXml(pr.comments)}</dc:description>` : ''}<meta:generator>LightCast</meta:generator></office:meta></office:document-meta>`;
   const entries = [
