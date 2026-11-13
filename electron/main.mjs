@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 // LightCast desktop app: runs the LightCast server inside the app and shows the console,
 // audience outputs and stage displays as native windows placed on your displays.
-import { app, BrowserWindow, desktopCapturer, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, session, shell, dialog } from 'electron';
+import { app, BrowserWindow, desktopCapturer, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, session, shell, dialog, systemPreferences } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -387,7 +387,7 @@ ipcMain.handle('desktop:info', (e) => {
     displays: displayList(),
     outputDisplays: settings.outputDisplays,
     presenterDisplay: settings.presenterDisplay,
-    ai: { proxyUrl: settings.ai.proxyUrl ?? '', hasGeminiKey: !!settings.ai.geminiKey, hasOpenrouterKey: !!settings.ai.openrouterKey },
+    ai: { proxyUrl: settings.ai.proxyUrl ?? '', hasGeminiKey: !!settings.ai.geminiKey, hasOpenrouterKey: !!settings.ai.openrouterKey, hasSpeechKey: !!settings.ai.speechKey, speechBaseUrl: settings.ai.speechBaseUrl ?? '', speechModel: settings.ai.speechModel ?? '' },
     networkRemote: settings.networkRemote,
     lanUrls: settings.networkRemote ? lanAddresses().map((ip) => `http://${ip}:${PORT}`) : [],
     internet: { on: settings.internetRemote, status: tunnelState.status, url: tunnelState.url, error: tunnelState.error, note: tunnelState.note ?? null,
@@ -488,7 +488,7 @@ ipcMain.handle('desktop:endShow', (e) => {
 ipcMain.handle('desktop:setAiConfig', (e, patch) => {
   if (!fromMain(e) || !patch || typeof patch !== 'object') return;
   const next = { ...settings.ai };
-  for (const k of ['proxyUrl', 'geminiKey', 'openrouterKey']) {
+  for (const k of ['proxyUrl', 'geminiKey', 'openrouterKey', 'speechBaseUrl', 'speechKey', 'speechModel']) {
     if (!(k in patch)) continue;
     const v = typeof patch[k] === 'string' ? patch[k].trim() : '';
     if (v) next[k] = v;
@@ -573,6 +573,26 @@ app.whenReady().then(async () => {
     }, () => callback({}));
   });
   setAiConfigProvider(() => settings.ai);
+  // 자막 / 말로 찾기 / 가사 따라가기 listen to the microphone. Only the app's own page may use it; on macOS the system
+  // asks once (needs NSMicrophoneUsageDescription in the packaged app). Other permissions keep Electron's default (allowed).
+  const ownPage = (url) => typeof url === 'string' && url.startsWith(origin());
+  session.defaultSession.setPermissionCheckHandler((_wc, permission, requestingOrigin, details) => {
+    if (permission !== 'media') return true;
+    if (details?.mediaType && details.mediaType !== 'audio' && details.mediaType !== 'video' && details.mediaType !== 'unknown') return false;
+    return ownPage(details?.requestingUrl ?? requestingOrigin);
+  });
+  session.defaultSession.setPermissionRequestHandler(async (_wc, permission, callback, details) => {
+    if (permission !== 'media') { callback(true); return; }
+    if (!ownPage(details?.requestingUrl)) { callback(false); return; }
+    try {
+      const wantsAudio = !details.mediaTypes || details.mediaTypes.includes('audio');
+      if (wantsAudio && process.platform === 'darwin' && systemPreferences.getMediaAccessStatus('microphone') !== 'granted') {
+        callback(await systemPreferences.askForMediaAccess('microphone'));
+        return;
+      }
+    } catch { /* fall through: let the page try and report */ }
+    callback(true);
+  });
   // Spelling in Korean and English where this system's checker has them (macOS uses its own languages).
   try {
     const have = session.defaultSession.availableSpellCheckerLanguages ?? [];

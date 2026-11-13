@@ -13,7 +13,7 @@ export interface DesktopInfo {
   outputDisplays: Record<string, number | null>;
   /** The display the presenter view goes to when a show starts (null: stays where the console is). */
   presenterDisplay?: number | null;
-  ai: { proxyUrl: string; hasGeminiKey: boolean; hasOpenrouterKey: boolean };
+  ai: { proxyUrl: string; hasGeminiKey: boolean; hasOpenrouterKey: boolean; hasSpeechKey?: boolean; speechBaseUrl?: string; speechModel?: string };
   networkRemote: boolean;
   lanUrls: string[];
   internet: { on: boolean; status: 'off' | 'connecting' | 'on' | 'error'; url: string | null; error: string | null; note: string | null;
@@ -61,7 +61,7 @@ export interface DesktopBridge {
   endShow(): Promise<void>;
   /** The mixer window: float above everything (true) or not; without an argument, just report. Older apps lack it. */
   setOnTop?(on?: boolean): Promise<boolean>;
-  setAiConfig(patch: { proxyUrl?: string; geminiKey?: string; openrouterKey?: string }): Promise<void>;
+  setAiConfig(patch: { proxyUrl?: string; geminiKey?: string; openrouterKey?: string; speechBaseUrl?: string; speechKey?: string; speechModel?: string }): Promise<void>;
   setNetworkRemote(on: boolean): Promise<void>;
   setInternetRemote(on: boolean): Promise<void>;
   /** Make a new permanent link (the old one stops working). */

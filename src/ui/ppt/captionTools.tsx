@@ -1,10 +1,11 @@
-// Slide Show › 자막: the presenter's window listens (one shared speech recognizer, see useSpeechRefs) and sends the text;
+// Slide Show › 자막: the presenter's window listens (one app-wide speech service, see ../speechService) and sends the text;
 // the audience window draws it as a band at the bottom.
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { applyCaption, captionExpired, captionMessage, captionOffMessage, captionText, captionUnavailableReason, CAPTION_FADE_MS, CAPTION_LANGS, CAPTION_LINE_WIDTH, CAPTION_SIZES, emptyCaption, parseCaptionMessage, wrapCaption, type CaptionLang, type CaptionMessage, type CaptionSize, type CaptionState } from '../../domain/captions';
+import { applyCaption, captionExpired, captionMessage, captionOffMessage, captionText, CAPTION_FADE_MS, CAPTION_LANGS, CAPTION_LINE_WIDTH, CAPTION_SIZES, emptyCaption, parseCaptionMessage, wrapCaption, type CaptionLang, type CaptionMessage, type CaptionSize, type CaptionState } from '../../domain/captions';
 import { openLiveChannel } from '../../domain/sync';
-import { desktop } from '../../domain/desktop';
-import { speechSupported, useSpeechRefs } from '../useSpeechRefs';
+import { PROVIDER_CHOICES, speechErrorMessage, speechStatusText } from '../../domain/speech/settings';
+import { currentProvider, getCloudInfo, getSpeechSettings, refreshCloudInfo, setSpeechSettings, speechUnavailableReason, useCloudInfo, useSpeechSettings, useSpeechStatus } from '../speechService';
+import { useSpeechRefs } from '../useSpeechRefs';
 import { DropButton, Group, MenuItem, MenuSep } from './ribbonParts';
 
 // ── Settings (shared by the ribbon, the presenter bar and the host) ──────────────────────────────
@@ -14,7 +15,7 @@ const load = (): Settings => {
   const base: Settings = { on: false, lang: 'ko-KR', size: 'md', lines: 2 };
   try {
     const o = JSON.parse(localStorage.getItem(KEY) ?? '{}') as Partial<Settings>;
-    return { on: false, lang: o.lang === 'en-US' ? 'en-US' : base.lang, size: o.size === 'sm' || o.size === 'lg' ? o.size : base.size, lines: o.lines === 1 ? 1 : base.lines };
+    return { on: false, lang: getSpeechSettings().lang, size: o.size === 'sm' || o.size === 'lg' ? o.size : base.size, lines: o.lines === 1 ? 1 : base.lines };
   } catch { return base; }
 };
 let settings = load();
@@ -29,7 +30,9 @@ const useSettings = () => useSyncExternalStore((f) => { subs.add(f); return () =
 /** Turn captions on or off. When speech recognition is missing it says why instead of switching on. */
 export function toggleCaptions(notify: (msg: string) => void) {
   if (settings.on) { update({ on: false }); return; }
-  const reason = captionUnavailableReason(speechSupported(), !!desktop);
+  // Whether the cloud provider is configured is asked of the server once; the answer decides what can run.
+  if (getCloudInfo() === null) { void refreshCloudInfo().then(() => toggleCaptions(notify)); return; }
+  const reason = speechUnavailableReason();
   if (reason) { notify(reason); return; }
   update({ on: true });
 }
@@ -40,8 +43,7 @@ const send = (m: CaptionMessage) => { try { (channel ??= openLiveChannel(() => u
 // ── Presenter: listen and send ───────────────────────────────────────────────────────────────────
 /** Mounted once in the presenter view. Restarts itself when the browser stops listening (the hook does it). */
 export function CaptionHost() {
-  const s = useSettings();
-  return <CaptionListener key={s.lang} />;
+  return <CaptionListener />;
 }
 
 function CaptionListener() {
@@ -56,7 +58,7 @@ function CaptionListener() {
     sentOff.current = false;
     send(captionMessage(text, final, cfg.current.size, cfg.current.lines));
   };
-  const speech = useSpeechRefs(() => undefined, s.lang, (text, final) => {
+  const speech = useSpeechRefs(() => undefined, undefined, (text, final) => {
     state.current = applyCaption(state.current, text, final, Date.now());
     push(final);
   });
@@ -75,7 +77,9 @@ function CaptionListener() {
     return () => clearInterval(t);
   }, [s.on]);
   useEffect(() => () => send(captionOffMessage()), []);
-  return speech.error ? <span className="caption-error" role="alert">{speech.error}</span> : null;
+  const status = useSpeechStatus();
+  const shown = s.on && status.state === 'error' && status.error ? speechErrorMessage(status.error) : speech.error;
+  return shown ? <span className="caption-error" role="alert">{shown}</span> : null;
 }
 
 // ── Controls ─────────────────────────────────────────────────────────────────────────────────────
@@ -83,9 +87,15 @@ const mark = (on: boolean, label: string) => `${on ? '✓ ' : '  '}${label}`;
 
 function CaptionMenu({ close }: { close: () => void }) {
   const s = useSettings();
+  const sp = useSpeechSettings();
+  const status = useSpeechStatus();
+  useCloudInfo();
   return (
     <>
-      {CAPTION_LANGS.map((l) => <MenuItem key={l.id} label={mark(s.lang === l.id, `언어: ${l.label}`)} onClick={() => { update({ lang: l.id }); close(); }} />)}
+      <MenuItem label={`상태: ${speechStatusText(status, currentProvider())}`} onClick={close} />
+      {PROVIDER_CHOICES.map((p) => <MenuItem key={p.id} label={mark(sp.provider === p.id, `음성 인식: ${p.label}`)} onClick={() => { setSpeechSettings({ provider: p.id }); close(); }} />)}
+      <MenuSep />
+      {CAPTION_LANGS.map((l) => <MenuItem key={l.id} label={mark(sp.lang === l.id, `언어: ${l.label}`)} onClick={() => { update({ lang: l.id }); setSpeechSettings({ lang: l.id }); close(); }} />)}
       <MenuSep />
       {CAPTION_SIZES.map((z) => <MenuItem key={z.id} label={mark(s.size === z.id, `글자 크기: ${z.label}`)} onClick={() => { update({ size: z.id }); close(); }} />)}
       <MenuSep />
