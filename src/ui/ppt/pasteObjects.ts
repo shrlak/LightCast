@@ -10,6 +10,7 @@ import { DUPLICATE_OFFSET } from '../../domain/shapeOps';
 import { getMedia, putMedia } from '../../domain/media';
 import { desktop } from '../../domain/desktop';
 import { uid } from '../../domain/lyrics';
+import { isMetafileName, pictureBlob } from '../../domain/metafile/image';
 
 /** What a paste found on the clipboard. */
 export interface ClipSource { custom?: string; html?: string; text?: string; images: Blob[] }
@@ -69,7 +70,7 @@ export function sourceOf(data: DataTransfer): ClipSource {
     custom: data.getData(CLIP_TYPE) || undefined,
     html: data.getData('text/html') || undefined,
     text: data.getData('text/plain') || undefined,
-    images: Array.from(data.files ?? []).filter((f) => f.type.startsWith('image/')),
+    images: Array.from(data.files ?? []).filter((f) => f.type.startsWith('image/') || isMetafileName(f.name)),
   };
 }
 
@@ -169,8 +170,10 @@ export async function clipboardToElements(src: ClipSource, existing: SlideElemen
   }
   if (!result && src.images.length) {
     const id = uid('m');
-    await putMedia(id, src.images[0]);
-    result = { elements: [await pictureElement(src.images[0], id)], media: [{ id, name: '붙여넣은 그림', type: 'image' }], from: 'picture' };
+    // A Windows metafile (.wmf, .emf) is drawn into an ordinary picture first, so its size is known.
+    const image = await pictureBlob(src.images[0]);
+    await putMedia(id, image);
+    result = { elements: [await pictureElement(image, id)], media: [{ id, name: '붙여넣은 그림', type: 'image' }], from: 'picture' };
   }
   if (!result && text?.trim()) {
     result = { elements: [{ id: uid('el'), kind: 'text', text: text.replace(/\n+$/, ''), x: 220, y: 340, w: 1000, h: 400, fontSize: 56, color: '#ffffff', align: 'center' }], media: [], from: 'text' };

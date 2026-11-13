@@ -12,6 +12,7 @@ import { fromPptxVert } from '../textFormat';
 import { child, find, kids, local, parseMarkup, path, type MNode } from './markup';
 import { BEVELS, CAMERAS } from '../shapeEffects';
 import { LIGHTINGS, LIGHT_DIRS, MATERIALS, patch3d } from '../shape3d';
+import { metafileToBlob } from '../metafile/image';
 
 export const EMU_PER_PX = 6350;
 const px = (emu: string | undefined, dflt = 0) => (emu === undefined || emu === '' || !Number.isFinite(Number(emu)) ? dflt : Number(emu) / EMU_PER_PX);
@@ -483,9 +484,15 @@ export async function readGvml(bytes: ArrayBuffer | Uint8Array, newMediaId: () =
     const f = zip.file(target);
     if (!f) continue;
     const ext = target.split('.').pop()?.toLowerCase() ?? 'png';
-    const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : ext === 'emf' || ext === 'wmf' ? '' : 'image/png';
-    if (!type) continue;
-    media.push({ rId: r.attrs.Id, id: newMediaId(), name: target.split('/').pop() ?? 'image', blob: new Blob([await f.async('arraybuffer')], { type }) });
+    const file = target.split('/').pop() ?? 'image';
+    if (ext === 'emf' || ext === 'wmf') {
+      // Windows metafile pictures are drawn at import (a PNG with a DOM, else an SVG), not dropped.
+      const blob = await metafileToBlob(await f.async('arraybuffer'));
+      if (blob) media.push({ rId: r.attrs.Id, id: newMediaId(), name: file.replace(/\.(emf|wmf)$/i, blob.type === 'image/png' ? '.png' : '.svg'), blob });
+      continue;
+    }
+    const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : 'image/png';
+    media.push({ rId: r.attrs.Id, id: newMediaId(), name: file, blob: new Blob([await f.async('arraybuffer')], { type }) });
   }
   const elements = drawingToElements(xml, { theme, media: (rId) => media.find((m) => m.rId === rId)?.id });
   return { elements: keepOnSlide(elements), media };

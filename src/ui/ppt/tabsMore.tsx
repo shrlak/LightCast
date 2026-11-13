@@ -159,7 +159,7 @@ export function WorshipTab({ ed }: { ed: Ed }) {
   const upload = (kind: 'conti' | 'lyrics' | 'sermon') => {
     uploadKind.current = kind;
     const input = uploadRef.current!;
-    input.accept = kind === 'conti' ? 'application/pdf,.pdf' : kind === 'lyrics' ? ACCEPT.lyrics : '.pptx,.ppt,.pdf,image/*';
+    input.accept = kind === 'conti' ? 'application/pdf,.pdf' : kind === 'lyrics' ? ACCEPT.lyrics : ACCEPT.slides;
     input.multiple = kind !== 'conti';
     input.click();
   };

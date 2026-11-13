@@ -5,6 +5,7 @@ import { importPptx } from '../domain/io/pptxImport';
 import { renderPdf } from '../domain/io/pdf';
 import { desktop } from '../domain/desktop';
 import { pptxSlides } from '../domain/templates/serviceTemplates';
+import { isMetafileName, metafileToBlob } from '../domain/metafile/image';
 
 async function storeImage(blob: Blob, name: string, addMedia: (m: MediaMeta) => void): Promise<string> {
   const id = uid('m');
@@ -68,6 +69,12 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       for (const page of await renderPdf(file, { scale: 2.5, quality: 0.95 })) {
         slides.push({ ...imageSlide(await storeImage(page.blob, `${base} p${page.page}`, (m) => addMedia({ ...m, backgroundHidden: true })), base), importSource: { format: 'pdf', name: file.name, page: page.page } });
       }
+    } else if (isMetafileName(file.name)) {
+      // Windows metafile pictures (.wmf, .emf) are drawn into an ordinary picture.
+      onProgress?.(`그림 읽는 중: ${file.name}…`);
+      const picture = await metafileToBlob(await file.arrayBuffer());
+      if (!picture) throw new Error(`${file.name}: WMF/EMF 그림을 읽지 못했습니다. PNG나 JPG로 저장해 다시 가져와 주세요. 기존 자료는 유지됩니다.`);
+      slides.push(imageSlide(await storeImage(picture, file.name.replace(/\.(wmf|emf)$/i, picture.type === 'image/png' ? '.png' : '.svg'), addMedia), base));
     } else if (file.type.startsWith('image/')) {
       slides.push(imageSlide(await storeImage(file, file.name, addMedia), base));
     }

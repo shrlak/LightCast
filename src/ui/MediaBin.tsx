@@ -8,6 +8,7 @@ import { uid } from '../domain/lyrics';
 import { useMediaUrl } from './hooks';
 import { assetUrl } from './SlideCanvas';
 import { protectedMediaIds, PROTECTED_MESSAGE } from '../domain/materialProtection';
+import { isMetafileName } from '../domain/metafile/image';
 
 interface Props {
   state: AppState;
@@ -40,7 +41,7 @@ export function MediaBin({ state, dispatch }: Props) {
 
   const add = async (files: FileList | null) => {
     for (const file of Array.from(files ?? [])) {
-      const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') ? 'image' : null;
+      const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') || isMetafileName(file.name) ? 'image' : null;
       if (!type || file.size > MAX_BYTES) continue;
       const id = uid('m');
       await putMedia(id, file);
@@ -89,7 +90,7 @@ export function MediaBin({ state, dispatch }: Props) {
             <option value="cover">꽉 채우기</option><option value="contain">전체 보이기</option>
           </select>
         </div>
-        <input ref={input} type="file" accept="image/*,video/*" multiple hidden onChange={(e) => add(e.target.files)} />
+        <input ref={input} type="file" accept="image/*,.wmf,.emf,video/*" multiple hidden onChange={(e) => add(e.target.files)} />
       </div>
       <div className="swatches">
         {items.map((it) => (

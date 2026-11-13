@@ -37,7 +37,7 @@ function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
   return new Promise((resolve) => {
     const inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = 'image/*';
+    inp.accept = 'image/*,.wmf,.emf';
     inp.onchange = () => {
       const f = inp.files?.[0];
       if (!f) return resolve(null);
@@ -51,6 +51,7 @@ import { withMaster } from '../../domain/master';
 import { Backstage, FindReplaceDialog, NotesPageView, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
 import { zoomStep } from '../../domain/viewOptions';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
+import { isMetafileName } from '../../domain/metafile/image';
 
 /** Status bar lock: a closed padlock when locked; the shackle swung open outward when unlocked. */
 function LockIcon({ locked }: { locked: boolean }) {
@@ -293,7 +294,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     const onPaste = (e: ClipboardEvent) => {
       const t = e.target as HTMLElement;
       if (!p || cmd.view === 'presenter' || t.matches('input,textarea,select,[contenteditable="true"]') || document.querySelector('.modal-backdrop')) return;
-      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/'));
+      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/') || isMetafileName(f.name));
       if (!file) return;
       e.preventDefault();
       if (p.protected) return cmd.notify(PROTECTED_MESSAGE);
