@@ -127,6 +127,14 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
         else if (ok01(msg.x) && ok01(msg.y)) broadcast(JSON.stringify({ type: 'laser', x: msg.x, y: msg.y }), (c) => c.role === 'viewer');
         return;
       }
+      if (ws.role === 'host' && msg?.type === 'caption') {
+        // Live caption text for audience viewers: length-limited, passed on, never kept.
+        if (msg.off === true) broadcast(JSON.stringify({ type: 'caption', off: true }), (c) => c.role === 'viewer');
+        else if (typeof msg.text === 'string') {
+          broadcast(JSON.stringify({ type: 'caption', text: msg.text.slice(0, 400), final: msg.final === true, size: ['sm', 'md', 'lg'].includes(msg.size) ? msg.size : 'md', lines: msg.lines === 1 ? 1 : 2 }), (c) => c.role === 'viewer');
+        }
+        return;
+      }
       if (ws.role === 'host' && msg?.type === 'state') {
         lastState = String(raw);
         broadcast(lastState, (c) => c.role === 'viewer' || c.role === 'remote' || c.role === 'team');

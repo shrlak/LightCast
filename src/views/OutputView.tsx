@@ -7,6 +7,7 @@ import { useLiveFeed } from '../ui/hooks';
 import { liveCanvasProps } from '../ui/liveProps';
 import { openLiveChannel } from '../domain/sync';
 import { LaserDot, useLaserDot } from '../ui/ppt/showTools';
+import { CaptionBand } from '../ui/ppt/captionTools';
 
 /**
  * Audience output. Open it on the projector screen and press F (or double-click) for fullscreen.
@@ -109,6 +110,7 @@ export function OutputView() {
           </div>
           <div className={`edge-fade ${edge.part}`} style={{ width: `${(edge.overlap / regionW) * 100}%` }} />
           <LaserDot point={laser} edge={edge} />
+          <CaptionBand />
         </div>
       </div>
     );
@@ -117,6 +119,7 @@ export function OutputView() {
     <div className="output-root" style={{ background: bg }}>
       <SlideCanvas {...liveCanvasProps(live, screen)} className="output-canvas" />
       <LaserDot point={laser} />
+      <CaptionBand />
       {tip && <div className="output-tip" style={{ left: tip.x + 14, top: tip.y + 18 }}>{tip.text}</div>}
     </div>
   );

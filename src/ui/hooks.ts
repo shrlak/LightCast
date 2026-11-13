@@ -6,6 +6,7 @@ import { mediaUrl, peekMediaUrl } from '../domain/media';
 import { openLiveChannel } from '../domain/sync';
 import { loadLive, saveLive } from '../domain/persistence';
 import { laserDue, parseLaserMessage } from '../domain/laserPointer';
+import { parseCaptionMessage } from '../domain/captions';
 
 /**
  * Object URL for a stored picture/video. When the id changes (the next slide has another background)
@@ -207,6 +208,8 @@ export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => voi
         const on = msg && !('off' in msg);
         if (msg && laserDue(laserSentAt.current, Date.now(), on ? { x: 0, y: 0 } : null)) { laserSentAt.current = Date.now(); relayRef.current(msg); }
       }
+      // Live captions go to audience devices on the relay too.
+      if (m.type === 'caption') { const msg = parseCaptionMessage(m); if (msg) relayRef.current(msg); }
       if (m.type === 'hello') channel.current?.post({ type: 'state', state: latest.current });
       // A slide show covering this very screen still answers to the arrow keys, Space and Esc.
       if (m.type === 'key') window.dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: m.shiftKey, cancelable: true }));
@@ -243,6 +246,7 @@ export function useLiveFeed(): LiveState | null {
     if (m.type === 'state' && m.state) apply(m.state as LiveState);
     // The presenter's laser dot, for the audience view to draw (see useLaserDot).
     if (m.type === 'laser') window.dispatchEvent(new CustomEvent('lightcast:laser', { detail: m }));
+    if (m.type === 'caption') window.dispatchEvent(new CustomEvent('lightcast:caption', { detail: m }));
   });
   return live;
 }

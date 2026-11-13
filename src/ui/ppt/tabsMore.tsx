@@ -15,6 +15,7 @@ import { acceptAllRevisions, endCompare, useCompare } from './reviewPanes';
 import { showGuides } from './viewDialogs';
 import { Big, Col, DropButton, Group, MenuItem, RI, Small } from './ribbonParts';
 import { ShowToolsGroup } from './showTools';
+import { CaptionsGroup } from './captionTools';
 
 export function SlideShowTab({ ed }: { ed: Ed }) {
   const { cmd, state, dispatch, p, slide } = ed;
@@ -42,6 +43,7 @@ export function SlideShowTab({ ed }: { ed: Ed }) {
         </Col>
       </Group>
       <ShowToolsGroup ed={ed} />
+      <CaptionsGroup notify={cmd.notify} />
       <Group label="모니터">
         <Big icon={RI.presenter} label="발표자 보기" active={cmd.view === 'presenter'} onClick={() => cmd.setView(cmd.view === 'presenter' ? 'normal' : 'presenter')} />
         <Col>
