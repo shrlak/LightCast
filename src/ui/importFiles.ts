@@ -3,6 +3,7 @@ import { putMedia } from '../domain/media';
 import { uid } from '../domain/lyrics';
 import { importPptx } from '../domain/io/pptxImport';
 import { parseOdp } from '../domain/io/odp';
+import { importPpt } from '../domain/io/pptImport';
 import { renderPdf } from '../domain/io/pdf';
 import { desktop } from '../domain/desktop';
 import { pptxSlides } from '../domain/templates/serviceTemplates';
@@ -34,7 +35,23 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       if (format === 'ppt') {
         onProgress?.(`PPT를 편집 가능한 PPTX로 변환 중: ${file.name}…`);
         const converted = await desktop?.pptToPptx?.(new Uint8Array(data)).catch(() => null);
-        if (!converted) throw new Error(`${file.name}: 구형 PPT 변환에는 데스크톱 앱과 PowerPoint 또는 LibreOffice가 필요합니다. 설치 후 다시 가져오거나 PowerPoint에서 PPTX로 저장해 주세요. 기존 자료는 유지됩니다.`);
+        if (!converted) {
+          // No PowerPoint / LibreOffice to convert with (or a browser): LightCast's own reader takes the text, notes and pictures.
+          onProgress?.(`PPT에서 텍스트와 그림 읽는 중: ${file.name}…`);
+          const result = await importPpt(new Uint8Array(data), file.name, {
+            group: base, newId: uid,
+            store: async (pic, name) => {
+              const id = uid('m');
+              await putMedia(id, new Blob([pic.bytes as BlobPart], { type: pic.mime }));
+              addPptMedia({ id, name, type: 'image' });
+              return id;
+            },
+          });
+          if (!result.slides.length) throw new Error(`${file.name}: ${result.warnings[0] ?? '슬라이드를 읽지 못했습니다.'} 구형 PPT 변환에는 데스크톱 앱과 PowerPoint 또는 LibreOffice가 필요합니다. 설치 후 다시 가져오거나 PowerPoint에서 PPTX로 저장해 주세요. 기존 자료는 유지됩니다.`);
+          onApprox?.(file.name);
+          slides.push(...result.slides);
+          continue;
+        }
         data = new Uint8Array(converted).buffer;
       }
       const imported = await importPptx(new Blob([data])).catch(() => []);

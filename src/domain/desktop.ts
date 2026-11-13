@@ -11,6 +11,8 @@ export interface DesktopInfo {
   computerName?: string;
   displays: DesktopDisplay[];
   outputDisplays: Record<string, number | null>;
+  /** The display the presenter view goes to when a show starts (null: stays where the console is). */
+  presenterDisplay?: number | null;
   ai: { proxyUrl: string; hasGeminiKey: boolean; hasOpenrouterKey: boolean };
   networkRemote: boolean;
   lanUrls: string[];
@@ -53,6 +55,8 @@ export interface DesktopBridge {
   openView(url: string, displayId?: number | null): Promise<void>;
   /** Slide show starts: cover the projector (or this screen) right away, like PowerPoint. */
   present(url: string): Promise<void>;
+  /** 슬라이드 쇼 › 모니터: audience display (null: automatic) and presenter-view display (null: unchanged). Older apps lack it. */
+  setShowDisplays?(audienceId: number | null, presenterId: number | null): Promise<void>;
   /** Slide show ends: close the window `present` opened. */
   endShow(): Promise<void>;
   /** The mixer window: float above everything (true) or not; without an argument, just report. Older apps lack it. */

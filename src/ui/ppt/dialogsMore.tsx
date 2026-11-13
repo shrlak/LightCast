@@ -1,6 +1,7 @@
 // The dialog boxes behind Insert (Header & Footer, SmartArt, Photo Album, Action, Zoom, Audio
 // playback), Home › New Slide (Reuse Slides, Slides from Outline), Slide Show (Set Up Slide Show,
 // Custom Shows), View (Guides) and Review (Thesaurus).
+import { MonitorPicker } from './MonitorPicker';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ElementAction, MediaPlayback, Presentation, Slide } from '../../domain/types';
 import { sequence } from '../../domain/arrangement';
@@ -116,7 +117,7 @@ function SetupShowDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
       </fieldset>
       <fieldset className="dlg-set">
         <legend>여러 모니터</legend>
-        <button type="button" onClick={() => { ed.cmd.open('settings'); onClose(); }}>출력 화면 설정…</button>
+        <MonitorPicker ed={ed} />
       </fieldset>
     </Dialog>
   );
