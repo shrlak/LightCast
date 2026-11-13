@@ -146,7 +146,12 @@ export function CompareDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) 
     // .pptx (and its variants) through the PPTX reader; legacy .ppt through the native binary reader.
     const imported = LEGACY_POWERPOINT_FILE.test(f.name)
       ? (await importPpt(new Uint8Array(await f.arrayBuffer()), f.name, { group: 'Slide', newId: (k) => `${k}-cmp`, store: async () => '' }).catch(() => ({ slides: [] }))).slides.map((s) => ({ title: s.title ?? '', text: s.text ?? '', notes: s.notes ?? '' }))
-      : await importPptx(f).catch(() => []);
+      : await (async () => {
+        // A password-protected .pptx asks for its password first.
+        try { return await importPptx(new Blob([(await (await import('../unlockPowerPoint')).unlockPowerPoint(f, f.name)) as BlobPart])).catch(() => []); }
+        catch (e) { ed.cmd.notify((e as Error).message); return null; }
+      })();
+    if (!imported) return;
     if (!imported.length) return ed.cmd.notify('이 파일에서 슬라이드를 읽지 못했습니다');
     // A file brings text only: compared slide by slide by position (title, body, notes).
     start({ ...ed.p, id: '__file', title: f.name, slides: imported.map((s, i) => ({ ...(ed.p!.slides[i] ?? { id: `file-${i}`, group: 'Slide' }), id: ed.p!.slides[i]?.id ?? `file-${i}`, title: s.title, text: s.text, notes: s.notes })) as Slide[] });

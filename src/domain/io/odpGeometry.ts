@@ -117,24 +117,51 @@ const mod360 = (n: number) => ((Math.round(n * 100) / 100 % 360) + 360) % 360;
 /** An ODF gradient as LightCast's gradient fields (0° = left to right, 90° = top to bottom; radial: first colour in the middle). */
 export function gradientToLc(g: OdfGradient): LcGradient {
   const angle = mod360(90 - g.angle);
+  const stops = g.stops && g.stops.length >= 2 ? [...g.stops].sort((a, b) => a.pos - b.pos) : undefined;
   if (g.style === 'radial' || g.style === 'ellipsoid' || g.style === 'square' || g.style === 'rectangular') {
-    return { fill: g.end, gradient: [g.end, g.start], gradientAngle: angle, gradientType: 'radial' };
+    // ODF runs a radial gradient from the outer (start) colour to the centre (end); LightCast's first colour is the centre.
+    const rs = stops && stops.length > 2 ? stops.map((s) => ({ ...s, pos: Math.round((100 - s.pos) * 10) / 10 })).reverse() : undefined;
+    return { fill: g.end, gradient: [g.end, g.start], gradientAngle: angle, gradientType: 'radial', ...(rs ? { gradientStops: rs } : {}) };
   }
   if (g.style === 'axial') {
     return { fill: g.start, gradient: [g.start, g.start], gradientAngle: angle, gradientStops: [{ pos: 0, color: g.start }, { pos: 50, color: g.end }, { pos: 100, color: g.start }] };
   }
-  const stops = g.stops && g.stops.length >= 2 ? [...g.stops].sort((a, b) => a.pos - b.pos) : undefined;
   const first = stops?.[0].color ?? g.start, last = stops?.[stops.length - 1].color ?? g.end;
   return { fill: first, gradient: [first, last], gradientAngle: angle, ...(stops && stops.length > 2 ? { gradientStops: stops } : {}) };
 }
 
-/** LightCast's gradient fields as an ODF gradient (the first and last colour; null when there is no usable gradient). */
+/** LightCast's gradient fields as an ODF gradient, with every stop of a multi-stop one (null when there is no usable gradient). */
 export function lcToGradient(el: { gradient?: [string, string]; gradientStops?: GradientStop[]; gradientAngle?: number; gradientType?: 'linear' | 'radial' }): OdfGradient | null {
-  const colors = el.gradient ?? (el.gradientStops && el.gradientStops.length >= 2 ? [el.gradientStops[0].color, el.gradientStops[el.gradientStops.length - 1].color] : null);
+  let ok: GradientStop[] | undefined;
+  if (el.gradientStops && el.gradientStops.length > 2) {
+    const list = [...el.gradientStops].sort((x, y) => x.pos - y.pos).map((s) => ({ pos: Math.max(0, Math.min(100, Math.round(s.pos * 10) / 10)), color: hexColor(s.color) }));
+    if (list.every((s) => s.color)) ok = list as GradientStop[];
+  }
+  const colors = ok ? [ok[0].color, ok[ok.length - 1].color] : el.gradient ?? (el.gradientStops && el.gradientStops.length >= 2 ? [el.gradientStops[0].color, el.gradientStops[el.gradientStops.length - 1].color] : null);
   const a = hexColor(colors?.[0]), b = hexColor(colors?.[1]);
   if (!a || !b) return null;
-  if (el.gradientType === 'radial') return { style: 'radial', start: b, end: a, angle: 0 };
-  return { style: 'linear', start: a, end: b, angle: mod360(90 - (el.gradientAngle ?? 0)) };
+  if (el.gradientType === 'radial') {
+    const rs = ok ? ok.map((s) => ({ ...s, pos: Math.round((100 - s.pos) * 10) / 10 })).reverse() : undefined;
+    return { style: 'radial', start: b, end: a, angle: 0, ...(rs ? { stops: rs } : {}) };
+  }
+  return { style: 'linear', start: a, end: b, angle: mod360(90 - (el.gradientAngle ?? 0)), ...(ok ? { stops: ok } : {}) };
+}
+
+/** A gradient as a CSS background image with all its stops (PowerPoint's angle 0 points right, turning clockwise). */
+export function stopsCss(g: { type: 'linear' | 'radial'; angle: number; stops: GradientStop[] }): string {
+  const list = g.stops.map((s) => `${s.color} ${Math.round(s.pos * 10) / 10}%`).join(', ');
+  const deg = (((Math.round(g.angle) % 360) + 360) % 360 + 90) % 360;
+  return g.type === 'radial' ? `radial-gradient(circle at 50% 50%, ${list})` : `linear-gradient(${deg}deg, ${list})`;
+}
+
+/** A CSS gradient of any number of #rrggbb stops (as {@link stopsCss} writes it) back into its fields; null for any other CSS. */
+export function parseStopsCss(css: string): { type: 'linear' | 'radial'; angle: number; stops: GradientStop[] } | null {
+  const m = /^(linear|radial)-gradient\(\s*(?:(\d+(?:\.\d+)?)deg|circle at 50% 50%)\s*,\s*([^()]*)\)$/i.exec(css.trim());
+  if (!m) return null;
+  const raw = m[3].split(',').map((x) => /^\s*(#[0-9a-f]{6})(?:\s+(\d+(?:\.\d+)?)%)?\s*$/i.exec(x));
+  if (raw.length < 2 || raw.some((x) => !x)) return null;
+  const stops = raw.map((x, i) => ({ color: x![1].toLowerCase(), pos: x![2] !== undefined ? Number(x![2]) : Math.round((i / (raw.length - 1)) * 1000) / 10 }));
+  return { type: m[1].toLowerCase() === 'radial' ? 'radial' : 'linear', angle: m[2] !== undefined ? (Number(m[2]) + 270) % 360 : 0, stops };
 }
 
 // ── Transitions & timing ────────────────────────────────────────────────────────────────────────

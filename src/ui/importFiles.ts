@@ -1,3 +1,4 @@
+import { isSvgzName } from '../domain/svgPicture';
 import type { MediaMeta, Slide } from '../domain/types';
 import { putMedia } from '../domain/media';
 import { uid } from '../domain/lyrics';
@@ -6,7 +7,7 @@ import { parseOdp } from '../domain/io/odp';
 import { importPpt } from '../domain/io/pptImport';
 import { renderPdf } from '../domain/io/pdf';
 import { desktop } from '../domain/desktop';
-import { importEmbeddedFonts } from '../domain/embeddedFonts';
+import { importEmbeddedFontsReport, skippedFontsNotice } from '../domain/embeddedFonts';
 import { pptxSlides } from '../domain/templates/serviceTemplates';
 import { isMetafileName, metafileToBlob } from '../domain/metafile/image';
 
@@ -30,7 +31,7 @@ const imageSlide = (mediaId: string, group: string): Slide => ({
  * Turn PPTX, PDF and image files into slides, in the order given:
  * PDF → read-only pages; image → one slide; PPTX/PPT → editable objects, plus notes.
  */
-export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => void, onProgress?: (msg: string) => void, onApprox?: (fileName: string) => void): Promise<Slide[]> {
+export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => void, onProgress?: (msg: string) => void, onApprox?: (fileName: string) => void, onFontNotice?: (message: string) => void): Promise<Slide[]> {
   const slides: Slide[] = [];
   for (const file of files) {
     const base = file.name.replace(/\.[^.]+$/, '');
@@ -38,7 +39,10 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       const format = LEGACY_POWERPOINT_FILE.test(file.name) ? 'ppt' : 'pptx';
       const addPptMedia = (m: MediaMeta) => addMedia({ ...m, backgroundHidden: true });
       onProgress?.(`편집 가능한 슬라이드 읽는 중: ${file.name}…`);
-      let data = await file.arrayBuffer();
+      // A password-protected .pptx (PowerPoint's "Encrypt with Password") asks for the password and is decrypted first.
+      let data = format === 'pptx'
+        ? await (async () => { const u = await (await import('./unlockPowerPoint')).unlockPowerPoint(file, file.name); return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer; })()
+        : await file.arrayBuffer();
       if (format === 'ppt') {
         onProgress?.(`PPT를 편집 가능한 PPTX로 변환 중: ${file.name}…`);
         const converted = await desktop?.pptToPptx?.(new Uint8Array(data)).catch(() => null);
@@ -62,7 +66,9 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
         data = new Uint8Array(converted).buffer;
       }
       // Fonts the file carries are registered first, so the slides draw in them.
-      await importEmbeddedFonts(data, file.name);
+      const fontReport = await importEmbeddedFontsReport(data, file.name);
+      const fontNote = skippedFontsNotice(fontReport.skipped);
+      if (fontNote) onFontNotice?.(fontNote);
       const imported = await importPptx(new Blob([data])).catch(() => []);
       // Keep source objects editable on every platform; never flatten PowerPoint into PDF pages.
       let n = 0;
@@ -107,7 +113,7 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       const picture = await metafileToBlob(await file.arrayBuffer());
       if (!picture) throw new Error(`${file.name}: WMF/EMF 그림을 읽지 못했습니다. PNG나 JPG로 저장해 다시 가져와 주세요. 기존 자료는 유지됩니다.`);
       slides.push(imageSlide(await storeImage(picture, file.name.replace(/\.(wmf|emf)$/i, picture.type === 'image/png' ? '.png' : '.svg'), addMedia), base));
-    } else if (file.type.startsWith('image/')) {
+    } else if (file.type.startsWith('image/') || isSvgzName(file.name)) {
       slides.push(imageSlide(await storeImage(file, file.name, addMedia), base));
     }
   }

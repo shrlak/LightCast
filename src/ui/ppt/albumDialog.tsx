@@ -121,7 +121,7 @@ export function PhotoAlbumDialog({ ed, onClose, edit, onInsert }: { ed: Ed; onCl
       <Check label="제목 포함" checked={layout !== 'fit' && titles} onChange={setTitles} />
       <Check label="모든 그림 아래에 캡션 넣기" checked={captions} onChange={setCaptions} />
       <Check label="모든 그림을 흑백으로" checked={gray} onChange={setGray} />
-      <input ref={input} type="file" accept="image/*,.wmf,.emf" multiple hidden onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
+      <input ref={input} type="file" accept="image/*,.wmf,.emf,.svgz" multiple hidden onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
     </Dialog>
   );
 }

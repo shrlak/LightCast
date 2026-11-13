@@ -2,13 +2,15 @@
 // font, window-viewport and world transforms, paths and clip groups. Drawing goes to an `Out`
 // (SVG) in device units; the picture's frame is mapped to the SVG view box afterwards.
 import { apply, compose, scaleOf, type Xf, type Bytes } from './bytes';
-import { hex, num, Out, PathData, xmlText, type Color, type Fill, type Stroke } from './out';
+import { hex, num, Out, PathData, xmlText, BIG, type Color, type Fill, type Stroke } from './out';
+import { textWidth } from './metrics';
 import { cropRgba, pngDataUrl, type Dib } from './png';
 
 export interface GdiPen { style: number; width: number; color: Color; cap: 'butt' | 'round' | 'square'; join: 'miter' | 'round' | 'bevel'; cosmetic: boolean }
 export interface GdiBrush { style: number; color: Color; hatch: number; pattern?: { href: string; w: number; h: number } }
 export interface GdiFont { family: string; height: number; weight: number; italic: boolean; underline: boolean; strike: boolean; charset: number; escapement: number }
-export type GdiObject = { k: 'pen'; pen: GdiPen } | { k: 'brush'; brush: GdiBrush } | { k: 'font'; font: GdiFont } | { k: 'other' };
+export type GdiObject = { k: 'pen'; pen: GdiPen } | { k: 'brush'; brush: GdiBrush } | { k: 'font'; font: GdiFont } | { k: 'region'; rects: Rect[] } | { k: 'other' };
+export type Rect = [number, number, number, number];
 
 export const MAX_OBJECTS = 8192;
 const MAX_STACK = 1024;
@@ -20,6 +22,10 @@ export const PS_NULL = 5;
 
 export const colorref = (v: number): Color => ({ rgb: hex(v & 255, (v >>> 8) & 255, (v >>> 16) & 255), a: 1 });
 const BLACK = colorref(0), WHITE = colorref(0xffffff);
+const invert = (c: Color): Color => {
+  const v = parseInt(c.rgb.slice(1), 16);
+  return { rgb: hex(255 - ((v >> 16) & 255), 255 - ((v >> 8) & 255), 255 - (v & 255)), a: c.a };
+};
 
 interface DC {
   mapMode: number;
@@ -133,6 +139,7 @@ export class Gdi {
     if (o.k === 'pen') this.dc.pen = o.pen;
     else if (o.k === 'brush') this.dc.brush = o.brush;
     else if (o.k === 'font') this.dc.font = o.font;
+    else if (o.k === 'region') this.clipRects(o.rects, 5); // WMF: selecting a region object sets the clip
   }
   private selectStock(n: number) {
     const solid = (v: number): GdiBrush => ({ style: BS_SOLID, color: colorref(v), hatch: 0 });
@@ -169,8 +176,7 @@ export class Gdi {
 
   // ---- paint selection ----
 
-  private fill(): Fill {
-    const b = this.dc.brush;
+  private fill(b: GdiBrush = this.dc.brush): Fill {
     if (b.style === BS_NULL) return null;
     if (b.style === BS_HATCHED) return { ref: this.out.hatch(b.hatch, b.color, this.dc.bkMode === 2 ? this.dc.bkColor : null) };
     if (b.pattern && (b.style === BS_PATTERN || b.style === BS_DIBPATTERN || b.style === BS_DIBPATTERNPT)) return { ref: this.out.imagePattern(b.pattern.href, b.pattern.w, b.pattern.h) };
@@ -192,7 +198,22 @@ export class Gdi {
   private paint(pd: PathData, fill: boolean, stroke: boolean) {
     if (this.pathOpen) { this.pathD += pd.d; this.figure = false; return; }
     if (this.dc.rop2 === 11) return; // R2_NOP
-    this.out.drawPath(pd, fill ? this.fill() : null, stroke ? this.stroke() : null, this.dc.polyFill === 1);
+    const r = this.rop2Paint(fill ? this.fill() : null, stroke ? this.stroke() : null);
+    this.out.drawPath(pd, r.fill, r.stroke, this.dc.polyFill === 1, r.blend);
+  }
+  /**
+   * The binary raster operation (SetROP2) applied to the pen and brush. Operations that read the
+   * destination are approximated with a blend mode: XOR and NOT as `difference` (exact on black and
+   * white, a close look-alike elsewhere), AND as `multiply`, OR as `screen`.
+   */
+  private rop2Paint(fill: Fill, stroke: Stroke | null): { fill: Fill; stroke: Stroke | null; blend?: string } {
+    const mode = this.dc.rop2;
+    const recolor = (c: Color) => (mode === 1 ? BLACK : mode === 16 || mode === 6 ? WHITE : mode === 4 ? invert(c) : c);
+    const both = <T extends { color: Color }>(v: T | null): T | null => (v ? { ...v, color: recolor(v.color) } : v);
+    const f = fill && 'color' in fill ? both(fill) : fill;
+    const st = both(stroke);
+    const blend = mode === 6 || mode === 7 ? 'difference' : mode === 9 ? 'multiply' : mode === 15 ? 'screen' : undefined;
+    return { fill: f, stroke: st, blend };
   }
   private P() { const m = this.xf(); return (x: number, y: number) => apply(m, x, y); }
 
@@ -302,29 +323,61 @@ export class Gdi {
   paintPath(fill: boolean, stroke: boolean) {
     const pd = this.pathData();
     if (!pd) return;
-    this.out.drawPath(pd, fill ? this.fill() : null, stroke ? this.stroke() : null, this.dc.polyFill === 1);
+    const r = this.rop2Paint(fill ? this.fill() : null, stroke ? this.stroke() : null);
+    this.out.drawPath(pd, r.fill, r.stroke, this.dc.polyFill === 1, r.blend);
     this.lastPath = '';
   }
-  /** SELECTCLIPPATH: mode 1 AND, 5 COPY; others leave the clip as it is. */
+  /** Combines `pd` into the clip: RGN_AND 1, OR 2, XOR 3, DIFF 4 (the clip minus the shape), COPY 5. */
+  private applyClip(pd: PathData, mode: number, evenOdd: boolean) {
+    const base = this.clipBase(), open = this.out.clipDepth > base;
+    if (mode === 5) { this.out.popClipsTo(base); this.out.pushClip(pd, evenOdd); }
+    else if (mode === 1) this.out.pushClip(pd, evenOdd);
+    else if (mode === 4) this.out.pushClip(this.out.rawPath(BIG + pd.d), true);
+    else if (mode === 2) { if (open) this.out.combineTopClip(pd, false); }
+    else if (mode === 3) { if (open) this.out.combineTopClip(pd, true); else this.out.pushClip(this.out.rawPath(BIG + pd.d), true); }
+  }
+  /** SELECTCLIPPATH with the RGN_ mode. */
   clipPath(mode: number) {
     const pd = this.pathData();
     this.lastPath = '';
-    if (!pd || (mode !== 1 && mode !== 5)) return;
-    if (mode === 5) this.out.popClipsTo(this.clipBase());
-    this.out.pushClip(pd, this.dc.polyFill === 1);
+    if (!pd || mode < 1 || mode > 5) return;
+    this.applyClip(pd, mode, this.dc.polyFill === 1);
   }
-  intersectClipRect(l: number, t: number, r: number, b: number) {
-    const P = this.P(), pd = this.out.path();
-    pd.m(...P(l, t)).l(...P(r, t)).l(...P(r, b)).l(...P(l, b)).z();
-    this.out.pushClip(pd);
-  }
-  /** Rectangles in logical units as the clip: mode 1 AND, 5 COPY (an empty list with COPY removes the clip). */
-  clipRects(rects: [number, number, number, number][], mode: number) {
-    if (mode === 5) this.out.popClipsTo(this.clipBase());
-    if (!rects.length || (mode !== 1 && mode !== 5)) return;
+  intersectClipRect(l: number, t: number, r: number, b: number) { this.clipRects([[l, t, r, b]], 1); }
+  /** EXCLUDECLIPRECT: everything but the rectangle stays visible. */
+  excludeClipRect(l: number, t: number, r: number, b: number) { this.clipRects([[l, t, r, b]], 4); }
+  private rectsPath(rects: Rect[]): PathData {
     const P = this.P(), pd = this.out.path();
     for (const [l, t, r, b] of rects) pd.m(...P(l, t)).l(...P(r, t)).l(...P(r, b)).l(...P(l, b)).z();
-    this.out.pushClip(pd);
+    return pd;
+  }
+  /** Rectangles in logical units as a region combined into the clip by `mode` (1 AND, 2 OR, 3 XOR, 4 DIFF, 5 COPY; an empty list with COPY removes the clip). */
+  clipRects(rects: Rect[], mode: number) {
+    if (!rects.length) { if (mode === 5) this.out.popClipsTo(this.clipBase()); return; }
+    if (mode < 1 || mode > 5) return;
+    this.applyClip(this.rectsPath(rects), mode, false);
+  }
+
+  // ---- regions ----
+
+  /** FillRgn / PaintRgn: the region filled with `brush` (default: the current one). */
+  fillRegion(rects: Rect[], brush?: GdiBrush) {
+    if (!rects.length || this.out.muted || this.pathOpen) return;
+    this.out.drawPath(this.rectsPath(rects), this.fill(brush ?? this.dc.brush), null, false);
+  }
+  /** FrameRgn: a border of `w` x `h` logical units drawn just outside the region. */
+  frameRegion(rects: Rect[], brush: GdiBrush | undefined, w: number, h: number) {
+    if (!rects.length || this.out.muted || this.pathOpen) return;
+    const fill = this.fill(brush ?? this.dc.brush);
+    const w2 = Math.max(Math.abs(w), 1), h2 = Math.max(Math.abs(h), 1);
+    this.out.pushClip(this.out.rawPath(BIG + this.rectsPath(rects).d), true);
+    this.out.drawPath(this.rectsPath(rects.map(([l, t, r, b]): Rect => [Math.min(l, r) - w2, Math.min(t, b) - h2, Math.max(l, r) + w2, Math.max(t, b) + h2])), fill, null, false);
+    this.out.popClip();
+  }
+  /** InvertRgn: the destination inverted (a white fill in `difference` blend mode). */
+  invertRegion(rects: Rect[]) {
+    if (!rects.length || this.out.muted || this.pathOpen) return;
+    this.out.drawPath(this.rectsPath(rects), { color: WHITE }, null, false, 'difference');
   }
   resetClip() { this.out.popClipsTo(this.clipBase()); }
 
@@ -352,6 +405,7 @@ export class Gdi {
     const h = align & 6;
     let xs = '0', anchor = h === 6 ? 'middle' : h === 2 ? 'end' : 'start';
     let total = 0;
+    const measured = textWidth(str, f.family, size, f.weight >= 600, f.italic);
     if (dx && dx.length >= str.length) {
       const adv = [...str].map((_, i) => Math.abs(dx[i] * s));
       total = adv.reduce((a, v) => a + v, 0);
@@ -361,8 +415,10 @@ export class Gdi {
       xs = parts.join(' ');
       anchor = 'start';
     }
-    this.out.grow(px, py - size);
-    this.out.grow(px + (total || str.length * size * 0.5), py + size * 0.3);
+    const run = total || measured;
+    const left = h === 6 && !total ? -run / 2 : h === 2 && !total ? -run : 0;
+    this.out.grow(px + left, py - size);
+    this.out.grow(px + left + run, py + size * 0.3);
     const fam = `'${f.family.replace(/['"\\<>&]/g, '')}', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Segoe UI', Arial, sans-serif`;
     const deco = [f.underline ? 'underline' : '', f.strike ? 'line-through' : ''].filter(Boolean).join(' ');
     const c = d.textColor;
@@ -371,19 +427,60 @@ export class Gdi {
       + `${f.weight >= 600 ? ' font-weight="bold"' : ''}${f.italic ? ' font-style="italic"' : ''}${deco ? ` text-decoration="${deco}"` : ''}`
       + `${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''} fill="${c.rgb}">${xmlText(str)}</text>`,
     );
-    if (align & 1 && total) d.cur = [x + total / (s || 1), y];
+    if (align & 1) d.cur = [x + (total || measured) / (s || 1), y];
+  }
+
+  /**
+   * Text drawn from glyph indices (ETO_GLYPH_INDEX, DrawDriverString without character codes). The
+   * indices only mean something in the font file they were made with, so the characters are not
+   * known: each glyph is drawn as a pale box where it would stand, so the layout is still visible.
+   */
+  glyphText(x: number, y: number, n: number, dx: number[] | null) {
+    if (n <= 0 || this.out.muted || this.pathOpen) return;
+    n = Math.min(n, MAX_TEXT);
+    const d = this.dc, f = d.font, align = d.textAlign;
+    if (align & 1) [x, y] = d.cur;
+    const m = this.xf(), s = scaleOf(m);
+    const em = f.height < 0 ? -f.height : f.height > 0 ? f.height * 0.85 : 12;
+    const size = Math.max(em * s, 0.5);
+    const [px, py] = apply(m, x, y);
+    const adv = Array.from({ length: n }, (_, i) => (dx && dx.length >= n ? Math.abs(dx[i] * s) : size * 0.55));
+    const total = adv.reduce((a, v) => a + v, 0);
+    const h = align & 6;
+    let o = h === 6 ? -total / 2 : h === 2 ? -total : 0;
+    const base = (align & 24) === 24 ? 0 : align & 8 ? -size * 0.2 : size * 0.8;
+    const top = py - base + size * 0.15, bottom = py - base + size * 0.8;
+    const pd = this.out.path();
+    for (const a of adv) {
+      const gap = a * 0.12;
+      pd.m(px + o + gap, top).l(px + o + a - gap, top).l(px + o + a - gap, bottom).l(px + o + gap, bottom).z();
+      o += a;
+    }
+    this.out.drawPath(pd, { color: { rgb: d.textColor.rgb, a: 0.3 } }, null);
+    if (align & 1) d.cur = [x + total / (s || 1), y];
   }
 
   // ---- bitmaps ----
 
   /** Draws `dib` (source rectangle `src` = [x, y, w, h] in pixels) into `dst` = [x, y, w, h] logical units; a negative size mirrors. */
-  bitmap(dib: Dib, src: [number, number, number, number], dst: [number, number, number, number]) {
+  bitmap(dib: Dib, src: [number, number, number, number], dst: [number, number, number, number], opt: BlitOptions = {}) {
     if (this.out.muted || this.pathOpen) return;
     let href = dib.encoded;
     let iw = dib.img.w, ih = dib.img.h;
     if (!href) {
       const [sx, sy, sw, sh] = src;
-      const img = sw > 0 && sh > 0 ? cropRgba(dib.img, sx, sy, sw, sh) : dib.img;
+      let base = dib.img;
+      if (opt.alpha === 'opaque' || opt.alpha === 'premultiplied' || opt.key !== undefined) {
+        const px = new Uint8ClampedArray(base.px);
+        const k = opt.key === undefined ? -1 : ((opt.key & 255) << 16) | (opt.key & 0xff00) | ((opt.key >>> 16) & 255);
+        for (let i = 0; i < px.length; i += 4) {
+          if (opt.alpha === 'opaque') px[i + 3] = 255;
+          else if (opt.alpha === 'premultiplied' && px[i + 3] && px[i + 3] < 255) { const f = 255 / px[i + 3]; px[i] *= f; px[i + 1] *= f; px[i + 2] *= f; }
+          if (k >= 0 && ((px[i] << 16) | (px[i + 1] << 8) | px[i + 2]) === k) px[i + 3] = 0;
+        }
+        base = { ...base, px };
+      }
+      const img = sw > 0 && sh > 0 ? cropRgba(base, sx, sy, sw, sh) : base;
       if (!img) return;
       iw = img.w; ih = img.h;
       href = pngDataUrl(img);
@@ -392,13 +489,66 @@ export class Gdi {
     if (!dw || !dh || !iw || !ih) return;
     const m = compose(this.xf(), [dw / iw, 0, 0, dh / ih, dx, dy]);
     for (const [px, py] of [[0, 0], [iw, 0], [iw, ih], [0, ih]]) this.out.grow(...apply(m, px, py));
-    this.out.element(`<image href="${href}" width="${iw}" height="${ih}" preserveAspectRatio="none" transform="matrix(${m.map(num).join(' ')})"/>`);
+    const mode = opt.rop === undefined ? null : sourceRop(opt.rop);
+    let extra = '';
+    if (opt.opacity !== undefined && opt.opacity < 1) extra += ` opacity="${num(Math.max(0, opt.opacity))}"`;
+    if (mode?.invert) extra += ` filter="url(#${this.out.invertFilter()})"`;
+    if (mode?.blend) extra += ` style="mix-blend-mode:${mode.blend}"`;
+    this.out.element(`<image href="${href}" width="${iw}" height="${ih}" preserveAspectRatio="none" transform="matrix(${m.map(num).join(' ')})"${extra}/>`);
+  }
+  /**
+   * A raster operation with no source bitmap: PATCOPY, BLACKNESS, WHITENESS, and the ones that read
+   * the destination (DSTINVERT, PATINVERT, PATPAINT, MERGECOPY with the brush as source), drawn with a
+   * blend mode: XOR / invert as `difference` with white or the brush, AND as `multiply`, OR as `screen`.
+   */
+  rop(rop: number, l: number, t: number, w: number, h: number) {
+    if (this.out.muted || this.pathOpen || !w || !h) return;
+    const P = this.P(), pd = this.out.path();
+    pd.m(...P(l, t)).l(...P(l + w, t)).l(...P(l + w, t + h)).l(...P(l, t + h)).z();
+    const brush = this.fill();
+    const draw = (fill: Fill, blend?: string) => this.out.drawPath(pd, fill, null, false, blend);
+    switch (rop >>> 0) {
+      case 0x00f00021: draw(brush); break; // PATCOPY
+      case 0x00000042: draw({ color: BLACK }); break; // BLACKNESS
+      case 0x00ff0062: draw({ color: WHITE }); break; // WHITENESS
+      case 0x00550009: draw({ color: WHITE }, 'difference'); break; // DSTINVERT
+      case 0x005a0049: draw(brush, 'difference'); break; // PATINVERT
+      case 0x00fb0a09: draw(brush, 'screen'); break; // PATPAINT
+      case 0x00a000c9: draw(brush, 'multiply'); break; // DPa
+      case 0x000f0001: draw(brush && 'color' in brush ? { color: invert(brush.color) } : brush); break; // PATNOT approximated by the inverted brush
+      default: break;
+    }
   }
   /** A rectangle filled with the current brush (PATCOPY) or a flat colour (BLACKNESS, WHITENESS). */
   fillRect(l: number, t: number, w: number, h: number, color?: Color) {
     const P = this.P(), pd = this.out.path();
     pd.m(...P(l, t)).l(...P(l + w, t)).l(...P(l + w, t + h)).l(...P(l, t + h)).z();
     this.out.drawPath(pd, color ? { color } : this.fill(), null);
+  }
+}
+
+export interface BlitOptions {
+  /** The ternary raster operation of the blit; only those with a source are looked at here. */
+  rop?: number;
+  /** Constant alpha 0..1 (AlphaBlend). */
+  opacity?: number;
+  /** 'opaque' ignores the bitmap's alpha, 'premultiplied' un-premultiplies it. */
+  alpha?: 'opaque' | 'premultiplied';
+  /** TransparentBlt colour key as a COLORREF. */
+  key?: number;
+}
+
+/** The look-alike of a ternary raster operation that combines a source bitmap with the destination. */
+export function sourceRop(rop: number): { invert?: boolean; blend?: string } | null {
+  switch (rop >>> 0) {
+    case 0x00330008: return { invert: true }; // NOTSRCCOPY
+    case 0x00660046: return { blend: 'difference' }; // SRCINVERT
+    case 0x008800c6: return { blend: 'multiply' }; // SRCAND
+    case 0x00ee0086: return { blend: 'screen' }; // SRCPAINT
+    case 0x00220326: return { invert: true, blend: 'multiply' }; // NOTSRCAND (dest AND NOT source)
+    case 0x00bb0226: return { invert: true, blend: 'screen' }; // MERGEPAINT (dest OR NOT source)
+    case 0x001100a6: return { invert: true, blend: 'multiply' }; // NOTSRCERASE (NOR), without the destination inversion
+    default: return null;
   }
 }
 

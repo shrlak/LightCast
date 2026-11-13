@@ -2117,6 +2117,12 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
   color: #fef08a; background: rgba(6, 40, 20, .82); border: 2px solid rgba(34, 197, 94, .7); text-shadow: 0 1px 3px #000; pointer-events: none; animation: caption-in .2s ease-out; }
 @keyframes caption-in { from { opacity: 0; } to { opacity: 1; } }
 .caption-error { color: #b45309; font-size: 12px; font-weight: 600; }
+.speech-card { border-color: rgba(34, 197, 94, .45); }
+.speech-card .speech-choices button, .speech-card [role='radio'] { border-color: rgba(34, 197, 94, .5); }
+.speech-card [role='radio'].on { background: #166534 !important; border-color: #22c55e; color: #fef08a !important; font-weight: 700; }
+.speech-status { margin: 0; padding: 6px 10px; border-radius: 8px; background: rgba(234, 179, 8, .14); color: #854d0e; font-size: 13px; font-weight: 600; }
+.speech-status.ok { background: rgba(34, 197, 94, .16); color: #166534; }
+.speech-status.bad { background: rgba(234, 179, 8, .28); color: #713f12; }
 
 /* Insert › Screenshot: source picker and crop */
 .capture-sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; max-height: 44vh; overflow: auto; padding: 2px; }
@@ -2154,3 +2160,16 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .bs-video-go { display: flex; gap: 8px; align-items: center; }
 .bs-print-go.bs-cancel { background: #fff6cc; color: #5c4a00; border: 1px solid #e0b400; }
 .bs-progress { width: 100%; max-width: 420px; height: 10px; accent-color: #1f8a52; }
+.font-import-msg { font-size: 11px; color: #1f6f3d; padding: 3px 10px; white-space: normal; max-width: 280px; }
+.font-menu .font-import { color: #1f8a52; font-weight: 600; border-top: 1px solid #e1dfdd; }
+
+/* Phone remote: laser pointer driven by dragging over the slide preview */
+.remote-console .remote-laser.active { background: #2a0a0a; border-color: #ff2a2a; color: #ff6b6b; box-shadow: inset 0 0 0 1px #ff2a2a, 0 0 12px #ff2a2a55; }
+.remote-console .remote-laser svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.remote-current { position: relative; }
+.remote-current.remote-laser-on { touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.remote-laser-dot { position: absolute; z-index: 5; width: 22px; height: 22px; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none;
+  background: radial-gradient(circle, #fff 0 12%, #ff2a2a 30%, rgba(255, 42, 42, .55) 60%, rgba(255, 42, 42, 0) 72%); box-shadow: 0 0 14px 4px rgba(255, 42, 42, .6); }
+.remote-laser-hint { position: absolute; z-index: 4; left: 50%; bottom: 6px; transform: translateX(-50%); padding: 2px 10px; border-radius: 999px; background: #000a; color: #fff; font-size: 12px; pointer-events: none; white-space: nowrap; }
+.remote-laser-hint:empty { display: none; }
+.vh-basis { color: #7a5c00; font-size: 11px; background: #fff8d6; border-radius: 3px; padding: 0 4px; }

@@ -37,6 +37,10 @@ export function aiConfig() {
     proxyOrigin: c.proxyOrigin || process.env.FREECAST_AI_PROXY_ORIGIN || DEFAULT_PROXY_ORIGIN,
     geminiKey: c.geminiKey || process.env.GEMINI_API_KEY || '',
     openrouterKey: c.openrouterKey || process.env.OPENROUTER_API_KEY || '',
+    // Speech-to-text (자막): any OpenAI-compatible /audio/transcriptions service. Without its own key, a Gemini key is used.
+    speechBaseUrl: (c.speechBaseUrl || process.env.SPEECH_BASE_URL || 'https://api.openai.com/v1').replace(/\/+$/, ''),
+    speechKey: c.speechKey || process.env.SPEECH_API_KEY || '',
+    speechModel: c.speechModel || process.env.SPEECH_MODEL || '',
   };
 }
 

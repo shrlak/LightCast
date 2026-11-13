@@ -2,6 +2,7 @@
 // server, which asks the church's Gemini / OpenRouter model pool (see aiProviders.mjs).
 import { z } from 'zod';
 import { aiConfig, askJson, attempts, setAiConfigProvider } from './aiProviders.mjs';
+import { speechRoute } from './speech.mjs';
 
 export { setAiConfigProvider };
 const MAX_BODY = 40 * 1024 * 1024;
@@ -142,6 +143,7 @@ export async function aiMiddleware(req, res, next) {
       configured: true,
     });
   }
+  if (name === 'transcribe' || name === 'speech-status') return speechRoute(name, req, res, url, send);
   if (name === 'usage') {
     // Today's per-model counts kept by the church Worker (shared with the ppt site, whose keys it holds).
     const cfg = aiConfig();

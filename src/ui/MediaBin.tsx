@@ -1,3 +1,4 @@
+import { isSvgzName } from '../domain/svgPicture';
 import { useRef, useState, type Dispatch } from 'react';
 import type { Action, AppState } from '../domain/reducer';
 import type { Background, MediaMeta } from '../domain/types';
@@ -41,7 +42,7 @@ export function MediaBin({ state, dispatch }: Props) {
 
   const add = async (files: FileList | null) => {
     for (const file of Array.from(files ?? [])) {
-      const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') || isMetafileName(file.name) ? 'image' : null;
+      const type = file.type.startsWith('video/') ? 'video' : file.type.startsWith('image/') || isMetafileName(file.name) || isSvgzName(file.name) ? 'image' : null;
       if (!type || file.size > MAX_BYTES) continue;
       const id = uid('m');
       await putMedia(id, file);
@@ -90,7 +91,7 @@ export function MediaBin({ state, dispatch }: Props) {
             <option value="cover">꽉 채우기</option><option value="contain">전체 보이기</option>
           </select>
         </div>
-        <input ref={input} type="file" accept="image/*,.wmf,.emf,video/*" multiple hidden onChange={(e) => add(e.target.files)} />
+        <input ref={input} type="file" accept="image/*,.wmf,.emf,.svgz,video/*" multiple hidden onChange={(e) => add(e.target.files)} />
       </div>
       <div className="swatches">
         {items.map((it) => (

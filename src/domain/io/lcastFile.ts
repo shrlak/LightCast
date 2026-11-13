@@ -82,17 +82,28 @@ export async function decryptBytes(file: Uint8Array, password: string): Promise<
 
 // ── The file's content ────────────────────────────────────────────────────────────────────────
 export interface NativeMedia { meta: MediaMeta; bytes: Uint8Array; mime: string }
-export interface NativeContent { presentation: Presentation; media: NativeMedia[] }
+/** An imported font file a presentation uses, carried inside the file so it looks the same on another computer. */
+export interface NativeFont { family: string; subfamily: string; weight: number; weightRange?: [number, number]; italic: boolean; format: 'truetype' | 'opentype' | 'woff' | 'woff2'; bytes: Uint8Array }
+export interface NativeContent { presentation: Presentation; media: NativeMedia[]; fonts: NativeFont[] }
+/** One .lcast file carries at most this many font files / bytes. */
+export const MAX_NATIVE_FONTS = 24;
+export const MAX_NATIVE_FONT_BYTES = 48 * 1024 * 1024;
+const FONT_EXT: Record<NativeFont['format'], string> = { truetype: 'ttf', opentype: 'otf', woff: 'woff', woff2: 'woff2' };
 
 /** Pack a presentation and its media into LightCast's zip; with a password the zip is encrypted. */
 export async function saveNative(
   presentation: Presentation,
   media: NativeMedia[],
   password?: string,
+  fonts: NativeFont[] = [],
 ): Promise<Uint8Array> {
   const zip = new JSZip();
-  zip.file('lightcast.json', JSON.stringify({ format: FORMAT, version: VERSION, presentation, media: media.map((m) => ({ ...m.meta, mime: m.mime })) }));
+  let fontBytes = 0;
+  const kept = fonts.filter((f) => f.bytes.length > 0 && (fontBytes += f.bytes.length) <= MAX_NATIVE_FONT_BYTES).slice(0, MAX_NATIVE_FONTS);
+  const fontMeta = kept.map(({ bytes: _b, ...m }, i) => ({ ...m, file: `fonts/font${i}.${FONT_EXT[m.format] ?? 'ttf'}` }));
+  zip.file('lightcast.json', JSON.stringify({ format: FORMAT, version: VERSION, presentation, media: media.map((m) => ({ ...m.meta, mime: m.mime })), ...(kept.length ? { fonts: fontMeta } : {}) }));
   for (const m of media) zip.file(`media/${m.meta.id}`, m.bytes);
+  kept.forEach((f, i) => zip.file(fontMeta[i].file, f.bytes));
   const bytes = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE' });
   return password ? encryptBytes(bytes, password) : bytes;
 }
@@ -108,7 +119,7 @@ export async function openNative(file: Uint8Array, password?: string): Promise<N
   try { zip = await JSZip.loadAsync(bytes); } catch { throw new NotLightCastFileError(); }
   const json = zip.file('lightcast.json');
   if (!json) throw new NotLightCastFileError();
-  let doc: { format?: string; version?: number; presentation?: Presentation; media?: (MediaMeta & { mime?: string })[] };
+  let doc: { format?: string; version?: number; presentation?: Presentation; media?: (MediaMeta & { mime?: string })[]; fonts?: (Omit<NativeFont, 'bytes'> & { file?: string })[] };
   try { doc = JSON.parse(await json.async('string')); } catch { throw new NotLightCastFileError(); }
   if (doc.format !== FORMAT || doc.version !== VERSION || !doc.presentation || !Array.isArray(doc.presentation.slides)) throw new NotLightCastFileError();
   const media: NativeMedia[] = [];
@@ -116,7 +127,20 @@ export async function openNative(file: Uint8Array, password?: string): Promise<N
     const f = zip.file(`media/${meta.id}`);
     if (f && /^[\w-]+$/.test(meta.id)) media.push({ meta, bytes: await f.async('uint8array'), mime: mime ?? 'application/octet-stream' });
   }
-  return { presentation: doc.presentation, media };
+  // Fonts: only files inside fonts/, within the same caps; anything odd is skipped (the deck still opens).
+  const fonts: NativeFont[] = [];
+  let total = 0;
+  for (const { file, ...meta } of Array.isArray(doc.fonts) ? doc.fonts.slice(0, MAX_NATIVE_FONTS) : []) {
+    try {
+      const f = typeof file === 'string' && /^fonts\/font\d+\.(ttf|otf|woff2?)$/.test(file) ? zip.file(file) : null;
+      if (!f || typeof meta.family !== 'string' || !meta.family) continue;
+      const bytes = await f.async('uint8array');
+      if (total + bytes.length > MAX_NATIVE_FONT_BYTES) continue;
+      total += bytes.length;
+      fonts.push({ family: meta.family, subfamily: String(meta.subfamily ?? ''), weight: Number(meta.weight) || 400, weightRange: meta.weightRange, italic: !!meta.italic, format: meta.format, bytes });
+    } catch { /* skip this font */ }
+  }
+  return { presentation: doc.presentation, media, fonts };
 }
 
 /** A password's strength as a label for the dialog: PowerPoint warns that a lost password cannot be recovered. */

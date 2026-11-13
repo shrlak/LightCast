@@ -4,8 +4,9 @@
 import { getMedia, putMedia, deleteMedia } from './media';
 import { embedFontsInZip, mayEmbed, readEmbeddedFonts, sfntFormat, usedFamilies, type FontStyle, type ReadFont } from './io/pptxFonts';
 import JSZip from 'jszip';
+import { importedFonts, importedSfnt, registerImportedFonts, embedStyleOf } from './importedFonts';
 
-interface Stored { id: string; family: string; style: FontStyle; bytes: number; source: string; at: number }
+export interface StoredEmbedded { id: string; family: string; style: FontStyle; bytes: number; source: string; at: number }
 
 const INDEX_KEY = 'embfont:index';
 /** All imported fonts together stay under this; the oldest go first. */
@@ -19,14 +20,14 @@ let chain: Promise<unknown> = Promise.resolve();
 /** One index update at a time, so two imports cannot overwrite each other's list. */
 const serial = <T>(f: () => Promise<T>): Promise<T> => { const p = chain.then(f, f); chain = p.catch(() => undefined); return p; };
 
-async function readIndex(): Promise<Stored[]> {
+async function readIndex(): Promise<StoredEmbedded[]> {
   try {
     const b = await getMedia(INDEX_KEY);
     const list = b ? JSON.parse(await b.text()) : [];
     return Array.isArray(list) ? list : [];
   } catch { return []; }
 }
-const writeIndex = (list: Stored[]) => putMedia(INDEX_KEY, new Blob([JSON.stringify(list)], { type: 'application/json' }));
+const writeIndex = (list: StoredEmbedded[]) => putMedia(INDEX_KEY, new Blob([JSON.stringify(list)], { type: 'application/json' }));
 
 const registered = new Set<string>();
 async function register(id: string, family: string, style: FontStyle, data: ArrayBuffer): Promise<void> {
@@ -68,14 +69,43 @@ export async function keepEmbeddedFonts(fonts: ReadFont[], source: string): Prom
 
 /** Read the embedded fonts of a .pptx and keep them; resolves to how many were usable. */
 export async function importEmbeddedFonts(pptx: ArrayBuffer, source: string): Promise<number> {
-  try {
-    const { fonts } = await readEmbeddedFonts(pptx);
-    return await keepEmbeddedFonts(fonts, source);
-  } catch { return 0; }
+  return (await importEmbeddedFontsReport(pptx, source)).kept;
 }
 
-/** On start-up: register every kept font. */
+/** Like importEmbeddedFonts, and says which fonts of the deck were skipped and why (for the import notice). */
+export async function importEmbeddedFontsReport(pptx: ArrayBuffer, source: string): Promise<{ kept: number; skipped: { family: string; style: FontStyle; reason: string }[] }> {
+  try {
+    const { fonts, skippedFonts } = await readEmbeddedFonts(pptx);
+    const kept = await keepEmbeddedFonts(fonts, source);
+    return { kept, skipped: skippedFonts };
+  } catch { return { kept: 0, skipped: [] }; }
+}
+
+/** "글꼴 N개를 건너뛰었습니다: Name (reason) …" for a toast; null when nothing was skipped. */
+export function skippedFontsNotice(skipped: { family: string; reason: string }[]): string | null {
+  if (!skipped.length) return null;
+  const by = new Map<string, string>();
+  for (const s of skipped) by.set(s.family, s.reason);
+  const items = [...by].slice(0, 4).map(([f, r]) => `${f}(${r})`).join(', ');
+  return `PPTX에 들어 있는 글꼴 ${by.size}개를 가져오지 못했습니다: ${items}${by.size > 4 ? ` 외 ${by.size - 4}개` : ''}. 글꼴 파일이 있으면 글꼴 가져오기로 추가하세요.`;
+}
+
+/** The fonts that came inside imported decks (source = the .pptx file name). */
+export const listEmbeddedFonts = (): Promise<StoredEmbedded[]> => readIndex();
+
+/** Forget one font that came from a deck. */
+export function removeEmbeddedFont(id: string): Promise<void> {
+  return serial(async () => {
+    const list = await readIndex();
+    await writeIndex(list.filter((x) => x.id !== id)).catch(() => undefined);
+    registered.delete(id);
+    await deleteMedia(id).catch(() => undefined);
+  });
+}
+
+/** On start-up: register every kept font (the ones from decks and the ones imported from font files). */
 export async function registerStoredFonts(): Promise<void> {
+  await registerImportedFonts();
   try {
     for (const s of await readIndex()) {
       const b = await getMedia(s.id).catch(() => undefined);
@@ -94,6 +124,13 @@ export async function localFontFiles(families: string[]): Promise<{ family: stri
     for (const s of index.filter((x) => same(x.family, family))) {
       const b = await getMedia(s.id).catch(() => undefined);
       if (b) { out.push({ family, style: s.style, data: new Uint8Array(await b.arrayBuffer()) }); have.add(s.style); }
+    }
+    // Fonts imported from files: the regular / bold / italic / bold-italic faces of the family.
+    for (const f of importedFonts().filter((x) => same(x.family, family))) {
+      const style = embedStyleOf(f);
+      if (!style || have.has(style)) continue;
+      const data = await importedSfnt(f);
+      if (data) { out.push({ family, style, data }); have.add(style); }
     }
     if (have.size) continue;
     try {
@@ -125,4 +162,12 @@ export async function embedUsedFonts(blob: Blob, deck: unknown): Promise<{ blob:
     const embedded = [...new Set(files.map((f) => f.family))];
     return { blob: await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' }), embedded, missing: families.filter((f) => !embedded.includes(f)) };
   } catch { return { blob, embedded: [], missing: families }; }
+}
+
+/** The notice after a PPTX export with 글꼴 포함: which fonts went in and which could not (no file here, licence, WOFF2 / variable). */
+export function exportFontNotice(r: { missingFonts: string[]; embedded: string[] } | void): string | null {
+  if (!r || (!r.missingFonts.length && !r.embedded.length)) return null;
+  const ok = r.embedded.length ? `글꼴 ${r.embedded.length}개를 파일에 넣었습니다. ` : '';
+  const miss = r.missingFonts.length ? `넣지 못한 글꼴: ${r.missingFonts.slice(0, 5).join(', ')}${r.missingFonts.length > 5 ? ` 외 ${r.missingFonts.length - 5}개` : ''} (글꼴 파일이 없거나, 저작권상 허용되지 않거나, 지원하지 않는 형식입니다. 글꼴 가져오기로 파일을 추가하세요.)` : '';
+  return ok + miss;
 }

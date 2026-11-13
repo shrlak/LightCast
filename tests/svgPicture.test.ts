@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { containBox, looksLikeSvg, prepareMediaBlob, sanitizeCss, sanitizeSvg, svgForPptx, svgIntrinsicSize } from '../src/domain/svgPicture';
+import { gzipSync } from 'node:zlib';
+import { containBox, gunzip, gunzipFallback, isSvgzName, looksLikeSvg, prepareMediaBlob, sanitizeCss, sanitizeSvg, svgForPptx, svgIntrinsicSize } from '../src/domain/svgPicture';
 
 const EVIL = `<?xml version="1.0"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 100 50" onload="alert(1)">
@@ -90,5 +91,57 @@ describe('export helpers', () => {
     expect(s).toContain('width="384"');
     expect(s).toContain('height="192"');
     expect(s).toContain('viewBox="0 0 10 10"');
+  });
+});
+
+describe('.svgz (gzip-compressed SVG)', () => {
+  const SRC = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 20"><script>alert(1)</script><rect width="40" height="20" fill="red" onclick="x()"/></svg>';
+  const gz = (text: string) => new Uint8Array(gzipSync(Buffer.from(text)));
+
+  it('is recognised by name', () => {
+    expect(isSvgzName('logo.svgz')).toBe(true);
+    expect(isSvgzName('LOGO.SVGZ')).toBe(true);
+    expect(isSvgzName('logo.svg')).toBe(false);
+  });
+
+  it('gunzip unpacks with DecompressionStream and with the JSZip fallback', async () => {
+    const bytes = gz(SRC);
+    expect(new TextDecoder().decode((await gunzip(bytes))!)).toBe(SRC);
+    expect(new TextDecoder().decode((await gunzipFallback(bytes, 1e6))!)).toBe(SRC);
+  });
+
+  it('the fallback skips a gzip header with a file name and comment', async () => {
+    const plain = gz(SRC);
+    const flg = Uint8Array.from([...plain.slice(0, 3), plain[3] | 8 | 16, ...plain.slice(4, 10), ...new TextEncoder().encode('logo.svg\0a comment\0'), ...plain.slice(10)]);
+    expect(new TextDecoder().decode((await gunzipFallback(flg, 1e6))!)).toBe(SRC);
+    expect(new TextDecoder().decode((await gunzip(flg))!)).toBe(SRC);
+  });
+
+  it('refuses a gzip bomb and data that is not gzip', async () => {
+    const bomb = gz('<svg>' + ' '.repeat(2_000_000) + '</svg>');
+    expect(bomb.length).toBeLessThan(10_000);
+    expect(await gunzip(bomb, 100_000)).toBeNull();
+    expect(await gunzipFallback(bomb, 100_000)).toBeNull();
+    expect(await gunzip(new TextEncoder().encode('<svg/>'))).toBeNull();
+    const broken = gz(SRC).slice(0, 25);
+    expect(await gunzip(broken)).toBeNull();
+  });
+
+  it('prepareMediaBlob unpacks, sanitizes and types an .svgz file however the browser typed it', async () => {
+    for (const type of ['application/gzip', 'image/svg+xml-compressed', '', 'application/octet-stream']) {
+      const file = new File([gz(SRC)], 'logo.svgz', { type });
+      const out = await prepareMediaBlob(file);
+      expect(out.type).toBe('image/svg+xml');
+      const text = await out.text();
+      expect(text).toContain('<rect');
+      expect(text).not.toMatch(/script|onclick/);
+    }
+  });
+
+  it('leaves gzip that is not an SVG, and a PNG, alone', async () => {
+    const notSvg = new File([gz('hello world, not a picture at all')], 'x.svgz', { type: 'application/gzip' });
+    expect(await prepareMediaBlob(notSvg)).toBe(notSvg);
+    const png = new Blob([new Uint8Array(40)], { type: 'image/png' });
+    expect(await prepareMediaBlob(png)).toBe(png);
   });
 });

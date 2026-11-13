@@ -174,7 +174,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
         </div>
         <div className="fmt-row">
           <label className="fmt-color grow" title="단색 배경"><span style={{ background: bgColor }} />단색<input type="color" value={hexOf(bgColor)} onChange={(e) => setBg({ kind: 'color', value: withTransparency(e.target.value, transparencyOf(bgColor)) })} /></label>
-          <input ref={fileRef} type="file" accept="image/*,.wmf,.emf,video/*" hidden onChange={(e) => uploadBg(e.target.files?.[0])} />
+          <input ref={fileRef} type="file" accept="image/*,.wmf,.emf,.svgz,video/*" hidden onChange={(e) => uploadBg(e.target.files?.[0])} />
         </div>
         <BackgroundSources ed={{ dispatch, cmd: { notify: flash } as never }} setBg={setBg} onFile={() => fileRef.current?.click()} />
         {bg?.kind === 'color' && (

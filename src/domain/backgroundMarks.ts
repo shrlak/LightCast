@@ -9,6 +9,8 @@
 // With no remove mark at all the picture's border is the removal seed (the usual "background touches
 // the edge" case), so the first preview needs no work from the person.
 
+import type { CutoutMarks } from './types';
+
 export type MarkKind = 'keep' | 'remove';
 export interface Mark { kind: MarkKind; /** Brush centres in picture pixels (a click is one point). */ points: [number, number][]; /** Brush radius in picture pixels. */ radius: number }
 
@@ -114,3 +116,40 @@ export const brushRadius = (w: number, h: number, size: number) => Math.max(2, (
 /** Map a point on the displayed canvas (CSS pixels) to picture pixels. */
 export const toPicturePoint = (cx: number, cy: number, shownW: number, shownH: number, w: number, h: number): [number, number] =>
   [Math.max(0, Math.min(w - 1, (cx / shownW) * w)), Math.max(0, Math.min(h - 1, (cy / shownH) * h))];
+
+// ── Keeping the marks with the picture ────────────────────────────────────────────────────────
+/** Strokes are thinned: a point closer than this (thousandths of the picture) to the last kept one is dropped. */
+const THIN = 5;
+
+/** The marks as the compact list stored with the picture (PictureAdjust.cutoutMarks), from marks in a `w` × `h` pixel picture. */
+export function packMarks(marks: Mark[], w: number, h: number, tolerance: number): CutoutMarks {
+  const short = Math.max(1, Math.min(w, h));
+  const strokes = marks.filter((m) => m.points.length).map((m) => {
+    const p: number[] = [];
+    m.points.forEach(([x, y], i) => {
+      const px = Math.round((Math.max(0, Math.min(w, x)) / w) * 1000), py = Math.round((Math.max(0, Math.min(h, y)) / h) * 1000);
+      const last = i === m.points.length - 1;
+      // Keep the first and last point; thin the points between.
+      if (i === 0 || (last ? px !== p[p.length - 2] || py !== p[p.length - 1] : Math.hypot(px - p[p.length - 2], py - p[p.length - 1]) >= THIN)) p.push(px, py);
+    });
+    return { k: m.kind === 'keep' ? ('k' as const) : ('r' as const), r: Math.max(1, Math.round((m.radius / short) * 10000)), p };
+  });
+  return { tol: Math.round(Math.max(BG_TOLERANCE_MIN, Math.min(BG_TOLERANCE_MAX, tolerance))), strokes };
+}
+
+/** The marks and tolerance back, in the pixels of a `w` × `h` picture. Anything malformed is skipped. */
+export function unpackMarks(saved: CutoutMarks | null | undefined, w: number, h: number): { marks: Mark[]; tolerance: number } {
+  const short = Math.min(w, h);
+  const marks: Mark[] = [];
+  for (const s of Array.isArray(saved?.strokes) ? saved!.strokes : []) {
+    if (!s || (s.k !== 'k' && s.k !== 'r') || !Array.isArray(s.p) || typeof s.r !== 'number' || !Number.isFinite(s.r)) continue;
+    const points: [number, number][] = [];
+    for (let i = 0; i + 1 < s.p.length; i += 2) {
+      const x = s.p[i], y = s.p[i + 1];
+      if (Number.isFinite(x) && Number.isFinite(y)) points.push([Math.max(0, Math.min(w - 1, (x / 1000) * w)), Math.max(0, Math.min(h - 1, (y / 1000) * h))]);
+    }
+    if (points.length) marks.push({ kind: s.k === 'k' ? 'keep' : 'remove', points, radius: Math.max(0.5, (s.r / 10000) * short) });
+  }
+  const tol = typeof saved?.tol === 'number' && Number.isFinite(saved.tol) ? Math.max(BG_TOLERANCE_MIN, Math.min(BG_TOLERANCE_MAX, saved.tol)) : BG_TOLERANCE_DEFAULT;
+  return { marks, tolerance: tol };
+}

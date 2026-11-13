@@ -67,7 +67,8 @@ describe('slide show', () => {
     await openDeck(page);
     await startShow(page);
     await page.getByRole('button', { name: /자막 켜기/ }).click();
-    await see(page.getByText(/음성 인식을 지원하지 않아 자막을 쓸 수 없습니다/));
+    // Without browser speech recognition and without a cloud speech key the app says why captions cannot start.
+    await see(page.getByText(/이 브라우저는 음성 인식을 지원하지 않고, 클라우드 음성 인식도 설정되어 있지 않습니다/));
     await app.close();
   });
 

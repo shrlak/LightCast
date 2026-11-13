@@ -561,7 +561,7 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
       {el.paragraphs
         ? el.paragraphs.map((p, i) => (
             <div key={i} data-para={i} style={{
-              fontSize: (p.fontSize ?? base), fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
+              fontSize: (p.fontSize ?? base), fontWeight: p.weight !== undefined ? Math.min(900, Math.max(100, Math.round(p.weight / 100) * 100)) : p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
               color: p.color, ...alignCss(p.align), minHeight: '1.2em', flexShrink: 0,
             }}>
               {lineBody(p.text, i)}

@@ -114,6 +114,28 @@ export function wrapEot(font: Uint8Array): Uint8Array {
   return out;
 }
 
+/** What an EOT header says about its font (null when the bytes are not an EOT). */
+export interface EotInfo { family: string; weight: number; italic: boolean; fsType: number; compressed: boolean; xored: boolean; fontSize: number }
+export function parseEotHeader(b: Uint8Array): EotInfo | null {
+  try {
+    if (b.length < 86) return null;
+    const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+    if (v.getUint16(34, true) !== 0x504c) return null;
+    const flags = v.getUint32(12, true);
+    const n = Math.min(v.getUint16(84, true), 512);
+    let family = '';
+    for (let i = 0; i + 1 < n && 86 + i + 1 < b.length; i += 2) family += String.fromCharCode(b[86 + i] | (b[87 + i] << 8));
+    return { family: family.replace(/\0/g, '').trim(), weight: v.getUint32(28, true), italic: b[27] !== 0, fsType: v.getUint16(32, true), compressed: (flags & 0x4) !== 0, xored: (flags & 0x10000000) !== 0, fontSize: v.getUint32(4, true) };
+  } catch { return null; }
+}
+
+/** Why a part could not be used, in Korean, for the notice listing skipped fonts. */
+export function skipReason(bytes: Uint8Array): string {
+  const eot = parseEotHeader(bytes);
+  if (eot?.compressed) return 'PowerPoint 압축(MTX) 글꼴은 아직 읽을 수 없습니다';
+  return '읽을 수 없는 글꼴 형식입니다';
+}
+
 /** Decode one embedded part: plain sfnt first, then uncompressed EOT, then the GUID obfuscation. Never throws. */
 export function decodeFontPart(bytes: Uint8Array, partName: string): DecodedFont | null {
   try {
@@ -132,9 +154,10 @@ export function decodeFontPart(bytes: Uint8Array, partName: string): DecodedFont
 }
 
 /** Every decodable embedded font of a .pptx, within the size caps. Bad or unsupported parts are skipped. */
-export async function readEmbeddedFonts(file: ArrayBuffer | Uint8Array): Promise<{ fonts: ReadFont[]; skipped: number }> {
+export async function readEmbeddedFonts(file: ArrayBuffer | Uint8Array): Promise<{ fonts: ReadFont[]; skipped: number; skippedFonts: { family: string; style: FontStyle; reason: string }[] }> {
   const fonts: ReadFont[] = [];
   let skipped = 0;
+  const skippedFonts: { family: string; style: FontStyle; reason: string }[] = [];
   try {
     const zip = await JSZip.loadAsync(file);
     const pres = (await zip.file('ppt/presentation.xml')?.async('string')) ?? '';
@@ -142,14 +165,17 @@ export async function readEmbeddedFonts(file: ArrayBuffer | Uint8Array): Promise
     let total = 0;
     for (const ref of parseEmbeddedFontList(pres, rels)) {
       const part = zip.file(ref.target);
-      if (!part || fonts.length >= MAX_FONTS_PER_DECK) { skipped++; continue; }
-      const d = decodeFontPart(await part.async('uint8array'), ref.target);
-      if (!d || total + d.data.length > MAX_DECK_FONT_BYTES) { skipped++; continue; }
+      if (!part) { skipped++; skippedFonts.push({ family: ref.typeface, style: ref.style, reason: '파일 안에 글꼴 데이터가 없습니다' }); continue; }
+      if (fonts.length >= MAX_FONTS_PER_DECK) { skipped++; skippedFonts.push({ family: ref.typeface, style: ref.style, reason: `한 파일에서 ${MAX_FONTS_PER_DECK}개까지만 가져옵니다` }); continue; }
+      const raw = await part.async('uint8array');
+      const d = decodeFontPart(raw, ref.target);
+      if (!d) { skipped++; skippedFonts.push({ family: ref.typeface, style: ref.style, reason: skipReason(raw) }); continue; }
+      if (total + d.data.length > MAX_DECK_FONT_BYTES) { skipped++; skippedFonts.push({ family: ref.typeface, style: ref.style, reason: '글꼴 용량 한도(64MB)를 넘습니다' }); continue; }
       total += d.data.length;
       fonts.push({ family: ref.typeface, style: ref.style, data: d.data, format: d.format });
     }
   } catch { /* a damaged file brings in no fonts */ }
-  return { fonts, skipped };
+  return { fonts, skipped, skippedFonts };
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

@@ -1,7 +1,7 @@
 // 동영상 만들기, the fast way: slides are drawn on a canvas and handed straight to a WebCodecs VideoEncoder, so a ten-minute
 // show is made in seconds instead of ten minutes. The frames are muxed by domain/videoMux. Where the browser has no
 // VideoEncoder (or cannot encode anything we can mux) `fastVideoCodec` is null and the caller records in real time.
-import { muxMp4, muxWebm, pickFastCodec, planFrames, type EncodedFrame, type FastCodec } from '../domain/videoMux';
+import { muxMp4, muxWebm, pickFastCodec, planFrames, type AudioTrack, type EncodedFrame, type FastCodec } from '../domain/videoMux';
 
 const hasEncoder = typeof VideoEncoder !== 'undefined' && typeof VideoFrame !== 'undefined';
 
@@ -19,6 +19,8 @@ export interface FastVideoOptions {
   width: number;
   height: number;
   codec: FastCodec;
+  /** The encoded narration track to write beside the pictures (see ui/narrationAudio). */
+  audio?: AudioTrack | null;
   bitrate: number;
   /** Frames done so far / frames in all. */
   onProgress: (done: number, total: number) => void;
@@ -79,7 +81,7 @@ export async function exportFastVideo(o: FastVideoOptions): Promise<Blob | null>
   frames.sort((a, b) => a.timestampUs - b.timestampUs);
   if (o.codec.container === 'mp4') {
     if (!avcC) throw new Error('H.264 인코더가 설정 정보를 주지 않았습니다.');
-    return new Blob([muxMp4({ width: o.width, height: o.height, avcC, frames }) as BlobPart], { type: o.codec.mime });
+    return new Blob([muxMp4({ width: o.width, height: o.height, avcC, frames, audio: o.audio ?? undefined }) as BlobPart], { type: o.codec.mime });
   }
-  return new Blob([muxWebm({ width: o.width, height: o.height, codecId: o.codec.webmId!, frames }) as BlobPart], { type: o.codec.mime });
+  return new Blob([muxWebm({ width: o.width, height: o.height, codecId: o.codec.webmId!, frames, audio: o.audio ?? undefined }) as BlobPart], { type: o.codec.mime });
 }

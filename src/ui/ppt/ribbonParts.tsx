@@ -46,6 +46,7 @@ export const RI = {
   highlighter: (c = '#ffff00') => <S><path d="M8 24l2-7L21 6l5 5-11 11z" {...st()} fill="#fff" /><rect x="3" y="26" width="26" height="3" fill={c} /></S>,
   eraser: <S><path d="M5 21L17 9l8 8-8 8H9z" {...st()} fill="#f4b6c2" /><path d="M11 15l8 8" {...st()} /></S>,
   lasso: <S><path d="M5 5v18l5-4 3 7 3-1-3-7h6z" {...st()} fill="#fff" /></S>,
+  inkText: <S><path d="M3 24c3-7 6-9 8-4s4 2 6-3" {...st(GR, 1.8)} /><rect x="18" y="6" width="11" height="13" rx="1.5" {...st(G, 1.4)} fill="#fff" /><path d="M21 16l2.5-7 2.5 7M22 14h3" {...st(GR, 1.4)} /><rect x="18" y="22" width="11" height="3" rx="1" fill={Y} /></S>,
   inkShape: <S><path d="M5 18c3-8 8-12 12-6s6 6 10-2" {...st(B, 1.8)} /><rect x="9" y="20" width="14" height="8" {...st(G, 1.6)} /></S>,
   themes: <S><rect x="3" y="6" width="26" height="20" rx="1" {...st()} fill="#fff" /><rect x="3" y="6" width="26" height="6" fill={R} /><path d="M7 16h12M7 20h8" {...st(G, 1.4)} /></S>,
   slideSize: <S><rect x="3" y="7" width="20" height="15" {...st()} /><rect x="9" y="12" width="20" height="14" {...st(B)} fill="#fff" /></S>,

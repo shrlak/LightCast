@@ -8,6 +8,7 @@ import type { HAlign, SlideElement, TextRun } from './types';
 import { uid } from './lyrics';
 import { normalizeRuns } from './richText';
 import { officeFont } from './fonts';
+import { splitWeightedFace, weightPatch } from './fontWeight';
 import { textFields } from './io/drawingml';
 import { decodeEntities, parseMarkup, textOf, type MNode } from './io/markup';
 
@@ -200,12 +201,16 @@ export function htmlLines(root: MNode, rules = new Map<string, Record<string, st
       const fsPx = fs ? cssLength(fs, s, s) : HEADING_PT[tag] ? HEADING_PT[tag] * 2 * 1.333 : undefined;
       if (fsPx && fsPx > 0) { s = Math.round(fsPx * 10) / 10; f.fontSize = s; }
       const fam = css['font-family'] ?? (tag === 'font' ? c.attrs.face : undefined);
-      if (fam) { const first = fam.split(',')[0].trim().replace(/^['"]|['"]$/g, ''); if (first && !/^(inherit|initial)$/i.test(first)) f.fontFamily = officeFont(first); }
+      if (fam) { const first = fam.split(',')[0].trim().replace(/^['"]|['"]$/g, ''); if (first && !/^(inherit|initial)$/i.test(first)) { const sp = splitWeightedFace(first); f.fontFamily = officeFont(sp.family); if (sp.weight !== undefined) Object.assign(f, weightPatch(sp.weight)); } }
       const col = cssColor(css.color ?? (tag === 'font' ? c.attrs.color : undefined));
       if (col) f.color = col;
       const w = css['font-weight'];
       if (tag === 'b' || tag === 'strong' || /^h\d$/.test(tag) || w === 'bold' || w === 'bolder' || (w && Number(w) >= 600)) f.bold = true;
       if (w === 'normal' || (w && Number(w) > 0 && Number(w) < 600)) f.bold = undefined;
+      // A numeric weight other than Regular / Bold is kept as the weight (Light 300 … Black 900).
+      const wn = Number(w);
+      if (w && wn >= 100 && wn <= 900 && wn !== 400 && wn !== 700) Object.assign(f, weightPatch(wn));
+      else if (w === 'normal' || w === 'bold' || tag === 'b' || tag === 'strong') f.weight = undefined;
       if (tag === 'i' || tag === 'em' || css['font-style'] === 'italic' || css['font-style'] === 'oblique') f.italic = true;
       if (css['font-style'] === 'normal') f.italic = undefined;
       const deco = `${css['text-decoration'] ?? ''} ${css['text-decoration-line'] ?? ''} ${css['text-underline'] ? 'underline' : ''}`;

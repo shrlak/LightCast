@@ -1,7 +1,8 @@
 // Enhanced Metafile (MS-EMF): a header, then (type, size) records. Records are played into a `Gdi`;
 // EMF+ comment records go to the EMF+ player. Records not understood are skipped.
 import { type Xf, Bytes } from './bytes';
-import { BS_HATCHED, BS_NULL, colorref, decode8, Gdi, MAX_POINTS, patternBrush, PS_NULL, type GdiBrush } from './gdi';
+import type { BlitOptions } from './gdi';
+import { BS_HATCHED, BS_NULL, colorref, decode8, Gdi, MAX_POINTS, patternBrush, PS_NULL, type GdiBrush, type Rect } from './gdi';
 import { Plus } from './emfplus';
 import { decodeDib } from './png';
 import type { Played } from './wmf';
@@ -118,6 +119,12 @@ function record(g: Gdi, type: number, r: Bytes): void {
       break;
     }
     case 30: { const [l, t, rr, bb] = rect(r, 8); g.intersectClipRect(l, t, rr, bb); break; }
+    case 29: { const [l, t, rr, bb] = rect(r, 8); g.excludeClipRect(l, t, rr, bb); break; }
+    case 79: g.setObject(r.u32(8), { k: 'region', rects: regionRects(r, 16, r.u32(12)) }); break; // EXTCREATEREGION: handle, byte count, RGNDATA
+    case 71: g.fillRegion(regionRects(r, 32, r.u32(24)), brushAt(g, r.u32(28))); break; // FILLRGN: bounds, bytes, brush, RGNDATA
+    case 72: g.frameRegion(regionRects(r, 40, r.u32(24)), brushAt(g, r.u32(28)), r.i32(32), r.i32(36)); break; // FRAMERGN: .., brush, stroke w/h, RGNDATA
+    case 73: g.invertRegion(regionRects(r, 28, r.u32(24))); break; // INVERTRGN
+    case 74: g.fillRegion(regionRects(r, 28, r.u32(24))); break; // PAINTRGN
     case 75: extSelectClip(g, r); break;
     case 67: g.clipPath(r.u32(8)); break;
     case 27: g.moveTo(...pt(r, 8)); break;
@@ -150,18 +157,22 @@ function record(g: Gdi, type: number, r: Bytes): void {
     case 76: case 77: { // BITBLT / STRETCHBLT: dest rect @24, rop @40, source x/y @44, bmi @84, bits @92, source size @100
       const dst: [number, number, number, number] = [r.i32(24), r.i32(28), r.i32(32), r.i32(36)];
       const rop = r.u32(40);
-      if (r.u32(96) === 0 || r.u32(88) === 0) { rasterOp(g, rop, dst); break; }
+      if (r.u32(96) === 0 || r.u32(88) === 0) { g.rop(rop, ...dst); break; }
       const src: [number, number, number, number] = [r.i32(44), r.i32(48), type === 77 ? r.i32(100) : dst[2], type === 77 ? r.i32(104) : dst[3]];
-      blit(g, r, dst, src, 84, 92);
+      blit(g, r, dst, src, 84, 92, { rop });
       break;
     }
-    case 114: case 115: { // ALPHABLEND / TRANSPARENTBLT: like STRETCHBLT with the blend function (colour) at 40
+    case 114: case 116: { // ALPHABLEND / TRANSPARENTBLT: like STRETCHBLT with the blend function (BlendOp, flags, constant alpha, format) or colour key at 40
       const dst: [number, number, number, number] = [r.i32(24), r.i32(28), r.i32(32), r.i32(36)];
-      blit(g, r, dst, [r.i32(44), r.i32(48), r.i32(100), r.i32(104)], 84, 92);
+      const v = r.u32(40);
+      const opt: BlitOptions = type === 114
+        ? { opacity: ((v >>> 16) & 255) / 255, alpha: ((v >>> 24) & 1) === 1 ? 'premultiplied' : 'opaque' }
+        : { key: v };
+      blit(g, r, dst, [r.i32(44), r.i32(48), r.i32(100), r.i32(104)], 84, 92, opt);
       break;
     }
     case 81: { // STRETCHDIBITS: dest x/y @24, source x/y/w/h @32, bmi @48, bits @56, rop @68, dest w/h @72
-      blit(g, r, [r.i32(24), r.i32(28), r.i32(72), r.i32(76)], [r.i32(32), r.i32(36), r.i32(40), r.i32(44)], 48, 56);
+      blit(g, r, [r.i32(24), r.i32(28), r.i32(72), r.i32(76)], [r.i32(32), r.i32(36), r.i32(40), r.i32(44)], 48, 56, { rop: r.u32(68) });
       break;
     }
     case 80: { // SETDIBITSTODEVICE: dest x/y @24, source x/y @32, size @40, bmi @48, bits @56, first scan line @68
@@ -173,18 +184,14 @@ function record(g: Gdi, type: number, r: Bytes): void {
   }
 }
 
-function rasterOp(g: Gdi, rop: number, [x, y, w, h]: [number, number, number, number]) {
-  if (rop === 0x00f00021) g.fillRect(x, y, w, h);
-  else if (rop === 0x00000042) g.fillRect(x, y, w, h, colorref(0));
-  else if (rop === 0x00ff0062) g.fillRect(x, y, w, h, colorref(0xffffff));
-}
+const brushAt = (g: Gdi, i: number): GdiBrush | undefined => { const o = g.objects[i]; return o?.k === 'brush' ? o.brush : undefined; };
 
 /** The bitmap whose BITMAPINFO offset/size pair is at `bmi` and bits pair at `bits`, stretched into `dst`. */
-function blit(g: Gdi, r: Bytes, dst: [number, number, number, number], src: [number, number, number, number], bmi: number, bits: number) {
+function blit(g: Gdi, r: Bytes, dst: [number, number, number, number], src: [number, number, number, number], bmi: number, bits: number, opt: BlitOptions = {}) {
   const bo = r.u32(bmi), bl = r.u32(bmi + 4), po = r.u32(bits), pl = r.u32(bits + 4);
   if (!pl || !bl) return;
   const dib = decodeDib(r.slice(bo, bl), r.slice(po, pl));
-  if (dib) g.bitmap(dib, src, dst);
+  if (dib) g.bitmap(dib, src, dst, opt);
 }
 
 /** Point count at 24, then the points at 28: 32-bit, or 16-bit when `wide` is false. */
@@ -212,14 +219,22 @@ function groups(r: Bytes, wide: boolean): [number, number][][] {
   return out;
 }
 
-/** EXTSELECTCLIPRGN: byte count @8, mode @12, RGNDATA @16 (32-byte header, then rectangles). */
+/** RGNDATA at `o` (`cb` bytes): a 32-byte header with the rectangle count at 8, then RECTL rectangles. */
+function regionRects(r: Bytes, o: number, cb: number): Rect[] {
+  const count = Math.min(r.u32(o + 8), 65536);
+  const rects: Rect[] = [];
+  for (let i = 0; i < count && r.has(o + 32 + i * 16, 16) && 32 + i * 16 + 16 <= cb; i++) {
+    const [l, t, rr, b] = rect(r, o + 32 + i * 16);
+    rects.push([Math.min(l, rr), Math.min(t, b), Math.max(l, rr), Math.max(t, b)]);
+  }
+  return rects;
+}
+
+/** EXTSELECTCLIPRGN: byte count @8, mode @12 (AND, OR, XOR, DIFF, COPY), RGNDATA @16. */
 function extSelectClip(g: Gdi, r: Bytes) {
   const cb = r.u32(8), mode = r.u32(12);
   if (cb === 0) { if (mode === 5) g.resetClip(); return; }
-  const count = Math.min(r.u32(16 + 8), 4096);
-  const rects: [number, number, number, number][] = [];
-  for (let i = 0; i < count && r.has(16 + 32 + i * 16, 16) && 32 + i * 16 + 16 <= cb; i++) rects.push(rect(r, 16 + 32 + i * 16));
-  g.clipRects(rects, mode);
+  g.clipRects(regionRects(r, 16, cb), mode);
 }
 
 const ETO_OPAQUE = 2, ETO_NO_RECT = 0x100, ETO_SMALL_CHARS = 0x200, ETO_GLYPH_INDEX = 0x10, ETO_PDY = 0x2000;
@@ -228,10 +243,16 @@ const ETO_OPAQUE = 2, ETO_NO_RECT = 0x100, ETO_SMALL_CHARS = 0x200, ETO_GLYPH_IN
 function extTextOut(g: Gdi, r: Bytes, wide: boolean) {
   const [x, y] = pt(r, 36);
   const n = Math.min(r.u32(44), 32768), off = r.u32(48), opts = r.u32(52);
-  if (!n || opts & ETO_GLYPH_INDEX) return;
+  if (!n) return;
   const noRect = (opts & ETO_NO_RECT) !== 0;
   const bounds = noRect ? null : rect(r, 56);
   const dxOff = r.u32(noRect ? 56 : 72);
+  if (opts & ETO_GLYPH_INDEX) {
+    const gdx: number[] = [];
+    if (dxOff) for (let i = 0; i < n && r.has(dxOff + i * (opts & ETO_PDY ? 8 : 4), 4); i++) gdx.push(r.i32(dxOff + i * (opts & ETO_PDY ? 8 : 4)));
+    g.glyphText(x, y, n, gdx.length === n ? gdx : null);
+    return;
+  }
   const str = wide ? r.utf16(off, n) : decode8(r.slice(off, n).u8, g.dc.font.charset);
   const step = opts & ETO_PDY ? 8 : 4;
   const dx: number[] = [];
@@ -242,7 +263,8 @@ function extTextOut(g: Gdi, r: Bytes, wide: boolean) {
 /** SMALLTEXTOUT: x, y @8, chars @16, options @20, then bounds (unless ETO_NO_RECT) and the characters. */
 function smallTextOut(g: Gdi, r: Bytes) {
   const x = r.i32(8), y = r.i32(12), n = Math.min(r.u32(16), 32768), opts = r.u32(20);
-  if (!n || opts & ETO_GLYPH_INDEX) return;
+  if (!n) return;
+  if (opts & ETO_GLYPH_INDEX) { g.glyphText(x, y, n, null); return; }
   const noRect = (opts & ETO_NO_RECT) !== 0;
   const off = noRect ? 36 : 52;
   const str = opts & ETO_SMALL_CHARS ? decode8(r.slice(off, n).u8, g.dc.font.charset) : r.utf16(off, n);
