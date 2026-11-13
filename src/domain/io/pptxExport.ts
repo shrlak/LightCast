@@ -411,6 +411,14 @@ export async function exportPptx(lib: Library, source: { playlist: Playlist } | 
   return { missingFonts: missing };
 }
 
+/** The same .pptx as exportPptx makes, as bytes instead of a download (for wrapping in PowerPoint password encryption). */
+export async function exportPptxBytes(lib: Library, source: { playlist: Playlist } | { presentation: Presentation }): Promise<Uint8Array> {
+  const pptx = await buildPptx(lib, source);
+  let blob = await pptx.write({ outputType: 'blob' }) as Blob;
+  if (embedFontsPref()) blob = (await embedUsedFonts(blob, 'playlist' in source ? lib.presentations : source.presentation)).blob;
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
 /** The deck as PowerPoint will get it (in playlist order when given). */
 export async function buildPptx(lib: Library, source: { playlist: Playlist } | { presentation: Presentation }): Promise<PptxGenJS> {
   const pptx = new PptxGenJS();
