@@ -1,7 +1,7 @@
 // Windows Metafile (MS-WMF): a placeable (or plain) header, then 16-bit-word records. Records are
 // played into a `Gdi`; those not understood are skipped.
 import { Bytes } from './bytes';
-import { BS_HATCHED, BS_SOLID, colorref, decode8, Gdi, MAX_POINTS, patternBrush } from './gdi';
+import { BS_HATCHED, BS_SOLID, colorref, decode8, Gdi, MAX_POINTS, patternBrush, type GdiBrush, type Rect } from './gdi';
 import { decodeDib } from './png';
 
 export interface Played {
@@ -126,6 +126,13 @@ function record(g: Gdi, fn: number, r: Bytes): void {
       break;
     }
     case 0x0416: g.intersectClipRect(s(3), s(2), s(1), s(0)); break;
+    case 0x0415: g.excludeClipRect(s(3), s(2), s(1), s(0)); break;
+    case 0x06ff: g.addObject({ k: 'region', rects: wmfRegion(r, 6) }); break; // CreateRegion
+    case 0x012c: { const o = g.objects[u(0)]; if (o?.k === 'region') g.clipRects(o.rects, 5); break; } // SelectClipRegion
+    case 0x0228: { const o = g.objects[u(0)], b = g.objects[u(1)]; if (o?.k === 'region') g.fillRegion(o.rects, brushOf(b)); break; } // FillRegion: region, brush
+    case 0x0429: { const o = g.objects[u(0)], b = g.objects[u(1)]; if (o?.k === 'region') g.frameRegion(o.rects, brushOf(b), s(3), s(2)); break; } // FrameRegion: region, brush, height, width
+    case 0x012b: { const o = g.objects[u(0)]; if (o?.k === 'region') g.fillRegion(o.rects); break; } // PaintRegion
+    case 0x012a: { const o = g.objects[u(0)]; if (o?.k === 'region') g.invertRegion(o.rects); break; } // InvertRegion
     case 0x0521: { // TextOut: length, string (word-aligned), y, x
       const n = Math.min(u(0), 32768), pad = n + (n & 1);
       const str = decode8(r.slice(8, n).u8, g.dc.font.charset);
@@ -147,14 +154,14 @@ function record(g: Gdi, fn: number, r: Bytes): void {
     }
     case 0x0f43: { // StretchDIBits: rop, usage, src h/w/y/x, dst h/w/y/x, DIB
       const dib = decodeDib(r.tail(28), r.tail(28), true);
-      if (dib) g.bitmap(dib, [r.i16(18), r.i16(16), r.i16(14), r.i16(12)], [r.i16(26), r.i16(24), r.i16(22), r.i16(20)]);
+      if (dib) g.bitmap(dib, [r.i16(18), r.i16(16), r.i16(14), r.i16(12)], [r.i16(26), r.i16(24), r.i16(22), r.i16(20)], { rop: r.u32(6) });
       break;
     }
     case 0x0b41: { // DibStretchBlt: rop, src h/w/y/x, dst h/w/y/x, DIB
       const rop = r.u32(6);
       if (r.length <= 26) { rasterOp(g, rop, r.i16(24), r.i16(22), r.i16(20), r.i16(18)); break; }
       const dib = decodeDib(r.tail(26), r.tail(26), true);
-      if (dib) g.bitmap(dib, [r.i16(16), r.i16(14), r.i16(12), r.i16(10)], [r.i16(24), r.i16(22), r.i16(20), r.i16(18)]);
+      if (dib) g.bitmap(dib, [r.i16(16), r.i16(14), r.i16(12), r.i16(10)], [r.i16(24), r.i16(22), r.i16(20), r.i16(18)], { rop });
       break;
     }
     case 0x0940: { // DibBitBlt: rop, ySrc, xSrc, height, width, yDst, xDst, DIB
@@ -162,7 +169,7 @@ function record(g: Gdi, fn: number, r: Bytes): void {
       if (r.length <= 24) { rasterOp(g, rop, r.i16(20), r.i16(18), r.i16(16), r.i16(14)); break; }
       const dib = decodeDib(r.tail(22), r.tail(22), true);
       const w = r.i16(16), h = r.i16(14);
-      if (dib) g.bitmap(dib, [r.i16(12), r.i16(10), w, h], [r.i16(20), r.i16(18), w, h]);
+      if (dib) g.bitmap(dib, [r.i16(12), r.i16(10), w, h], [r.i16(20), r.i16(18), w, h], { rop });
       break;
     }
     case 0x0d33: { // SetDIBitsToDevice
@@ -175,11 +182,30 @@ function record(g: Gdi, fn: number, r: Bytes): void {
   }
 }
 
-/** A raster operation with no source bitmap: PATCOPY fills with the brush, BLACKNESS / WHITENESS with a colour. */
-function rasterOp(g: Gdi, rop: number, x: number, y: number, w: number, h: number) {
-  if (rop === 0x00f00021) g.fillRect(x, y, w, h);
-  else if (rop === 0x00000042) g.fillRect(x, y, w, h, colorref(0));
-  else if (rop === 0x00ff0062) g.fillRect(x, y, w, h, colorref(0xffffff));
+const brushOf = (o: { k: string } | undefined): GdiBrush | undefined => (o && o.k === 'brush' ? (o as { k: 'brush'; brush: GdiBrush }).brush : undefined);
+
+/** A raster operation with no source bitmap (PATCOPY, BLACKNESS, WHITENESS, DSTINVERT, PATINVERT ...). */
+function rasterOp(g: Gdi, rop: number, x: number, y: number, w: number, h: number) { g.rop(rop, x, y, w, h); }
+
+/**
+ * A Region object (MS-WMF 2.2.1.5) at `o`: next, type, count, size, scan count, max scan, bounds, then
+ * scans of (count, top, bottom, left / right pairs, count). Returned as rectangles (left, top, right, bottom).
+ */
+function wmfRegion(r: Bytes, o: number): Rect[] {
+  const scans = Math.min(r.u16(o + 10), 8192);
+  let p = o + 22;
+  const rects: Rect[] = [];
+  for (let i = 0; i < scans && r.has(p, 8); i++) {
+    const count = r.u16(p), top = r.i16(p + 2), bottom = r.i16(p + 4);
+    // The count is the number of x values (two per pair); the closing word repeats it. Accept a pair count too.
+    const bytes = r.u16(p + 6 + count * 2) === count ? count * 2 : r.u16(p + 6 + count * 4) === count ? count * 4 : count * 2;
+    for (let k = 0; k + 3 < bytes && rects.length < 65536; k += 4) {
+      const l = r.i16(p + 6 + k), rr = r.i16(p + 8 + k);
+      if (rr > l && bottom > top) rects.push([l, top, rr, bottom]);
+    }
+    p += 6 + bytes + 2;
+  }
+  return rects;
 }
 
 /** `n` points as (x, y) 16-bit pairs at `off`. */

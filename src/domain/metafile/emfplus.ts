@@ -3,8 +3,9 @@
 // control back to the GDI records for a stretch.
 import { apply, compose, scaleOf, type Xf, Bytes } from './bytes';
 import { arcSegs } from './gdi';
-import { hex, num, Out, xmlText, type Color, type Fill, type PathData, type Stroke } from './out';
+import { hex, num, Out, xmlText, BIG, type Color, type Fill, type PathData, type Stroke } from './out';
 import { encodedImageUrl, pngDataUrl } from './png';
+import { textWidth } from './metrics';
 
 /** Renders a nested metafile image to an SVG data URL (set by index.ts, which owns the whole reader). */
 export let nestedRenderer: ((u8: Uint8Array) => { href: string; w: number; h: number } | null) | null = null;
@@ -23,12 +24,14 @@ type Op = { t: 'M' | 'L'; x: number; y: number } | { t: 'C'; p: [number, number,
 type BrushObj =
   | { k: 'solid'; c: Color }
   | { k: 'hatch'; style: number; fg: Color; bg: Color }
-  | { k: 'linear'; rect: [number, number, number, number]; stops: [number, Color][]; xf: Xf; repeat: boolean };
+  | { k: 'linear'; rect: [number, number, number, number]; stops: [number, Color][]; xf: Xf; repeat: boolean }
+  | { k: 'texture'; img: ImageObj; xf: Xf };
 interface PenObj { width: number; unit: number; brush: BrushObj; dash: number; cap: number; join: number; miter: number; dashes?: number[] }
 interface ImageObj { href: string; w: number; h: number }
 interface FontObj { em: number; unit: number; style: number; family: string }
 interface FormatObj { align: number; lineAlign: number }
-type PlusObj = { k: 'brush'; v: BrushObj } | { k: 'pen'; v: PenObj } | { k: 'path'; v: Op[] } | { k: 'image'; v: ImageObj } | { k: 'font'; v: FontObj } | { k: 'format'; v: FormatObj };
+type R4 = [number, number, number, number];
+type PlusObj = { k: 'region'; v: R4[] } | { k: 'brush'; v: BrushObj } | { k: 'pen'; v: PenObj } | { k: 'path'; v: Op[] } | { k: 'image'; v: ImageObj } | { k: 'font'; v: FontObj } | { k: 'format'; v: FormatObj };
 
 let nesting = 0;
 
@@ -41,7 +44,9 @@ export class Plus {
   private scale = 1;
   private objects: (PlusObj | undefined)[] = new Array(MAX_OBJECTS).fill(undefined);
   private objectBytes = 0;
-  private stack: { id: number; world: Xf; unit: number; scale: number; clip: number }[] = [];
+  /** Container mapping (BeginContainer's source to destination rectangles), applied after the world transform. */
+  private base: Xf = [1, 0, 0, 1, 0, 0];
+  private stack: { id: number; world: Xf; base: Xf; unit: number; scale: number; clip: number }[] = [];
   private partial: { id: number; kind: number; total: number; data: number[] } | null = null;
 
   constructor(private out: Out, private frame: [number, number, number, number] | null) {}
@@ -72,7 +77,7 @@ export class Plus {
       default: return 1;
     }
   }
-  private xf(): Xf { const k = this.unitFactor(this.unit) * this.scale; return compose([k, 0, 0, k, 0, 0], this.world); }
+  private xf(): Xf { const k = this.unitFactor(this.unit) * this.scale; return compose([k, 0, 0, k, 0, 0], compose(this.base, this.world)); }
   private clipBase() { return this.stack.length ? this.stack[this.stack.length - 1].clip : 0; }
 
   private record(type: number, flags: number, r: Bytes): void {
@@ -121,8 +126,19 @@ export class Plus {
       case 0x401b: this.drawImagePoints(id, r, compressed); break;
       case 0x401c: this.drawString(flags, r); break;
       case 0x4036: this.drawDriverString(flags, r); break;
-      case 0x4025: case 0x4028: case 0x4027: // Save, BeginContainerNoParams, BeginContainer (the container's own mapping is not applied)
-        if (this.stack.length < MAX_STACK) this.stack.push({ id: r.u32(type === 0x4027 ? 32 : 0), world: this.world, unit: this.unit, scale: this.scale, clip: this.out.clipDepth });
+      case 0x4025: case 0x4028: case 0x4027: // Save, BeginContainerNoParams, BeginContainer
+        if (this.stack.length < MAX_STACK) {
+          this.stack.push({ id: r.u32(type === 0x4027 ? 32 : 0), world: this.world, base: this.base, unit: this.unit, scale: this.scale, clip: this.out.clipDepth });
+          if (type === 0x4027) {
+            // The source rectangle (in the unit named by the flags) is mapped onto the destination rectangle (in the current units); the container starts with an identity world transform.
+            const [dx, dy, dw, dh, sx, sy, sw, sh] = [r.f32(0), r.f32(4), r.f32(8), r.f32(12), r.f32(16), r.f32(20), r.f32(24), r.f32(28)];
+            if (sw && sh && dw && dh) {
+              const kx = dw / sw, ky = dh / sh;
+              this.base = compose(compose(this.base, this.world), [kx, 0, 0, ky, dx - sx * kx, dy - sy * ky]);
+              this.world = [1, 0, 0, 1, 0, 0];
+            }
+          }
+        }
         break;
       case 0x4026: case 0x4029: { // Restore, EndContainer
         const want = r.u32(0);
@@ -130,7 +146,7 @@ export class Plus {
         if (i < 0) break;
         const s = this.stack[i];
         this.stack.length = i;
-        this.world = s.world; this.unit = s.unit; this.scale = s.scale;
+        this.world = s.world; this.base = s.base; this.unit = s.unit; this.scale = s.scale;
         this.out.popClipsTo(s.clip);
         break;
       }
@@ -144,16 +160,32 @@ export class Plus {
       case 0x4031: this.out.popClipsTo(this.clipBase()); break;
       case 0x4032: this.clip(rectOps(rects(r, 0, 1, compressed)[0]), (flags >> 8) & 0xf); break;
       case 0x4033: { const p = this.path(id); if (p) this.clip(p, (flags >> 8) & 0xf); break; }
+      case 0x4034: { const o = this.objects[id]; if (o?.k === 'region') this.clip(o.v.flatMap(rectOps), (flags >> 8) & 0xf, o.v.length === 0); break; } // SetClipRegion
+      case 0x4013: { // FillRegion: brush (or colour), region in the flags
+        const o = this.objects[id];
+        if (o?.k === 'region') { const fill = this.fillOf(flags, r.u32(0)); for (const rc of o.v) this.shape(rectOps(rc), fill, null); }
+        break;
+      }
       default: break; // rendering hints, regions, effects, terminal-server records: not drawn
     }
   }
 
   private mult(m: Xf, flags: number) { this.world = flags & 0x2000 ? compose(m, this.world) : compose(this.world, m); }
 
-  private clip(ops: Op[], mode: number) {
-    if (mode !== 0 && mode !== 1) return;
-    if (mode === 0) this.out.popClipsTo(this.clipBase());
-    this.out.pushClip(this.toPath(ops, this.xf()));
+  /** CombineMode: 0 replace, 1 intersect, 2 union, 3 xor, 4 exclude (clip minus shape), 5 complement (shape minus clip; approximated by replace under an open clip). */
+  private clip(ops: Op[], mode: number, empty = false) {
+    if (mode > 5) return;
+    const base = this.clipBase(), open = this.out.clipDepth > base;
+    if (empty) { // an empty region: replace / intersect leave nothing visible, exclude and union change nothing
+      if (mode === 0 || mode === 1 || mode === 5) { if (mode !== 1) this.out.popClipsTo(base); this.out.pushClip(this.out.rawPath('M0 0')); }
+      return;
+    }
+    const pd = this.toPath(ops, this.xf());
+    if (mode === 0 || (mode === 5 && open)) { this.out.popClipsTo(base); this.out.pushClip(pd, true); }
+    else if (mode === 1 || mode === 5) this.out.pushClip(pd, true);
+    else if (mode === 4) this.out.pushClip(this.out.rawPath(BIG + pd.d), true);
+    else if (open) this.out.combineTopClip(pd, mode === 3);
+    else if (mode === 3) this.out.pushClip(this.out.rawPath(BIG + pd.d), true);
   }
 
   private clear(c: number) {
@@ -208,6 +240,7 @@ export class Plus {
     if (!b) return null;
     if (b.k === 'solid') return { color: b.c };
     if (b.k === 'hatch') return { ref: this.out.hatch(b.style, b.fg, b.bg) };
+    if (b.k === 'texture') return { ref: this.out.imagePattern(b.img.href, b.img.w, b.img.h, compose(m, b.xf)) };
     const [x, y, w] = b.rect;
     return { ref: this.out.linearGradient(x, y, x + w, y, b.stops, compose(m, b.xf), !b.repeat) };
   }
@@ -215,7 +248,7 @@ export class Plus {
   private strokeFor(p: PenObj | null, m: Xf): Stroke | null {
     if (!p) return null;
     const b = p.brush;
-    const color = b.k === 'solid' ? b.c : b.k === 'hatch' ? b.fg : b.stops[0]?.[1] ?? { rgb: '#000000', a: 1 };
+    const color = this.colorOf(b);
     const width = p.unit <= 1 ? p.width * scaleOf(m) : p.width * this.unitFactor(p.unit);
     const w = Math.max(width, 1);
     const unit = Math.max(width, 1);
@@ -279,7 +312,7 @@ export class Plus {
     const attrs = `font-family="${xmlText(`'${font.family.replace(/['"\\<>&]/g, '')}', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Segoe UI', Arial, sans-serif`)}" font-size="${num(size)}"${font.style & 1 ? ' font-weight="bold"' : ''}${font.style & 2 ? ' font-style="italic"' : ''}${font.style & 4 ? ' text-decoration="underline"' : font.style & 8 ? ' text-decoration="line-through"' : ''}`;
     return { size, attrs };
   }
-  private colorOf(b: BrushObj | null): Color { return !b ? { rgb: '#000000', a: 1 } : b.k === 'solid' ? b.c : b.k === 'hatch' ? b.fg : b.stops[0]?.[1] ?? { rgb: '#000000', a: 1 }; }
+  private colorOf(b: BrushObj | null): Color { return !b ? { rgb: '#000000', a: 1 } : b.k === 'solid' ? b.c : b.k === 'hatch' ? b.fg : b.k === 'texture' ? { rgb: '#808080', a: 1 } : b.stops[0]?.[1] ?? { rgb: '#000000', a: 1 }; }
 
   /** DrawString: brush, format, length, layout rectangle, UTF-16 text; the font object is in the flags. */
   private drawString(flags: number, r: Bytes) {
@@ -305,7 +338,9 @@ export class Plus {
     lines.forEach((line, i) => {
       if (!line) return;
       const [px, py] = apply(m, ax, top + i * lineH + em * 0.9);
-      this.out.grow(px, py - size); this.out.grow(px + line.length * size * 0.5, py + size * 0.3);
+      const lw = textWidth(line, o.v.family, size, (o.v.style & 1) !== 0, (o.v.style & 2) !== 0);
+      const lx = anchor === 'middle' ? -lw / 2 : anchor === 'end' ? -lw : 0;
+      this.out.grow(px + lx, py - size); this.out.grow(px + lx + lw, py + size * 0.3);
       this.out.element(`<text xml:space="preserve" transform="translate(${num(px)} ${num(py)})${rot ? ` rotate(${num(rot)})` : ''}" ${attrs}${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(line)}</text>`);
     });
   }
@@ -315,10 +350,11 @@ export class Plus {
     const o = this.objects[flags & 0xff];
     if (o?.k !== 'font') return;
     const opts = r.u32(4), n = Math.min(r.u32(12), MAX_CHARS);
-    if (!(opts & 1) || !n) return;
-    const str = r.utf16(16, n);
+    if (!n) return;
+    const glyphs = !(opts & 1); // glyph indices cannot be mapped to characters without the font
+    const str = glyphs ? '' : r.utf16(16, n);
     const realized = (opts & 4) !== 0;
-    const pos = 16 + n * 2;
+    const pos = 16 + Math.ceil((n * 2) / 4) * 4;
     const m = this.xf();
     const { size, attrs } = this.textStyle(o.v, m);
     const c = this.colorOf(this.fillOf(flags, r.u32(0)));
@@ -326,6 +362,16 @@ export class Plus {
     const count = realized ? 1 : n;
     for (let i = 0; i < count && r.has(pos + i * 8, 8); i++) { const [px, py] = apply(m, r.f32(pos + i * 8), r.f32(pos + i * 8 + 4)); xs.push(px); ys.push(py); }
     if (!xs.length) return;
+    if (glyphs) { // a pale box per glyph where it would stand
+      const pd = this.out.path();
+      const w = size * 0.55;
+      for (let i = 0; i < n; i++) {
+        const x = realized ? xs[0] + i * w : xs[Math.min(i, xs.length - 1)], y = realized ? ys[0] : ys[Math.min(i, ys.length - 1)];
+        pd.m(x + w * 0.1, y - size * 0.75).l(x + w * 0.9, y - size * 0.75).l(x + w * 0.9, y).l(x + w * 0.1, y).z();
+      }
+      this.out.drawPath(pd, { color: { rgb: c.rgb, a: Math.min(c.a, 0.3) } }, null);
+      return;
+    }
     xs.forEach((x, i) => this.out.grow(x, ys[i] - size));
     this.out.grow(xs[xs.length - 1] + size, ys[ys.length - 1] + size * 0.3);
     this.out.element(`<text xml:space="preserve" x="${xs.map(num).join(' ')}" y="${ys.map(num).join(' ')}" ${attrs} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(str)}</text>`);
@@ -408,6 +454,7 @@ function parseObject(kind: number, r: Bytes): PlusObj | null {
     case 1: { const v = parseBrush(r); return v ? { k: 'brush', v } : null; }
     case 2: { const v = parsePen(r); return v ? { k: 'pen', v } : null; }
     case 3: { const v = parsePath(r); return v ? { k: 'path', v } : null; }
+    case 4: { const v = parseRegion(r); return v ? { k: 'region', v } : null; }
     case 5: { const v = parseImage(r); return v ? { k: 'image', v } : null; }
     case 6: {
       const n = Math.min(r.u32(20), 256);
@@ -442,7 +489,73 @@ function parseBrush(r: Bytes): BrushObj | null {
     }
     return { k: 'linear', rect, stops, xf, repeat: wrap === 0 };
   }
-  return null; // texture brushes are not drawn
+  if (type === 2) { // texture brush: flags, wrap mode, optional transform, then the image object
+    const bf = r.u32(8);
+    let o = 16;
+    let xf: Xf = [1, 0, 0, 1, 0, 0];
+    if (bf & 0x2) { xf = [r.f32(o), r.f32(o + 4), r.f32(o + 8), r.f32(o + 12), r.f32(o + 16), r.f32(o + 20)]; o += 24; }
+    const img = parseImage(r.tail(o));
+    return img ? { k: 'texture', img, xf } : null;
+  }
+  return null;
+}
+
+/** A region object: version, node count, then the node tree in pre-order. Rectangles, infinite and empty nodes and the combine operators are exact; a path node is approximated by its bounding box. */
+function parseRegion(r: Bytes): R4[] | null {
+  const INF: R4 = [-1e6, -1e6, 2e6, 2e6];
+  let o = 8, guard = 0;
+  const node = (depth: number): R4[] | null => {
+    if (guard++ > 4096 || depth > 32 || !r.has(o, 4)) return null;
+    const type = r.u32(o); o += 4;
+    if (type === 0x10000000) { const v: R4 = [r.f32(o), r.f32(o + 4), r.f32(o + 8), r.f32(o + 12)]; o += 16; return v[2] > 0 && v[3] > 0 ? [v] : []; }
+    if (type === 0x10000002) return [];
+    if (type === 0x10000003) return [INF];
+    if (type === 0x10000001) {
+      const size = r.u32(o); o += 4;
+      const ops = parsePath(r.slice(o, size));
+      o += size;
+      if (!ops) return [];
+      let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const p of ops) {
+        const pts = p.t === 'C' ? [[p.p[0], p.p[1]], [p.p[2], p.p[3]], [p.p[4], p.p[5]]] : p.t === 'Z' ? [] : [[p.x, p.y]];
+        for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+      }
+      return x1 > x0 && y1 > y0 ? [[x0, y0, x1 - x0, y1 - y0]] : [];
+    }
+    if (type >= 1 && type <= 5) {
+      const a = node(depth + 1), b = a && node(depth + 1);
+      if (!a || !b) return null;
+      return combineRects(a, b, type);
+    }
+    return null;
+  };
+  const out = node(0);
+  return out && out.length <= 20000 ? out : null;
+}
+
+/** A minus B for rectangles (x, y, w, h): the pieces of A not covered by B. */
+function subtractRect(a: R4, b: R4): R4[] {
+  const [ax, ay, aw, ah] = a, [bx, by, bw, bh] = b;
+  const ix0 = Math.max(ax, bx), iy0 = Math.max(ay, by), ix1 = Math.min(ax + aw, bx + bw), iy1 = Math.min(ay + ah, by + bh);
+  if (ix0 >= ix1 || iy0 >= iy1) return [a];
+  const out: R4[] = [];
+  if (iy0 > ay) out.push([ax, ay, aw, iy0 - ay]);
+  if (iy1 < ay + ah) out.push([ax, iy1, aw, ay + ah - iy1]);
+  if (ix0 > ax) out.push([ax, iy0, ix0 - ax, iy1 - iy0]);
+  if (ix1 < ax + aw) out.push([ix1, iy0, ax + aw - ix1, iy1 - iy0]);
+  return out;
+}
+const subtract = (as: R4[], bs: R4[]): R4[] => bs.reduce((acc, b) => acc.flatMap((a) => subtractRect(a, b)), as);
+/** Region combination on rectangle lists: 1 and, 2 or, 3 xor, 4 exclude (a minus b), 5 complement (b minus a). */
+export function combineRects(a: R4[], b: R4[], mode: number): R4[] {
+  switch (mode) {
+    case 1: return a.flatMap((p) => subtract([p], subtract([p], b)));
+    case 2: return [...a, ...subtract(b, a)];
+    case 3: return [...subtract(a, b), ...subtract(b, a)];
+    case 4: return subtract(a, b);
+    case 5: return subtract(b, a);
+    default: return a;
+  }
 }
 
 /** A pen: version, type, flags, unit, width, then the optional parts the flags name, then its brush. */
@@ -475,10 +588,25 @@ function parsePen(r: Bytes): PenObj | null {
 /** A path: version, point count, flags (0x4000 compressed 16-bit points), the points, one type byte per point. */
 function parsePath(r: Bytes): Op[] | null {
   const n = r.u32(4), fl = r.u32(8);
-  if (n > MAX_POINTS || fl & 0x800) return null; // relative points are not read
+  if (n > MAX_POINTS) return null;
   const compressed = (fl & 0x4000) !== 0;
-  const pts = points(r, 12, n, compressed);
-  const tOff = 12 + n * (compressed ? 4 : 8);
+  let pts: P2[], tOff: number;
+  if (fl & 0x800) {
+    // Relative coordinates: each value is a 1-byte (7-bit) or 2-byte (15-bit, big-endian) signed integer, added to the previous point.
+    pts = [];
+    let o = 12, x = 0, y = 0;
+    const int = (): number => {
+      const b0 = r.u8At(o++);
+      if (!(b0 & 0x80)) return b0 & 0x40 ? (b0 & 0x7f) - 0x80 : b0 & 0x7f;
+      const v = ((b0 & 0x7f) << 8) | r.u8At(o++);
+      return v & 0x4000 ? v - 0x8000 : v;
+    };
+    for (let i = 0; i < n && o < r.length; i++) { x += int(); y += int(); pts.push([x, y]); }
+    tOff = o;
+  } else {
+    pts = points(r, 12, n, compressed);
+    tOff = 12 + n * (compressed ? 4 : 8);
+  }
   const ops: Op[] = [];
   for (let i = 0; i < pts.length; i++) {
     const t = r.u8At(tOff + i);
