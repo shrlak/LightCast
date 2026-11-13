@@ -197,7 +197,27 @@ export function duplicateSelection(els: Elements, sel: string[], offset: [number
   const ids = expandSelection(els, sel);
   const sources = els.filter((e) => ids.includes(e.id));
   const copies = cloneElements(sources, offset);
-  return { elements: [...els, ...copies], ids: copies.map((c) => c.id), pairs: sources.map((e, i) => [e.id, copies[i].id]) };
+  // A member copied on its own (its group entered) stays in its group, as in DeckCraft's edit.duplicate;
+  // a group copied whole keeps the copies grouped among themselves.
+  const inCopy = new Set(ids);
+  const whole = (gid: string) => els.every((e) => e.groupId !== gid || inCopy.has(e.id));
+  const into = new Map<string, SlideElement[]>();
+  const loose: SlideElement[] = [];
+  sources.forEach((src, i) => {
+    if (src.groupId && !whole(src.groupId)) {
+      const c = { ...copies[i], groupId: src.groupId };
+      copies[i] = c;
+      into.set(src.groupId, [...(into.get(src.groupId) ?? []), c]);
+    } else loose.push(copies[i]);
+  });
+  // Copies kept in a group go right after the group's last member, so the group stays together in the stacking order.
+  const out: Elements = [];
+  els.forEach((e, i) => {
+    out.push(e);
+    const gid = e.groupId;
+    if (gid && into.has(gid) && !els.slice(i + 1).some((x) => x.groupId === gid)) out.push(...into.get(gid)!);
+  });
+  return { elements: [...out, ...loose], ids: copies.map((c) => c.id), pairs: sources.map((e, i) => [e.id, copies[i].id]) };
 }
 
 /** The look Format Painter (서식 복사) carries from one object to another (see formatPainter). */
@@ -317,7 +337,8 @@ export function mergeSelection(els: Elements, sel: string[], mode: MergeMode): {
   const at = els.findIndex((e) => e.id === first.id);
   const rest = els.filter((e) => !picked.includes(e));
   const insertAt = Math.min(at, rest.length);
-  return { elements: [...rest.slice(0, insertAt), ...made, ...rest.slice(insertAt)], ids: made.map((m) => m.id) };
+  // A group left with one member is no group (merged members leave theirs).
+  return { elements: dropLoneGroups([...rest.slice(0, insertAt), ...made, ...rest.slice(insertAt)]), ids: made.map((m) => m.id) };
 }
 
 /** A freeform (clicked / dragged points, canvas pixels) as a shape: closed and filled, or an open line. */
