@@ -48,7 +48,7 @@ export async function adjustPicture(el: SlideElement, patch: Partial<PictureAdju
   const original = el.picture?.original ?? el.mediaId;
   if (patch === null) return { mediaId: original, picture: undefined };
   const adjust: PictureAdjust = { ...(el.picture ?? { original }), ...patch, original };
-  const px = await pixels(original);
+  const px = await pixels(adjust.cutout ?? original);
   if (!px) return null;
   const out = processPicture(px.data.data, px.w, px.h, stepsOf(adjust, extra), scheme);
   if (!out) return null;
@@ -127,4 +127,26 @@ export async function compressElement(el: SlideElement, ppi: number, deleteCropp
   if (!el.picture) return { patch: base, before: blob.size, after: out.size };
   const remade = await adjustPicture({ ...el, ...base, picture: { ...el.picture, original: id } }, {}, dispatch, scheme);
   return { patch: { ...base, ...(remade ?? { picture: { ...el.picture, original: id } }) }, before: blob.size, after: out.size };
+}
+
+/** The picture's own pixels (the original, so marks always start from it), for the marking tool. */
+export async function originalPixels(el: SlideElement): Promise<{ data: Uint8ClampedArray; w: number; h: number } | null> {
+  const id = el.picture?.original ?? el.mediaId;
+  const px = id ? await pixels(id) : null;
+  return px ? { data: px.data.data, w: px.w, h: px.h } : null;
+}
+
+/**
+ * Keep a cut-out made with the marking tool as the shown picture (a PNG with transparency). The
+ * original stays, so Reset Picture brings it back; later adjustments start from the cut-out.
+ */
+export async function storeCutout(el: SlideElement, rgba: Uint8ClampedArray, w: number, h: number, dispatch: Dispatch<Action>): Promise<Partial<SlideElement> | null> {
+  if (el.kind !== 'image' || !el.mediaId) return null;
+  const png = await toPng(rgba, w, h);
+  if (!png) return null;
+  const original = el.picture?.original ?? el.mediaId;
+  const id = uid('m');
+  await putMedia(id, png);
+  dispatch({ type: 'media/add', media: { id, name: '배경을 제거한 그림.png', type: 'image', backgroundHidden: true } });
+  return { mediaId: id, picture: { ...(el.picture ?? {}), original, cutout: id, removeBackground: undefined } };
 }

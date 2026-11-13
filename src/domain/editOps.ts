@@ -8,6 +8,7 @@ import { uid } from './lyrics';
 import { DUPLICATE_OFFSET, freeformPath, movableIds } from './shapeOps';
 import { copyFormat, paintElements, type CopiedStyle } from './formatPainter';
 import { sampleChart } from './chartTypes';
+import { recognizeStroke, type RecognizedInk } from './inkShapes';
 import {
   connectShapes, mergeShapes, type MergeMode, type PathShape,
   alignBoxes, boundsOf, distributeBoxes, flipBoxes, newTable, orderIds, recognizeInk, rotateBoxes, shapeCatalog, smoothInk,
@@ -257,16 +258,21 @@ export function makeInk(points: [number, number][], color: string, width: number
 
 /** 잉크를 셰이프로: a recognised stroke becomes the shape it draws; anything else stays ink. */
 export function inkToShape(points: [number, number][], color: string, width: number): SlideElement | null {
-  const r = recognizeInk(points);
+  const r = recognizeStroke(points) ?? engineRecognize(points);
   if (!r) return null;
   const look = { stroke: color, strokeWidth: width, fill: 'transparent' };
-  if (r.kind === 'line') {
-    const x = Math.min(r.x0, r.x1), y = Math.min(r.y0, r.y1), w = Math.abs(r.x1 - r.x0), h = Math.abs(r.y1 - r.y0);
-    const rising = (r.x1 - r.x0) * (r.y1 - r.y0) < 0;
-    return { id: uid('el'), kind: 'shape', shape: 'line', x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h), ...look, flipV: rising ? true : undefined };
+  if (r.kind === 'line' || r.kind === 'arrow') {
+    const el: SlideElement = { id: uid('el'), kind: 'shape', shape: r.kind === 'arrow' ? 'straightConnector1' : 'line', ...lineBox(r.x0, r.y0, r.x1, r.y1), ...look };
+    return r.kind === 'arrow' ? { ...el, arrowEnd: true, name: '화살표' } : el;
   }
+  if (r.kind === 'polygon') return makeFreeform(r.points, true, { ...look, name: '다각형' });
   const shape = r.kind === 'rect' ? 'rect' : r.kind === 'ellipse' ? 'ellipse' : 'triangle';
   return { id: uid('el'), kind: 'shape', shape, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.w), h: Math.round(r.h), ...look, flipV: r.kind === 'triangle' && r.flipV ? true : undefined };
+}
+
+/** The engine's own recogniser, used when ours finds nothing. */
+function engineRecognize(points: [number, number][]): RecognizedInk | null {
+  try { return recognizeInk(points); } catch { return null; }
 }
 
 // ── Animations ────────────────────────────────────────────────────────────────────────────────
