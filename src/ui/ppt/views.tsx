@@ -375,7 +375,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <>
             <h1>열기</h1>
             <div className="bs-cards">
-              <Card icon="📊" title="PowerPoint · OpenDocument · PDF · 그림" text=".pptx .ppt .odp .pdf 이미지" onClick={() => run(() => cmd.pickFiles('slides', ACCEPT.slides))} />
+              <Card icon="📊" title="PowerPoint · OpenDocument · PDF · 그림" text=".pptx .ppt .ppsx .pptm .potx .odp .pdf 이미지" onClick={() => run(() => cmd.pickFiles('slides', ACCEPT.slides))} />
               <NativeOpenCard ed={ed} onOpened={onClose} />
               <Card icon="🎵" title="찬양 파일" text="텍스트 · ChordPro · OpenLyrics · OpenSong" onClick={() => run(() => cmd.pickFiles('lyrics', ACCEPT.lyrics))} />
               <Card icon="🗂" title="백업 복원" text=".zip 백업에서" onClick={() => run(() => cmd.pickFiles('backup', ACCEPT.backup))} />

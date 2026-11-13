@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import type { Presentation, Slide } from '../../domain/types';
 import { accept, acceptAll, compare, type Revision } from '../../domain/compare';
 import { importPptx } from '../../domain/io/pptxImport';
+import { importPpt } from '../../domain/io/pptImport';
+import { LEGACY_POWERPOINT_FILE } from '../importFiles';
 import { addToDictionary, changeWord, dictionaryReady, ensureDictionary, ignoreKey, isMisspelled, misspellings, suggestionsFor, userDictionary, type SpellWord } from '../../domain/spelling';
 import { thesaurus } from '../../engine';
 import { Check, Dialog, Field } from './dialogs';
@@ -133,7 +135,7 @@ export function endCompare(ed: Ed) {
   if (ed.pane === 'revisions') ed.setPane(null);
 }
 
-/** Review › Compare: choose the other version (a presentation in the library, or a .pptx file). */
+/** Review › Compare: choose the other version (a presentation in the library, or a .pptx / .ppt file). */
 export function CompareDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const others = ed.state.library.presentations.filter((x) => x.id !== ed.p?.id);
   const [pick, setPick] = useState(others[0]?.id ?? '');
@@ -141,7 +143,10 @@ export function CompareDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) 
   const start = (other: Presentation) => { setCompare({ target: other, rejected: new Set() }); ed.setPane('revisions'); onClose(); };
   const fromFile = async (f: File | undefined) => {
     if (!f || !ed.p) return;
-    const imported = await importPptx(f).catch(() => []);
+    // .pptx (and its variants) through the PPTX reader; legacy .ppt through the native binary reader.
+    const imported = LEGACY_POWERPOINT_FILE.test(f.name)
+      ? (await importPpt(new Uint8Array(await f.arrayBuffer()), f.name, { group: 'Slide', newId: (k) => `${k}-cmp`, store: async () => '' }).catch(() => ({ slides: [] }))).slides.map((s) => ({ title: s.title ?? '', text: s.text ?? '', notes: s.notes ?? '' }))
+      : await importPptx(f).catch(() => []);
     if (!imported.length) return ed.cmd.notify('이 파일에서 슬라이드를 읽지 못했습니다');
     // A file brings text only: compared slide by slide by position (title, body, notes).
     start({ ...ed.p, id: '__file', title: f.name, slides: imported.map((s, i) => ({ ...(ed.p!.slides[i] ?? { id: `file-${i}`, group: 'Slide' }), id: ed.p!.slides[i]?.id ?? `file-${i}`, title: s.title, text: s.text, notes: s.notes })) as Slide[] });
@@ -149,8 +154,8 @@ export function CompareDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) 
   return (
     <Dialog title="비교 — 이 프레젠테이션과 비교할 파일" onClose={onClose} onOk={() => { const o = others.find((x) => x.id === pick); if (o) start(o); }} okLabel="비교" okDisabled={!pick}>
       <Field label="라이브러리의 프레젠테이션"><select value={pick} onChange={(e) => setPick(e.target.value)}>{others.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select></Field>
-      <div className="dlg-row"><button type="button" onClick={() => file.current?.click()}>PowerPoint 파일(.pptx)에서…</button><span className="dlg-note">파일은 텍스트(제목 · 본문 · 노트)를 비교합니다.</span></div>
-      <input ref={file} type="file" accept=".pptx" hidden onChange={(e) => { void fromFile(e.target.files?.[0]); e.target.value = ''; }} />
+      <div className="dlg-row"><button type="button" onClick={() => file.current?.click()}>PowerPoint 파일(.pptx · .ppt)에서…</button><span className="dlg-note">파일은 텍스트(제목 · 본문 · 노트)를 비교합니다.</span></div>
+      <input ref={file} type="file" accept=".pptx,.pptm,.ppsx,.potx,.ppt,.pps" hidden onChange={(e) => { void fromFile(e.target.files?.[0]); e.target.value = ''; }} />
     </Dialog>
   );
 }

@@ -8,6 +8,11 @@ import { renderPdf } from '../domain/io/pdf';
 import { desktop } from '../domain/desktop';
 import { pptxSlides } from '../domain/templates/serviceTemplates';
 
+/** PowerPoint files LightCast opens as editable slides: .pptx / .ppt, plus show, macro and template variants (macros are never run). */
+export const POWERPOINT_FILE = /\.(pptx|pptm|ppsx|ppsm|potx|potm|ppt|pps|pot)$/i;
+/** Legacy binary PowerPoint (97–2003): .ppt, .pps, .pot. */
+export const LEGACY_POWERPOINT_FILE = /\.(ppt|pps|pot)$/i;
+
 async function storeImage(blob: Blob, name: string, addMedia: (m: MediaMeta) => void): Promise<string> {
   const id = uid('m');
   await putMedia(id, blob);
@@ -27,8 +32,8 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
   const slides: Slide[] = [];
   for (const file of files) {
     const base = file.name.replace(/\.[^.]+$/, '');
-    if (/\.pptx?$/i.test(file.name)) {
-      const format = /\.ppt$/i.test(file.name) ? 'ppt' : 'pptx';
+    if (POWERPOINT_FILE.test(file.name)) {
+      const format = LEGACY_POWERPOINT_FILE.test(file.name) ? 'ppt' : 'pptx';
       const addPptMedia = (m: MediaMeta) => addMedia({ ...m, backgroundHidden: true });
       onProgress?.(`편집 가능한 슬라이드 읽는 중: ${file.name}…`);
       let data = await file.arrayBuffer();
