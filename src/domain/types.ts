@@ -225,6 +225,8 @@ export interface MediaPlayback {
 /** Picture Format adjustments; the shown picture is made from `original` by the engine. */
 export interface PictureAdjust {
   original: string;
+  /** 배경 제거 with marks: the media id of the cut-out picture the other adjustments start from. */
+  cutout?: string;
   removeBackground?: number;
   transparentColor?: string;
   brightness?: number;

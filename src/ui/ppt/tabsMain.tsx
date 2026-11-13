@@ -589,7 +589,7 @@ export function DrawTab({ ed }: { ed: Ed }) {
         <DropButton icon={<span className="pen-width" />} label={`두께 ${pen ? pen.width / 2 : 3} pt`} disabled={!pen} render={(close) => <>{[2, 4, 6, 10, 16, 24, 36].map((w) => <MenuItem key={w} label={<span className="line-sample" style={{ borderTopWidth: Math.max(1, w / 3) }}>{w / 2} pt</span>} on={pen?.width === w} onClick={() => { if (pen) ed.setTool({ ...pen, width: w }); close(); }} />)}</>} />
       </Group>
       <Group label="변환">
-        <Big icon={RI.inkShape} label="잉크를 셰이프로" title="켜면 손으로 그린 선·사각형·원·삼각형이 반듯한 도형으로 바뀝니다" active={toShape} onClick={() => { const v = !toShape; setToShape(v); if (pen && !pen.highlighter) ed.setTool({ ...pen, toShape: v }); }} />
+        <Big icon={RI.inkShape} label="잉크를 셰이프로" title="켜면 손으로 그린 선·화살표·사각형·원·삼각형·다각형이 반듯한 도형으로 바뀝니다" active={toShape} onClick={() => { const v = !toShape; setToShape(v); if (pen && !pen.highlighter) ed.setTool({ ...pen, toShape: v }); }} />
       </Group>
       <Group label="잉크">
         <Big icon={RI.deleteIcon} label="모든 잉크 지우기" disabled={!ed.elements.some((e) => e.kind === 'ink') || !ed.canEdit} onClick={() => ed.setElements((els) => els.filter((e) => e.kind !== 'ink'))} />

@@ -4,7 +4,8 @@ import { useRef, useState, type CSSProperties } from 'react';
 import type { PictureAdjust, SlideElement } from '../../domain/types';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
-import { adjustPicture, colorAt, pictureSize } from './pictureTools';
+import { adjustPicture, colorAt, pictureSize, storeCutout } from './pictureTools';
+import { BackgroundRemovalDialog } from './backgroundRemoval';
 import { PICTURE_STYLES, REMOVE_BACKGROUND_LEVELS, RESET_PICTURE, SATURATION_STEPS, TRANSPARENCY_STEPS, naturalSize, pictureStylePatch, recolorLabel } from '../../domain/pictureFormat';
 import { lookCss } from '../pictureStyles';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
@@ -276,6 +277,7 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
   const p = pics[0];
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [marking, setMarking] = useState(false);
   const a = p?.picture;
   /** Re-make the selected picture from its original with these adjustments (through the engine). */
   const adjust = async (patch: Partial<PictureAdjust> | null, extra?: PictureSteps) => {
@@ -322,11 +324,19 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
   const gif = !!p && /\.gif$/i.test(ed.state.library.media.find((m) => m.id === p.mediaId)?.name ?? p.name ?? '');
   return (
     <>
+      {marking && p && <BackgroundRemovalDialog picture={p} onClose={() => setMarking(false)} onApply={async (rgba, w, h) => {
+        const r = await storeCutout(p, rgba, w, h, ed.dispatch);
+        if (!r) { ed.cmd.notify('그림을 처리하지 못했습니다'); return; }
+        ed.setElements((els) => els.map((e) => (e.id === p.id ? { ...e, ...r } : e)));
+        setMarking(false);
+      }} />}
       <Group label="조정">
         <DropButton big icon="✂" label={busy ? '처리 중…' : '배경 제거'} title="가장자리에서 이어진 배경을 투명하게 (엔진)" disabled={!p || busy} active={!!a?.removeBackground} split onMain={() => void adjust({ removeBackground: a?.removeBackground ? undefined : 20 })} render={(close) => (
           <>
             {REMOVE_BACKGROUND_LEVELS.map(([label, tol]) => <MenuItem key={tol} label={label} on={a?.removeBackground === tol} onClick={() => { void adjust({ removeBackground: tol }); close(); }} />)}
             <MenuSep />
+            <MenuItem label="유지/제거할 영역 표시…" disabled={!p} onClick={() => { setMarking(true); close(); }} />
+            <MenuItem label="표시한 배경 제거 취소" disabled={!a?.cutout} onClick={() => { void adjust({ cutout: undefined }); close(); }} />
             <MenuItem label="배경 제거 취소" disabled={!a?.removeBackground} onClick={() => { void adjust({ removeBackground: undefined }); close(); }} />
           </>
         )} />
