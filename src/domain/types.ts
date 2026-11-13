@@ -5,7 +5,9 @@ export type TextDirection = 'rotate90' | 'rotate270' | 'stacked';
 /** Bullets or numbering in front of each line (PowerPoint's 글머리 기호 / 번호 매기기). */
 export type ListStyle = 'bullet' | 'circle' | 'square' | 'check' | 'arrow' | 'number' | 'number-paren' | 'roman' | 'alpha' | 'hangul'
   /** DeckCraft's other bullets (□ ◆ – ★) and numbering schemes (i. a. a)). */
-  | 'box' | 'diamond' | 'dash' | 'star' | 'roman-lower' | 'alpha-lower' | 'alpha-lower-paren';
+  | 'box' | 'diamond' | 'dash' | 'star' | 'roman-lower' | 'alpha-lower' | 'alpha-lower-paren'
+  /** 그림 글머리 기호: the image in `bulletPicture` (a small PNG data URL) stands in front of each line. */
+  | 'picture';
 export type VAlign = 'top' | 'middle' | 'bottom';
 
 /** Text styling, sized against the 1440x1080 (4:3) canvas. */
@@ -48,6 +50,8 @@ export interface Theme {
   /** Text highlight colour. */
   highlight?: string;
   list?: ListStyle;
+  /** The image of a 그림 글머리 기호 (`list: 'picture'`). */
+  bulletPicture?: string;
   /** Indent level (each level 60 canvas pixels). */
   indent?: number;
   columns?: number;
@@ -61,7 +65,7 @@ export interface Theme {
 export type SlideStyle = Partial<Pick<Theme,
   'fontFamily' | 'fontSize' | 'fontWeight' | 'color' | 'align' | 'vAlign' | 'lineHeight' | 'shadow' | 'uppercase' |
   'subColor' | 'strokeColor' | 'strokeWidth' | 'italic' | 'underline' | 'padding' | 'strike' | 'letterSpacing' | 'highlight' |
-  'list' | 'indent' | 'columns' | 'vertical' | 'direction' | 'autoFit' | 'glowColor'>>;
+  'list' | 'bulletPicture' | 'indent' | 'columns' | 'vertical' | 'direction' | 'autoFit' | 'glowColor'>>;
 
 export type MediaType = 'image' | 'video' | 'audio';
 /** 'fill' stretches to the box (how PowerPoint draws a picture in its frame). */
@@ -296,6 +300,7 @@ export interface SlideElement {
   lineHeight?: number;
   highlight?: string;
   list?: ListStyle;
+  bulletPicture?: string;
   indent?: number;
   columns?: number;
   vertical?: boolean;

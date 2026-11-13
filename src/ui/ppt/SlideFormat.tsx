@@ -129,7 +129,7 @@ export function SlideFormat({ state, dispatch, presentation: p, slide, onDesign:
           value={boxMode ? textValue(ref) : {
             fontFamily: t.fontFamily, fontSize: t.fontSize, bold: t.fontWeight >= 700, italic: !!t.italic, underline: !!t.underline,
             strike: !!t.strike, shadow: t.shadow, letterSpacing: t.letterSpacing ?? 0, color: t.color, highlight: t.highlight,
-            align: t.align, vAlign: t.vAlign, lineHeight: t.lineHeight, list: t.list, indent: t.indent ?? 0, columns: t.columns ?? 1,
+            align: t.align, vAlign: t.vAlign, lineHeight: t.lineHeight, list: t.list, bulletPicture: t.bulletPicture, indent: t.indent ?? 0, columns: t.columns ?? 1,
             vertical: !!t.vertical, direction: t.direction, autoFit: t.autoFit !== false,
           }}
           onChange={boxMode ? (patch) => patchBoxes((e) => elementPatch(e, patch)) : ({ bold, ...rest }) => setStyle({ ...rest, ...(bold === undefined ? {} : { fontWeight: bold ? 700 : 400 }) })}

@@ -7,6 +7,7 @@ import { DEFAULT_TAB, decimalAt, layoutTabLine, splitRunsAtTabs } from '../domai
 import { FRAME_PLACEHOLDERS, PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
+import { bulletPictureOf } from '../domain/pictureBullet';
 import { INDENT_PX, alignCss, lineHeightCss, listMarkers, writingCss } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
@@ -246,13 +247,14 @@ const columnsAndDirection = (f: { columns?: number; vertical?: boolean; directio
 });
 
 /** A line with its bullet / number and its highlight. */
-function ListLine({ marker, highlight, children }: { marker: string | null; highlight?: string; children: ReactNode }) {
+function ListLine({ marker, highlight, picture, children }: { marker: string | null; highlight?: string; picture?: string; children: ReactNode }) {
+  if (marker && picture) return <><span className="list-marker list-picture" style={{ backgroundImage: `url("${picture}")` }} />{highlight ? <span style={{ background: highlight, boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }}>{children}</span> : children}</>;
   const body = highlight ? <span style={{ background: highlight, boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }}>{children}</span> : children;
   return marker ? <><span className="list-marker">{marker}</span>{body}</> : <>{body}</>;
 }
 
 /** Lines wrapped in **…** render bold (prayer topic titles); bullets / numbering and highlight as the slide sets. */
-function Lines({ text, list, highlight, runs }: { text: string; list?: ListStyle; highlight?: string; runs?: (TextRun[] | null)[] }) {
+function Lines({ text, list, picture, highlight, runs }: { text: string; list?: ListStyle; picture?: string; highlight?: string; runs?: (TextRun[] | null)[] }) {
   const lines = stripChords(text).split('\n');
   const markers = listMarkers(lines, list);
   return (
@@ -263,7 +265,7 @@ function Lines({ text, list, highlight, runs }: { text: string; list?: ListStyle
         // Runs only stand for a line they still spell once chords are taken out.
         const own = runs?.[i] && runs[i]!.map((r) => r.text).join('') === line ? runs[i] : null;
         const body = own ? own.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(content) ? <DynamicText text={content} /> : content || '\u00a0';
-        return <div key={i}><ListLine marker={markers[i]} highlight={line.trim() ? highlight : undefined}>{bold ? <strong style={{ fontWeight: 800 }}>{body}</strong> : body}</ListLine></div>;
+        return <div key={i}><ListLine marker={markers[i]} picture={picture} highlight={line.trim() ? highlight : undefined}>{bold ? <strong style={{ fontWeight: 800 }}>{body}</strong> : body}</ListLine></div>;
       })}
     </>
   );
@@ -536,7 +538,7 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
   const tabbed = !!el.tabStops?.length && lines.some((l) => l.includes('\t'));
   const styled = !!(el.list || el.highlight || runs.some(Boolean) || tabbed) || byPara;
   const lineBody = (text: string, i: number) => (
-    <ListLine marker={markers[i]} highlight={text.trim() ? el.highlight : undefined}>
+    <ListLine marker={markers[i]} picture={bulletPictureOf(el)} highlight={text.trim() ? el.highlight : undefined}>
       {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
         : runs[i] ? runs[i]!.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(text) ? <DynamicText text={text} /> : runText(text)}
     </ListLine>
@@ -599,7 +601,7 @@ function SlideBody({ slide, theme: base, build }: { slide: Slide; theme: Theme; 
       >
         <div ref={inner} data-slide-text-box data-fitted-font-size={resolved.fontSize} data-preferred-font-size={originalTheme.fontSize} style={{ ...textStyle(t), width: frame.w, flexShrink: 0, whiteSpace: noWrap ? 'pre' : 'pre-wrap', overflowWrap: 'anywhere', paddingLeft: theme.indent ? theme.indent * INDENT_PX : undefined }}>
           {slide.title && <div className="slide-title" style={{ fontSize: t.fontSize * 0.72, marginBottom: t.fontSize * 0.35 }}>{slide.title}</div>}
-          {slide.text && <Lines text={slide.text} list={theme.list} highlight={theme.highlight} runs={slide.textRuns ? slideLineRuns(slide) : undefined} />}
+          {slide.text && <Lines text={slide.text} list={theme.list} picture={bulletPictureOf(theme)} highlight={theme.highlight} runs={slide.textRuns ? slideLineRuns(slide) : undefined} />}
           {slide.subtext && (
             <div style={{ fontSize: t.fontSize * (theme.subScale ?? 0.62), color: theme.subColor ?? theme.color, marginTop: t.fontSize * 0.35, fontWeight: Math.min(theme.fontWeight, 500) }}>
               <Lines text={slide.subtext} />

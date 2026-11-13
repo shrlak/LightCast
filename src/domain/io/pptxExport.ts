@@ -18,6 +18,7 @@ import { isFrontPresentation, isFrontSlide } from '../frontLayout';
 import { resolveBackground } from '../autoBackground';
 import { motionFlatColor } from '../motion';
 import JSZip from 'jszip';
+import { bulletMedia, bulletPictureOf, bulletPlaceholder, patchBulletXml } from '../pictureBullet';
 import { fillXml, lnXml, needsShapePatch, patchPptx, type ShapePatch } from './shapeXml';
 import { scene3dXml } from '../shape3d';
 
@@ -31,6 +32,14 @@ type Box = { x: number; y: number; w: number; h: number; rotate?: number };
 /** What each export still has to put into the shapes' XML (outline cap / join / compound, gradients, 3-D…; see shapeXml). */
 const shapePatches = new WeakMap<PptxGenJS, ShapePatch[]>();
 let markerSeq = 0;
+/** The picture bullets of an export (data URLs), by the index their placeholder character carries. */
+const bulletPictures = new WeakMap<PptxGenJS, string[]>();
+function registerBulletPicture(pptx: PptxGenJS, dataUrl: string): number {
+  const list = bulletPictures.get(pptx) ?? [];
+  let i = list.indexOf(dataUrl);
+  if (i < 0) { i = list.push(dataUrl) - 1; bulletPictures.set(pptx, list); }
+  return i;
+}
 
 /** A picture fill's bytes and file type, from the data URL the media store gives. */
 function blipOf(data: string | null): { ext: string; data: Uint8Array } | null {
@@ -197,14 +206,17 @@ function firstColor(b: Background | undefined | null): string {
 const pptxAlign = (a: HAlign | undefined): 'left' | 'center' | 'right' | 'justify' | undefined => (a === 'distributed' || a === 'justLow' ? 'justify' : a);
 
 /** 취소선, 문자 간격, 강조 색, 글머리 기호 / 번호, 들여쓰기, 세로 쓰기 — in PowerPoint's terms. */
-function textOptions(f: { strike?: boolean; letterSpacing?: number; highlight?: string; list?: ListStyle; indent?: number; vertical?: boolean; direction?: TextDirection }) {
+function textOptions(f: { strike?: boolean; letterSpacing?: number; highlight?: string; list?: ListStyle; bulletPicture?: string; indent?: number; vertical?: boolean; direction?: TextDirection }, pptx?: PptxGenJS) {
+  // 그림 글머리 기호: a placeholder character now, rewritten to a:buBlip once the file is written (bulletXml in patchOnWrite).
+  const pic = pptx ? bulletPictureOf(f) : undefined;
+  const picCode = pic ? bulletPlaceholder(registerBulletPicture(pptx!, pic)) : undefined;
   const numbered = f.list === 'number' || f.list === 'number-paren' || f.list === 'roman' || f.list === 'alpha' || f.list === 'hangul' || f.list === 'roman-lower' || f.list === 'alpha-lower' || f.list === 'alpha-lower-paren';
   const numberType = ({ 'number-paren': 'arabicParenR', roman: 'romanUcPeriod', alpha: 'alphaUcPeriod', 'roman-lower': 'romanLcPeriod', 'alpha-lower': 'alphaLcPeriod', 'alpha-lower-paren': 'alphaLcParenR' } as const)[f.list as 'roman'] ?? 'arabicPeriod';
   return {
     strike: f.strike ? ('sngStrike' as const) : undefined,
     charSpacing: f.letterSpacing ? f.letterSpacing * 0.5 : undefined,
     highlight: f.highlight?.replace('#', ''),
-    bullet: f.list ? (numbered ? { type: 'number' as const, style: numberType } : { characterCode: { circle: '25CB', square: '25A0', check: '2713', arrow: '27A2', box: '25A1', diamond: '25C6', dash: '2013', star: '2605' }[f.list as 'circle'] ?? '2022' }) : undefined,
+    bullet: f.list ? (picCode ? { characterCode: picCode } : numbered ? { type: 'number' as const, style: numberType } : { characterCode: { circle: '25CB', square: '25A0', check: '2713', arrow: '27A2', box: '25A1', diamond: '25C6', dash: '2013', star: '2605' }[f.list as 'circle'] ?? '2022' }) : undefined,
     indentLevel: f.indent || undefined,
     vert: pptxVert(f) as 'eaVert' | 'vert' | 'vert270' | 'wordArtVert' | undefined,
   };
@@ -292,7 +304,7 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
     s.addText(runs, {
       x: layout.box.x * PX, y: layout.box.y * PX, w: layout.box.w * PX, h: layout.box.h * PX,
       fontFace: fontFace(theme), fontSize: theme.fontSize * 0.5, color, italic: theme.italic, underline: theme.underline ? { style: 'sng' } : undefined,
-      ...textOptions(theme),
+      ...textOptions(theme, pptx),
       margin: NO_MARGIN, lang: langOf(`${slide.title ?? ''}${slide.text}${slide.subtext ?? ''}`),
       align: pptxAlign(theme.align), valign,
       shadow: theme.shadow ? { type: 'outer', blur: 6, offset: 2, angle: 45, color: '000000', opacity: 0.6 } : undefined,
@@ -317,7 +329,7 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
           return parts.flatMap((r, k) => r.text.split('\u000b').map((piece, j) => ({ text: piece, options: { ...(j > 0 ? { softBreakBefore: true } : {}), ...(r.link ? { hyperlink: { url: r.link } } : {}), fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: r.bold ?? el.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), fontFace: r.fontFamily ? pptxFont(r.fontFamily) : undefined, highlight: r.highlight?.replace('#', ''), strike: r.strike ? ('sngStrike' as const) : undefined, superscript: r.baseline === 'super' || undefined, subscript: r.baseline === 'sub' || undefined, breakLine: k === parts.length - 1 && i < richLines.length - 1 && j === r.text.split('\u000b').length - 1 } })));
         });
         const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: exactPts(p.fontSize ?? el.fontSize ?? 64), bold: p.bold ?? el.bold, italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: pptxAlign(p.align ?? el.align), breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
-        s.addText(content, { ...box, fontFace: pptxFont(el.fontFamily ?? baseTheme.fontFamily), lineSpacing: el.paragraphs?.length ? undefined : exactPts(el.fontSize ?? 64), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: el.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el), align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
+        s.addText(content, { ...box, fontFace: pptxFont(el.fontFamily ?? baseTheme.fontFamily), lineSpacing: el.paragraphs?.length ? undefined : exactPts(el.fontSize ?? 64), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: el.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el, pptx), align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
       } else if (el.kind === 'image' && el.mediaId) {
         const data = await dataUrl(el.mediaId);
         if (data) s.addImage({ ...box, data, sizing: { type: el.fit === 'cover' ? 'cover' : 'contain', w: box.w, h: box.h } });
@@ -370,14 +382,16 @@ export async function buildPptx(lib: Library, source: { playlist: Playlist } | {
 
 /** PptxGenJS writes the file; shapes that need more than it can say are rewritten in that file (shapeXml). */
 function patchOnWrite(pptx: PptxGenJS) {
-  const patches = shapePatches.get(pptx);
-  if (!patches?.length) return;
+  const patches = shapePatches.get(pptx) ?? [];
+  const bullets = bulletPictures.get(pptx) ?? [];
+  if (!patches.length && !bullets.length) return;
   const write = pptx.write.bind(pptx);
   const patched = async (props?: PptxGenJS.WriteProps) => {
     const type = typeof props === 'string' ? props : props?.outputType ?? 'blob';
     const out = await write({ ...(typeof props === 'object' ? props : {}), outputType: 'arraybuffer' });
     const zip = await JSZip.loadAsync(out as ArrayBuffer);
     await patchPptx(zip, patches);
+    await patchBulletPictures(zip, bullets);
     const asType = ({ nodebuffer: 'nodebuffer', arraybuffer: 'arraybuffer', uint8array: 'uint8array', base64: 'base64', binarystring: 'binarystring', blob: 'blob' } as const)[type as 'blob'] ?? 'blob';
     return zip.generateAsync({ type: asType as 'blob', compression: 'DEFLATE' });
   };
@@ -394,4 +408,32 @@ function patchOnWrite(pptx: PptxGenJS) {
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     return fileName;
   };
+}
+
+/** 그림 글머리 기호: the placeholder bullets of every slide become a:buBlip, with the pictures added to the file. */
+async function patchBulletPictures(zip: JSZip, pictures: string[]): Promise<void> {
+  if (!pictures.length) return;
+  const media = pictures.map((d, i) => bulletMedia(d, i));
+  const exts = new Set<string>();
+  for (const f of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) {
+    const { xml, used } = patchBulletXml(await zip.file(f)!.async('string'), pictures.length);
+    if (!used.length) continue;
+    zip.file(f, xml);
+    const relFile = f.replace('slides/', 'slides/_rels/') + '.rels';
+    let rels = await zip.file(relFile)!.async('string');
+    for (const i of used) {
+      const m = media[i];
+      if (!m) continue;
+      zip.file(`ppt/media/lcbu-${i}.${m.ext}`, m.data);
+      exts.add(m.ext);
+      rels = rels.replace('</Relationships>', `<Relationship Id="${m.id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/lcbu-${i}.${m.ext}"/></Relationships>`);
+    }
+    zip.file(relFile, rels);
+  }
+  if (exts.size) {
+    let types = await zip.file('[Content_Types].xml')!.async('string');
+    const mime: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
+    for (const e of exts) if (!types.includes(`Extension="${e}"`)) types = types.replace('<Override', `<Default Extension="${e}" ContentType="${mime[e] ?? 'application/octet-stream'}"/><Override`);
+    zip.file('[Content_Types].xml', types);
+  }
 }
