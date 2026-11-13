@@ -19,3 +19,35 @@ export const laserShown = (ctrlKey: boolean, toggledOn: boolean): boolean => ctr
 
 export const laserMessage = (p: LaserPoint | null): LaserMessage => (p ? { type: 'laser', x: p.x, y: p.y } : { type: 'laser', off: true });
 export const laserFromMessage = (m: LaserMessage): LaserPoint | null => ('off' in m ? null : { x: m.x, y: m.y });
+
+/** A laser message that came over the network: anything not shaped right is dropped, numbers are held inside the slide. */
+export function parseLaserMessage(m: unknown): LaserMessage | null {
+  if (!m || typeof m !== 'object' || (m as { type?: unknown }).type !== 'laser') return null;
+  const o = m as { off?: unknown; x?: unknown; y?: unknown };
+  if (o.off === true) return { type: 'laser', off: true };
+  if (typeof o.x !== 'number' || typeof o.y !== 'number' || !Number.isFinite(o.x) || !Number.isFinite(o.y)) return null;
+  return { type: 'laser', x: Math.min(1, Math.max(0, o.x)), y: Math.min(1, Math.max(0, o.y)) };
+}
+
+/** Network traffic stays light: about 30 dots a second at most; "off" always goes through. */
+export const LASER_SEND_MS = 33;
+export const laserDue = (lastSentAt: number, now: number, p: LaserPoint | null): boolean => !p || now - lastSentAt >= LASER_SEND_MS;
+
+/**
+ * Two-projector (edge blend) layout: each output shows half the slide plus `overlap` canvas pixels of the other half,
+ * the slide filling the screen's width and centred vertically. Where the dot lands on this screen, as fractions (0–1)
+ * of the screen's width and height, or null when the point is on the other projector's part.
+ * `screenAspect` is the screen's width / height.
+ */
+export function edgeLaserPosition(p: LaserPoint, edge: { part: 'none' | 'left' | 'right'; overlap: number }, slideW: number, slideH: number, screenAspect: number): LaserPoint | null {
+  if (edge.part === 'none' || !(slideW > 0) || !(slideH > 0) || !(screenAspect > 0)) return null;
+  const half = slideW / 2;
+  const overlap = Math.min(slideW, Math.max(0, edge.overlap));
+  const regionW = half + overlap / 2;
+  const x0 = edge.part === 'left' ? 0 : half - overlap / 2;
+  const fx = (p.x * slideW - x0) / regionW;
+  if (fx < 0 || fx > 1) return null;
+  // The slide is (slideW / regionW) screen-widths wide, so this many screen-heights tall.
+  const heightFrac = (slideW / regionW) * (slideH / slideW) / screenAspect;
+  return { x: fx, y: 0.5 + (p.y - 0.5) * heightFrac };
+}

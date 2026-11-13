@@ -23,6 +23,7 @@ import { InfoStats } from './infoPanel';
 import { NativeOpenCard, NativeSaveCards, OdpSaveCard, PasswordProtectCard } from './fileFormats';
 import { ExportPanel } from './exportPanel';
 import { ExportMorePanel } from './exportMorePanel';
+import { ReadingLaser, ReadingLaserToggle } from './showTools';
 
 // ── Find and replace ──────────────────────────────────────────────────────────────────────────
 // What is searched and how a replacement keeps the formatting: domain/findReplace (DeckCraft text.find /
@@ -284,9 +285,11 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
       if (e.key === 'Escape') finish();
     }} onClick={onStageClick}>
       <div className="reading-stage" ref={stage} title={tip} onMouseMove={onStageMove}><SlideCanvas slide={slide} theme={ed.theme} background={slide ? resolveBackground(slide, p) : null} bgEffect={p.bgEffect} transition={transition} build={build} animate number={i + 1} /></div>
+      <ReadingLaser stage={stage} />
       <div className="reading-bar" onClick={(e) => e.stopPropagation()}>
         <span>{p.title}{ids || custom ? ' · 재구성한 쇼' : ''}</span><span className="grow" />
         {rehearse && <span className="rehearse-clock">⏱ {Math.floor(onSlide / 60)}:{String(Math.floor(onSlide % 60)).padStart(2, '0')}</span>}
+        <ReadingLaserToggle />
         <button type="button" onClick={prev}>◀</button><span>슬라이드 {i + 1} / {pages.length}</span><button type="button" onClick={() => void next()}>▶</button>
         <button type="button" onClick={finish}>{rehearse ? '예행 연습 마침 (Esc)' : '읽기용 보기 닫기 (Esc)'}</button>
       </div>

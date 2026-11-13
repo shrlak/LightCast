@@ -120,6 +120,13 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
         broadcast(rehearsal, (c) => c.role === 'remote');
         return;
       }
+      if (ws.role === 'host' && msg?.type === 'laser') {
+        // The presenter's laser dot (0-1 across the slide), or off: passed on to audience viewers, never kept.
+        const ok01 = (n) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 1;
+        if (msg.off === true) broadcast(JSON.stringify({ type: 'laser', off: true }), (c) => c.role === 'viewer');
+        else if (ok01(msg.x) && ok01(msg.y)) broadcast(JSON.stringify({ type: 'laser', x: msg.x, y: msg.y }), (c) => c.role === 'viewer');
+        return;
+      }
       if (ws.role === 'host' && msg?.type === 'state') {
         lastState = String(raw);
         broadcast(lastState, (c) => c.role === 'viewer' || c.role === 'remote' || c.role === 'team');

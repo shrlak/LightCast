@@ -419,6 +419,18 @@ ipcMain.handle('desktop:printToPdf', async (e) => {
 ipcMain.handle('desktop:pptToPptx', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptToPptx(bytes) : null));
 // Paste from PowerPoint: Office puts the copied shapes on the clipboard as a small Office package
 // (DrawingML), under this name on Windows and as a pasteboard type on macOS.
+// Insert › Screenshot: the screens and windows with small pictures, and the one chosen for the next capture.
+let pendingCaptureSource = null;
+ipcMain.handle('desktop:captureSources', async (e) => {
+  if (!fromMain(e)) return [];
+  const sources = await desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 320, height: 200 }, fetchWindowIcons: false });
+  return sources.map((s) => ({ id: s.id, name: s.name, thumbnail: s.thumbnail.isEmpty() ? '' : s.thumbnail.toDataURL() }));
+});
+ipcMain.handle('desktop:selectCaptureSource', (e, id) => {
+  if (!fromMain(e)) return false;
+  pendingCaptureSource = typeof id === 'string' && id.length < 200 ? id : null;
+  return true;
+});
 const OFFICE_SHAPES = ['Art::GVML ClipFormat', 'com.microsoft.Art--GVML-ClipFormat', 'Art--GVML-ClipFormat'];
 ipcMain.handle('desktop:readOfficeClipboard', (e) => {
   if (!fromMain(e)) return null;
@@ -531,8 +543,14 @@ app.whenReady().then(async () => {
   if (!SMOKE) showSplash();
   loadSettings();
   // Insert › Screenshot: getDisplayMedia needs the app to say which source it gets (the first screen).
+  // The picker in the page (desktop:captureSources) names the source first; without a choice it is the first screen.
   session.defaultSession.setDisplayMediaRequestHandler((_req, callback) => {
-    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => callback(sources[0] ? { video: sources[0] } : {}), () => callback({}));
+    const wanted = pendingCaptureSource;
+    pendingCaptureSource = null;
+    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => {
+      const pick = sources.find((s) => s.id === wanted) ?? (wanted ? null : sources[0]);
+      callback(pick ? { video: pick } : {});
+    }, () => callback({}));
   });
   setAiConfigProvider(() => settings.ai);
   // Spelling in Korean and English where this system's checker has them (macOS uses its own languages).
