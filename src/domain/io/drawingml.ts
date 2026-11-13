@@ -13,6 +13,7 @@ import { child, find, kids, local, parseMarkup, path, type MNode } from './marku
 import { BEVELS, CAMERAS } from '../shapeEffects';
 import { LIGHTINGS, LIGHT_DIRS, MATERIALS, patch3d } from '../shape3d';
 import { shrinkBulletPicture } from '../pictureBullet';
+import { metafileToBlob } from '../metafile/image';
 
 export const EMU_PER_PX = 6350;
 const px = (emu: string | undefined, dflt = 0) => (emu === undefined || emu === '' || !Number.isFinite(Number(emu)) ? dflt : Number(emu) / EMU_PER_PX);
@@ -497,15 +498,22 @@ export async function readGvml(bytes: ArrayBuffer | Uint8Array, newMediaId: () =
     const f = zip.file(target);
     if (!f) continue;
     const ext = target.split('.').pop()?.toLowerCase() ?? 'png';
-    const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : ext === 'emf' || ext === 'wmf' ? '' : 'image/png';
-    if (!type) continue;
+    const file = target.split('/').pop() ?? 'image';
+    if (ext === 'emf' || ext === 'wmf') {
+      // Windows metafile pictures are drawn at import (a PNG with a DOM, else an SVG), not dropped.
+      if (bulletIds.has(r.attrs.Id) && uses(r.attrs.Id, allBlips) <= uses(r.attrs.Id, bulletBlips)) continue;
+      const mblob = await metafileToBlob(await f.async('arraybuffer'));
+      if (mblob) media.push({ rId: r.attrs.Id, id: newMediaId(), name: file.replace(/\.(emf|wmf)$/i, mblob.type === 'image/png' ? '.png' : '.svg'), blob: mblob });
+      continue;
+    }
+    const type = ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : ext === 'gif' ? 'image/gif' : ext === 'svg' ? 'image/svg+xml' : 'image/png';
     const blob = new Blob([await f.async('arraybuffer')], { type });
     if (bulletIds.has(r.attrs.Id)) {
       const url = await shrink(blob);
       if (url) bullets.set(r.attrs.Id, url);
       if (uses(r.attrs.Id, allBlips) <= uses(r.attrs.Id, bulletBlips)) continue;
     }
-    media.push({ rId: r.attrs.Id, id: newMediaId(), name: target.split('/').pop() ?? 'image', blob });
+    media.push({ rId: r.attrs.Id, id: newMediaId(), name: file, blob });
   }
   const elements = drawingToElements(xml, { theme, media: (rId) => media.find((m) => m.rId === rId)?.id, bulletPicture: (rId) => bullets.get(rId) });
   return { elements: keepOnSlide(elements), media };

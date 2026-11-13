@@ -1,4 +1,5 @@
 // Media files live in IndexedDB so every window can load them by id.
+import { pictureBlob } from './metafile/image';
 const DB_NAME = 'freecast-media';
 const STORE = 'blobs';
 
@@ -25,7 +26,11 @@ function tx<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest<
   );
 }
 
-export const putMedia = (id: string, blob: Blob) => tx('readwrite', (s) => s.put(blob, id)).then(() => undefined);
+/** Stores a media file. A Windows metafile picture (.wmf, .emf) is drawn into an ordinary image first, so it shows everywhere a picture does. */
+export const putMedia = async (id: string, blob: Blob) => {
+  const stored = await pictureBlob(blob);
+  await tx('readwrite', (s) => s.put(stored, id));
+};
 export const deleteMedia = (id: string) => tx('readwrite', (s) => s.delete(id)).then(() => undefined);
 export const getMedia = (id: string) => tx<Blob | undefined>('readonly', (s) => s.get(id));
 

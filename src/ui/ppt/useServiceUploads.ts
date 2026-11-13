@@ -336,7 +336,7 @@ export function useServiceUploads(library: Library, dispatch: Dispatch<Action>, 
   const drop = (files: File[]) => {
     const lyricFiles = files.filter((f) => LYRIC_FILE.test(f.name));
     const contiFile = files.find((f) => /\.pdf$/i.test(f.name) && CONTI_NAME.test(f.name));
-    const sermonFiles = files.filter((f) => !lyricFiles.includes(f) && f !== contiFile && ((POWERPOINT_FILE.test(f.name) || /\.pdf$/i.test(f.name)) || f.type.startsWith('image/')));
+    const sermonFiles = files.filter((f) => !lyricFiles.includes(f) && f !== contiFile && ((POWERPOINT_FILE.test(f.name) || /\.(pdf|wmf|emf)$/i.test(f.name)) || f.type.startsWith('image/')));
     (async () => {
       if (contiFile) await conti(contiFile);
       if (lyricFiles.length) await lyrics(lyricFiles);

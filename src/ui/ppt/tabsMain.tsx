@@ -30,6 +30,7 @@ import { applyLayout, resetSlide, slideFromLayout, withMaster } from '../../doma
 import { moveSection, removeAllSections, removeSection, removeSectionAndSlides, renameSection } from '../../domain/sections';
 import { shapeCatalog } from '../../engine';
 import { slideTheme } from '../SlideCanvas';
+import { isMetafileName, metafileToBlob } from '../../domain/metafile/image';
 
 const blocked = (ed: Ed) => {
   if (!ed.p || !ed.slide) return ed.cmd.notify('먼저 슬라이드를 선택하세요'), true;
@@ -210,7 +211,7 @@ function FillExtras({ ed, first, set, close }: { ed: Ed; first?: SlideElement; s
       <MenuHead>투명도</MenuHead>
       <div className="rb-chip-row" title="채우기만 투명하게 (개체 불투명도와는 별개)"><input type="range" min={0} max={100} step={5} value={Math.round((first?.fillTransparency ?? 0) * 100)} onChange={(e) => set({ fillTransparency: Number(e.target.value) ? Number(e.target.value) / 100 : undefined })} /><input type="number" min={0} max={100} step={5} style={{ width: 52 }} value={Math.round((first?.fillTransparency ?? 0) * 100)} onChange={(e) => set({ fillTransparency: Math.max(0, Math.min(100, Number(e.target.value))) / 100 || undefined })} />%</div>
       <MenuItem icon="🖼" label="그림…" onClick={() => file.current?.click()} />
-      <input ref={file} type="file" accept="image/*" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={file} type="file" accept="image/*,.wmf,.emf" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
       <MenuHead>그라데이션</MenuHead>
       <div className="grad-grid">
         {GRADIENTS.map(([a, b, l]) => (['linear', 'radial'] as const).map((t) => (
@@ -477,7 +478,14 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
   const insertMedia = async (file: File | undefined) => {
     if (!file || blocked(ed)) return;
     const id = uid('m');
-    await putMedia(id, file);
+    let stored: Blob = file;
+    if (kind.current === 'image' && isMetafileName(file.name)) {
+      // Windows metafile pictures (.wmf, .emf) are drawn into an ordinary picture.
+      const drawn = await metafileToBlob(await file.arrayBuffer());
+      if (!drawn) return ed.cmd.notify('WMF/EMF 그림을 읽지 못했습니다. PNG나 JPG로 저장해 다시 넣어 주세요');
+      stored = drawn;
+    }
+    await putMedia(id, stored);
     ed.dispatch({ type: 'media/add', media: { id, name: file.name, type: kind.current } });
     if (kind.current === 'audio') ed.addElement({ id: uid('el'), kind: 'audio', mediaId: id, x: 660, y: 480, w: 120, h: 120, name: file.name, playback: { autoplay: true } });
     else ed.addElement({ id: uid('el'), kind: kind.current, mediaId: id, fit: kind.current === 'video' ? 'cover' : 'contain', x: 220, y: 240, w: 1000, h: 600, name: file.name });
@@ -505,7 +513,7 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
         )} />
       </Group>
       <Group label="이미지">
-        <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*'; fileRef.current.click(); } }} />
+        <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" onClick={() => { kind.current = 'image'; if (fileRef.current) { fileRef.current.accept = 'image/*,.wmf,.emf'; fileRef.current.click(); } }} />
         <DropButton big icon="🖼" label="사진 앨범" disabled={!ed.p} split onMain={() => ed.setDialog('photoAlbum')} render={(close) => (
           <>
             <MenuItem label="새 사진 앨범…" onClick={() => { ed.setDialog('photoAlbum'); close(); }} />

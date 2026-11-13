@@ -235,7 +235,7 @@ export function ElementFormat({ el, onChange, onDelete, onOrder, addMedia, cell,
             <option value="cover">비율 유지 (꽉 차게)</option>
           </select>
           {el.kind === 'image' && <button onClick={() => fileRef.current?.click()}>그림 바꾸기…</button>}
-          <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => { replaceImage(e.target.files?.[0]); e.target.value = ''; }} />
+          <input ref={fileRef} type="file" accept="image/*,.wmf,.emf" hidden onChange={(e) => { replaceImage(e.target.files?.[0]); e.target.value = ''; }} />
         </div>
       )}
 

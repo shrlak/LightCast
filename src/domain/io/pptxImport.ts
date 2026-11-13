@@ -1,4 +1,5 @@
 import JSZip from 'jszip';
+import { metafileToBlob } from '../metafile/image';
 
 export interface ImportedSlide {
   title?: string;
@@ -54,13 +55,15 @@ export async function importPptx(file: Blob): Promise<ImportedSlide[]> {
     let notes: string | undefined;
     for (const m of rels.matchAll(/Target="([^"]+)"/g)) {
       const target = new URL(m[1], `https://x/${path}`).pathname.slice(1);
-      if (/\/media\/[^/]+\.(png|jpe?g|gif|webp)$/i.test(target)) {
+      if (/\/media\/[^/]+\.(png|jpe?g|gif|webp|emf|wmf)$/i.test(target)) {
         const f = zip.file(target);
         if (!f) continue;
-        const blob = await f.async('blob');
+        const ext = target.split('.').pop()!.toLowerCase();
+        // A Windows metafile is drawn into an ordinary picture (PNG, or SVG without a DOM).
+        const blob = ext === 'emf' || ext === 'wmf' ? await metafileToBlob(await f.async('arraybuffer')) : await f.async('blob');
+        if (!blob) continue;
         if (!image || blob.size > image.size) {
-          const ext = target.split('.').pop()!.toLowerCase();
-          image = new Blob([blob], { type: `image/${ext === 'jpg' ? 'jpeg' : ext}` });
+          image = ext === 'emf' || ext === 'wmf' ? blob : new Blob([blob], { type: `image/${ext === 'jpg' ? 'jpeg' : ext}` });
         }
       } else if (/notesSlide\d+\.xml$/.test(target)) {
         const nx = await zip.file(target)?.async('string');

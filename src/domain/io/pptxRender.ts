@@ -21,6 +21,7 @@
 // inheritance is what made such decks render squished/mispositioned, so
 // readSpTreeShapes/readTextShape below resolve it explicitly.
 import JSZip from 'jszip';
+import { metafileToBlob } from '../metafile/image';
 
 const EMU_PER_POINT = 12700;
 
@@ -360,10 +361,18 @@ async function mediaUrl(zip: JSZip, mediaPath: string, urlCache: Map<string, str
   if (!url) {
     const file = zip.file(mediaPath);
     if (!file) return undefined;
-    url = URL.createObjectURL(await file.async('blob'));
+    const blob = await mediaBlob(file, mediaPath);
+    if (!blob) return undefined;
+    url = URL.createObjectURL(blob);
     urlCache.set(mediaPath, url);
   }
   return url;
+}
+
+/** A media part as an image blob; Windows metafiles (.emf, .wmf) are drawn (PNG, or SVG without a DOM). Null when one cannot be read. */
+async function mediaBlob(file: JSZip.JSZipObject, mediaPath: string): Promise<Blob | null> {
+  if (/\.(emf|wmf)$/i.test(mediaPath)) return metafileToBlob(await file.async('arraybuffer'));
+  return file.async('blob');
 }
 
 /** A `p:bg` that is a picture rather than a colour, as an object URL. */
@@ -397,7 +406,8 @@ async function readPictureShape(
   if (!url) {
     const file = zip.file(mediaPath);
     if (!file) return null;
-    const bytes = await file.async('blob');
+    const bytes = await mediaBlob(file, mediaPath);
+    if (!bytes) return null;
     url = URL.createObjectURL(bytes);
     urlCache.set(mediaPath, url);
   }
