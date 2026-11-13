@@ -1,4 +1,5 @@
 // 홈 · 삽입 · 그리기 tabs.
+import { inkElementStroke, inkElements, inkTextBox, recognizeInkText } from '../../domain/inkText';
 import { useRef, useState } from 'react';
 import type { SlideElement } from '../../domain/types';
 import { uid } from '../../domain/lyrics';
@@ -588,6 +589,30 @@ const HIGHLIGHTERS = ['#ffff00', '#00ff00', '#00ffff', '#ff00ff', '#ff8c00'];
 export function DrawTab({ ed }: { ed: Ed }) {
   const pen = ed.tool?.kind === 'pen' ? ed.tool : null;
   const [toShape, setToShape] = useState(false);
+  const [reading, setReading] = useState(false);
+  /** 잉크를 텍스트로: the selected ink (else all the ink on the slide) becomes a text box at the ink. */
+  const inkToText = async () => {
+    if (blocked(ed) || reading) return;
+    const picked = ed.selEls.filter((e) => e.kind === 'ink').map((e) => e.id);
+    const targets = inkElements(ed.elements, picked.length ? picked : undefined);
+    if (!targets.length) return ed.cmd.notify('텍스트로 바꿀 잉크가 없습니다. 펜으로 쓴 뒤 선택하세요');
+    setReading(true);
+    try {
+      const r = await recognizeInkText(targets.map(inkElementStroke));
+      if (!r.ok) {
+        return ed.cmd.notify(r.reason === 'empty' ? '텍스트로 바꿀 잉크가 없습니다. 펜으로 쓴 뒤 선택하세요'
+          : '이 장치에서는 이 손글씨를 텍스트로 바꿀 수 없습니다. 한글 필기 인식은 브라우저의 필기 인식 기능이 있을 때만 되고, 지금은 숫자와 영문자만 읽을 수 있습니다');
+      }
+      const box = inkTextBox(r.text, targets, r.capHeight);
+      // Characters the reader could not read: keep the ink next to the text rather than lose them.
+      const keepInk = r.engine === 'template' && r.skipped > 0;
+      const gone = new Set(targets.map((t) => t.id));
+      ed.setElements((els) => (keepInk ? [...els, box] : [...els.filter((e) => !gone.has(e.id)), box]));
+      ed.setSel([box.id]);
+      ed.cmd.notify(keepInk ? `일부 글자(${r.skipped}개)를 읽지 못해 잉크를 그대로 두고 텍스트를 만들었습니다`
+        : r.engine === 'template' ? '잉크를 텍스트로 바꿨습니다 (이 장치는 숫자와 영문자 한 줄만 읽습니다)' : '잉크를 텍스트로 바꿨습니다');
+    } finally { setReading(false); }
+  };
   const usePen = (color: string, width: number, highlighter = false) => { if (!blocked(ed)) ed.setTool({ kind: 'pen', color, width, highlighter, toShape: !highlighter && toShape }); };
   return (
     <>
@@ -602,6 +627,7 @@ export function DrawTab({ ed }: { ed: Ed }) {
       </Group>
       <Group label="변환">
         <Big icon={RI.inkShape} label="잉크를 셰이프로" title="켜면 손으로 그린 선·화살표·사각형·원·삼각형·다각형이 반듯한 도형으로 바뀝니다" active={toShape} onClick={() => { const v = !toShape; setToShape(v); if (pen && !pen.highlighter) ed.setTool({ ...pen, toShape: v }); }} />
+        <Big icon={RI.inkText} label="잉크를 텍스트로" title="선택한 손글씨(선택이 없으면 슬라이드의 모든 잉크)를 텍스트 상자로 바꿉니다. 브라우저의 필기 인식이 있으면 한글·영문, 없으면 숫자와 영문자 한 줄만 읽습니다" disabled={reading || !ed.canEdit || !ed.elements.some((e) => e.kind === 'ink')} onClick={() => void inkToText()} />
       </Group>
       <Group label="잉크">
         <Big icon={RI.deleteIcon} label="모든 잉크 지우기" disabled={!ed.elements.some((e) => e.kind === 'ink') || !ed.canEdit} onClick={() => ed.setElements((els) => els.filter((e) => e.kind !== 'ink'))} />
