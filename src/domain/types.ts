@@ -518,6 +518,8 @@ export interface Slide {
   actions?: SlideAction[];
   /** Seconds before advancing to the next slide automatically. */
   autoAdvance?: number;
+  /** Slide Show › Record Slide Show: the narration clip (an audio media id) played while this slide is shown. */
+  narration?: string;
   /** Single key that jumps to this slide while its presentation is selected. */
   hotkey?: string;
   transition?: Transition;
@@ -640,7 +642,7 @@ export interface Presentation {
   /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
   master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[]; /** Master › Preserve: kept even when no slide uses it. */ preserve?: boolean };
   /** Slide Show › Set Up Slide Show. */
-  showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean };
+  showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean; /** 녹음된 내레이션 재생 off. */ noNarration?: boolean };
   /** Slide Show › Custom Slide Show: named lists of slides. */
   customShows?: { id: string; name: string; slideIds: string[] }[];
   /** View › Guides the user placed (canvas pixels). */

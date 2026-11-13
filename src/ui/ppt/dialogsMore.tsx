@@ -94,8 +94,9 @@ function SetupShowDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [noAnimation, setNoAnimation] = useState(!!p?.showSetup?.noAnimation);
   const [noTransitions, setNoTransitions] = useState(!!p?.showSetup?.noTransitions);
   const [manual, setManual] = useState(!!p?.showSetup?.manual);
+  const [noNarration, setNoNarration] = useState(!!p?.showSetup?.noNarration);
   const ok = () => {
-    const showSetup = { ...(noAnimation ? { noAnimation } : {}), ...(noTransitions ? { noTransitions } : {}), ...(manual ? { manual } : {}) };
+    const showSetup = { ...(noAnimation ? { noAnimation } : {}), ...(noTransitions ? { noTransitions } : {}), ...(manual ? { manual } : {}), ...(noNarration ? { noNarration } : {}) };
     ed.updatePres({ loop: loop || undefined, showSetup: Object.keys(showSetup).length ? showSetup : undefined });
     onClose();
   };
@@ -106,6 +107,7 @@ function SetupShowDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         <Check label="<Esc> 키를 누를 때까지 계속 실행 (마지막 슬라이드 다음에 처음으로)" checked={loop} onChange={setLoop} />
         <Check label="애니메이션 없이 보기" checked={noAnimation} onChange={setNoAnimation} />
         <Check label="화면 전환 없이 보기" checked={noTransitions} onChange={setNoTransitions} />
+        <Check label="녹음된 내레이션 재생 (슬라이드 쇼 녹화)" checked={!noNarration} onChange={(v) => setNoNarration(!v)} />
       </fieldset>
       <fieldset className="dlg-set">
         <legend>화면 전환</legend>

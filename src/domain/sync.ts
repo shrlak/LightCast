@@ -6,7 +6,9 @@ export type LiveMessage =
   /** A key pressed on a fullscreen output window — the console handles it as if pressed there. */
   | { type: 'key'; key: string; shiftKey: boolean }
   /** An object with an action (Action Settings, slide zoom) was clicked on an output window. */
-  | { type: 'show'; action: import('./showActions').ShowAction };
+  | { type: 'show'; action: import('./showActions').ShowAction }
+  /** Laser pointer position on the presenter's slide (0–1), or off. */
+  | import('./laserPointer').LaserMessage;
 
 const CHANNEL = 'freecast-live';
 
