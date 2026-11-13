@@ -44,7 +44,7 @@ const HANGUL = '가나다라마바사아자차카타파하';
 /** The marker in front of the n-th (1-based) item of a list. */
 export function listMarker(list: ListStyle, n: number): string {
   switch (list) {
-    case 'bullet': return '•';
+    case 'bullet': case 'picture': return '•';
     case 'circle': return '○';
     case 'square': return '■';
     case 'box': return '□';
