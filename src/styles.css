@@ -2154,3 +2154,5 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .bs-video-go { display: flex; gap: 8px; align-items: center; }
 .bs-print-go.bs-cancel { background: #fff6cc; color: #5c4a00; border: 1px solid #e0b400; }
 .bs-progress { width: 100%; max-width: 420px; height: 10px; accent-color: #1f8a52; }
+.font-import-msg { font-size: 11px; color: #1f6f3d; padding: 3px 10px; white-space: normal; max-width: 280px; }
+.font-menu .font-import { color: #1f8a52; font-weight: 600; border-top: 1px solid #e1dfdd; }

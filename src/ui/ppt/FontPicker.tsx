@@ -6,6 +6,8 @@ import { FONT_OPTIONS, officeFont } from '../../domain/fonts';
 import { fontLabel, fontEntries, type FontEntry } from '../../domain/fontList';
 import { Icon } from './pptIcons';
 import { useMenuPlacement } from './TextFormatPanel';
+import { FontImportButton, useImportedFonts } from './FontImport';
+import { groupFamilies } from '../../domain/importedFonts';
 
 /** Fonts people commonly have on Windows, macOS and Korean systems; the ones really installed are listed. */
 const CANDIDATES = [
@@ -54,9 +56,12 @@ export function FontPicker({ value, mixed, theme, onChange }: {
     window.addEventListener('pointerdown', off);
     return () => window.removeEventListener('pointerdown', off);
   }, [open]);
+  const imported = useImportedFonts();
+  const importedList = useMemo(() => groupFamilies(imported).map((g): FontEntry => ({ label: g.family, family: officeFont(g.family) })), [imported]);
   const all = useMemo(() => (open ? fontEntries(installedFonts()) : []), [open]);
   const q = typed ? text.trim().toLowerCase() : '';
   const list = q ? all.filter((f) => f.label.toLowerCase().includes(q)) : all;
+  const importedShown = q ? importedList.filter((f) => f.label.toLowerCase().includes(q)) : importedList;
   const pick = (f: FontEntry | undefined) => { onChange(f?.family); setOpen(false); setTyped(false); };
   /** A typed name: one of the listed fonts, else that face (with LightCast's Korean fallbacks behind it). */
   const commit = () => {
@@ -83,12 +88,17 @@ export function FontPicker({ value, mixed, theme, onChange }: {
             <div className="ppt-menu-head">테마 글꼴</div>
             <button type="button" className={`ppt-item font-item ${!value && !mixed ? 'on' : ''}`} style={{ fontFamily: theme }} onClick={() => pick(undefined)}>{themeName}<span className="font-role">제목</span></button>
             <button type="button" className="ppt-item font-item" style={{ fontFamily: theme }} onClick={() => pick(undefined)}>{themeName}<span className="font-role">본문</span></button>
-            <div className="ppt-menu-head">모든 글꼴</div>
           </>}
+          {!!importedShown.length && <div className="ppt-menu-head">가져온 글꼴</div>}
+          {importedShown.map((f) => (
+            <button key={`imp-${f.label}`} type="button" role="option" aria-selected={f.family === value} className={`ppt-item font-item ${f.family === value ? 'on' : ''}`} style={{ fontFamily: f.family }} onClick={() => pick(f)}>{f.label}</button>
+          ))}
+          {!q && <div className="ppt-menu-head">모든 글꼴</div>}
           {list.map((f) => (
             <button key={f.label} type="button" role="option" aria-selected={f.family === value} className={`ppt-item font-item ${f.family === value ? 'on' : ''}`} style={{ fontFamily: f.family }} onClick={() => pick(f)}>{f.label}</button>
           ))}
-          {q && !list.length && <div className="ppt-item muted">Enter: “{text.trim()}” 글꼴 사용</div>}
+          {q && !list.length && !importedShown.length && <div className="ppt-item muted">Enter: “{text.trim()}” 글꼴 사용</div>}
+          <FontImportButton className="ppt-item font-item font-import" label="글꼴 가져오기…" />
         </div>
       )}
     </span>

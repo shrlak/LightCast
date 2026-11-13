@@ -247,6 +247,8 @@ export interface ElementParagraph {
   runs?: TextRun[];
   fontSize?: number;
   bold?: boolean;
+  /** CSS font-weight 100–900 for the paragraph; absent: Bold (700) / Regular by `bold`. */
+  weight?: number;
   italic?: boolean;
   color?: string;
   align?: HAlign;

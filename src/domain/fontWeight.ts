@@ -143,3 +143,30 @@ export function pptxFontFor(face: string, own: WeightSource, inherited?: WeightS
   if (new RegExp(`\\b(${WEIGHTS.map((x) => x.en).join('|')})$`, 'i').test(face)) return { face, bold: w >= 600 };
   return { face: `${face} ${info.en}`, bold: w >= 600 };
 }
+
+/**
+ * A slide's theme text weight (100–900) for PowerPoint. Like pptxFontFor, but a weight the family is not
+ * known to have keeps the old behaviour (bold from 700, never an invented "Family SemiBold"), so the
+ * themes' default weights (500 / 600 / 800 on Malgun Gothic …) export exactly as before.
+ */
+export function pptxFontForTheme(face: string, weight: number): { face: string; bold: boolean } {
+  const w = nearestWeight(weight);
+  if (w === 400 || w === 700) return { face, bold: w === 700 };
+  if (!availableWeights(face).includes(w)) return { face, bold: w >= 700 };
+  return pptxFontFor(face, { weight: w });
+}
+
+/** The family and weight in a PowerPoint / ODP face name: "Noto Sans KR Light" → { family: "Noto Sans KR", weight: 300 }. A plain name gives no weight. */
+export function splitWeightedFace(name: string): { family: string; weight?: number } {
+  const t = name.trim();
+  const names = [...WEIGHTS.map((w) => w.en), 'Extra Light', 'Extra Bold', 'Semi Bold', 'Demi Bold', 'DemiBold', 'UltraLight', 'Ultra Light', 'Heavy', 'Book'];
+  const m = new RegExp(`^(.+?)[ -](${names.join('|')})$`, 'i').exec(t);
+  if (!m) return { family: t };
+  const key = m[2].toLowerCase().replace(/[ -]/g, '');
+  const map: Record<string, number> = { thin: 100, extralight: 200, ultralight: 200, light: 300, medium: 500, semibold: 600, demibold: 600, extrabold: 800, black: 900, heavy: 900, bold: 700 };
+  const weight = map[key];
+  // "Arial Black" / "Calibri Light" are families of their own that PowerPoint knows by that name; only names of families with a known weight set split.
+  if (weight === undefined || KNOWN[t.toLowerCase()]) return { family: t };
+  const fam = m[1].trim();
+  return KNOWN[fam.toLowerCase()] ? { family: fam, weight } : { family: t };
+}

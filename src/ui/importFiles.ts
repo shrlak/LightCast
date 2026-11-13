@@ -6,7 +6,7 @@ import { parseOdp } from '../domain/io/odp';
 import { importPpt } from '../domain/io/pptImport';
 import { renderPdf } from '../domain/io/pdf';
 import { desktop } from '../domain/desktop';
-import { importEmbeddedFonts } from '../domain/embeddedFonts';
+import { importEmbeddedFontsReport, skippedFontsNotice } from '../domain/embeddedFonts';
 import { pptxSlides } from '../domain/templates/serviceTemplates';
 import { isMetafileName, metafileToBlob } from '../domain/metafile/image';
 
@@ -30,7 +30,7 @@ const imageSlide = (mediaId: string, group: string): Slide => ({
  * Turn PPTX, PDF and image files into slides, in the order given:
  * PDF → read-only pages; image → one slide; PPTX/PPT → editable objects, plus notes.
  */
-export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => void, onProgress?: (msg: string) => void, onApprox?: (fileName: string) => void): Promise<Slide[]> {
+export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => void, onProgress?: (msg: string) => void, onApprox?: (fileName: string) => void, onFontNotice?: (message: string) => void): Promise<Slide[]> {
   const slides: Slide[] = [];
   for (const file of files) {
     const base = file.name.replace(/\.[^.]+$/, '');
@@ -62,7 +62,9 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
         data = new Uint8Array(converted).buffer;
       }
       // Fonts the file carries are registered first, so the slides draw in them.
-      await importEmbeddedFonts(data, file.name);
+      const fontReport = await importEmbeddedFontsReport(data, file.name);
+      const fontNote = skippedFontsNotice(fontReport.skipped);
+      if (fontNote) onFontNotice?.(fontNote);
       const imported = await importPptx(new Blob([data])).catch(() => []);
       // Keep source objects editable on every platform; never flatten PowerPoint into PDF pages.
       let n = 0;

@@ -1,5 +1,6 @@
 // File › Open / Save / Info: OpenDocument (.odp) and LightCast's own password-protected file (.lcast).
 // The password protects LightCast's own file only — it is not PowerPoint's encryption, and .pptx saves stay unencrypted.
+import { collectDeckFonts, restoreNativeFonts } from '../../domain/importedFonts';
 import { useRef, useState, type ReactNode } from 'react';
 import { mediaIdsOf } from '../../domain/filePrint';
 import { getMedia, putMedia } from '../../domain/media';
@@ -64,7 +65,7 @@ export function NativeSaveCards({ ed }: { ed: Ed }) {
   const saveNow = async (password?: string) => {
     if (!p) return;
     try {
-      const bytes = await saveNative(p, await collectMedia(ed, p), password);
+      const bytes = await saveNative(p, await collectMedia(ed, p), password, await collectDeckFonts(p));
       saveBytes(`${fileName(p.title)}${LCAST_EXT}`, bytes, 'application/octet-stream');
       ed.cmd.notify(password ? `${fileName(p.title)}${LCAST_EXT} 암호로 보호해 저장했습니다` : `${fileName(p.title)}${LCAST_EXT} 저장했습니다`);
     } catch (e) {
@@ -94,7 +95,7 @@ export function PasswordProtectCard({ ed }: { ed: Ed }) {
           onDone={async (pw) => {
             setDialog(false);
             try {
-              const bytes = await saveNative(p, await collectMedia(ed, p), pw);
+              const bytes = await saveNative(p, await collectMedia(ed, p), pw, await collectDeckFonts(p));
               saveBytes(`${fileName(p.title)}${LCAST_EXT}`, bytes, 'application/octet-stream');
               ed.cmd.notify(`${fileName(p.title)}${LCAST_EXT} 암호로 보호해 저장했습니다`);
             } catch (e) {
@@ -131,7 +132,8 @@ export function NativeOpenCard({ ed, onOpened }: { ed: Ed; onOpened?: () => void
 
   const open = async (name: string, bytes: Uint8Array, password?: string) => {
     try {
-      const { presentation, media } = await openNative(bytes, password);
+      const { presentation, media, fonts } = await openNative(bytes, password);
+      const nFonts = await restoreNativeFonts(fonts, `lcast:${name}`);
       for (const m of media) {
         await putMedia(m.meta.id, new Blob([m.bytes.buffer.slice(m.bytes.byteOffset, m.bytes.byteOffset + m.bytes.byteLength) as ArrayBuffer], { type: m.mime }));
         if (!ed.state.library.media.some((x) => x.id === m.meta.id)) ed.dispatch({ type: 'media/add', media: m.meta });
@@ -140,7 +142,7 @@ export function NativeOpenCard({ ed, onOpened }: { ed: Ed; onOpened?: () => void
       setPending(null);
       setPw('');
       setError('');
-      ed.cmd.notify(`${name} 열었습니다`);
+      ed.cmd.notify(`${name} 열었습니다${nFonts ? ` (글꼴 ${nFonts}개 가져옴)` : ''}`);
       onOpened?.();
     } catch (e) {
       if (e instanceof PasswordRequiredError) { setPending({ name, bytes }); setError(''); }

@@ -1,3 +1,5 @@
+import { exportFontNotice } from '../domain/embeddedFonts';
+import { useFontFileDrop } from '../ui/ppt/FontImport';
 import { RecoveryNotice } from '../ui/RecoveryNotice';
 import { beginSession, noteSaveFailed } from '../domain/sessionRecovery';
 import { TeamRequestsModal } from '../ui/TeamRequestsModal';
@@ -205,6 +207,7 @@ export function OperatorView() {
     return () => clearInterval(t);
   }, [dispatch]);
   const service = useServiceUploads(state.library, dispatch, (m) => notifyRef.current(m), state.activePlaylistId);
+  useFontFileDrop((m) => notifyRef.current(m));
   // Files dragged onto the window go straight into this week's 주일예배.
   const [dragging, setDragging] = useState(false);
   const serviceRef = useRef(service);
@@ -491,7 +494,7 @@ export function OperatorView() {
       } else {
         notify('Importing…');
         const approx: string[] = [];
-        const toSlides = (list: File[]) => filesToSlides(list, (m) => dispatch({ type: 'media/add', media: m }), notify, (n) => approx.push(n));
+        const toSlides = (list: File[]) => filesToSlides(list, (m) => dispatch({ type: 'media/add', media: m }), notify, (n) => approx.push(n), notify);
         const isPptx = (f: File) => POWERPOINT_FILE.test(f.name) || /\.odp$/i.test(f.name);
         let total = 0;
         // Each PowerPoint or OpenDocument (.odp) file becomes its own presentation in a new 재생목록 named after the file.
@@ -542,7 +545,7 @@ export function OperatorView() {
 
   const exportPlaylistPptx = () => {
     if (!playlist) return notify('재생목록이 없습니다');
-    exportPptx(state.library, { playlist }, playlist.name.replace(/\s*주일예배$/, '') || 'playlist').catch((e) => notify(String(e)));
+    exportPptx(state.library, { playlist }, playlist.name.replace(/\s*주일예배$/, '') || 'playlist').then((r) => { const m = exportFontNotice(r); if (m) notify(m); }).catch((e) => notify(String(e)));
   };
   const exportBackupZip = async () => {
     notify('Packing backup…');
