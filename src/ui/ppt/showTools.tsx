@@ -6,7 +6,7 @@ import type { Action, AppState } from '../../domain/reducer';
 import { openLiveChannel } from '../../domain/sync';
 import { LASER_STALE_MS, edgeLaserPosition, laserFromMessage, laserMessage, laserPoint, laserShown, parseLaserMessage, type LaserPoint } from '../../domain/laserPointer';
 import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
-import { applyRecording, clearRecording, clock, enterSlide, finishRecording, hasRecording, narrationCount, narrationToPlay, slideTimings, startRecording, type Recording } from '../../domain/narration';
+import { applyRecording, clearRecording, clock, cuesFromRecording, enterSlide, finishRecording, hasRecording, narrationClip, narrationCount, planNarration, slideTimings, startRecording, type Recording } from '../../domain/narration';
 import { deleteMedia, mediaUrl, putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { useNow } from '../hooks';
@@ -148,7 +148,9 @@ export function ReadingLaserToggle() {
 }
 
 // ── Record Slide Show ───────────────────────────────────────────────────────────────────────────
-interface Clip { mr: MediaRecorder; slideId: string; done: Promise<Blob> }
+// One MediaRecorder runs for the whole show, so there is no break in the sound where the slide changes; each slide's
+// part of it is stored as cue offsets (slide.narrationCue).
+interface Track { mr: MediaRecorder; done: Promise<Blob>; startedAt: number }
 
 function Recorder({ state, dispatch, notify }: { state: AppState; dispatch: Dispatch<Action>; notify: (m: string) => void }) {
   const now = useNow(1000);
@@ -158,29 +160,21 @@ function Recorder({ state, dispatch, notify }: { state: AppState; dispatch: Disp
   const slideId = state.live.slide?.id ?? null;
   const session = useRef<Recording>(startRecording());
   const stream = useRef<MediaStream | null>(null);
-  const cur = useRef<Clip | null>(null);
-  const takes = useRef(new Map<string, Promise<Blob>>());
+  const track = useRef<Track | null>(null);
   const startedAt = useRef(Date.now());
   const [micError, setMicError] = useState(false);
 
-  const endClip = () => {
-    const c = cur.current;
-    cur.current = null;
-    if (!c) return;
-    if (c.mr.state !== 'inactive') c.mr.stop();
-    takes.current.set(c.slideId, c.done);
-  };
-  const beginClip = (id: string | null) => {
-    if (!stream.current || !id) return;
+  const beginTrack = () => {
+    if (!stream.current || track.current) return;
     const mr = new MediaRecorder(stream.current);
     const chunks: Blob[] = [];
     mr.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
     const done = new Promise<Blob>((res) => { mr.onstop = () => res(new Blob(chunks, { type: mr.mimeType || 'audio/webm' })); });
+    const t: Track = { mr, done, startedAt: Date.now() };
+    mr.onstart = () => { t.startedAt = Date.now(); };
     mr.start();
-    cur.current = { mr, slideId: id, done };
+    track.current = t;
   };
-  const slideRef = useRef(slideId);
-  slideRef.current = slideId;
 
   // The microphone: the show is timed even when it cannot be opened.
   useEffect(() => {
@@ -188,23 +182,20 @@ function Recorder({ state, dispatch, notify }: { state: AppState; dispatch: Disp
     navigator.mediaDevices?.getUserMedia({ audio: true }).then((s) => {
       if (dead) { s.getTracks().forEach((t) => t.stop()); return; }
       stream.current = s;
-      beginClip(slideRef.current);
+      beginTrack();
     }).catch(() => setMicError(true));
     if (!navigator.mediaDevices?.getUserMedia) setMicError(true);
     return () => { dead = true; void finish(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Every slide change closes the clip of the slide that was on screen and opens the next.
-  useEffect(() => {
-    session.current = enterSlide(session.current, slideId, Date.now());
-    endClip();
-    beginClip(slideId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slideId]);
+  // Every slide change is only noted (when it happened); the recorder keeps running.
+  useEffect(() => { session.current = enterSlide(session.current, slideId, Date.now()); }, [slideId]);
 
   async function finish() {
-    endClip();
+    const t = track.current;
+    track.current = null;
+    if (t && t.mr.state !== 'inactive') t.mr.stop();
     session.current = finishRecording(session.current, Date.now());
     stream.current?.getTracks().forEach((t) => t.stop());
     stream.current = null;
@@ -212,18 +203,20 @@ function Recorder({ state, dispatch, notify }: { state: AppState; dispatch: Disp
     const pres = latest.current.library.presentations.find((x) => x.id === presId.current);
     if (!pres || !Object.keys(timings).length) return;
     if (pres.protected) { notify('보호된 자료라 녹화를 저장하지 않았습니다'); return; }
-    const clips: Record<string, string> = {};
-    for (const [id, done] of takes.current) {
-      const blob = await done;
-      if (blob.size < 200) continue;
-      const mediaId = uid('m');
-      await putMedia(mediaId, blob);
-      dispatch({ type: 'media/add', media: { id: mediaId, name: '슬라이드 쇼 녹음', type: 'audio', backgroundHidden: true } });
-      clips[id] = mediaId;
+    let audio: { mediaId: string; cues: ReturnType<typeof cuesFromRecording> } | undefined;
+    const blob = t ? await t.done : null;
+    if (t && blob && blob.size >= 200) {
+      const cues = cuesFromRecording(session.current, t.startedAt);
+      if (Object.keys(cues).length) {
+        const mediaId = uid('m');
+        await putMedia(mediaId, blob);
+        dispatch({ type: 'media/add', media: { id: mediaId, name: '슬라이드 쇼 녹음', type: 'audio', backgroundHidden: true } });
+        audio = { mediaId, cues };
+      }
     }
     const fresh = latest.current.library.presentations.find((x) => x.id === presId.current) ?? pres;
-    dispatch({ type: 'presentation/update', id: pres.id, patch: { slides: applyRecording(fresh.slides, timings, clips), showSetup: { ...fresh.showSetup, manual: undefined } } });
-    notify(`슬라이드 쇼 녹화를 저장했습니다 — 슬라이드 ${Object.keys(timings).length}장의 시간, 내레이션 ${Object.keys(clips).length}개`);
+    dispatch({ type: 'presentation/update', id: pres.id, patch: { slides: applyRecording(fresh.slides, timings, {}, audio), showSetup: { ...fresh.showSetup, manual: undefined } } });
+    notify(`슬라이드 쇼 녹화를 저장했습니다 — 슬라이드 ${Object.keys(timings).length}장의 시간, 내레이션 ${audio ? Object.keys(audio.cues).length : 0}장`);
   }
 
   return (
@@ -235,23 +228,99 @@ function Recorder({ state, dispatch, notify }: { state: AppState; dispatch: Disp
   );
 }
 
+/**
+ * Plays the narration of the slide on screen. A part of a continuous recording is played from a decoded buffer (a
+ * recorded WebM cannot be seeked reliably) and runs on across slide changes where the next part follows on, so there
+ * is no gap; a clip of its own (older recordings) simply starts with its slide.
+ */
+class NarrationPlayer {
+  private ctx: AudioContext | null = null;
+  private buffers = new Map<string, Promise<AudioBuffer | null>>();
+  private src: AudioBufferSourceNode | null = null;
+  private audio: HTMLAudioElement | null = null;
+  private mediaId = '';
+  private offset = 0;
+  private startedAt = 0;
+  private token = 0;
+
+  private position(): number | null {
+    return this.src && this.ctx ? this.offset + (this.ctx.currentTime - this.startedAt) : null;
+  }
+  private stopAll() {
+    try { this.src?.stop(); } catch { /* already ended */ }
+    this.src = null;
+    this.audio?.pause();
+    this.audio = null;
+  }
+  private load(mediaId: string): Promise<AudioBuffer | null> {
+    let b = this.buffers.get(mediaId);
+    if (!b) {
+      b = (async () => {
+        const url = await mediaUrl(mediaId);
+        if (!url || !this.ctx) return null;
+        return this.ctx.decodeAudioData(await (await fetch(url)).arrayBuffer());
+      })().catch(() => null);
+      this.buffers.set(mediaId, b);
+    }
+    return b;
+  }
+
+  async play(clip: ReturnType<typeof narrationClip>) {
+    const token = ++this.token;
+    const pos = this.position();
+    const plan = planNarration(pos === null ? null : { mediaId: this.mediaId, position: pos }, clip);
+    if (plan.kind === 'keep') { this.stopAt(plan.stopAt); return; }
+    this.stopAll();
+    if (plan.kind === 'stop') return;
+    if (!clip?.cue) {
+      // A clip of its own: from its start, as before.
+      const url = await mediaUrl(plan.mediaId);
+      if (!url || token !== this.token) return;
+      this.audio = new Audio(url);
+      void this.audio.play().catch(() => undefined);
+      return;
+    }
+    this.ctx ??= new AudioContext();
+    const buffer = await this.load(plan.mediaId);
+    if (!buffer || token !== this.token || !this.ctx) return;
+    void this.ctx.resume().catch(() => undefined);
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(this.ctx.destination);
+    src.start(0, Math.min(plan.offset, Math.max(0, buffer.duration - 0.01)));
+    this.src = src;
+    this.mediaId = plan.mediaId;
+    this.offset = plan.offset;
+    this.startedAt = this.ctx.currentTime;
+    this.stopAt(plan.stopAt);
+  }
+
+  /** Stop a little after the slide's part ends (the next slide may carry it on, which moves this again). */
+  private stopAt(trackSec: number | null) {
+    if (!this.src || !this.ctx) return;
+    try { this.src.stop(trackSec === null ? undefined : this.startedAt + (trackSec - this.offset) + 0.4); } catch { /* not started yet */ }
+  }
+
+  close() {
+    this.token++;
+    this.stopAll();
+    void this.ctx?.close().catch(() => undefined);
+    this.ctx = null;
+  }
+}
+
 /** Mounted in the presenter window: the recorder while 슬라이드 쇼 녹화 is on, and playback of the narrations otherwise. */
 export function NarrationHost({ state, dispatch, cmd }: { state: AppState; dispatch: Dispatch<Action>; cmd: Commands }) {
   const recording = recordingOn.use();
   const pres = state.cursor ? state.library.presentations.find((x) => x.id === state.cursor!.presentationId) : null;
-  const clip = recording ? null : narrationToPlay(state.live.slide, pres);
+  const clip = recording ? null : narrationClip(state.live.slide, pres);
   const seq = state.cursor?.seq;
+  const player = useRef<NarrationPlayer | null>(null);
   useEffect(() => {
-    if (!clip) return;
-    let dead = false;
-    let audio: HTMLAudioElement | null = null;
-    void mediaUrl(clip).then((u) => {
-      if (dead || !u) return;
-      audio = new Audio(u);
-      void audio.play().catch(() => undefined);
-    });
-    return () => { dead = true; audio?.pause(); };
-  }, [clip, seq, state.live.slide?.id]);
+    player.current ??= new NarrationPlayer();
+    void player.current.play(clip);
+  }, [clip?.mediaId, clip?.cue?.startSec, clip?.cue?.endSec, seq, state.live.slide?.id]);
+  useEffect(() => () => { player.current?.close(); player.current = null; }, []);
   useEffect(() => () => stopNarrationRecording(), []);
   return recording ? <Recorder state={state} dispatch={dispatch} notify={cmd.notify} /> : null;
 }

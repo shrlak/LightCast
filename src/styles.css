@@ -2144,3 +2144,7 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .vh-thumb { aspect-ratio: 4 / 3; background: #fff; border: 1px solid #c8c6c4; position: relative; overflow: hidden; }
 .vh-thumb.vh-none { display: grid; place-items: center; color: #8a8886; font-size: 12px; background: #f3f2f1; }
 @media (max-width: 700px) { .vh { grid-template-columns: 1fr; } }
+/* 동영상 만들기: 진행 막대와 취소 */
+.bs-video-go { display: flex; gap: 8px; align-items: center; }
+.bs-print-go.bs-cancel { background: #fff6cc; color: #5c4a00; border: 1px solid #e0b400; }
+.bs-progress { width: 100%; max-width: 420px; height: 10px; accent-color: #1f8a52; }

@@ -491,6 +491,8 @@ export interface SlideComment {
 /** Things a slide does when it goes live (ProPresenter "slide actions"). */
 export type SlideAction = MacroStep | { type: 'runMacro'; macroId: string };
 
+export interface NarrationCue { startSec: number; endSec: number }
+
 export interface Slide {
   /** Front template: preserve original fonts/paragraph sizes/geometry; only its date is refreshed. */
   preserveTextLayout?: boolean;
@@ -527,6 +529,8 @@ export interface Slide {
   autoAdvance?: number;
   /** Slide Show › Record Slide Show: the narration clip (an audio media id) played while this slide is shown. */
   narration?: string;
+  /** Which part (seconds) of `narration` belongs to this slide, when the clip is one continuous recording of the whole show; unset for a clip of its own. */
+  narrationCue?: NarrationCue;
   /** Single key that jumps to this slide while its presentation is selected. */
   hotkey?: string;
   transition?: Transition;
