@@ -4,6 +4,7 @@ import type { Ed } from './editor';
 import { HomeTab, InsertTab, DrawTab } from './tabsMain';
 import { DesignTab, TransitionsTab, AnimationsTab } from './tabsShow';
 import { SlideShowTab, ReviewTab, ViewTab, WorshipTab, ToolsTab } from './tabsMore';
+import { TellMe } from './TellMe';
 import { CONTEXT_LABEL, ContextTabBody, contextTabs, type ContextTab } from './tabsContext';
 
 const TABS = ['홈', '삽입', '그리기', '디자인', '전환', '애니메이션', '슬라이드 쇼', '검토', '보기', '예배', '도구'] as const;
@@ -64,6 +65,7 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
         {ctx.map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={`pp-tab ctx ${tab === t ? 'on' : ''}`} onClick={() => pick(t)}>{CONTEXT_LABEL[t]}</button>
         ))}
+        <TellMe ed={ed} actions={actions} tabs={[...TABS, ...ctx]} ctx={ctx} go={(t) => { setTab(t as Tab); if (collapsed) setPeek(true); }} />
         <span className="pp-spacer" />
         <button type="button" className={`pp-comments ${ed.pane === 'comments' ? 'on' : ''}`} onClick={() => ed.setPane(ed.pane === 'comments' ? null : 'comments')}>💬 메모</button>
         <button type="button" className="pp-present" disabled={!p} title="현재 슬라이드부터 (Shift+F5) — 처음부터는 F5" onClick={() => cmd.startShow(true)}>▶ 슬라이드 쇼</button>

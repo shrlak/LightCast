@@ -18,7 +18,7 @@ import type { TextFormatValue } from './TextFormatPanel';
 export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'designer' | 'spelling' | 'revisions' | null;
 
 /** The dialog boxes (Font, Paragraph, Replace Fonts, Header & Footer, Set Up Show, …). */
-export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect' | 'language' | 'compare' | 'albumEdit' | 'tabs' | 'autocorrect' | 'viewZoom' | 'sizePosition' | 'compress' | 'altText' | 'hyperlink' | 'dateTime' | 'equation' | 'insertTable' | 'themeColors' | 'themeFonts' | 'slideSize';
+export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect' | 'language' | 'compare' | 'albumEdit' | 'tabs' | 'autocorrect' | 'viewZoom' | 'sizePosition' | 'compress' | 'altText' | 'hyperlink' | 'dateTime' | 'equation' | 'insertTable' | 'themeColors' | 'themeFonts' | 'slideSize' | 'recordAudio' | 'screenCapture';
 
 export interface Ed {
   state: AppState;
@@ -186,7 +186,7 @@ export function textTarget(ed: Ed): TextTarget | null {
   const slideValue: TextFormatValue = {
     fontFamily: t.fontFamily, fontSize: t.fontSize, bold: t.fontWeight >= 700, italic: !!t.italic, underline: !!t.underline,
     strike: !!t.strike, shadow: t.shadow, letterSpacing: t.letterSpacing ?? 0, color: t.color, highlight: t.highlight,
-    align: t.align, vAlign: t.vAlign, lineHeight: t.lineHeight, list: t.list, indent: t.indent ?? 0, columns: t.columns ?? 1,
+    align: t.align, vAlign: t.vAlign, lineHeight: t.lineHeight, list: t.list, bulletPicture: t.bulletPicture, indent: t.indent ?? 0, columns: t.columns ?? 1,
     vertical: !!t.vertical, direction: t.direction, autoFit: t.autoFit !== false,
   };
   // Typing in the slide's own text with characters selected: size, weight, colour… go to those characters.

@@ -44,7 +44,7 @@ function measurementNode(el: SlideElement): HTMLDivElement {
     const line = document.createElement('div'), p = el.paragraphs?.[i];
     if (p) applyStyle(line, { fontSize: p.fontSize ?? el.fontSize ?? 64, fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined, minHeight: '1.2em' });
     line.style.flexShrink = '0';
-    if (markers[i]) { const marker = document.createElement('span'); marker.className = 'list-marker'; marker.textContent = markers[i]; line.append(marker); }
+    if (markers[i]) { const marker = document.createElement('span'); marker.className = el.list === 'picture' ? 'list-marker list-picture' : 'list-marker'; if (el.list !== 'picture') marker.textContent = markers[i]; line.append(marker); }
     // Runs with their own size or weight take the room they will be drawn in.
     if (runs[i]) for (const r of runs[i]!) {
       const span = document.createElement('span');

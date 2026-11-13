@@ -20,7 +20,9 @@ import { TRANSITION } from './ko';
 import { PropertiesForm } from './printing';
 import { PrintPanel } from './printPanel';
 import { InfoStats } from './infoPanel';
+import { NativeOpenCard, NativeSaveCards, OdpSaveCard, PasswordProtectCard } from './fileFormats';
 import { ExportPanel } from './exportPanel';
+import { ExportMorePanel } from './exportMorePanel';
 
 // ── Find and replace ──────────────────────────────────────────────────────────────────────────
 // What is searched and how a replacement keeps the formatting: domain/findReplace (DeckCraft text.find /
@@ -370,7 +372,8 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <>
             <h1>열기</h1>
             <div className="bs-cards">
-              <Card icon="📊" title="PowerPoint · PDF · 그림" text=".pptx .ppt .pdf 이미지" onClick={() => run(() => cmd.pickFiles('slides', ACCEPT.slides))} />
+              <Card icon="📊" title="PowerPoint · OpenDocument · PDF · 그림" text=".pptx .ppt .odp .pdf 이미지" onClick={() => run(() => cmd.pickFiles('slides', ACCEPT.slides))} />
+              <NativeOpenCard ed={ed} onOpened={onClose} />
               <Card icon="🎵" title="찬양 파일" text="텍스트 · ChordPro · OpenLyrics · OpenSong" onClick={() => run(() => cmd.pickFiles('lyrics', ACCEPT.lyrics))} />
               <Card icon="🗂" title="백업 복원" text=".zip 백업에서" onClick={() => run(() => cmd.pickFiles('backup', ACCEPT.backup))} />
               <Card icon="{ }" title="라이브러리 JSON" onClick={() => run(() => cmd.pickFiles('library', ACCEPT.library))} />
@@ -386,6 +389,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
                 <InfoStats ed={ed} />
                 <div className="bs-cards">
                   <Card icon="🔒" title={p.protected ? '자료 보호 해제' : '프레젠테이션 보호'} text="실수로 바꾸거나 지우지 않게" onClick={() => run(() => ed.dispatch({ type: 'presentation/protect', id: p.id, on: !p.protected }))} />
+                  <PasswordProtectCard ed={ed} />
                   <Card icon="🕘" title="복원 지점" text="자동 저장된 때로 되돌리기" onClick={() => run(() => cmd.open('restore'))} />
                   <Card icon="🗑" title="휴지통" onClick={() => run(() => cmd.open('trash'))} />
                   <Card icon="📋" title="사용 기록" onClick={() => run(() => cmd.open('activity'))} />
@@ -402,6 +406,8 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             <p className="bs-note">LightCast는 바꾸는 즉시 이 컴퓨터에 저장하고, 로그인하면 클라우드에도 동기화합니다.</p>
             <div className="bs-cards">
               <Card icon={RI.paste} title="PowerPoint 파일로 저장 (.pptx)" text="지금 재생목록을 MMDD.pptx로" onClick={() => run(cmd.exportPlaylistPptx)} />
+              <OdpSaveCard ed={ed} />
+              <NativeSaveCards ed={ed} />
               <Card icon="🗜" title="전체 백업 저장 (.zip)" text="라이브러리와 미디어 전부" onClick={() => run(cmd.exportBackup)} />
               <Card icon="{ }" title="라이브러리 JSON 저장" onClick={() => run(cmd.exportLibrary)} />
             </div>
@@ -417,6 +423,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <>
             <h1>내보내기</h1>
             <ExportPanel ed={ed} onPdf={() => setPage('print')} />
+            <ExportMorePanel ed={ed} />
             <h2>다른 형식</h2>
             <div className="bs-cards">
               <Card icon="📊" title="PowerPoint 프레젠테이션" text=".pptx" onClick={() => run(cmd.exportPlaylistPptx)} />

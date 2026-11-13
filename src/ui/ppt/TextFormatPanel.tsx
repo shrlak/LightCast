@@ -5,6 +5,7 @@ import { FontSize } from './FontSize';
 import { FontPicker } from './FontPicker';
 import { Icon } from './pptIcons';
 import { ColorGrid } from './ribbonParts';
+import { bulletPictureFromFile } from './pictureBulletFile';
 
 /** The text formatting PowerPoint's 홈 → 글꼴 / 단락 groups set, for slide text or a text box. */
 export interface TextFormatValue {
@@ -24,6 +25,7 @@ export interface TextFormatValue {
   /** CSS line-height multiple. */
   lineHeight: number;
   list?: ListStyle;
+  bulletPicture?: string;
   indent: number;
   columns: number;
   vertical: boolean;
@@ -120,6 +122,7 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onS
   shortcuts?: boolean;
 }) {
   const colorRef = useRef<HTMLInputElement>(null);
+  const bulletFile = useRef<HTMLInputElement>(null);
   const step = (dir: 1 | -1) => (onStep ? onStep(dir) : onChange({ fontSize: stepFontSize(f.fontSize, dir) }));
   const latest = useRef({ f, onChange, step, onClear });
   latest.current = { f, onChange, step, onClear };
@@ -199,14 +202,25 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onS
       {part !== 'font' && <>
       {!part && <div className="ppt-group-label">단락</div>}
       <div className="ppt-row">
-        <Drop icon={Icon.bullets} title="글머리 기호" active={!!f.list && BULLETS.includes(f.list)} onMain={() => onChange({ list: f.list && BULLETS.includes(f.list) ? undefined : 'bullet' })}>
+        <Drop icon={Icon.bullets} title="글머리 기호" active={!!f.list && (BULLETS.includes(f.list) || f.list === 'picture')} onMain={() => onChange({ list: f.list && (BULLETS.includes(f.list) || f.list === 'picture') ? undefined : 'bullet' })}>
           {(close) => (
             <div className="ppt-list-grid">
               <button type="button" className={`ppt-list-cell ${!f.list ? 'on' : ''}`} onClick={() => { onChange({ list: undefined }); close(); }}>없음</button>
               {BULLETS.map((b) => <button key={b} type="button" className={`ppt-list-cell ${f.list === b ? 'on' : ''}`} onClick={() => { onChange({ list: b }); close(); }}>{[1, 2, 3].map((n) => <span key={n}>{listMarker(b, n)} ―</span>)}</button>)}
+              <button type="button" className={`ppt-list-cell wide ${f.list === 'picture' ? 'on' : ''}`} title="그림 파일을 글머리 기호로 사용합니다" onClick={() => { bulletFile.current?.click(); close(); }}>
+                {f.list === 'picture' && f.bulletPicture ? <img className="list-picture-preview" src={f.bulletPicture} alt="" /> : null}그림 글머리 기호…
+              </button>
             </div>
           )}
         </Drop>
+        <input ref={bulletFile} type="file" accept="image/*" hidden aria-label="그림 글머리 기호" onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (!file) return;
+          const picture = await bulletPictureFromFile(file);
+          if (picture) onChange({ list: 'picture', bulletPicture: picture });
+          else window.alert('그림 글머리 기호로 쓸 수 없는 파일입니다. PNG, JPG, GIF, WebP 그림을 고르세요.');
+        }} />
         <Drop icon={Icon.numbering} title="번호 매기기" active={!!f.list && NUMBERS.includes(f.list)} onMain={() => onChange({ list: f.list && NUMBERS.includes(f.list) ? undefined : 'number' })}>
           {(close) => (
             <div className="ppt-list-grid">

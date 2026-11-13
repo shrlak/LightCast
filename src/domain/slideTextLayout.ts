@@ -30,7 +30,7 @@ export function fitSlideText(slide: Slide, theme: Theme): TextLayout {
     const content = stripChords(text).split('\n'), markers = listMarkers(content, theme.list);
     content.forEach((line, i) => {
       const child = document.createElement('div'), bold = /^\*\*(.+)\*\*$/.exec(line);
-      if (markers[i]) { const marker = document.createElement('span'); marker.className = 'list-marker'; marker.textContent = markers[i]; child.append(marker); }
+      if (markers[i]) { const marker = document.createElement('span'); marker.className = theme.list === 'picture' ? 'list-marker list-picture' : 'list-marker'; if (theme.list !== 'picture') marker.textContent = markers[i]; child.append(marker); }
       child.append(document.createTextNode(bold?.[1] ?? (line || '\u00a0'))); if (bold) child.style.fontWeight = '800'; parent.append(child);
     });
   };

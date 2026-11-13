@@ -85,6 +85,7 @@ export function mediaIdsOf(p: Presentation): string[] {
   bg(p.background);
   for (const s of p.slides) {
     bg(s.background);
+    if (s.narration) ids.add(s.narration);
     for (const e of s.elements ?? []) {
       if (e.mediaId) ids.add(e.mediaId);
       if (e.fillImage) ids.add(e.fillImage);

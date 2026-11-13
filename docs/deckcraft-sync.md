@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=9b1fe3ff23ca55ace1acd97a7376f5dcebfa6e22
+DECKCRAFT_SYNCED=ef9ac9ac7a1f610656144981b53688efdb9ef518
 ```
 
-(`PPTX: evaluate a custom geometry's guide lists once per coordinate space`.)
+(`Merge pull request #2062 from cloutier/fix/2060-large-adjustment-guides`.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -43,3 +43,16 @@ DECKCRAFT_SYNCED=9b1fe3ff23ca55ace1acd97a7376f5dcebfa6e22
   renderer (chart legend entries `c:legendEntry`, a picture in a placeholder showing the layout fill, custom
   geometry guide lists); LightCast reads no charts or layout placeholder fills from PPTX and draws `custGeom` as a
   rectangle. Revisit if LightCast ever imports PPTX charts or custom geometry.
+- `9b1fe3f..ef9ac9a` (60 commits, 2026-11-13):
+  - Ported: `edit.duplicate` keeps a member of a group in its group (`duplicateSelection`; the copy goes after the
+    group's last member; a group duplicated whole still gets a new group); `shape.merge` on group members (LightCast
+    keeps flat coordinates, so no refusal is needed, but the merge no longer leaves a one-member group behind);
+    forward Delete removes a whole grapheme cluster (the browser's own Delete in the editors and `charMove` /
+    `deleteWord` already step by cluster; tests added).
+  - Not applicable: `arrange.ungroup` of a nested group (LightCast groups are one level, `groupId`), a shape copied
+    from a group pastes where it was drawn (members carry slide coordinates, no group transform), PPTX reader fixes
+    (paragraph-build inference, master text styles, picture backing, large adjustment guides, series `c:dLbls`,
+    slide-list limits and unresolved relationships), automation roots, About window, CI.
+  - Not ported: WMF / EMF / EMF+ reading (`craft-metafile`, a new external crate replacing `crates/metafile`).
+    LightCast does not read metafiles (they are dropped on PPTX import, `drawingml.ts`); porting needs a
+    metafile renderer in the engine and is left for a separate task. No Rust changed, so the wasm was not rebuilt.

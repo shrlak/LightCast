@@ -12,6 +12,7 @@ import { SlideFormat } from './SlideFormat';
 import { CanvasEditor } from './CanvasEditor';
 import type { Commands } from './commands';
 import { resolveBackground } from '../../domain/autoBackground';
+import { LaserArea, NarrationHost, toggleLaser } from './showTools';
 
 interface Props {
   state: AppState;
@@ -111,6 +112,7 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
 
   return (
     <div className="presenter split">
+      <NarrationHost state={state} dispatch={dispatch} cmd={cmd} />
       <section className="presenter-main">
         <div className="presenter-top">
           <span className="presenter-clock">⏱ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</span>
@@ -120,13 +122,14 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
             <button className={mode === 'next' ? 'on' : ''} onClick={() => setMode('next')}>다음 슬라이드</button>
             <button className={mode === 'all' ? 'on' : ''} onClick={() => setMode('all')}>모든 슬라이드</button>
           </div>
+          <button type="button" title="Ctrl을 누른 채 마우스를 움직여도 됩니다" onClick={toggleLaser}>◉ 레이저 포인터</button>
           <button className="danger" onClick={cmd.endShow}>쇼 마침 (Esc)</button>
         </div>
         {mode === 'next' ? (
           <div className="presenter-slides">
             <div className="presenter-current">
               <div className="presenter-label">현재 화면</div>
-              <SlideCanvas {...liveCanvasProps(live)} />
+              <LaserArea cmd={cmd}><SlideCanvas {...liveCanvasProps(live)} /></LaserArea>
               <div className="presenter-nav">
                 <button onClick={() => dispatch({ type: 'live/prev' })}>◀</button>
                 <span>{cursor ? `슬라이드 ${cursor.seq + 1} / ${seqLen}` : '—'}</span>

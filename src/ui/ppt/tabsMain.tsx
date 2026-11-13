@@ -549,7 +549,13 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
       </Group>
       <Group label="미디어">
         <Big icon={RI.video} label="비디오" onClick={() => { kind.current = 'video'; if (fileRef.current) { fileRef.current.accept = 'video/*'; fileRef.current.click(); } }} />
-        <Big icon="🔊" label="오디오" title="이 장치의 오디오 삽입 (슬라이드가 나올 때 재생)" onClick={() => { kind.current = 'audio'; if (fileRef.current) { fileRef.current.accept = 'audio/*'; fileRef.current.click(); } }} />
+        <DropButton big icon="🔊" label="오디오" title="오디오 삽입 · 녹음" render={(close) => (
+          <>
+            <MenuItem label="이 장치의 오디오…" hint="슬라이드가 나올 때 재생" onClick={() => { kind.current = 'audio'; if (fileRef.current) { fileRef.current.accept = 'audio/*'; fileRef.current.click(); } close(); }} />
+            <MenuItem label="오디오 녹음…" hint="마이크로 녹음해 삽입" onClick={() => { if (!blocked(ed)) ed.setDialog('recordAudio'); close(); }} />
+          </>
+        )} />
+        <Big icon="🖥" label="스크린샷" title="화면이나 창을 캡처해 그림으로 삽입" disabled={!ed.slide} onClick={() => !blocked(ed) && ed.setDialog('screenCapture')} />
         <Col>
           <Small icon="⏯" label="재생 옵션" title="선택한 오디오 · 비디오의 재생 (자동 실행, 반복, 볼륨, 맞추기, 페이드)" disabled={!ed.selEls.some((e) => e.kind === 'audio' || e.kind === 'video')} onClick={() => ed.setDialog('audio')} />
           <Small icon={RI.camera} label="카메라" onClick={() => add({ id: uid('el'), kind: 'camera', deviceId: '', x: 320, y: 315, w: 800, h: 450 })} />

@@ -6,6 +6,7 @@ import { CANVAS_W } from '../domain/canvas';
 import { useLiveFeed } from '../ui/hooks';
 import { liveCanvasProps } from '../ui/liveProps';
 import { openLiveChannel } from '../domain/sync';
+import { LaserDot, useLaserDot } from '../ui/ppt/showTools';
 
 /**
  * Audience output. Open it on the projector screen and press F (or double-click) for fullscreen.
@@ -14,6 +15,7 @@ import { openLiveChannel } from '../domain/sync';
  */
 export function OutputView() {
   const live = useLiveFeed();
+  const laser = useLaserDot();
   const latest = useRef(live);
   latest.current = live;
   const screenId = new URLSearchParams(location.search).get('screen');
@@ -113,6 +115,7 @@ export function OutputView() {
   return (
     <div className="output-root" style={{ background: bg }}>
       <SlideCanvas {...liveCanvasProps(live, screen)} className="output-canvas" />
+      <LaserDot point={laser} />
       {tip && <div className="output-tip" style={{ left: tip.x + 14, top: tip.y + 18 }}>{tip.text}</div>}
     </div>
   );
