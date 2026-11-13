@@ -9,6 +9,7 @@ import { uid } from '../../domain/lyrics';
 import { CANVAS_W } from '../../domain/canvas';
 import { sections } from '../../domain/sections';
 import { withMaster } from '../../domain/master';
+import { RecordAudioDialog, ScreenCaptureDialog } from './captureDialogs';
 import { PhotoAlbumDialog } from './albumDialog';
 import { MediaPanel } from './mediaPanel';
 import { nodesFromText, smartArtElements, smartArtOwner, relayoutSmartArt, textFromNodes, type SmartArtSpec } from '../../domain/smartArt';
@@ -476,6 +477,8 @@ export function MoreDialogs({ ed, kind, onClose }: { ed: Ed; kind: DialogKind; o
     case 'smartArt': return <SmartArtDialog ed={ed} onClose={onClose} />;
     case 'photoAlbum': return <PhotoAlbumDialog ed={ed} onClose={onClose} onInsert={(add) => insertSlides(ed, add)} />;
     case 'albumEdit': return <PhotoAlbumDialog ed={ed} onClose={onClose} edit onInsert={(add) => insertSlides(ed, add)} />;
+    case 'recordAudio': return <RecordAudioDialog ed={ed} onClose={onClose} />;
+    case 'screenCapture': return <ScreenCaptureDialog ed={ed} onClose={onClose} />;
     case 'action': return <ActionDialog ed={ed} onClose={onClose} />;
     case 'reuse': return <ReuseDialog ed={ed} onClose={onClose} />;
     case 'outline': return <OutlineDialog ed={ed} onClose={onClose} />;
