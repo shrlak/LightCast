@@ -11,3 +11,4 @@
 .bgr-row { display: grid !important; grid-template-columns: 120px 1fr; align-items: center; gap: 8px; }
 .bgr-row input[type=range] { accent-color: var(--pp-sel, #2e9e66); }
 .bgr-help { margin: 0; color: #605e5c; font-size: 12px; }
+.bgr-restored { margin: 0; padding: 4px 8px; border-left: 3px solid var(--pp-yellow-ink, #b89a00); background: #fffbe0; color: #3b3a1a; font-size: 12px; }
