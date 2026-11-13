@@ -1,13 +1,16 @@
 // File › Export › 동영상 만들기 / 애니메이션 GIF / 개요 내보내기. Slides are drawn with slideToImage (the same
-// picture the PNG export makes). The video is recorded in real time with canvas.captureStream + MediaRecorder
-// (MP4 where Chromium can write it, else WebM) and carries the deck's recorded narration track when it has one.
-import { useState } from 'react';
+// picture the PNG export makes). The video is made the fast way when the browser has WebCodecs (VideoEncoder + our own
+// MP4 / WebM muxer, many times faster than real time); otherwise, and whenever the deck's recorded narration track is
+// included, it is recorded in real time with canvas.captureStream + MediaRecorder (MP4 where Chromium can write it, else WebM).
+import { useEffect, useRef, useState } from 'react';
 import { encodeGif } from '../../domain/gifEncoder';
 import { buildOutline, outlineToRtf, outlineToText } from '../../domain/outlineExport';
 import { DEFAULT_SECONDS, GIF_SIZES, VIDEO_SIZES, clampSeconds, gifDelayCs, pickVideoType, slideDurations } from '../../domain/videoExport';
 import { printPages } from '../../domain/filePrint';
 import { mediaUrl } from '../../domain/media';
 import { slideToImage } from '../slideImage';
+import { exportFastVideo, fastVideoCodec } from '../fastVideoExport';
+import type { FastCodec } from '../../domain/videoMux';
 import { slideTheme } from '../SlideCanvas';
 import { Check } from './dialogs';
 import type { Ed } from './editor';
@@ -42,6 +45,18 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
   const [gSaved, setGSaved] = useState(false);
   const [oNotes, setONotes] = useState(false);
   const [oHidden, setOHidden] = useState(false);
+  const [fastCodec, setFastCodec] = useState<FastCodec | null>(null);
+  const [vFast, setVFast] = useState(true);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [videoRunning, setVideoRunning] = useState(false);
+  const cancelled = useRef(false);
+  const vDims = VIDEO_SIZES.find((x) => x.id === vSize)!;
+  useEffect(() => {
+    let live = true;
+    setFastCodec(null);
+    fastVideoCodec(vDims.width, vDims.height).then((c) => { if (live) setFastCodec(c); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [vDims.width, vDims.height]);
   if (!p || !ed.theme) return null;
   const theme = ed.theme;
   const pages = printPages(p, { range: '', includeHidden: false }).pages;
@@ -50,16 +65,39 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
 
   const makeVideo = async () => {
     setMsg(null);
-    if (!videoType) { setMsg('이 컴퓨터에서는 동영상을 만들 수 없습니다 (MediaRecorder 미지원).'); return; }
+    const withAudio = vAudio && !!p.timeline?.audioMediaId;
+    // The fast way cannot carry the recorded narration track yet; with it, the video is recorded in real time.
+    const fast = vFast && !!fastCodec && !withAudio ? fastCodec : null;
+    if (!videoType && !fast) { setMsg('이 컴퓨터에서는 동영상을 만들 수 없습니다 (MediaRecorder 미지원).'); return; }
+    cancelled.current = false;
+    setProgress(null);
+    setVideoRunning(true);
     let audioEl: HTMLAudioElement | null = null, actx: AudioContext | null = null;
     try {
       const size = VIDEO_SIZES.find((s) => s.id === vSize)!;
       const secs = slideDurations(p, pages.map((x) => x.slide), vSecs, vSaved);
       const bitmaps: ImageBitmap[] = [];
       for (let i = 0; i < pages.length; i++) {
+        if (cancelled.current) { setMsg('동영상 만들기를 취소했습니다.'); return; }
         setBusy(`${i + 1} / ${pages.length} 그리는 중…`);
         bitmaps.push(await toBitmap(await slideToImage(p, pages[i].slide, slideTheme(theme, pages[i].slide), size.width, 'png')));
       }
+      if (fast) {
+        const started = performance.now();
+        setBusy('빠르게 만드는 중…');
+        const blob = await exportFastVideo({
+          bitmaps, seconds: secs, width: size.width, height: size.height, codec: fast, bitrate: size.width >= 1440 ? 6_000_000 : 3_000_000,
+          onProgress: (done, total) => { setProgress({ done, total }); setBusy(`빠르게 만드는 중… ${Math.round((done / total) * 100)}%`); },
+          isCancelled: () => cancelled.current,
+        });
+        bitmaps.forEach((b) => b.close());
+        if (!blob) { setMsg('동영상 만들기를 취소했습니다. 파일은 저장하지 않았습니다.'); return; }
+        const total = secs.reduce((a, b) => a + b, 0);
+        save(`${baseName(p.title)}.${fast.ext}`, blob);
+        setMsg(`${fast.label} 동영상을 저장했습니다 (${bitmaps.length}장, ${Math.round(total)}초 분량을 ${Math.max(1, Math.round((performance.now() - started) / 1000))}초 만에 만들었습니다).`);
+        return;
+      }
+      if (!videoType) return;
       const canvas = document.createElement('canvas');
       canvas.width = size.width; canvas.height = size.height;
       const ctx = canvas.getContext('2d')!;
@@ -67,7 +105,7 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
       draw(0);
       const stream = canvas.captureStream(30);
       let narrated = false;
-      if (vAudio && p.timeline?.audioMediaId) {
+      if (withAudio && p.timeline?.audioMediaId) {
         const url = await mediaUrl(p.timeline.audioMediaId);
         if (url) {
           audioEl = new Audio(url);
@@ -92,15 +130,19 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
         const end = elapsed + secs[i];
         const t0 = performance.now();
         while ((performance.now() - t0) / 1000 < secs[i]) {
+          if (cancelled.current) break;
+          setProgress({ done: Math.round(elapsed + (performance.now() - t0) / 1000), total: Math.round(total) });
           setBusy(`녹화 중… ${Math.min(total, Math.round(elapsed + (performance.now() - t0) / 1000))} / ${Math.round(total)}초`);
           draw(i);
           await sleep(100);
         }
         elapsed = end;
+        if (cancelled.current) break;
       }
       rec.stop();
       await done;
       stream.getTracks().forEach((t) => t.stop());
+      if (cancelled.current) { setMsg('동영상 만들기를 취소했습니다. 파일은 저장하지 않았습니다.'); return; }
       save(`${baseName(p.title)}.${videoType.ext}`, new Blob(chunks, { type: videoType.mime.split(';')[0] }));
       setMsg(`${videoType.label} 동영상을 저장했습니다 (${bitmaps.length}장, ${Math.round(total)}초${narrated ? ', 녹음된 내레이션 포함' : ''}).`);
     } catch (e) {
@@ -109,6 +151,8 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
       audioEl?.pause();
       void actx?.close();
       setBusy(null);
+      setProgress(null);
+      setVideoRunning(false);
     }
   };
 
@@ -153,6 +197,13 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
   };
 
   const none = pages.length === 0;
+  const withAudioNow = vAudio && hasAudio;
+  const fastOn = vFast && !!fastCodec && !withAudioNow;
+  const fastNote = fastOn
+    ? `${fastCodec!.label} 형식으로 빠르게 만듭니다 (동영상 길이보다 훨씬 짧게 걸립니다).`
+    : videoType
+      ? `${videoType.label} 형식으로 저장합니다${videoType.ext === 'webm' ? ' (이 컴퓨터에서는 MP4를 만들 수 없어 WebM으로 저장합니다)' : ''}. 만드는 데 동영상 길이만큼 걸립니다${withAudioNow && fastCodec ? ' (녹음된 내레이션을 넣으면 실시간으로 녹화합니다)' : ''}.`
+      : '이 컴퓨터에서는 동영상을 만들 수 없습니다.';
   return (
     <div className="bs-export bs-export-more">
       <h2>동영상 만들기</h2>
@@ -165,8 +216,13 @@ export function ExportMorePanel({ ed }: { ed: Ed }) {
           <input type="number" min={0.5} step={0.5} value={vSecs} onChange={(e) => setVSecs(clampSeconds(Number(e.target.value)))} />
         </label>
         <Check label={hasAudio ? '녹음된 내레이션 포함' : '녹음된 내레이션 포함 (녹음 없음)'} checked={vAudio && hasAudio} disabled={!hasAudio} onChange={setVAudio} />
-        <p className="bs-note">{videoType ? `${videoType.label} 형식으로 저장합니다${videoType.ext === 'webm' ? ' (이 컴퓨터에서는 MP4를 만들 수 없어 WebM으로 저장합니다)' : ''}. 만드는 데 동영상 길이만큼 걸립니다.` : '이 컴퓨터에서는 동영상을 만들 수 없습니다.'}</p>
-        <button type="button" className="bs-print-go primary" disabled={none || !!busy || !videoType} onClick={() => void makeVideo()}>동영상 만들기</button>
+        <Check label={fastCodec ? '빠르게 만들기 (실시간보다 빠름)' : '빠르게 만들기 (이 컴퓨터에서는 사용할 수 없음)'} checked={vFast && !!fastCodec} disabled={!fastCodec} onChange={setVFast} />
+        <p className="bs-note">{fastNote}</p>
+        <div className="bs-video-go">
+          <button type="button" className="bs-print-go primary" disabled={none || !!busy || (!videoType && !fastCodec)} onClick={() => void makeVideo()}>동영상 만들기</button>
+          {videoRunning && <button type="button" className="bs-print-go bs-cancel" onClick={() => { cancelled.current = true; setBusy('취소하는 중…'); }}>취소</button>}
+        </div>
+        {progress && <progress className="bs-progress" max={progress.total} value={progress.done} aria-label="동영상 만드는 중" />}
       </div>
       <h2>애니메이션 GIF</h2>
       <div className="bs-print-opts">
