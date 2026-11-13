@@ -12,6 +12,7 @@ import { SlideFormat } from './SlideFormat';
 import { CanvasEditor } from './CanvasEditor';
 import type { Commands } from './commands';
 import { resolveBackground } from '../../domain/autoBackground';
+import { CaptionHost, CaptionToggle } from './captionTools';
 import { LaserArea, NarrationHost, toggleLaser } from './showTools';
 
 interface Props {
@@ -113,6 +114,7 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
   return (
     <div className="presenter split">
       <NarrationHost state={state} dispatch={dispatch} cmd={cmd} />
+      <CaptionHost />
       <section className="presenter-main">
         <div className="presenter-top">
           <span className="presenter-clock">⏱ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</span>
@@ -123,6 +125,7 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
             <button className={mode === 'all' ? 'on' : ''} onClick={() => setMode('all')}>모든 슬라이드</button>
           </div>
           <button type="button" title="Ctrl을 누른 채 마우스를 움직여도 됩니다" onClick={toggleLaser}>◉ 레이저 포인터</button>
+          <CaptionToggle notify={cmd.notify} />
           <button className="danger" onClick={cmd.endShow}>쇼 마침 (Esc)</button>
         </div>
         {mode === 'next' ? (

@@ -14,6 +14,9 @@ const ctor = (): RecognitionCtor | null => {
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
 };
 
+/** True when this browser can recognise speech at all (the desktop app's Electron usually cannot). */
+export const speechSupported = (): boolean => typeof window !== 'undefined' && ctor() !== null;
+
 const MESSAGES: Record<string, string> = {
   'not-allowed': '마이크 사용이 막혀 있습니다. 브라우저 설정에서 마이크를 허용해 주세요.',
   'service-not-allowed': '이 브라우저에서는 음성 인식을 쓸 수 없습니다.',
@@ -26,7 +29,7 @@ const MESSAGES: Record<string, string> = {
  * It restarts by itself when the browser stops it (they stop after a pause), until stop() is called.
  * `onText` gets the recent transcript every time words arrive, final or not.
  */
-export function useSpeechRefs(onText: (recent: string, final: boolean) => void, lang = 'ko-KR') {
+export function useSpeechRefs(onText: (recent: string, final: boolean) => void, lang = 'ko-KR', onPiece?: (text: string, final: boolean) => void) {
   const [listening, setListening] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [interim, setInterim] = useState('');
@@ -34,6 +37,8 @@ export function useSpeechRefs(onText: (recent: string, final: boolean) => void, 
   const recognition = useRef<RecognitionLike | null>(null);
   const handler = useRef(onText);
   handler.current = onText;
+  const pieceHandler = useRef(onPiece);
+  pieceHandler.current = onPiece;
   const history = useRef('');
   const supported = ctor() !== null;
 
@@ -48,6 +53,7 @@ export function useSpeechRefs(onText: (recent: string, final: boolean) => void, 
       let live = '';
       for (let i = e.resultIndex; i < e.results.length; i++) {
         const piece = e.results[i][0].transcript;
+        pieceHandler.current?.(piece, e.results[i].isFinal);
         if (e.results[i].isFinal) {
           history.current = `${history.current} ${piece}`.slice(-400);
           live = '';
