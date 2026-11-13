@@ -17,9 +17,27 @@
 //     curves, DrawImage, DrawImagePoints, DrawString, DrawDriverString (character codes), world and
 //     page transforms, Save / Restore / containers, clip rectangle and path. In a file that holds
 //     EMF+ records those are drawn and the GDI fallback is ignored, except where GetDC asks for it.
-// Not drawn: raster operations that read the destination (XOR, invert), MaskBlt / PlgBlt, regions
-//   (FillRegion, SetClipRegion), texture brushes, image attributes / effects, glyph-index text,
-//   EMF+ relative-coordinate paths, flood fills, exclude-clip, EMF+ container mapping.
+// Also drawn, approximately
+//   Regions: EMF ExtCreateRegion / FillRgn / FrameRgn / PaintRgn / InvertRgn, WMF CreateRegion /
+//     FillRegion / FrameRegion / PaintRegion / InvertRegion / SelectClipRegion, EMF+ region objects
+//     (rect, infinite, empty, and / or / xor / exclude / complement; a path node as its bounding box)
+//     with FillRegion and SetClipRegion. Clip combine modes AND, DIFF (exclude), COPY are exact; OR and
+//     XOR rebuild the innermost clip, exact for one clip level. ExcludeClipRect is exact.
+//   Raster operations that read the destination: DSTINVERT, PATINVERT, SRCINVERT, NOTSRCCOPY, SRCAND,
+//     SRCPAINT, NOTSRCAND, MERGEPAINT, PATPAINT and the binary ROP2 modes (XOR, NOT, MASK, MERGE,
+//     NOTCOPYPEN, BLACK, WHITE) become CSS `mix-blend-mode` (difference / multiply / screen) and an
+//     invert filter. XOR is exact on black and white; elsewhere it is `difference`, a look-alike.
+//     Blend modes show in browsers and when the SVG is drawn to a canvas for the PNG; other renderers
+//     may ignore them.
+//   Bitmaps: AlphaBlend constant alpha and per-pixel alpha, TransparentBlt colour key.
+//   EMF+: texture brushes (tiled image, brush transform), relative-coordinate paths, BeginContainer
+//     source -> destination rectangle mapping. Text widths come from canvas measureText with a DOM,
+//     else built-in Helvetica / Times / fixed-pitch tables (metrics.ts).
+//   Glyph-index text (ETO_GLYPH_INDEX, DrawDriverString without character codes): the indices cannot be
+//     mapped to characters without the font, so a pale box is drawn per glyph as a placeholder.
+// Not drawn: MaskBlt / PlgBlt, flood fills, EMF+ image attributes and effects (the attributes object
+//   holds only a wrap mode and clamp colour), path nodes of EMF+ regions beyond their bounding box,
+//   EMF+ complement clipping under an already open clip.
 import { Bytes } from './bytes';
 import { isEmf, playEmf } from './emf';
 import { setNestedRenderer } from './emfplus';

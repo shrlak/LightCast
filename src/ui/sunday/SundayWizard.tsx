@@ -274,7 +274,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
             <div className="stack narrow">
               <p>설교 PPT (.pptx, .ppt) or PDF — its slides go right after the scripture. Skip if there is none.</p>
               <button className="primary" onClick={() => sermonRef.current?.click()}>설교 파일 올리기</button>
-              <input ref={sermonRef} type="file" accept=".pptx,.ppt,.pptm,.ppsx,.pps,.potx,.pdf,image/*,.wmf,.emf" multiple hidden onChange={(e) => { importInto(e.target.files, 'sermonSlides'); e.target.value = ''; }} />
+              <input ref={sermonRef} type="file" accept=".pptx,.ppt,.pptm,.ppsx,.pps,.potx,.pdf,image/*,.wmf,.emf,.svgz" multiple hidden onChange={(e) => { importInto(e.target.files, 'sermonSlides'); e.target.value = ''; }} />
               {slideList(d.sermonSlides, 'sermonSlides')}
             </div>
           )}
@@ -313,7 +313,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
             <div className="stack narrow">
               <p>추가 자료: PDF (one slide per page), images, PPTX. They go after the Back/End slides, in this order.</p>
               <button onClick={() => extraRef.current?.click()}>＋ Add files</button>
-              <input ref={extraRef} type="file" accept=".pdf,.pptx,.ppt,.pptm,.ppsx,.pps,.potx,image/*,.wmf,.emf" multiple hidden onChange={(e) => { importInto(e.target.files, 'extraSlides'); e.target.value = ''; }} />
+              <input ref={extraRef} type="file" accept=".pdf,.pptx,.ppt,.pptm,.ppsx,.pps,.potx,image/*,.wmf,.emf,.svgz" multiple hidden onChange={(e) => { importInto(e.target.files, 'extraSlides'); e.target.value = ''; }} />
               {slideList(d.extraSlides, 'extraSlides')}
             </div>
           )}

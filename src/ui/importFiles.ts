@@ -1,3 +1,4 @@
+import { isSvgzName } from '../domain/svgPicture';
 import type { MediaMeta, Slide } from '../domain/types';
 import { putMedia } from '../domain/media';
 import { uid } from '../domain/lyrics';
@@ -112,7 +113,7 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       const picture = await metafileToBlob(await file.arrayBuffer());
       if (!picture) throw new Error(`${file.name}: WMF/EMF 그림을 읽지 못했습니다. PNG나 JPG로 저장해 다시 가져와 주세요. 기존 자료는 유지됩니다.`);
       slides.push(imageSlide(await storeImage(picture, file.name.replace(/\.(wmf|emf)$/i, picture.type === 'image/png' ? '.png' : '.svg'), addMedia), base));
-    } else if (file.type.startsWith('image/')) {
+    } else if (file.type.startsWith('image/') || isSvgzName(file.name)) {
       slides.push(imageSlide(await storeImage(file, file.name, addMedia), base));
     }
   }

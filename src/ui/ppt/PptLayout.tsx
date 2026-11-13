@@ -1,3 +1,4 @@
+import { isSvgzName } from '../../domain/svgPicture';
 import { activeTextEditor } from '../RichTextEditor';
 import { copyFormat, finishPainter, heldFormat, holdFormat } from '../../domain/formatPainter';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } from 'react';
@@ -37,7 +38,7 @@ function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
   return new Promise((resolve) => {
     const inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = 'image/*,.wmf,.emf';
+    inp.accept = 'image/*,.wmf,.emf,.svgz';
     inp.onchange = () => {
       const f = inp.files?.[0];
       if (!f) return resolve(null);
@@ -295,7 +296,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     const onPaste = (e: ClipboardEvent) => {
       const t = e.target as HTMLElement;
       if (!p || cmd.view === 'presenter' || t.matches('input,textarea,select,[contenteditable="true"]') || document.querySelector('.modal-backdrop')) return;
-      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/') || isMetafileName(f.name));
+      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/') || isMetafileName(f.name) || isSvgzName(f.name));
       if (!file) return;
       e.preventDefault();
       if (p.protected) return cmd.notify(PROTECTED_MESSAGE);

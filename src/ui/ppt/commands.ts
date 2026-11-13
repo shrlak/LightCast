@@ -50,7 +50,7 @@ export interface Commands {
 }
 
 export const ACCEPT = {
-  slides: '.pptx,.ppt,.pptm,.ppsx,.pps,.potx,.odp,.pdf,image/*,.wmf,.emf',
+  slides: '.pptx,.ppt,.pptm,.ppsx,.pps,.potx,.odp,.pdf,image/*,.wmf,.emf,.svgz',
   lyrics: '.txt,.md,.pro6,.cho,.chopro,.chordpro,.crd,.xml,text/plain,text/markdown',
   backup: '.zip,application/zip',
   library: '.json,application/json',

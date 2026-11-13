@@ -1,8 +1,8 @@
 // 그리기 › 잉크를 도형으로 변환 (Draw › Convert to Shape): recognise a hand-drawn stroke as a line,
 // arrow, rectangle, ellipse, triangle or a straight-edged polygon. Pure geometry: canvas pixels in, a
 // description of the shape out; editOps turns it into a slide object.
-// (잉크를 텍스트로 / Ink to Text needs a handwriting model; LightCast has none and adds no heavy
-// dependency for it, so that conversion is not offered.)
+// (잉크를 텍스트로 / Ink to Text is in inkText.ts: the browser's handwriting recogniser when there is
+// one, else a small template reader for digits and Latin letters.)
 
 export type Pt = [number, number];
 

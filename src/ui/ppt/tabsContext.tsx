@@ -186,7 +186,7 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
             );
           })()}
           <Big icon="🖼" label="그림 삽입" title="선택한 SmartArt 도형을 그림으로 채웁니다 (그림 레이아웃의 그림 자리)" disabled={ed.sel.length !== 1}
-            onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*,.wmf,.emf'; inp.onchange = () => { const f = inp.files?.[0]; if (!f) return; const id = uid('m'); void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image', backgroundHidden: true } }); ed.setElements((els) => els.map((e) => (e.id === ed.sel[0] ? { ...e, fillImage: id, pattern: undefined, gradient: undefined } : e))); }); }; inp.click(); }} />
+            onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*,.wmf,.emf,.svgz'; inp.onchange = () => { const f = inp.files?.[0]; if (!f) return; const id = uid('m'); void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image', backgroundHidden: true } }); ed.setElements((els) => els.map((e) => (e.id === ed.sel[0] ? { ...e, fillImage: id, pattern: undefined, gradient: undefined } : e))); }); }; inp.click(); }} />
           <DropButton big icon="⇄" label="변환" render={(close) => {
             const owner = smartArtOwner(ed.elements, ed.selEls);
             return (
@@ -383,7 +383,7 @@ export function PictureFormatTab({ ed }: { ed: Ed }) {
           )} />
           {gif && <Small icon={p?.gifPaused ? '▶' : '❚❚'} label={p?.gifPaused ? 'GIF 재생' : 'GIF 일시 중지'} title="움직이는 GIF를 멈추거나 다시 재생" onClick={() => set({ gifPaused: p?.gifPaused ? undefined : true })} />}
         </Col>
-        <input ref={fileRef} type="file" accept="image/*,.wmf,.emf" hidden onChange={(e) => { void replace(e.target.files?.[0]); e.target.value = ''; }} />
+        <input ref={fileRef} type="file" accept="image/*,.wmf,.emf,.svgz" hidden onChange={(e) => { void replace(e.target.files?.[0]); e.target.value = ''; }} />
       </Group>
       <Group label="그림 스타일">
         <DropButton big icon="🖼" label="빠른 스타일" disabled={!p} wide render={(close) => (

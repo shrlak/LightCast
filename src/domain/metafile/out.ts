@@ -17,6 +17,9 @@ export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', 
 export const xmlText = (s: string) => esc(s.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f￾￿]/g, ''));
 export const hex = (r: number, g: number, b: number) => '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
 
+/** "Everything": a rectangle far larger than any picture, for exclude-clip and complements. */
+export const BIG = 'M-1e7 -1e7L1e7 -1e7L1e7 1e7L-1e7 1e7Z';
+
 export type Color = { rgb: string; a: number };
 export type Fill = { color: Color } | { ref: string } | null;
 export interface Stroke { color: Color; width: number; dash?: number[]; cap?: 'butt' | 'round' | 'square'; join?: 'miter' | 'round' | 'bevel'; miter?: number }
@@ -41,6 +44,9 @@ export class Out {
   clipDepth = 0;
   private ids = 0;
   private hatches = new Map<string, string>();
+  private invId = '';
+  /** Paths of the open clips, innermost last, so a region combine (OR / XOR) can rebuild the innermost one. */
+  private clipPaths: { d: string; evenOdd: boolean }[] = [];
   /** Bounds of everything drawn. */
   minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
   /** While true nothing is drawn (EMF+ files play their own records, not the GDI fallback). */
@@ -75,10 +81,20 @@ export class Out {
     if (s.dash?.length) a += ` stroke-dasharray="${s.dash.map(num).join(' ')}"`;
     return a;
   }
-  /** One filled and/or stroked path. */
-  drawPath(p: PathData, fill: Fill, stroke: Stroke | null, evenOdd = false) {
+  /** One filled and/or stroked path. `blend` is a CSS mix-blend-mode that stands in for a raster operation that reads the destination. */
+  drawPath(p: PathData, fill: Fill, stroke: Stroke | null, evenOdd = false, blend?: string) {
     if (p.empty || (!fill && !stroke)) return;
-    this.push(`<path d="${p.d}"${this.fillAttrs(fill, evenOdd)}${this.strokeAttrs(stroke)}/>`);
+    this.push(`<path d="${p.d}"${this.fillAttrs(fill, evenOdd)}${this.strokeAttrs(stroke)}${blend ? ` style="mix-blend-mode:${blend}"` : ''}/>`);
+  }
+  /** Path data written without touching the bounds (for a huge "everything" rectangle). */
+  rawPath(d: string) { const p = new PathData(this); p.d = d; return p; }
+  /** An SVG filter that inverts colours (NOTSRCCOPY and friends); returns its id. */
+  invertFilter(): string {
+    if (!this.invId) {
+      this.invId = this.id('f');
+      this.addDef(`<filter id="${this.invId}" color-interpolation-filters="sRGB" x="0" y="0" width="100%" height="100%"><feColorMatrix type="matrix" values="-1 0 0 0 1 0 -1 0 0 1 0 0 -1 0 1 0 0 0 1 0"/></filter>`);
+    }
+    return this.invId;
   }
   /** Raw element (text, image) drawn at once. */
   element(s: string) { this.push(s); }
@@ -90,8 +106,23 @@ export class Out {
     this.addDef(`<clipPath id="${id}"><path d="${p.empty ? 'M0 0' : p.d}"${evenOdd ? ' clip-rule="evenodd"' : ''}/></clipPath>`);
     this.body.push(`<g clip-path="url(#${id})">`);
     this.clipDepth++;
+    this.clipPaths[this.clipDepth - 1] = { d: p.empty ? 'M0 0' : p.d, evenOdd };
   }
-  popClip() { if (this.clipDepth > 0) { this.body.push('</g>'); this.clipDepth--; } }
+  /** Replaces the innermost clip by its union (`xor` false) or symmetric difference with `p`; with no clip open, OR is "everything" and XOR the complement of `p`. Exact for one clip level, an approximation under nested ones. */
+  combineTopClip(p: PathData, xor: boolean) {
+    if (this.muted || this.full) return;
+    const top = this.clipDepth > 0 ? this.clipPaths[this.clipDepth - 1] : null;
+    if (!top) { if (xor) this.pushClip(this.rawPath(`${BIG}${p.d}`), true); return; }
+    this.popClip();
+    const id = this.id('c');
+    const a = `<path d="${top.d}"${top.evenOdd ? ' clip-rule="evenodd"' : ''}/>`;
+    if (xor) { this.pushClip(this.rawPath(top.d + p.d), true); return; }
+    this.addDef(`<clipPath id="${id}">${a}<path d="${p.d}"/></clipPath>`);
+    this.body.push(`<g clip-path="url(#${id})">`);
+    this.clipDepth++;
+    this.clipPaths[this.clipDepth - 1] = { d: top.d + p.d, evenOdd: false };
+  }
+  popClip() { if (this.clipDepth > 0) { this.body.push('</g>'); this.clipDepth--; this.clipPaths.length = this.clipDepth; } }
   popClipsTo(depth: number) { while (this.clipDepth > depth) this.popClip(); }
 
   /** A hatch brush's pattern: `style` is the GDI HS_ constant. */
@@ -111,9 +142,9 @@ export class Out {
     this.hatches.set(key, id);
     return id;
   }
-  imagePattern(href: string, w: number, h: number): string {
+  imagePattern(href: string, w: number, h: number, xf?: Xf): string {
     const id = this.id('p');
-    this.addDef(`<pattern id="${id}" width="${num(w)}" height="${num(h)}" patternUnits="userSpaceOnUse"><image href="${href}" width="${num(w)}" height="${num(h)}" preserveAspectRatio="none"/></pattern>`);
+    this.addDef(`<pattern id="${id}" width="${num(w)}" height="${num(h)}" patternUnits="userSpaceOnUse"${xf ? ` patternTransform="matrix(${xf.map(num).join(' ')})"` : ''}><image href="${href}" width="${num(w)}" height="${num(h)}" preserveAspectRatio="none"/></pattern>`);
     return id;
   }
   linearGradient(x1: number, y1: number, x2: number, y2: number, stops: [number, Color][], xf: Xf, pad: boolean): string {
