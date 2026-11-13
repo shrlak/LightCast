@@ -1,4 +1,5 @@
 import PptxGenJS from 'pptxgenjs';
+import { embedFontsPref, embedUsedFonts } from '../embeddedFonts';
 import type { Background, HAlign, Library, ListStyle, Playlist, Presentation, SlideElement, TextDirection, Theme } from '../types';
 import { chartSvg, iconCatalog, layoutTable } from '../../engine';
 import { histogramColumns, pptxPlan } from '../chartTypes';
@@ -357,7 +358,19 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
 /** Export presentations (in playlist order when given) to a .pptx file download. */
 export async function exportPptx(lib: Library, source: { playlist: Playlist } | { presentation: Presentation }, fileName: string) {
   const pptx = await buildPptx(lib, source);
-  await pptx.writeFile({ fileName: fileName.endsWith('.pptx') ? fileName : `${fileName}.pptx` });
+  const name = fileName.endsWith('.pptx') ? fileName : `${fileName}.pptx`;
+  if (!embedFontsPref()) return void (await pptx.writeFile({ fileName: name }));
+  // 글꼴 포함: the fonts the deck uses that this computer has files for go into the file (the rest are listed in the result).
+  const blob = await pptx.write({ outputType: 'blob' }) as Blob;
+  const { blob: withFonts, missing } = await embedUsedFonts(blob, 'playlist' in source ? lib.presentations : source.presentation);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(withFonts);
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  return { missingFonts: missing };
 }
 
 /** The deck as PowerPoint will get it (in playlist order when given). */

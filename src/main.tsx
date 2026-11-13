@@ -17,10 +17,12 @@ import '@fontsource/arimo/700.css';
 import '@fontsource/arimo/400-italic.css';
 import './styles.css';
 import { loadEngine } from './engine/load';
+import { registerStoredFonts } from './domain/embeddedFonts';
 
 const view = new URLSearchParams(location.search).get('view');
 const Root = view === 'output' ? OutputView : view === 'stage' ? StageView : view === 'remote' ? RemoteView : view === 'team' ? TeamView : view === 'mixer' ? MixerView : OperatorView;
 document.body.dataset.view = view ?? 'operator';
+void registerStoredFonts();
 
 // The animated KCCP start screen (public/splash.js) plays to the end — or until it is clicked —
 // then fades. The desktop app already showed it in its splash window, and output/stage windows
