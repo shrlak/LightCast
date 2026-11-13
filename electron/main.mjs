@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 // LightCast desktop app: runs the LightCast server inside the app and shows the console,
 // audience outputs and stage displays as native windows placed on your displays.
-import { app, BrowserWindow, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, session, shell, dialog } from 'electron';
+import { app, BrowserWindow, desktopCapturer, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, session, shell, dialog } from 'electron';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -530,6 +530,10 @@ app.whenReady().then(async () => {
   if (process.platform === 'darwin' && !app.isPackaged) app.dock?.setIcon(APP_ICON);
   if (!SMOKE) showSplash();
   loadSettings();
+  // Insert › Screenshot: getDisplayMedia needs the app to say which source it gets (the first screen).
+  session.defaultSession.setDisplayMediaRequestHandler((_req, callback) => {
+    desktopCapturer.getSources({ types: ['screen', 'window'] }).then((sources) => callback(sources[0] ? { video: sources[0] } : {}), () => callback({}));
+  });
   setAiConfigProvider(() => settings.ai);
   // Spelling in Korean and English where this system's checker has them (macOS uses its own languages).
   try {
