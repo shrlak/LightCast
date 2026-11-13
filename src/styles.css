@@ -2117,6 +2117,12 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
   color: #fef08a; background: rgba(6, 40, 20, .82); border: 2px solid rgba(34, 197, 94, .7); text-shadow: 0 1px 3px #000; pointer-events: none; animation: caption-in .2s ease-out; }
 @keyframes caption-in { from { opacity: 0; } to { opacity: 1; } }
 .caption-error { color: #b45309; font-size: 12px; font-weight: 600; }
+.speech-card { border-color: rgba(34, 197, 94, .45); }
+.speech-card .speech-choices button, .speech-card [role='radio'] { border-color: rgba(34, 197, 94, .5); }
+.speech-card [role='radio'].on { background: #166534 !important; border-color: #22c55e; color: #fef08a !important; font-weight: 700; }
+.speech-status { margin: 0; padding: 6px 10px; border-radius: 8px; background: rgba(234, 179, 8, .14); color: #854d0e; font-size: 13px; font-weight: 600; }
+.speech-status.ok { background: rgba(34, 197, 94, .16); color: #166534; }
+.speech-status.bad { background: rgba(234, 179, 8, .28); color: #713f12; }
 
 /* Insert › Screenshot: source picker and crop */
 .capture-sources { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px; max-height: 44vh; overflow: auto; padding: 2px; }

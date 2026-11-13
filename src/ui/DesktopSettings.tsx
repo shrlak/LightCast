@@ -4,6 +4,7 @@ import { desktop, type DesktopInfo } from '../domain/desktop';
 import { openOutput } from './outputWindows';
 import { UpdateCheck } from './UpdateBanner';
 import { qrDataUrl } from '../domain/io/qr';
+import { SpeechSettingsCard } from './SpeechSettingsCard';
 
 export interface DesktopSettingsState {
   info: DesktopInfo;
@@ -95,6 +96,7 @@ export function DesktopAi({ info, refresh }: DesktopSettingsState) {
           {info.ai.hasOpenrouterKey && <button className="danger" onClick={async () => { await desktop!.setAiConfig({ openrouterKey: '' }); refresh(); }}>삭제</button>}
         </div>
       </section>
+      <SpeechSettingsCard info={info} refresh={refresh} />
     </>
   );
 }
