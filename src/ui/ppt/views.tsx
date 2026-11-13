@@ -20,6 +20,7 @@ import { TRANSITION } from './ko';
 import { PropertiesForm } from './printing';
 import { PrintPanel } from './printPanel';
 import { InfoStats } from './infoPanel';
+import { EmbedFontsOption } from './EmbedFontsOption';
 import { NativeOpenCard, NativeSaveCards, OdpSaveCard, PasswordProtectCard } from './fileFormats';
 import { ExportPanel } from './exportPanel';
 import { ExportMorePanel } from './exportMorePanel';
@@ -407,6 +408,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <>
             <h1>저장</h1>
             <p className="bs-note">LightCast는 바꾸는 즉시 이 컴퓨터에 저장하고, 로그인하면 클라우드에도 동기화합니다.</p>
+            <EmbedFontsOption />
             <div className="bs-cards">
               <Card icon={RI.paste} title="PowerPoint 파일로 저장 (.pptx)" text="지금 재생목록을 MMDD.pptx로" onClick={() => run(cmd.exportPlaylistPptx)} />
               <OdpSaveCard ed={ed} />
