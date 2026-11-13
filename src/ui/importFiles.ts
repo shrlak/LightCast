@@ -6,7 +6,9 @@ import { parseOdp } from '../domain/io/odp';
 import { importPpt } from '../domain/io/pptImport';
 import { renderPdf } from '../domain/io/pdf';
 import { desktop } from '../domain/desktop';
+import { importEmbeddedFonts } from '../domain/embeddedFonts';
 import { pptxSlides } from '../domain/templates/serviceTemplates';
+import { isMetafileName, metafileToBlob } from '../domain/metafile/image';
 
 /** PowerPoint files LightCast opens as editable slides: .pptx / .ppt, plus show, macro and template variants (macros are never run). */
 export const POWERPOINT_FILE = /\.(pptx|pptm|ppsx|ppsm|potx|potm|ppt|pps|pot)$/i;
@@ -59,6 +61,8 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
         }
         data = new Uint8Array(converted).buffer;
       }
+      // Fonts the file carries are registered first, so the slides draw in them.
+      await importEmbeddedFonts(data, file.name);
       const imported = await importPptx(new Blob([data])).catch(() => []);
       // Keep source objects editable on every platform; never flatten PowerPoint into PDF pages.
       let n = 0;
@@ -97,6 +101,12 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       for (const page of await renderPdf(file, { scale: 2.5, quality: 0.95 })) {
         slides.push({ ...imageSlide(await storeImage(page.blob, `${base} p${page.page}`, (m) => addMedia({ ...m, backgroundHidden: true })), base), importSource: { format: 'pdf', name: file.name, page: page.page } });
       }
+    } else if (isMetafileName(file.name)) {
+      // Windows metafile pictures (.wmf, .emf) are drawn into an ordinary picture.
+      onProgress?.(`그림 읽는 중: ${file.name}…`);
+      const picture = await metafileToBlob(await file.arrayBuffer());
+      if (!picture) throw new Error(`${file.name}: WMF/EMF 그림을 읽지 못했습니다. PNG나 JPG로 저장해 다시 가져와 주세요. 기존 자료는 유지됩니다.`);
+      slides.push(imageSlide(await storeImage(picture, file.name.replace(/\.(wmf|emf)$/i, picture.type === 'image/png' ? '.png' : '.svg'), addMedia), base));
     } else if (file.type.startsWith('image/')) {
       slides.push(imageSlide(await storeImage(file, file.name, addMedia), base));
     }

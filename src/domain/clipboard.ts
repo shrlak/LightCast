@@ -57,7 +57,9 @@ function runCss(r: Partial<TextRun>, el: SlideElement): string {
   if (size) css.push(`font-size:${pt(size)}`);
   const color = r.color ?? el.color;
   if (color) css.push(`color:${color}`);
-  if (r.bold ?? el.bold) css.push('font-weight:bold');
+  const weight = r.weight ?? (r.bold === undefined ? el.weight : undefined);
+  if (weight !== undefined) css.push(`font-weight:${weight}`);
+  else if (r.bold ?? el.bold) css.push('font-weight:bold');
   if (r.italic ?? el.italic) css.push('font-style:italic');
   const deco = [(r.underline ?? el.underline) && 'underline', (r.strike ?? el.strike) && 'line-through'].filter(Boolean).join(' ');
   if (deco) css.push(`text-decoration:${deco}`);

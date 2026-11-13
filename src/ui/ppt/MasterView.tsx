@@ -110,7 +110,7 @@ export function MasterView({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           </fieldset>
         </Dialog>
       )}
-      <input ref={file} type="file" accept="image/*" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={file} type="file" accept="image/*,.wmf,.emf" hidden onChange={(e) => { void picture(e.target.files?.[0]); e.target.value = ''; }} />
     </div>
   );
 }

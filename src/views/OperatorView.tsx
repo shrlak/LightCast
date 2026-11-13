@@ -504,6 +504,7 @@ export function OperatorView() {
           if (!slides.length) throw new Error(`${title}: 슬라이드를 읽지 못했습니다. 기존 PPT를 유지합니다.`);
           if (existing.length === 1) {
             dispatch({ type: 'presentation/update', id: existing[0].id, patch: { slides } });
+            dispatch({ type: 'select', id: existing[0].id });
             total += slides.length;
             continue;
           }
@@ -513,6 +514,8 @@ export function OperatorView() {
             presentations: [{ id, title, slides, themeId: 'theme_classic', folder: 'Imported' }],
             playlist: { id: uid('pl'), name: title, items: [{ id: uid('pli'), presentationId: id }] },
           });
+          // Opening a file shows it: the new 재생목록's deck becomes the one on screen.
+          dispatch({ type: 'playlist/select', index: 0 });
           total += slides.length;
         }
         const others = files.filter((f) => !isPptx(f));

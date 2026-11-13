@@ -53,6 +53,25 @@ DECKCRAFT_SYNCED=ef9ac9ac7a1f610656144981b53688efdb9ef518
     from a group pastes where it was drawn (members carry slide coordinates, no group transform), PPTX reader fixes
     (paragraph-build inference, master text styles, picture backing, large adjustment guides, series `c:dLbls`,
     slide-list limits and unresolved relationships), automation roots, About window, CI.
-  - Not ported: WMF / EMF / EMF+ reading (`craft-metafile`, a new external crate replacing `crates/metafile`).
-    LightCast does not read metafiles (they are dropped on PPTX import, `drawingml.ts`); porting needs a
-    metafile renderer in the engine and is left for a separate task. No Rust changed, so the wasm was not rebuilt.
+  - WMF / EMF / EMF+ reading (`craft-metafile`, a new external crate replacing `crates/metafile`) was ported later, in
+    TypeScript: see "Windows metafiles" below. No Rust changed, so the wasm was not rebuilt.
+
+## Windows metafiles (WMF, EMF, EMF+): handled in TypeScript, not by the engine
+
+DeckCraft reads `.wmf`, `.emf` and EMF+ inside `.emf` with the external `craft-metafile` crate
+(`storytold/craft-libs`, pinned in DeckCraft's `Cargo.toml`; before `ac3e46b` it was `crates/metafile` in DeckCraft
+itself, which is where this port was read from). LightCast does **not** link that crate and the engine wasm was not
+rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader that draws a metafile as an SVG
+(`metafileToSvg`) and, with a DOM, as a PNG (`metafileToBlob`, `pictureBlob` in `image.ts`).
+
+- Used by: PPTX import (`io/pptxRender.ts`, `io/pptxImport.ts`), pasted PowerPoint objects (`io/drawingml.ts`
+  `readGvml`), 삽입 › 그림 and every other picture chooser (accept `.wmf,.emf`), drag-and-drop and paste of
+  `.wmf` / `.emf` files (`ui/importFiles.ts`, `ui/ppt/pasteObjects.ts`), and `putMedia` (`domain/media.ts`), which
+  draws any metafile it is handed into an ordinary image before it is stored.
+- When `craft-metafile` changes (check `git log -- Cargo.toml Cargo.lock` and commits mentioning "metafile"): port the
+  change into `src/domain/metafile/` and add a test to `tests/metafile.test.ts`. Not drawn yet (DeckCraft's reader does
+  draw some of these): pen end caps and joins on cosmetic pens, region combinations other than AND/COPY, clipping to
+  anything but rectangles and paths, texture and path-gradient brushes (a path gradient is its centre colour),
+  glyph-index text, raster operations that read the destination, EMF+ relative paths and container mappings.
+- DeckCraft plays the GDI records of an EMF+ "dual" file; LightCast prefers the EMF+ records and uses the GDI
+  fallback only when EMF+ draws nothing, or between an EMF+ `GetDC` and the next EMF+ record.

@@ -269,7 +269,7 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
             <div className="row gap-xs wrap small">
               <button className="mini-btn" disabled={!!lookup.busy || !title.trim()} onClick={searchOnline} title="인터넷에서 제목으로 가사를 검색합니다">✨ AI로 검색</button>
               <button className="mini-btn" disabled={!!lookup.busy} onClick={() => photoRef.current?.click()} title="악보 사진이나 가사를 캡처한 사진에서 가사를 인식합니다">📷 악보·가사 사진 업로드</button>
-              <input ref={photoRef} type="file" accept="image/*" multiple hidden onChange={(e) => readPhotos(e.target.files)} />
+              <input ref={photoRef} type="file" accept="image/*,.wmf,.emf" multiple hidden onChange={(e) => readPhotos(e.target.files)} />
               {lookup.busy && <span className="muted">⏳ {lookup.busy}</span>}
               {lookup.note && <span className={lookup.note.startsWith('✓') ? 'ok' : 'warn'}>{lookup.note}</span>}
             </div>

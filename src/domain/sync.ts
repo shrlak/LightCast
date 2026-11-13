@@ -8,7 +8,9 @@ export type LiveMessage =
   /** An object with an action (Action Settings, slide zoom) was clicked on an output window. */
   | { type: 'show'; action: import('./showActions').ShowAction }
   /** Laser pointer position on the presenter's slide (0–1), or off. */
-  | import('./laserPointer').LaserMessage;
+  | import('./laserPointer').LaserMessage
+  /** Live caption text for the audience view. */
+  | import('./captions').CaptionMessage;
 
 const CHANNEL = 'freecast-live';
 

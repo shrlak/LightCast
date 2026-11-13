@@ -1,4 +1,6 @@
 // Media files live in IndexedDB so every window can load them by id.
+import { pictureBlob } from './metafile/image';
+import { isSvgBlob, prepareMediaBlob } from './svgPicture';
 const DB_NAME = 'freecast-media';
 const STORE = 'blobs';
 
@@ -25,7 +27,11 @@ function tx<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRequest<
   );
 }
 
-export const putMedia = (id: string, blob: Blob) => tx('readwrite', (s) => s.put(blob, id)).then(() => undefined);
+/** Stores a media file. A Windows metafile picture (.wmf, .emf) is drawn into an ordinary image first, and an SVG picture is stored as its sanitized source (script, foreignObject, handlers and outside links removed); other files as they are. */
+export const putMedia = async (id: string, blob: Blob) => {
+  const stored = await prepareMediaBlob(await pictureBlob(blob));
+  await tx('readwrite', (s) => s.put(stored, id));
+};
 export const deleteMedia = (id: string) => tx('readwrite', (s) => s.delete(id)).then(() => undefined);
 export const getMedia = (id: string) => tx<Blob | undefined>('readonly', (s) => s.get(id));
 
@@ -40,7 +46,7 @@ export function mediaUrl(id: string): Promise<string | null> {
   let p = urlCache.get(id);
   if (!p) {
     p = getMedia(id)
-      .then((b) => (b ? URL.createObjectURL(b) : isRemote() ? fromComputer(id) : null))
+      .then(async (b) => (b ? URL.createObjectURL(isSvgBlob(b) ? await prepareMediaBlob(b) : b) : isRemote() ? fromComputer(id) : null))
       .catch(() => null);
     urlCache.set(id, p);
     // A remote that could not get it may succeed later (the computer sends media a moment after a slide is chosen).

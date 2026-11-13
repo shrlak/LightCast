@@ -15,7 +15,7 @@ export const OBJECT_KEYS = [
 ] as const;
 /** Character formatting of the whole box (runs of their own override it). */
 export const TEXT_KEYS = [
-  'fontFamily', 'fontSize', 'color', 'bold', 'italic', 'underline', 'strike', 'shadow', 'letterSpacing', 'highlight',
+  'fontFamily', 'fontSize', 'color', 'bold', 'weight', 'italic', 'underline', 'strike', 'shadow', 'letterSpacing', 'highlight',
   'caps', 'textOutline', 'textTransparency', 'warp',
 ] as const;
 /** Paragraph formatting. */
@@ -88,7 +88,7 @@ const wipe = (el: SlideElement, keys: readonly (keyof SlideElement)[], from: Par
 
 /** The character formatting the painter sets on selected characters. */
 export const runFormatOf = (p: Painted): RunFormat => ({
-  fontSize: p.text?.fontSize, bold: p.text?.bold, italic: p.text?.italic, underline: p.text?.underline, strike: p.text?.strike, color: p.text?.color,
+  fontSize: p.text?.fontSize, bold: p.text?.bold, weight: p.text?.weight, italic: p.text?.italic, underline: p.text?.underline, strike: p.text?.strike, color: p.text?.color,
   fontFamily: p.text?.fontFamily, highlight: p.text?.highlight, baseline: p.baseline,
 });
 

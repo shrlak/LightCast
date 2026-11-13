@@ -159,7 +159,7 @@ export function ShapeElement({ el }: { el: SlideElement }) {
         <div style={{
           position: 'absolute', left: tx, top: ty, width: tw, height: th, display: 'flex', flexDirection: 'column', overflow: 'hidden',
           justifyContent: el.vAlign === 'top' ? 'flex-start' : el.vAlign === 'bottom' ? 'flex-end' : 'center', ...alignCss(el.align ?? 'center'), ...writingCss(el), ['--link-color' as string]: linkColorFor(el.color),
-          fontSize: el.fontSize ?? 40, fontFamily: el.fontFamily, color: el.color ?? '#ffffff', fontWeight: el.bold ? 800 : 500, fontStyle: el.italic ? 'italic' : undefined,
+          fontSize: el.fontSize ?? 40, fontFamily: el.fontFamily, color: el.color ?? '#ffffff', fontWeight: el.weight ?? (el.bold ? 800 : 500), fontStyle: el.italic ? 'italic' : undefined,
           lineHeight: lineHeightCss(el, el.fontSize ?? 40, 1.2), whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textDecoration: [el.underline && 'underline', el.strike && 'line-through'].filter(Boolean).join(' ') || undefined,
           textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, transform: [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ') || undefined,
         }}>{(() => {

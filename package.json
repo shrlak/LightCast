@@ -1,7 +1,7 @@
 {
   "name": "freecast",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Free presentation software for worship and live events",
   "type": "module",
   "scripts": {
@@ -16,6 +16,7 @@
     "engine": "node scripts/build-engine.mjs",
     "preview": "vite preview",
     "test": "vitest run",
+    "e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
     "lint": "tsc --noEmit",
     "release": "npm run build && electron-builder --mac --win --publish always"
   },

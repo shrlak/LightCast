@@ -1086,7 +1086,7 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         }}>
           <RichTextEditor key={`${identity}:${editEl.id}`} lines={lines} base={base} lang={editEl.lang} noProof={editEl.noProof} softBreaks
             painter={{ source: () => { const { object: _o, ...own } = copyFormat(latestEls.current.find((x) => x.id === editEl.id) ?? editEl); return own; }, setBox: (fn) => { boxPatch.current.push(fn); } }}
-            style={{ ...rest, ...shrinkStyle, ...(vert ? { height: '100%', width: 'max-content', maxWidth: '100%', alignSelf: across } : {}), tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: base.bold ? 800 : editEl.paragraphs ? 400 : 500, fontStyle: base.italic ? 'italic' : undefined, ...alignCss(editEl.align ?? 'center'), ['--link-color' as string]: linkColorFor(editEl.color), textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
+            style={{ ...rest, ...shrinkStyle, ...(vert ? { height: '100%', width: 'max-content', maxWidth: '100%', alignSelf: across } : {}), tabSize: `${editEl.defaultTab ?? 144}px`, color: base.color, fontWeight: editEl.weight ?? (base.bold ? 800 : editEl.paragraphs ? 400 : 500), fontStyle: base.italic ? 'italic' : undefined, ...alignCss(editEl.align ?? 'center'), ['--link-color' as string]: linkColorFor(editEl.color), textDecoration: editEl.underline ? 'underline' : undefined, textShadow: editEl.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined }}
             start={session?.start} standby={session?.standby} control={editorControl} onAutoList={onAutoList(editEl.id)}
             onChange={(l) => typed(editEl.id, l)} onDone={stopEditing} />
         </div>

@@ -1,3 +1,5 @@
+import { pptxFontFor } from './fontWeight';
+
 // Fonts offered in the editor. Korean text falls back to the system Korean font when a
 // Latin-only font (Arial, Calibri) is chosen. 나눔고딕 ships with the app (SIL OFL); Calibri and
 // Arial are used from the computer when installed, otherwise their metric-compatible free twins
@@ -27,6 +29,11 @@ export function pptxFont(family: string): string {
   if (known) return known.pptx;
   const first = family.split(',')[0].replace(/"/g, '').trim();
   return first === 'Nanum Gothic' ? '나눔고딕' : first;
+}
+
+/** The PowerPoint font name and bold flag of text in `family` with this weight ("Noto Sans KR Light"; Regular / Bold are the plain family). */
+export function pptxWeightedFont(family: string, own: { bold?: boolean; weight?: number }, inherited?: { bold?: boolean; weight?: number }): { face: string; bold: boolean } {
+  return pptxFontFor(pptxFont(family), own, inherited);
 }
 
 const OFFICE_ALIAS: Record<string, string> = {

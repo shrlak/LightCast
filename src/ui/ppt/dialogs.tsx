@@ -5,6 +5,8 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import type { SlideElement } from '../../domain/types';
 import { FONT_OPTIONS } from '../../domain/fonts';
+import { availableWeights, weightLabel, weightPatch } from '../../domain/fontWeight';
+import { declaredFaces } from './FontWeightPicker';
 import { SINGLE_SPACING } from '../../domain/textFormat';
 import { autoFitMode, autoFitValue } from '../../domain/textFit';
 import { formatAllRuns } from '../../domain/richText';
@@ -52,6 +54,8 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const first = t?.els[0];
   const [family, setFamily] = useState(v?.fontFamily ?? '');
   const [style, setStyle] = useState<Style>(() => { const b = cur?.bold ?? v?.bold, i = cur?.italic ?? v?.italic; return b && i ? 'boldItalic' : b ? 'bold' : i ? 'italic' : 'regular'; });
+  // 글꼴 굵기: blank follows 글꼴 스타일 (보통 / 굵게); a weight (가늘게 … 가장 굵게) replaces it.
+  const [weight, setWeight] = useState<number | undefined>(cur?.weight ?? v?.weight);
   const [size, setSize] = useState((cur?.fontSize ?? v?.fontSize ?? 64) / 2);
   const [color, setColor] = useState((cur?.color ?? v?.color ?? '#ffffff').slice(0, 7));
   const [underline, setUnderline] = useState(!!(cur?.underline ?? v?.underline));
@@ -62,18 +66,19 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [tab, setTab] = useState<'font' | 'spacing'>('font');
   if (!t || !v) return <Dialog title="글꼴" onClose={onClose}><p>서식을 바꿀 텍스트를 고르세요.</p></Dialog>;
   const ok = () => {
-    const bold = style === 'bold' || style === 'boldItalic', italic = style === 'italic' || style === 'boldItalic';
+    const italic = style === 'italic' || style === 'boldItalic';
+    const { bold, weight: ownWeight } = weight === undefined ? { bold: style === 'bold' || style === 'boldItalic', weight: undefined } : weightPatch(weight);
     const fontSize = Math.max(2, Math.round(size * 2));
     if (sel && editor) {
-      editor.apply({ fontSize, bold, italic, underline: underline || undefined, color, strike: strike || undefined, baseline });
+      editor.apply({ fontSize, bold, weight: ownWeight, italic, underline: underline || undefined, color, strike: strike || undefined, baseline });
       t.patchEach(() => ({ fontFamily: family || undefined, caps, letterSpacing: spacing * 2 || undefined }));
     } else if (t.els.length) {
       t.patchEach((e) => ({
-        fontFamily: family || undefined, fontSize, bold, italic, underline: underline || undefined, strike: strike || undefined, color, caps, letterSpacing: spacing * 2 || undefined,
+        fontFamily: family || undefined, fontSize, bold, weight: ownWeight, italic, underline: underline || undefined, strike: strike || undefined, color, caps, letterSpacing: spacing * 2 || undefined,
         ...(baseline !== cur?.baseline || baseline ? formatAllRuns({ ...e }, { baseline }) : {}),
       }));
     } else {
-      t.onChange({ fontFamily: family || undefined, fontSize, bold, italic, underline, strike, color, letterSpacing: spacing * 2 });
+      t.onChange({ fontFamily: family || undefined, fontSize, bold, weight: ownWeight, italic, underline, strike, color, letterSpacing: spacing * 2 });
     }
     onClose();
   };
@@ -101,6 +106,14 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             <Field label="크기 (pt)"><Num value={size} min={1} max={400} step={0.5} onChange={setSize} /></Field>
           </div>
           <div className="dlg-grid3">
+            <Field label="글꼴 굵기">
+              <select value={weight ?? ''} onChange={(e) => setWeight(e.target.value ? Number(e.target.value) : undefined)} aria-label="글꼴 굵기">
+                <option value="">스타일에 따름</option>
+                {availableWeights(family || v?.fontFamily, declaredFaces(), weight).map((w) => <option key={w} value={w}>{weightLabel(w)}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div className="dlg-grid3">
             <Field label="글꼴 색"><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /></Field>
             <Field label="밑줄 스타일">
               <select value={underline ? 'single' : 'none'} onChange={(e) => setUnderline(e.target.value !== 'none')}><option value="none">(없음)</option><option value="single">단어</option></select>
@@ -121,7 +134,7 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             </div>
           </fieldset>
           <div className="dlg-preview" style={{
-            fontFamily: family || undefined, fontWeight: style.startsWith('bold') ? 800 : 400, fontStyle: style.toLowerCase().includes('italic') ? 'italic' : 'normal',
+            fontFamily: family || undefined, fontWeight: weight ?? (style.startsWith('bold') ? 800 : 400), fontStyle: style.toLowerCase().includes('italic') ? 'italic' : 'normal',
             textDecoration: [underline && 'underline', strike && 'line-through'].filter(Boolean).join(' ') || undefined, color,
             textTransform: caps === 'all' ? 'uppercase' : undefined, fontVariant: caps === 'small' ? 'small-caps' : undefined, letterSpacing: spacing,
           }}>가나다 AaBbCc{baseline && <span style={{ verticalAlign: baseline, fontSize: '62%' }}>{baseline === 'super' ? '2' : '0'}</span>}</div>

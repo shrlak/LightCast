@@ -121,7 +121,7 @@ export function SlideDesigner({ slide, theme, background, media, addMedia, onSav
             <button onClick={() => add({ kind: 'shape', fill: 'rgba(0,0,0,0.55)', radius: 24, w: 1240, h: 220, x: 100, y: 820 })}>＋ Box</button>
             <button onClick={() => add({ kind: 'shape', fill: '#4bc789', ellipse: true, w: 300, h: 300 })}>＋ Circle</button>
             <button title="링크 QR 코드 — 오른쪽에서 링크를 입력하세요" onClick={() => add({ kind: 'qr', w: QR_SIZE, h: QR_SIZE })}>＋ QR 코드</button>
-            <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => uploadImage(e.target.files?.[0])} />
+            <input ref={fileRef} type="file" accept="image/*,.wmf,.emf" hidden onChange={(e) => uploadImage(e.target.files?.[0])} />
           </div>
           <button className="icon-btn" onClick={onClose} aria-label="Close">✕</button>
         </header>
