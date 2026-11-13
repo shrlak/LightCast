@@ -14,6 +14,7 @@ import { setCommentFocus, stepComment } from './panes';
 import { acceptAllRevisions, endCompare, useCompare } from './reviewPanes';
 import { showGuides } from './viewDialogs';
 import { Big, Col, DropButton, Group, MenuItem, RI, Small } from './ribbonParts';
+import { ShowToolsGroup } from './showTools';
 
 export function SlideShowTab({ ed }: { ed: Ed }) {
   const { cmd, state, dispatch, p, slide } = ed;
@@ -36,9 +37,11 @@ export function SlideShowTab({ ed }: { ed: Ed }) {
         <Col>
           <label className="rb-check"><input type="checkbox" disabled={!p || !!p.protected} checked={!p?.showSetup?.manual} onChange={(e) => ed.updatePres({ showSetup: { ...p?.showSetup, manual: e.target.checked ? undefined : true } })} /> 타이밍 사용</label>
           <Small icon="▶" label="송출 없이 넘겨 보기" disabled={!p} onClick={() => cmd.open('rehearsal')} />
+          <label className="rb-check" title="녹음된 내레이션을 쇼에서 재생합니다"><input type="checkbox" disabled={!p || !!p.protected} checked={!p?.showSetup?.noNarration} onChange={(e) => ed.updatePres({ showSetup: { ...p?.showSetup, noNarration: e.target.checked ? undefined : true } })} /> 내레이션 재생</label>
           <Small icon="✕" label="타이밍 지우기" disabled={!p?.slides.some((s) => s.autoAdvance) || !ed.canEdit} onClick={() => p && ed.updatePres({ slides: p.slides.map((s) => ({ ...s, autoAdvance: undefined })) })} />
         </Col>
       </Group>
+      <ShowToolsGroup ed={ed} />
       <Group label="모니터">
         <Big icon={RI.presenter} label="발표자 보기" active={cmd.view === 'presenter'} onClick={() => cmd.setView(cmd.view === 'presenter' ? 'normal' : 'presenter')} />
         <Col>

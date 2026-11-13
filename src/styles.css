@@ -2085,3 +2085,14 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .chart-data-edit td.cd-chk input { width: auto; min-width: 0; }
 
 @media (prefers-reduced-motion: reduce) { .remote-handset button, .remote-slides > button { transition: none; } .remote-handset button:active:not(:disabled), .remote-slides > button:active:not(:disabled) { transform: none; } }
+
+/* Slide show: recording badge and laser pointer */
+.laser-area { position: relative; }
+.laser-area.laser-on { cursor: crosshair; }
+.rec-badge { position: fixed; z-index: 90; top: 10px; right: 14px; display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-radius: 999px; background: #fffbe6; color: #3b3a1a; border: 1px solid #fbbf24; font-weight: 600; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+.rec-badge button { background: var(--accent); color: #fff; border-color: var(--accent); }
+.rec-dot { width: 10px; height: 10px; border-radius: 50%; background: #e5252a; animation: rec-blink 1s infinite; }
+.rec-warn { color: #b45309; font-weight: 500; }
+@keyframes rec-blink { 50% { opacity: .25; } }
+.laser-dot { position: fixed; z-index: 100; width: 22px; height: 22px; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none;
+  background: radial-gradient(circle, #fff 0 12%, #ff2a2a 30%, rgba(255, 42, 42, .55) 60%, rgba(255, 42, 42, 0) 72%); box-shadow: 0 0 14px 4px rgba(255, 42, 42, .6); }
