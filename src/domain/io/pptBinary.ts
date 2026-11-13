@@ -1,95 +1,126 @@
 // A reader for legacy binary PowerPoint (.ppt, PowerPoint 97-2003) files: the "PowerPoint Document"
 // stream's record tree (MS-PPT), the persist directory that says where each slide currently lives
-// (older edits are left in the file by incremental saves), the slides' text boxes and placeholders,
-// speaker notes and the pictures of the "Pictures" stream. Text and pictures only — no themes,
-// animations or vector art. Written for hostile input: it never throws, records are bounds-checked,
-// recursion and the number of records, slides and pictures are capped, and what cannot be read is
-// reported in `warnings` instead.
+// (older edits are left in the file by incremental saves), and what each slide holds:
+//   text (StyleTextPropAtom runs: bold / italic / underline, size, colour, font, alignment, bullets and
+//   indent levels, with the master's TextMasterStyle underneath), the FontCollection, the colour scheme
+//   and slide background (solid, shaded, picture), Escher shapes (fill, line, rotation, flips, preset
+//   autoshapes, group child coordinate spaces), master / title-master inheritance (placeholder position,
+//   size, text frame and style, plus the master's own objects), pictures (JPEG, PNG, DIB, TIFF and the
+//   compressed WMF / EMF), slide transitions, hidden slides and speaker notes.
+// Not read: animations, tables as such (old tables are groups of rectangles and come through as those),
+//   freeform / custom-geometry shapes, auto-numbered bullets (PowerPoint 2002 extension tags), OLE objects.
+// Written for hostile input: it never throws, records are bounds-checked, recursion and the number of
+// records, slides, shapes and pictures are capped, and what cannot be read is reported in `warnings`.
 import { isCfb, readCfb } from './cfb';
+import { inflateZlib } from './inflate';
+import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
+import { fillOf, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
+import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
-export const PPT_MAX_RECORDS = 400_000;
-export const PPT_MAX_DEPTH = 24;
-export const PPT_MAX_SLIDES = 2000;
-export const PPT_MAX_PICTURES = 2000;
+export { PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES };
+export type { PptPara, PptRun } from './pptText';
+
 const MAX_PICTURE_BYTES = 64 * 1024 * 1024;
 const MAX_TEXT_CHARS = 5_000_000;
+const MAX_SHAPES = 5000;
 
-export interface PptPicture { mime: 'image/jpeg' | 'image/png' | 'image/bmp' | 'image/tiff'; bytes: Uint8Array }
+export interface PptPicture {
+  /** The x-emf / x-wmf kinds are Windows metafiles (decompressed); the importer draws them as SVG / PNG. */
+  mime: 'image/jpeg' | 'image/png' | 'image/bmp' | 'image/tiff' | 'image/x-emf' | 'image/x-wmf';
+  bytes: Uint8Array;
+}
 export interface PptShape {
-  kind: 'text' | 'picture';
-  /** Position and size in master units (1/576 inch); undefined when the shape inherits it from the layout. */
+  kind: 'text' | 'picture' | 'shape';
+  /** Position and size in master units (1/576 inch); undefined when the shape inherits it from the layout and the master has none. */
   x?: number; y?: number; w?: number; h?: number;
+  /** Degrees clockwise. */
+  rotation?: number;
+  flipH?: boolean; flipV?: boolean;
   text?: string;
+  /** The styled paragraphs of `text`, one per line (text style of the master underneath, then the paragraph's and run's own). */
+  paras?: PptPara[];
   /** TextHeaderAtom type: 0 title, 1 body, 2 notes, 3 notice, 4 other, 5 center body, 6 center title, 7 half body, 8 quarter body. */
   textType?: number;
-  /** OEPlaceholderAtom type (1 title, 2 body, 3 center title, 4 subtitle, ...); undefined for a plain text box. */
+  /** OEPlaceholderAtom type (master ids 1 title, 2 body, 3 center title, 4 subtitle ...; slide ids 0x0d title, 0x0e body, 0x10 center title, 0x11 subtitle ...); undefined for a plain text box. */
   placeholder?: number;
   /** Picture: 1-based index into `pictures` (0 when the picture could not be read). */
   picture?: number;
+  /** Picture crop as fractions cut from each side: left, top, right, bottom. */
+  crop?: [number, number, number, number];
+  /** The preset autoshape (PowerPoint's preset name) this shape is drawn as; absent for a plain text box. */
+  shape?: string;
+  fill?: FillSpec;
+  line?: LineSpec;
+  /** Text frame: margins left, top, right, bottom in EMU; vertical anchor; false = no word wrap. */
+  margins?: [number, number, number, number];
+  vAlign?: 'top' | 'middle' | 'bottom';
+  wrap?: boolean;
+  /** Members of one group share its number. */
+  group?: number;
+  /** Placed by the master (the master's own object, not a placeholder). */
+  master?: boolean;
+  /** The position came from the master's placeholder. */
+  inherited?: boolean;
 }
-export interface PptSlide { shapes: PptShape[]; notes?: string }
+export type PptBackground =
+  | { kind: 'color'; color: string }
+  | { kind: 'gradient'; from: string; to: string; angle: number; radial?: boolean }
+  | { kind: 'picture'; picture: number };
+export interface PptTransition {
+  /** SlideShowSlideInfoAtom effect type (0 cut, 1 random, 2 blinds, 3 checker, 4 cover, 5 dissolve, 6 fade, 7 uncover, 8 random bars, 9 strips, 10 wipe, 11 box ...). */
+  effect: number;
+  /** 0 slow, 1 medium, 2 fast. */
+  speed: number;
+  /** Advance on a mouse click. */
+  onClick: boolean;
+  /** Automatic advance after this many milliseconds (0 = none). */
+  afterMs: number;
+}
+export interface PptSlide {
+  shapes: PptShape[];
+  notes?: string;
+  background?: PptBackground;
+  hidden?: boolean;
+  transition?: PptTransition;
+}
 export interface PptDocument {
   width: number;
   height: number;
   slides: PptSlide[];
-  /** 1-based: pictures[i] is picture i + 1; null for a picture that cannot be shown (metafile, damaged). */
+  /** 1-based: pictures[i] is picture i + 1; null for a picture that cannot be shown (damaged, PICT). */
   pictures: (PptPicture | null)[];
   warnings: string[];
 }
 
-interface Rec { ver: number; inst: number; type: number; pos: number; end: number }
-interface Ctx { b: Uint8Array; v: DataView; budget: number; warnings: Set<string> }
+// ── Text atoms ─────────────────────────────────────────────────────────────────────────────────
 
-const T = {
-  Document: 0x03e8, DocumentAtom: 0x03e9, Slide: 0x03ee, SlideAtom: 0x03ef, Notes: 0x03f0, SlideListWithText: 0x0ff0,
-  SlidePersistAtom: 0x03f3, PPDrawing: 0x040c, DrawingGroup: 0x040b, UserEdit: 0x0ff5, PersistDirectory: 0x1772,
-  TextHeader: 0x0f9f, TextChars: 0x0fa0, TextBytes: 0x0fa8, OEPlaceholder: 0x0bc3,
-  Dgg: 0xf000, BStore: 0xf001, Dg: 0xf002, Spgr: 0xf003, Sp: 0xf004, SpAtom: 0xf00a, Opt: 0xf00b, ClientTextbox: 0xf00d, ClientAnchor: 0xf010, ClientData: 0xf011, ChildAnchor: 0xf00f, BSE: 0xf007,
-};
-
-/** The records between two offsets. `f` returns false to stop. Never reads outside [from, to). */
-function each(c: Ctx, from: number, to: number, f: (r: Rec) => boolean | void) {
-  let o = from;
-  to = Math.min(to, c.b.length);
-  while (o >= 0 && o + 8 <= to) {
-    if (--c.budget < 0) { c.warnings.add('파일이 너무 복잡해 일부만 읽었습니다.'); return; }
-    const verInst = c.v.getUint16(o, true);
-    const type = c.v.getUint16(o + 2, true);
-    const len = c.v.getUint32(o + 4, true);
-    const pos = o + 8;
-    const end = Math.min(pos + len, to);
-    if (f({ ver: verInst & 0xf, inst: verInst >> 4, type, pos, end }) === false) return;
-    if (pos + len > to) return;
-    o = pos + len;
-  }
-}
-const isContainer = (r: Rec) => r.ver === 0xf;
-
-function decodeText(c: Ctx, r: Rec, wide: boolean): string {
+function decodeRaw(c: Ctx, r: Rec, wide: boolean): string {
   let s = '';
   if (wide) {
     for (let o = r.pos; o + 2 <= r.end && s.length < MAX_TEXT_CHARS; o += 2) s += String.fromCharCode(c.v.getUint16(o, true));
   } else {
     for (let o = r.pos; o < r.end && s.length < MAX_TEXT_CHARS; o++) s += String.fromCharCode(c.b[o]);
   }
-  // \r ends a paragraph, \v is a line break inside one; other control characters (fields, tabs aside) are dropped.
-  return s.replace(/[\r\v\u2028]/g, '\n').replace(/[\u0000-\u0008\u000c\u000e-\u001f\ufffe\uffff]/g, '').replace(/\n+$/, '');
+  return s;
 }
+// \r ends a paragraph, \v is a line break inside one; other control characters (fields, tabs aside) are dropped.
+const plain = (raw: string) => raw.replace(/[\r\v\u2028]/g, '\n').replace(/[\u0000-\u0008\u000c\u000e-\u001f\ufffe\uffff]/g, '').replace(/\n+$/, '');
 
-interface TextItem { type: number; text: string }
+interface TextItem { type: number; raw: string; style: StyleRuns | null }
+const itemText = (i: TextItem) => plain(i.raw);
 
-/** Text atoms from a ClientTextbox / SlideListWithText run: TextHeaderAtom starts an item, chars / bytes atoms fill it. */
+/** Text atoms from a ClientTextbox / SlideListWithText run: TextHeaderAtom starts an item, chars / bytes atoms fill it, a StyleTextPropAtom styles it. */
 function textItems(c: Ctx, from: number, to: number, stopAtPersist = false): TextItem[] {
   const out: TextItem[] = [];
   let cur: TextItem | null = null;
   each(c, from, to, (r) => {
     if (stopAtPersist && r.type === T.SlidePersistAtom) return false;
-    if (r.type === T.TextHeader && r.end - r.pos >= 4) { cur = { type: c.v.getUint32(r.pos, true), text: '' }; out.push(cur); }
+    if (r.type === T.TextHeader && r.end - r.pos >= 4) { cur = { type: c.v.getUint32(r.pos, true), raw: '', style: null }; out.push(cur); }
     else if (r.type === T.TextChars || r.type === T.TextBytes) {
-      const text = decodeText(c, r, r.type === T.TextChars);
-      if (cur && !cur.text) cur.text = text;
-      else out.push((cur = { type: 4, text }));
-    }
+      const raw = decodeRaw(c, r, r.type === T.TextChars);
+      if (cur && !cur.raw) cur.raw = raw;
+      else out.push((cur = { type: 4, raw, style: null }));
+    } else if (r.type === T.StyleTextProp && cur && !cur.style) cur.style = readStyleRuns(c, r, cur.raw.length);
   });
   return out;
 }
@@ -113,8 +144,8 @@ function dibToBmp(d: Uint8Array): Uint8Array | null {
   return out;
 }
 
-/** The picture of a blip record (JPEG, PNG, DIB, TIFF); null for metafiles and anything unreadable. */
-function readBlip(c: Ctx, b: Uint8Array, v: DataView, at: number): PptPicture | null {
+/** The picture of a blip record (JPEG, PNG, DIB, TIFF, compressed or plain EMF / WMF); null for PICT and anything unreadable. */
+function readBlip(b: Uint8Array, v: DataView, at: number): PptPicture | null {
   if (at < 0 || at + 8 > b.length) return null;
   const inst = v.getUint16(at, true) >> 4;
   const type = v.getUint16(at + 2, true);
@@ -122,6 +153,19 @@ function readBlip(c: Ctx, b: Uint8Array, v: DataView, at: number): PptPicture | 
   const pos = at + 8;
   const end = Math.min(pos + len, b.length);
   if (len > MAX_PICTURE_BYTES || end <= pos) return null;
+  if (type === 0xf01a || type === 0xf01b) {
+    // Metafile blip: UID(s), then 34 bytes (size, bounds, extent, compressed size, compression, filter), then the data.
+    const two = (type === 0xf01a && inst === 0x3d5) || (type === 0xf01b && inst === 0x217);
+    const hdr = pos + (two ? 32 : 16);
+    if (hdr + 34 >= end) return null;
+    const size = v.getUint32(hdr, true), saved = v.getUint32(hdr + 28, true), compression = b[hdr + 32];
+    const raw = b.subarray(hdr + 34, Math.min(hdr + 34 + saved, end));
+    const mime = type === 0xf01a ? 'image/x-emf' : 'image/x-wmf';
+    if (compression === 0xfe) return raw.length ? { mime, bytes: raw } : null;
+    if (compression !== 0) return null;
+    const data = inflateZlib(raw, Math.min(Math.max(size, 1024), MAX_PICTURE_BYTES));
+    return data && data.length ? { mime, bytes: data } : null;
+  }
   // One 16-byte UID, or two when the instance is the "with secondary UID" variant.
   const two = (type === 0xf01d && inst === 0x46b) || (type === 0xf01d && inst === 0x6e3) || (type === 0xf01e && inst === 0x6e1) || (type === 0xf01f && inst === 0x7a9) || (type === 0xf029 && inst === 0x6e5) || (type === 0xf02a && inst === 0x6e3);
   const start = pos + (two ? 32 : 16) + 1;
@@ -132,21 +176,22 @@ function readBlip(c: Ctx, b: Uint8Array, v: DataView, at: number): PptPicture | 
     case 0xf01e: return data[0] === 0x89 && data[1] === 0x50 ? { mime: 'image/png', bytes: data } : null;
     case 0xf01f: { const bmp = dibToBmp(data); return bmp ? { mime: 'image/bmp', bytes: bmp } : null; }
     case 0xf029: return { mime: 'image/tiff', bytes: data };
-    default: void c; return null; // EMF / WMF / PICT
+    default: return null; // PICT
   }
 }
 
-function readPictures(c: Ctx, doc: Rec | null, pictures: Uint8Array | null): (PptPicture | null)[] {
+function readPictures(c: Ctx, doc: Rec | null, pictures: Uint8Array | null): { list: (PptPicture | null)[]; defaults: Props } {
   const out: (PptPicture | null)[] = [];
-  if (!doc) return out;
+  const defaults: Props = new Map();
+  if (!doc) return { list: out, defaults };
   const bse = (r: Rec) => {
     if (out.length >= PPT_MAX_PICTURES || r.end - r.pos < 36) return;
     const foDelay = c.v.getUint32(r.pos + 28, true);
     const nameLen = c.b[r.pos + 33];
     let pic: PptPicture | null = null;
     // A blip embedded after the header, else one in the Pictures stream.
-    if (r.end - r.pos > 36 + nameLen + 8) pic = readBlip(c, c.b, c.v, r.pos + 36 + nameLen);
-    if (!pic && pictures && foDelay !== 0xffffffff) pic = readBlip(c, pictures, new DataView(pictures.buffer, pictures.byteOffset, pictures.byteLength), foDelay);
+    if (r.end - r.pos > 36 + nameLen + 8) pic = readBlip(c.b, c.v, r.pos + 36 + nameLen);
+    if (!pic && pictures && foDelay !== 0xffffffff) pic = readBlip(pictures, new DataView(pictures.buffer, pictures.byteOffset, pictures.byteLength), foDelay);
     out.push(pic);
   };
   each(c, doc.pos, doc.end, (r) => {
@@ -154,91 +199,193 @@ function readPictures(c: Ctx, doc: Rec | null, pictures: Uint8Array | null): (Pp
     each(c, r.pos, r.end, (dgg) => {
       if (dgg.type !== T.Dgg) return;
       each(c, dgg.pos, dgg.end, (store) => {
-        if (store.type !== T.BStore) return;
-        each(c, store.pos, store.end, (r2) => { if (r2.type === T.BSE) bse(r2); });
+        if (store.type === T.BStore) each(c, store.pos, store.end, (r2) => { if (r2.type === T.BSE) bse(r2); });
+        else if (store.type === T.Opt) readOpt(c, store, defaults); // default shape properties of the whole file
       });
     });
   });
+  return { list: out, defaults };
+}
+
+// ── Shapes ─────────────────────────────────────────────────────────────────────────────────────
+
+interface Placed { x: number; y: number; w: number; h: number; rot: number; flipH: boolean; flipV: boolean }
+type Mapper = (p: Placed) => Placed;
+interface Rect { l: number; t: number; r: number; b: number }
+const norm = (d: number) => { const r = ((d % 360) + 360) % 360; return Math.round(r * 100) / 100; };
+
+/** The child coordinate space of a group (its Spgr rectangle) laid onto where the group is (`g`, already in slide space). */
+function groupMapper(g: Placed, s: Rect | undefined): Mapper {
+  const sw = s ? s.r - s.l : 0, sh = s ? s.b - s.t : 0;
+  const sx = sw > 0 ? g.w / sw : 1, sy = sh > 0 ? g.h / sh : 1;
+  const sl = s && sw > 0 ? s.l : g.x, st = s && sh > 0 ? s.t : g.y;
+  const gcx = g.x + g.w / 2, gcy = g.y + g.h / 2;
+  const th = (g.rot * Math.PI) / 180, cos = Math.cos(th), sin = Math.sin(th);
+  return (p) => {
+    let cx = g.x + (p.x + p.w / 2 - sl) * sx, cy = g.y + (p.y + p.h / 2 - st) * sy;
+    let flipH = p.flipH, flipV = p.flipV, rot = p.rot;
+    if (g.flipH) { cx = 2 * gcx - cx; flipH = !flipH; rot = -rot; }
+    if (g.flipV) { cy = 2 * gcy - cy; flipV = !flipV; rot = -rot; }
+    if (g.rot) { const dx = cx - gcx, dy = cy - gcy; cx = gcx + dx * cos - dy * sin; cy = gcy + dx * sin + dy * cos; }
+    const w = p.w * sx, h = p.h * sy;
+    return { x: cx - w / 2, y: cy - h / 2, w, h, rot: norm(rot + g.rot), flipH, flipV };
+  };
+}
+
+interface RawShape {
+  props: Props;
+  flags: number;
+  spType: number;
+  /** Position in slide space (master units) once the group mappings are applied. */
+  placed?: Placed;
+  /** The group's child space rectangle (group shapes only). */
+  spgr?: Rect;
+  items: TextItem[];
+  placeholder?: number;
+  group?: number;
+}
+
+interface Parsed {
+  masterId: number;
+  notesId: number;
+  /** SlideAtom flags: 0x1 show the master's objects, 0x2 follow the master's colour scheme, 0x4 follow the master's background. */
+  flags: number;
+  hasAtom: boolean;
+  scheme?: Scheme;
+  shapes: RawShape[];
+  background?: RawShape;
+  styles: TextStyles;
+  info?: PptTransition & { hidden: boolean };
+}
+
+interface DrawState { shapes: RawShape[]; background?: RawShape; defaults: Props; groups: number }
+
+const rectOf = (l: number, t: number, r: number, b: number): Rect => ({ l: Math.min(l, r), t: Math.min(t, b), r: Math.max(l, r), b: Math.max(t, b) });
+
+function readRawShape(c: Ctx, sp: Rec, map: Mapper, st: DrawState, group: number | undefined): RawShape {
+  const props: Props = new Map(st.defaults);
+  const raw: RawShape = { props, flags: 0, spType: 0, items: [], group };
+  let abs: Rect | undefined, child: Rect | undefined;
+  each(c, sp.pos, sp.end, (r) => {
+    const len = r.end - r.pos;
+    if (r.type === T.SpAtom && len >= 8) { raw.spType = r.inst; raw.flags = c.v.getUint32(r.pos + 4, true); }
+    else if (r.type === T.SpgrAtom && len >= 16) raw.spgr = rectOf(c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true));
+    else if (r.type === T.ClientAnchor) {
+      if (len >= 16) abs = rectOf(c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true)); // left, top, right, bottom
+      else if (len >= 8) abs = rectOf(c.v.getInt16(r.pos + 2, true), c.v.getInt16(r.pos, true), c.v.getInt16(r.pos + 4, true), c.v.getInt16(r.pos + 6, true));
+    } else if (r.type === T.ChildAnchor && len >= 16) child = rectOf(c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true));
+    else if (r.type === T.ClientTextbox) raw.items = textItems(c, r.pos, r.end);
+    else if (r.type === T.ClientData) {
+      each(c, r.pos, r.end, (d) => { if (d.type === T.OEPlaceholder && d.end - d.pos >= 5) raw.placeholder = c.b[d.pos + 4]; });
+    } else if (r.type === T.Opt || r.type === T.SecondaryOpt || r.type === T.TertiaryOpt) readOpt(c, r, props);
+  });
+  const rect = abs ?? child;
+  if (rect && (rect.r > rect.l || rect.b > rect.t)) {
+    const p: Placed = { x: rect.l, y: rect.t, w: rect.r - rect.l, h: rect.b - rect.t, rot: rotationOf(props), flipH: (raw.flags & SP.flipH) !== 0, flipV: (raw.flags & SP.flipV) !== 0 };
+    raw.placed = abs ? p : map(p);
+  }
+  return raw;
+}
+
+function walkDrawing(c: Ctx, from: number, to: number, depth: number, map: Mapper, st: DrawState, group: number | undefined) {
+  if (depth > PPT_MAX_DEPTH) { c.warnings.add('겹친 개체가 너무 깊어 일부를 건너뛰었습니다.'); return; }
+  each(c, from, to, (r) => {
+    if (st.shapes.length >= MAX_SHAPES) return false;
+    if (r.type === T.Spgr && isContainer(r)) readGroup(c, r, depth + 1, map, st, group);
+    else if (r.type === T.Sp && isContainer(r)) addShape(c, r, map, st, group);
+    else if (isContainer(r)) walkDrawing(c, r.pos, r.end, depth + 1, map, st, group);
+  });
+}
+
+function addShape(c: Ctx, sp: Rec, map: Mapper, st: DrawState, group: number | undefined) {
+  const raw = readRawShape(c, sp, map, st, group);
+  if (raw.flags & SP.deleted) return;
+  if (raw.flags & SP.background) { st.background ??= raw; return; }
+  st.shapes.push(raw);
+}
+
+/** A group container: its first shape is the group itself (anchor, child space, rotation), the rest are its members. */
+function readGroup(c: Ctx, g: Rec, depth: number, map: Mapper, st: DrawState, group: number | undefined) {
+  if (depth > PPT_MAX_DEPTH) { c.warnings.add('겹친 개체가 너무 깊어 일부를 건너뛰었습니다.'); return; }
+  let inner = map;
+  let gid = group;
+  let first = true;
+  each(c, g.pos, g.end, (r) => {
+    if (st.shapes.length >= MAX_SHAPES) return false;
+    if (first) {
+      first = false;
+      if (r.type === T.Sp && isContainer(r)) {
+        const head = readRawShape(c, r, map, st, group);
+        if (!(head.flags & SP.patriarch)) {
+          if (head.placed) inner = groupMapper(head.placed, head.spgr);
+          gid = group ?? ++st.groups;
+        }
+        return;
+      }
+    }
+    if (r.type === T.Spgr && isContainer(r)) readGroup(c, r, depth + 1, inner, st, gid);
+    else if (r.type === T.Sp && isContainer(r)) addShape(c, r, inner, st, gid);
+    else if (isContainer(r)) walkDrawing(c, r.pos, r.end, depth + 1, inner, st, gid);
+  });
+}
+
+// ── Slides and masters ─────────────────────────────────────────────────────────────────────────
+
+const SLIDE_TYPES = new Set<number>([T.Slide, T.Notes, T.MainMaster]);
+
+function readSchemeAtom(c: Ctx, r: Rec): Scheme | undefined {
+  if (r.end - r.pos < 32) return undefined;
+  const out: string[] = [];
+  for (let i = 0; i < 8; i++) out.push(rgbHex(c.b[r.pos + i * 4], c.b[r.pos + i * 4 + 1], c.b[r.pos + i * 4 + 2]));
   return out;
 }
 
-// ── Slides ─────────────────────────────────────────────────────────────────────────────────────
-
-/** Shapes of a PPDrawing: text boxes, placeholders and pictures, in drawing order. */
-function readShapes(c: Ctx, from: number, to: number, depth: number, out: PptShape[], pictureCount: number) {
-  if (depth > PPT_MAX_DEPTH) { c.warnings.add('겹친 개체가 너무 깊어 일부를 건너뛰었습니다.'); return; }
-  each(c, from, to, (r) => {
-    if (r.type === T.Sp && isContainer(r)) {
-      if (out.length < 5000) {
-        const s = readShape(c, r, pictureCount);
-        if (s) out.push(s);
-      }
-    } else if (isContainer(r)) readShapes(c, r.pos, r.end, depth + 1, out, pictureCount);
-  });
-}
-
-function readShape(c: Ctx, sp: Rec, pictureCount: number): PptShape | null {
-  let anchor: [number, number, number, number] | null = null;
-  let child: [number, number, number, number] | null = null;
-  let items: TextItem[] = [];
-  let placeholder: number | undefined;
-  let pib = 0;
-  let background = false;
-  each(c, sp.pos, sp.end, (r) => {
-    const len = r.end - r.pos;
-    if (r.type === T.SpAtom && len >= 8) background = (c.v.getUint32(r.pos + 4, true) & 0x400) !== 0; // fBackground
-    else if (r.type === T.ClientAnchor) {
-      if (len >= 16) anchor = [c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true)]; // left, top, right, bottom
-      else if (len >= 8) anchor = [c.v.getInt16(r.pos + 2, true), c.v.getInt16(r.pos, true), c.v.getInt16(r.pos + 4, true), c.v.getInt16(r.pos + 6, true)];
-    } else if (r.type === T.ChildAnchor && len >= 16) {
-      child = [c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true)];
-    } else if (r.type === T.ClientTextbox) items = textItems(c, r.pos, r.end);
-    else if (r.type === T.ClientData) {
-      each(c, r.pos, r.end, (d) => { if (d.type === T.OEPlaceholder && d.end - d.pos >= 5) placeholder = c.b[d.pos + 4]; });
-    } else if (r.type === T.Opt) {
-      for (let i = 0; i < r.inst && r.pos + (i + 1) * 6 <= r.end; i++) {
-        const id = c.v.getUint16(r.pos + i * 6, true) & 0x3fff;
-        if (id === 0x104) pib = c.v.getInt32(r.pos + i * 6 + 2, true);
-      }
-    }
-  });
-  if (background) return null;
-  const rect = anchor ?? child;
-  const geom = rect && rect[2] > rect[0] && rect[3] > rect[1] ? { x: rect[0], y: rect[1], w: rect[2] - rect[0], h: rect[3] - rect[1] } : {};
-  const text = items.map((i) => i.text).filter(Boolean).join('\n');
-  if (text.trim()) return { kind: 'text', ...geom, text, textType: items[0]?.type, placeholder };
-  if (pib > 0) return { kind: 'picture', ...geom, picture: pib <= pictureCount ? pib : 0 };
-  // An empty placeholder carries no text but marks where the layout's text would be: nothing to import.
-  return null;
-}
-
-/** Slide container → its notes id and shapes. */
-function readSlide(c: Ctx, at: number, pictureCount: number): { notesId: number; shapes: PptShape[] } | null {
+/** Slide, notes or master container at a stream offset. */
+function readContainer(c: Ctx, at: number, defaults: Props): Parsed | null {
   if (at < 0 || at + 8 > c.b.length) return null;
-  let notesId = 0;
-  const shapes: PptShape[] = [];
+  const parsed: Parsed = { masterId: 0, notesId: 0, flags: 0x7, hasAtom: false, shapes: [], styles: new Map() };
+  const st: DrawState = { shapes: parsed.shapes, defaults, groups: 0 };
   let ok = false;
+  let anyScheme: Scheme | undefined;
   each(c, at, at + 8 + c.v.getUint32(at + 4, true), (r) => {
-    if (r.type !== T.Slide && r.type !== T.Notes) return false;
+    if (!SLIDE_TYPES.has(r.type)) return false;
     ok = true;
     each(c, r.pos, r.end, (k) => {
-      if (k.type === T.SlideAtom && k.end - k.pos >= 20) notesId = c.v.getUint32(k.pos + 16, true);
-      else if (k.type === T.PPDrawing) readShapes(c, k.pos, k.end, 0, shapes, pictureCount);
+      if (k.type === T.SlideAtom && k.end - k.pos >= 20) {
+        parsed.hasAtom = true;
+        parsed.masterId = c.v.getUint32(k.pos + 12, true);
+        parsed.notesId = c.v.getUint32(k.pos + 16, true);
+        if (k.end - k.pos >= 22) parsed.flags = c.v.getUint16(k.pos + 20, true);
+      } else if (k.type === T.PPDrawing) walkDrawing(c, k.pos, k.end, 0, (p) => p, st, undefined);
+      else if (k.type === T.ColorSchemeAtom) {
+        const s = readSchemeAtom(c, k);
+        if (k.inst === 6 && s) parsed.scheme = s; // the slide's own scheme
+        anyScheme ??= s;
+      } else if (k.type === T.TextMasterStyle) {
+        const ms = readMasterStyle(c, k);
+        if (ms && !parsed.styles.has(ms.type)) parsed.styles.set(ms.type, ms.levels);
+      }
+      else if (k.type === T.SlideShowSlideInfo && k.end - k.pos >= 12) {
+        const flags = c.v.getUint16(k.pos + 10, true);
+        parsed.info = { effect: c.b[k.pos + 9], speed: k.end - k.pos >= 13 ? c.b[k.pos + 12] : 1, onClick: (flags & 0x1) !== 0, afterMs: Math.max(0, c.v.getInt32(k.pos, true)), hidden: (flags & 0x4) !== 0 };
+      }
     });
     return false;
   });
-  return ok ? { notesId, shapes } : null;
+  parsed.scheme ??= anyScheme;
+  parsed.background = st.background;
+  return ok ? parsed : null;
 }
 
 interface Persist { persistId: number; slideId: number; items: TextItem[] }
-/** SlideListWithText of one kind (0 slides, 2 notes): its SlidePersistAtoms with the text that follows each. */
+/** SlideListWithText of one kind (0 slides, 1 masters, 2 notes): its SlidePersistAtoms with the text that follows each. */
 function readList(c: Ctx, doc: Rec, kind: number): Persist[] {
   const out: Persist[] = [];
   each(c, doc.pos, doc.end, (r) => {
     if (r.type !== T.SlideListWithText || r.inst !== kind) return;
     each(c, r.pos, r.end, (p) => {
       if (p.type !== T.SlidePersistAtom || p.end - p.pos < 16 || out.length >= PPT_MAX_SLIDES) return;
-      out.push({ persistId: c.v.getUint32(p.pos, true), slideId: c.v.getUint32(p.pos + 12, true), items: textItems(c, p.end, r.end, true) });
+      out.push({ persistId: c.v.getUint32(p.pos, true), slideId: c.v.getUint32(p.pos + 12, true), items: kind === 0 ? textItems(c, p.end, r.end, true) : [] });
     });
   });
   return out;
@@ -273,6 +420,98 @@ function persistDirectory(c: Ctx, currentUser: Uint8Array | null): { map: Map<nu
     edit = last;
   }
   return map.size ? { map, docId } : null;
+}
+
+// ── Raw shapes → PptShapes ─────────────────────────────────────────────────────────────────────
+
+/** A slide placeholder type → the master placeholder types whose position and style it takes, best first. */
+const MASTER_OF: Record<number, number[]> = {
+  0x0d: [1], 0x10: [3, 1], 0x11: [4, 2], 0x0e: [2], 0x0f: [2], 0x12: [1], 0x13: [2], 0x14: [2], 0x15: [2], 0x16: [2], 0x17: [2], 0x18: [2], 0x19: [2], 0x1a: [2], 0x1b: [2],
+  3: [3, 1], 4: [4, 2],
+};
+
+interface Env {
+  scheme?: Scheme;
+  styles?: TextStyles;
+  fallback?: TextStyles;
+  fonts: string[];
+  /** The master's shapes, for placeholder inheritance. */
+  master?: RawShape[];
+  pictureCount: number;
+}
+
+function masterPlaceholder(env: Env, ph: number): RawShape | undefined {
+  for (const t of MASTER_OF[ph] ?? [ph]) {
+    const m = env.master?.find((s) => s.placeholder === t);
+    if (m) return m;
+  }
+  return undefined;
+}
+
+const MARGIN = [91440, 45720, 91440, 45720];
+
+function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
+  const mp = raw.placeholder !== undefined ? masterPlaceholder(env, raw.placeholder) : undefined;
+  const props: Props = mp ? new Map([...mp.props, ...raw.props]) : raw.props;
+  const placed = raw.placed ?? mp?.placed;
+  const spType = raw.spType || (mp?.spType ?? 0);
+  const preset = presetOf(spType);
+  const geom: Partial<PptShape> = placed ? { x: placed.x, y: placed.y, w: placed.w, h: placed.h } : {};
+  if (placed?.rot) geom.rotation = placed.rot;
+  if (raw.placed?.flipH) geom.flipH = true;
+  if (raw.placed?.flipV) geom.flipV = true;
+  if (!raw.placed && placed) geom.inherited = true;
+  const base: Partial<PptShape> = { ...geom, ...(raw.placeholder !== undefined ? { placeholder: raw.placeholder } : {}), ...(raw.group ? { group: raw.group } : {}) };
+
+  const textEnv = { styles: env.styles, fallback: env.fallback, fonts: env.fonts, scheme: env.scheme };
+  const paras: PptPara[] = [];
+  for (const i of raw.items) if (itemText(i).trim()) paras.push(...buildParas(i.raw, i.style, i.type, textEnv));
+  const text = paras.map((p) => p.text).join('\n');
+  const textType = raw.items[0]?.type;
+  const fill = fillOf(props, env.scheme);
+  const line = lineOf(props, env.scheme, isLineType(spType));
+  const pib = props.get(P.pib) ?? 0;
+  const frame: Partial<PptShape> = {};
+  const m = [P.textLeft, P.textTop, P.textRight, P.textBottom].map((id, k) => props.get(id) ?? MARGIN[k]);
+  if (m.some((v, k) => v !== MARGIN[k])) frame.margins = m as [number, number, number, number];
+  const anchor = props.get(P.anchorText);
+  if (anchor !== undefined) frame.vAlign = anchor === 1 || anchor === 4 || anchor === 7 ? 'middle' : anchor === 2 || anchor === 5 || anchor === 8 ? 'bottom' : 'top';
+  if (props.get(P.wrapText) === 2) frame.wrap = false;
+
+  if (text.trim()) {
+    const out: PptShape = { kind: 'text', ...base, text, paras, textType, ...frame };
+    if (fill) out.fill = fill;
+    if (line) out.line = line;
+    if (preset && !isBoxType(spType) && !isLineType(spType) && raw.placeholder === undefined) out.shape = preset;
+    return out;
+  }
+  if (pib > 0 && !isLineType(spType)) {
+    const out: PptShape = { kind: 'picture', ...base, picture: pib <= env.pictureCount ? pib : 0 };
+    const crop = [P.cropLeft, P.cropTop, P.cropRight, P.cropBottom].map((id) => Math.max(0, Math.min(0.95, (props.get(id) ?? 0) / 65536)));
+    if (crop.some((v) => v > 0.001)) out.crop = crop as [number, number, number, number];
+    if (line) out.line = line;
+    return out;
+  }
+  // An empty placeholder carries no text but marks where the layout's text would be (kept for the master lookup, dropped later).
+  if (raw.placeholder !== undefined) return { kind: 'text', ...base, text: '', ...frame };
+  if (!preset) { if (fill || line) c.warnings.add('일부 도형(자유형 등)은 가져오지 못했습니다.'); return null; }
+  if (isLineType(spType)) return line ? { kind: 'shape', ...base, shape: 'line', line } : null;
+  if (!fill && !line) return null;
+  return { kind: 'shape', ...base, shape: preset, ...(fill ? { fill } : {}), ...(line ? { line } : {}) };
+}
+
+function backgroundOf(parsed: Parsed, master: Parsed | undefined, scheme: Scheme | undefined, pictureCount: number): PptBackground | undefined {
+  const spec = (p: Parsed | undefined): FillSpec | undefined => (p?.background ? fillOf(p.background.props, scheme) : undefined);
+  const own = spec(parsed);
+  const inherited = spec(master);
+  // A slide that follows the master's background (flag 0x4) takes the master's even when it carries a stale one of its own.
+  const follow = parsed.hasAtom && (parsed.flags & 0x4) !== 0;
+  const pick = follow ? inherited ?? own : own ?? inherited;
+  const bg = pick && !pick.background ? pick : undefined;
+  if (bg?.picture) return bg.picture <= pictureCount ? { kind: 'picture', picture: bg.picture } : undefined;
+  if (bg?.gradient) return { kind: 'gradient', ...bg.gradient };
+  if (bg?.color) return { kind: 'color', color: bg.color };
+  return scheme?.[0] ? { kind: 'color', color: scheme[0] } : undefined;
 }
 
 const empty = (warnings: string[]): PptDocument => ({ width: 5760, height: 4320, slides: [], pictures: [], warnings });
@@ -317,9 +556,24 @@ function parse(bytes: Uint8Array): PptDocument {
     return r.type === T.DocumentAtom ? false : undefined;
   });
 
-  const pictures = readPictures(c, document, cfb.stream('Pictures'));
+  const { list: pictures, defaults } = readPictures(c, document, cfb.stream('Pictures'));
+  const fonts = readFonts(c, document);
+  const fallback = readEnvironmentStyles(c, document);
   const slideList = readList(c, document, 0);
+  const masterList = readList(c, document, 1);
   const noteList = readList(c, document, 2);
+
+  // Masters (main and title) by their id, read once.
+  const masters = new Map<number, Parsed | null>();
+  const masterOf = (id: number): Parsed | undefined => {
+    if (!id || !dir) return undefined;
+    if (!masters.has(id)) {
+      const entry = masterList.find((m) => m.slideId === id);
+      const at = entry ? dir.map.get(entry.persistId) : undefined;
+      masters.set(id, at !== undefined ? readContainer(c, at, defaults) : null);
+    }
+    return masters.get(id) ?? undefined;
+  };
 
   const slides: PptSlide[] = [];
   const noteTextOf = (notesId: number): string | undefined => {
@@ -327,33 +581,72 @@ function parse(bytes: Uint8Array): PptDocument {
     const entry = noteList.find((n) => n.slideId === notesId);
     if (!entry) return undefined;
     const at = dir?.map.get(entry.persistId);
-    const parsed = at !== undefined ? readSlide(c, at, pictures.length) : null;
-    const fromShapes = parsed?.shapes.filter((s) => s.kind === 'text' && s.textType === 2).map((s) => s.text).join('\n');
-    const text = fromShapes || entry.items.filter((i) => i.type === 2).map((i) => i.text).join('\n');
+    const parsed = at !== undefined ? readContainer(c, at, defaults) : null;
+    const fromShapes = parsed?.shapes.flatMap((s) => s.items.filter((i) => i.type === 2).map(itemText)).filter(Boolean).join('\n');
+    const text = fromShapes || entry.items.filter((i) => i.type === 2).map(itemText).join('\n');
     return text.trim() || undefined;
+  };
+
+  const toSlide = (parsed: Parsed | null, entryItems: TextItem[]): PptSlide => {
+    const master = parsed ? masterOf(parsed.masterId) : undefined;
+    const followScheme = parsed && parsed.hasAtom && (parsed.flags & 0x2) !== 0;
+    const scheme = followScheme ? master?.scheme ?? parsed?.scheme : parsed?.scheme ?? master?.scheme;
+    const styles = master?.styles.size ? master.styles : [...masters.values()].find((m) => m?.styles.size)?.styles;
+    const env: Env = { scheme, styles, fallback, fonts, master: master?.shapes, pictureCount: pictures.length };
+    const shapes: PptShape[] = [];
+    // The master's own objects (logos, bands, plain text) sit under the slide's, unless the slide hides them.
+    if (master && (!parsed?.hasAtom || (parsed.flags & 0x1) !== 0)) {
+      for (const raw of master.shapes) {
+        if (raw.placeholder !== undefined) continue;
+        const s = finishShape(raw, { ...env, master: undefined, styles: master.styles.size ? master.styles : styles }, c);
+        if (s && !(s.kind === 'text' && !s.text)) shapes.push({ ...s, master: true });
+      }
+    }
+    for (const raw of parsed?.shapes ?? []) {
+      const s = finishShape(raw, env, c);
+      if (s && !(s.kind === 'text' && !s.text?.trim() && !s.fill && !s.line)) shapes.push(s);
+    }
+    // Text kept only in the slide list (outline text) when the slide's own boxes have none.
+    if (!shapes.some((s) => s.kind === 'text' && s.text) && entryItems.some((i) => itemText(i).trim())) {
+      for (const i of entryItems) {
+        if (!itemText(i).trim()) continue;
+        const paras = buildParas(i.raw, i.style, i.type, { styles, fallback, fonts, scheme });
+        shapes.push({ kind: 'text', text: paras.map((p) => p.text).join('\n'), paras, textType: i.type, placeholder: i.type === 0 || i.type === 6 ? 1 : 2 });
+      }
+    }
+    const slide: PptSlide = { shapes };
+    if (parsed) {
+      const background = backgroundOf(parsed, master, scheme, pictures.length);
+      if (background) slide.background = background;
+      if (parsed.info?.hidden) slide.hidden = true;
+      if (parsed.info && (parsed.info.effect > 0 || parsed.info.afterMs > 0 || !parsed.info.onClick)) {
+        const { effect, speed, onClick, afterMs } = parsed.info;
+        slide.transition = { effect, speed, onClick, afterMs };
+      }
+    }
+    return slide;
   };
 
   if (dir && slideList.length) {
     for (const entry of slideList.slice(0, PPT_MAX_SLIDES)) {
       const at = dir.map.get(entry.persistId);
-      const parsed = at !== undefined ? readSlide(c, at, pictures.length) : null;
-      let shapes = parsed?.shapes ?? [];
-      // Text kept only in the slide list (outline text) when the slide's own boxes have none.
-      if (!shapes.some((s) => s.kind === 'text') && entry.items.some((i) => i.text.trim())) {
-        shapes = [...shapes, ...entry.items.filter((i) => i.text.trim()).map((i): PptShape => ({ kind: 'text', text: i.text, textType: i.type, placeholder: i.type === 0 || i.type === 6 ? 1 : 2 }))];
-      }
-      slides.push({ shapes, notes: parsed ? noteTextOf(parsed.notesId) : undefined });
+      const parsed = at !== undefined ? readContainer(c, at, defaults) : null;
+      const slide = toSlide(parsed, entry.items);
+      const notes = parsed ? noteTextOf(parsed.notesId) : undefined;
+      if (notes) slide.notes = notes;
+      slides.push(slide);
     }
   } else {
-    // No persist directory: every slide container in stream order, then notes by slide-list order.
+    // No persist directory: every slide container in stream order (no masters, no notes).
     each(c, 0, stream.length, (r) => {
       if (r.type !== T.Slide || slides.length >= PPT_MAX_SLIDES) return;
-      const parsed = readSlide(c, r.pos - 8, pictures.length);
-      if (parsed) slides.push({ shapes: parsed.shapes });
+      const parsed = readContainer(c, r.pos - 8, defaults);
+      if (parsed) slides.push(toSlide(parsed, []));
     });
-    if (!slides.length && slideList.length) for (const e of slideList) slides.push({ shapes: e.items.filter((i) => i.text.trim()).map((i): PptShape => ({ kind: 'text', text: i.text, textType: i.type, placeholder: i.type === 0 || i.type === 6 ? 1 : 2 })) });
+    if (!slides.length && slideList.length) for (const e of slideList) slides.push(toSlide(null, e.items));
   }
   if (!slides.length) c.warnings.add('슬라이드를 찾지 못했습니다.');
   if (pictures.some((p) => !p)) c.warnings.add('일부 그림(벡터 그림 등)은 가져오지 못했습니다.');
   return { width, height, slides, pictures, warnings: [...c.warnings] };
 }
+
