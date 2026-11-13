@@ -5,6 +5,7 @@ import type { LiveState } from '../domain/types';
 import { mediaUrl, peekMediaUrl } from '../domain/media';
 import { openLiveChannel } from '../domain/sync';
 import { loadLive, saveLive } from '../domain/persistence';
+import { laserDue, parseLaserMessage } from '../domain/laserPointer';
 
 /**
  * Object URL for a stored picture/video. When the id changes (the next slide has another background)
@@ -195,8 +196,17 @@ export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => voi
   const onShow = useRef(onShowAction);
   onShow.current = onShowAction;
   const channel = useRef<ReturnType<typeof openLiveChannel> | null>(null);
+  const relayRef = useRef(relaySend);
+  relayRef.current = relaySend;
+  const laserSentAt = useRef(0);
   useEffect(() => {
     channel.current = openLiveChannel((m) => {
+      // The presenter's laser dot also goes to audience devices on the relay (a few dozen a second at most).
+      if (m.type === 'laser') {
+        const msg = parseLaserMessage(m);
+        const on = msg && !('off' in msg);
+        if (msg && laserDue(laserSentAt.current, Date.now(), on ? { x: 0, y: 0 } : null)) { laserSentAt.current = Date.now(); relayRef.current(msg); }
+      }
       if (m.type === 'hello') channel.current?.post({ type: 'state', state: latest.current });
       // A slide show covering this very screen still answers to the arrow keys, Space and Esc.
       if (m.type === 'key') window.dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: m.shiftKey, cancelable: true }));
@@ -231,6 +241,8 @@ export function useLiveFeed(): LiveState | null {
   }, []);
   useRelay({ type: 'hello', role: 'viewer' }, (m) => {
     if (m.type === 'state' && m.state) apply(m.state as LiveState);
+    // The presenter's laser dot, for the audience view to draw (see useLaserDot).
+    if (m.type === 'laser') window.dispatchEvent(new CustomEvent('lightcast:laser', { detail: m }));
   });
   return live;
 }

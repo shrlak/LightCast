@@ -104,10 +104,11 @@ export function OutputView() {
     return (
       <div className="output-root edge-root" style={{ background: bg }}>
         <div className="edge-view">
-          <div style={{ width: `${scale * 100}%`, transform: `translateX(${(-x / CANVAS_W) * 100}%)` }}>
+          <div className="edge-slide" style={{ width: `${scale * 100}%`, transform: `translateX(${(-x / CANVAS_W) * 100}%)` }}>
             <SlideCanvas {...liveCanvasProps(live, screen)} />
           </div>
           <div className={`edge-fade ${edge.part}`} style={{ width: `${(edge.overlap / regionW) * 100}%` }} />
+          <LaserDot point={laser} edge={edge} />
         </div>
       </div>
     );

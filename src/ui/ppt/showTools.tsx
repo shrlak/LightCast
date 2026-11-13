@@ -4,7 +4,8 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import type { Dispatch } from 'react';
 import type { Action, AppState } from '../../domain/reducer';
 import { openLiveChannel } from '../../domain/sync';
-import { LASER_STALE_MS, laserFromMessage, laserMessage, laserPoint, laserShown, type LaserPoint } from '../../domain/laserPointer';
+import { LASER_STALE_MS, edgeLaserPosition, laserFromMessage, laserMessage, laserPoint, laserShown, parseLaserMessage, type LaserPoint } from '../../domain/laserPointer';
+import { CANVAS_H, CANVAS_W } from '../../domain/canvas';
 import { applyRecording, clearRecording, clock, enterSlide, finishRecording, hasRecording, narrationCount, narrationToPlay, slideTimings, startRecording, type Recording } from '../../domain/narration';
 import { deleteMedia, mediaUrl, putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
@@ -87,23 +88,63 @@ export function useLaserDot(): LaserPoint | null {
       if (p) timer.current = setTimeout(() => setPt(null), LASER_STALE_MS);
     };
     const ch = openLiveChannel((m) => { if (m.type === 'laser') show(laserFromMessage(m)); });
+    // The same dot from the presenter's computer over the relay (audience devices on the network).
+    const net = (e: Event) => { const m = parseLaserMessage((e as CustomEvent).detail); if (m) show(laserFromMessage(m)); };
+    window.addEventListener('lightcast:laser', net);
     const move = (e: MouseEvent) => {
       if (!e.ctrlKey) return;
-      const r = document.querySelector('.output-canvas')?.getBoundingClientRect();
+      const r = document.querySelector('.output-canvas, .edge-slide')?.getBoundingClientRect();
       show(r ? laserPoint(r, e.clientX, e.clientY) : null);
     };
     const up = (e: KeyboardEvent) => { if (e.key === 'Control') show(null); };
     window.addEventListener('mousemove', move);
     window.addEventListener('keyup', up);
-    return () => { clearTimeout(timer.current); ch.close(); window.removeEventListener('mousemove', move); window.removeEventListener('keyup', up); };
+    return () => { clearTimeout(timer.current); ch.close(); window.removeEventListener('lightcast:laser', net); window.removeEventListener('mousemove', move); window.removeEventListener('keyup', up); };
   }, []);
   return pt;
 }
 
-export function LaserDot({ point }: { point: LaserPoint | null }) {
-  const r = point ? document.querySelector('.output-canvas')?.getBoundingClientRect() : null;
-  if (!point || !r) return null;
+/** The dot on the audience view; with `edge` (two-projector layout) it is placed on this projector's part of the slide, or not at all. */
+export function LaserDot({ point, edge }: { point: LaserPoint | null; edge?: { part: 'none' | 'left' | 'right'; overlap: number } | null }) {
+  if (!point) return null;
+  if (edge) {
+    const at = edgeLaserPosition(point, edge, CANVAS_W, CANVAS_H, window.innerWidth / Math.max(1, window.innerHeight));
+    return at ? <div className="laser-dot" style={{ left: `${at.x * 100}vw`, top: `${at.y * 100}vh` }} /> : null;
+  }
+  const r = document.querySelector('.output-canvas')?.getBoundingClientRect();
+  if (!r) return null;
   return <div className="laser-dot" style={{ left: r.left + point.x * r.width, top: r.top + point.y * r.height }} />;
+}
+
+/** 읽기용 보기: Ctrl + moving the mouse over the slide (or the toggle) shows the dot, as on the audience view. */
+export function ReadingLaser({ stage }: { stage: React.RefObject<HTMLElement | null> }) {
+  const on = laserOn.use();
+  const [pt, setPt] = useState<{ x: number; y: number } | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    const show = (p: { x: number; y: number } | null) => {
+      clearTimeout(timer.current);
+      setPt(p);
+      if (p) timer.current = setTimeout(() => setPt(null), LASER_STALE_MS);
+    };
+    const move = (e: MouseEvent) => {
+      const frame = stage.current?.querySelector('.canvas-frame');
+      const r = frame?.getBoundingClientRect();
+      const hit = r && laserShown(e.ctrlKey, on) ? laserPoint(r, e.clientX, e.clientY) : null;
+      show(hit && r ? { x: r.left + hit.x * r.width, y: r.top + hit.y * r.height } : null);
+    };
+    const up = (e: KeyboardEvent) => { if (e.key === 'Control' && !on) show(null); };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('keyup', up);
+    return () => { clearTimeout(timer.current); window.removeEventListener('mousemove', move); window.removeEventListener('keyup', up); };
+  }, [on, stage]);
+  return pt ? <div className="laser-dot" style={{ left: pt.x, top: pt.y }} /> : null;
+}
+
+/** The reading view's switch for the laser pointer (no Ctrl needed while on). */
+export function ReadingLaserToggle() {
+  const on = laserOn.use();
+  return <button type="button" className={on ? 'on' : ''} aria-pressed={on} title="슬라이드 위에 빨간 점이 마우스를 따라갑니다 (Ctrl을 누른 채 이동해도 됩니다)" onClick={toggleLaser}>◉ 레이저 포인터</button>;
 }
 
 // ── Record Slide Show ───────────────────────────────────────────────────────────────────────────

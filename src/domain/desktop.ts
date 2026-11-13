@@ -47,6 +47,9 @@ export interface DesktopBridge {
   spellSuggestions?(word: string): string[];
   /** PowerPoint's own copy of shapes on the clipboard (its "Art::GVML ClipFormat" package), if any. */
   readOfficeClipboard?(): Promise<Uint8Array | null>;
+  /** Insert › Screenshot: screens and windows with thumbnails, and the choice the next getDisplayMedia returns. Older apps lack them. */
+  captureSources?(): Promise<import('./captureSources').RawCaptureSource[]>;
+  selectCaptureSource?(id: string | null): Promise<boolean>;
   openView(url: string, displayId?: number | null): Promise<void>;
   /** Slide show starts: cover the projector (or this screen) right away, like PowerPoint. */
   present(url: string): Promise<void>;
