@@ -1,11 +1,14 @@
-// File › Open / Save / Info: OpenDocument (.odp) and LightCast's own password-protected file (.lcast).
-// The password protects LightCast's own file only — it is not PowerPoint's encryption, and .pptx saves stay unencrypted.
+// File › Open / Save / Info: OpenDocument (.odp), LightCast's own password-protected file (.lcast) and
+// PowerPoint-compatible password protection of .pptx (Agile Encryption, src/domain/io/officeCrypto.ts).
+// The .lcast password protects LightCast's own file only; "PowerPoint 암호로 저장" makes a .pptx PowerPoint asks the password for.
 import { collectDeckFonts, restoreNativeFonts } from '../../domain/importedFonts';
 import { useRef, useState, type ReactNode } from 'react';
 import { mediaIdsOf } from '../../domain/filePrint';
 import { getMedia, putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { writeOdp } from '../../domain/io/odp';
+import { encryptOfficePackage } from '../../domain/io/officeCrypto';
+import { exportPptxBytes } from '../../domain/io/pptxExport';
 import { LCAST_EXT, PasswordRequiredError, WrongPasswordError, openNative, passwordProblem, saveNative, type NativeMedia } from '../../domain/io/lcastFile';
 import type { Presentation } from '../../domain/types';
 import { Dialog, Field } from './dialogs';
@@ -58,6 +61,30 @@ export function OdpSaveCard({ ed }: { ed: Ed }) {
   return <Card icon="📄" title="OpenDocument 프레젠테이션 (.odp)" text="현재 프레젠테이션을 다른 이름으로 저장" disabled={!p} onClick={() => void save()} />;
 }
 
+/** 저장 › PowerPoint 암호로 저장 (.pptx): the deck exported as .pptx, then wrapped in PowerPoint's Agile Encryption. */
+function PptxPasswordSaveCard({ ed }: { ed: Ed }) {
+  const p = ed.p;
+  const [dialog, setDialog] = useState(false);
+  const save = async (password: string) => {
+    if (!p) return;
+    try {
+      ed.cmd.notify('PowerPoint 암호화 파일 만드는 중… (잠시 걸릴 수 있습니다)');
+      const plain = await exportPptxBytes(ed.state.library, { presentation: p });
+      const bytes = await encryptOfficePackage(plain, password);
+      saveBytes(`${fileName(p.title)}.pptx`, bytes, 'application/vnd.openxmlformats-officedocument.presentationml.presentation');
+      ed.cmd.notify(`${fileName(p.title)}.pptx 를 PowerPoint 암호로 보호해 저장했습니다. 암호를 잊으면 복구할 수 없습니다`);
+    } catch (e) {
+      ed.cmd.notify(`PowerPoint 암호 저장 실패: ${(e as Error).message}`);
+    }
+  };
+  return (
+    <>
+      <Card icon="🔐" title="PowerPoint 암호로 저장 (.pptx)" text="PowerPoint에서 암호를 물어보는 파일로 저장" disabled={!p} onClick={() => setDialog(true)} />
+      {dialog && p && <PasswordDialog kind="pptx" title={p.title} onClose={() => setDialog(false)} onDone={(pw) => { setDialog(false); void save(pw); }} />}
+    </>
+  );
+}
+
 /** 저장 › LightCast 파일 (.lcast), with or without a password. */
 export function NativeSaveCards({ ed }: { ed: Ed }) {
   const p = ed.p;
@@ -76,7 +103,8 @@ export function NativeSaveCards({ ed }: { ed: Ed }) {
     <>
       <Card icon="💾" title="LightCast 파일 저장 (.lcast)" text="미디어까지 한 파일로" disabled={!p} onClick={() => void saveNow()} />
       <Card icon="🔑" title="암호로 보호하여 저장 (.lcast)" text="LightCast 파일 암호화" disabled={!p} onClick={() => setDialog(true)} />
-      {dialog && p && <PasswordDialog title={p.title} onClose={() => setDialog(false)} onDone={(pw) => { setDialog(false); void saveNow(pw); }} />}
+      {dialog && p && <PasswordDialog kind="lcast" title={p.title} onClose={() => setDialog(false)} onDone={(pw) => { setDialog(false); void saveNow(pw); }} />}
+      <PptxPasswordSaveCard ed={ed} />
     </>
   );
 }
@@ -88,8 +116,10 @@ export function PasswordProtectCard({ ed }: { ed: Ed }) {
   return (
     <>
       <Card icon="🔑" title="암호 설정" text="프레젠테이션 보호 · LightCast 파일(.lcast)을 암호로 저장" disabled={!p} onClick={() => setDialog(true)} />
+      <PptxPasswordSaveCard ed={ed} />
       {dialog && p && (
         <PasswordDialog
+          kind="lcast"
           title={p.title}
           onClose={() => setDialog(false)}
           onDone={async (pw) => {
@@ -108,17 +138,23 @@ export function PasswordProtectCard({ ed }: { ed: Ed }) {
   );
 }
 
-function PasswordDialog({ title, onClose, onDone }: { title: string; onClose: () => void; onDone: (password: string) => void }) {
+function PasswordDialog({ kind, title, onClose, onDone }: { kind: 'lcast' | 'pptx'; title: string; onClose: () => void; onDone: (password: string) => void }) {
   const [pw, setPw] = useState('');
   const [again, setAgain] = useState('');
   const problem = passwordProblem(pw, again);
+  const pptx = kind === 'pptx';
   return (
-    <Dialog title="문서 암호화" onClose={onClose} onOk={() => !problem && onDone(pw)} okDisabled={!!problem}>
-      <p>“{title}”을(를) 암호로 보호해 LightCast 파일(.lcast)로 저장합니다.</p>
+    <Dialog title={pptx ? 'PowerPoint 암호로 저장' : '문서 암호화'} onClose={onClose} onOk={() => !problem && onDone(pw)} okDisabled={!!problem} okLabel={pptx ? '암호화하여 저장' : '확인'}>
+      {pptx
+        ? <p>“{title}”을(를) .pptx로 내보낸 뒤 PowerPoint 방식(AES-256)으로 암호화합니다. PowerPoint 2010 이상에서 이 암호로 열 수 있습니다.</p>
+        : <p>“{title}”을(를) 암호로 보호해 LightCast 파일(.lcast)로 저장합니다.</p>}
       <Field label="암호(P):"><input type="password" autoFocus autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} /></Field>
       <Field label="암호 확인(C):"><input type="password" autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !problem) onDone(pw); }} /></Field>
       {pw && again && problem && <p role="alert" className="bs-note">{problem}</p>}
-      <p className="bs-note">주의: 암호를 잊어버리면 복구할 수 없습니다. 이 암호는 LightCast 파일(.lcast)에만 적용되며 PowerPoint 암호화가 아닙니다. PowerPoint(.pptx)로 저장한 파일은 암호화되지 않습니다.</p>
+      <p className="bs-note" style={{ background: '#fff4ce', border: '1px solid #e8d48a', borderRadius: 4, padding: '6px 8px', color: '#5c4a00' }}>
+        <b>주의:</b> 암호를 잊어버리면 복구할 수 없습니다. LightCast도, Microsoft도 암호를 되찾아 드릴 수 없으니 안전한 곳에 적어 두세요.
+        {pptx ? ' 암호화한 .pptx는 암호 없이는 열 수 없으니, 암호화하지 않은 원본은 따로 보관하는 것이 좋습니다.' : ' 이 암호는 LightCast 파일(.lcast)에만 적용되며 PowerPoint 암호화가 아닙니다. PowerPoint에서 열려면 “PowerPoint 암호로 저장 (.pptx)”을 사용하세요.'}
+      </p>
     </Dialog>
   );
 }

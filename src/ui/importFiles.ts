@@ -38,7 +38,10 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       const format = LEGACY_POWERPOINT_FILE.test(file.name) ? 'ppt' : 'pptx';
       const addPptMedia = (m: MediaMeta) => addMedia({ ...m, backgroundHidden: true });
       onProgress?.(`편집 가능한 슬라이드 읽는 중: ${file.name}…`);
-      let data = await file.arrayBuffer();
+      // A password-protected .pptx (PowerPoint's "Encrypt with Password") asks for the password and is decrypted first.
+      let data = format === 'pptx'
+        ? await (async () => { const u = await (await import('./unlockPowerPoint')).unlockPowerPoint(file, file.name); return u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer; })()
+        : await file.arrayBuffer();
       if (format === 'ppt') {
         onProgress?.(`PPT를 편집 가능한 PPTX로 변환 중: ${file.name}…`);
         const converted = await desktop?.pptToPptx?.(new Uint8Array(data)).catch(() => null);
