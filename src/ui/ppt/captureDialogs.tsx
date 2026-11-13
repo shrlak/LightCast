@@ -3,8 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import {
-  canCaptureScreen, canRecordAudio, captureErrorMessage, formatClock, pickRecorderMime, recordedAudioElement, recordingFileName,
-  screenshotElement, screenshotFileName, unsupportedMessage,
+  canRecordAudio, captureErrorMessage, formatClock, pickRecorderMime, recordedAudioElement, recordingFileName, unsupportedMessage,
 } from '../../domain/captureMedia';
 import { Dialog, Field } from './dialogs';
 import type { Ed } from './editor';
@@ -91,53 +90,5 @@ export function RecordAudioDialog({ ed, onClose }: { ed: Ed; onClose: () => void
   );
 }
 
-/** Grab one frame of the chosen screen or window. */
-async function grabFrame(): Promise<Blob> {
-  const s = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
-  try {
-    const video = document.createElement('video');
-    video.srcObject = s;
-    video.muted = true;
-    await video.play();
-    // The first frame can be blank right after the picker closes.
-    await new Promise((r) => setTimeout(r, 300));
-    const c = document.createElement('canvas');
-    c.width = video.videoWidth; c.height = video.videoHeight;
-    if (!c.width || !c.height) throw new Error('캡처한 화면이 비어 있습니다.');
-    c.getContext('2d')!.drawImage(video, 0, 0);
-    const blob = await new Promise<Blob | null>((r) => c.toBlob(r, 'image/png'));
-    if (!blob) throw new Error('그림으로 저장하지 못했습니다.');
-    return blob;
-  } finally {
-    s.getTracks().forEach((t) => t.stop());
-  }
-}
-
-export function ScreenCaptureDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
-  const supported = canCaptureScreen({ mediaDevices: navigator.mediaDevices });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const go = async () => {
-    setError(''); setBusy(true);
-    try {
-      const blob = await grabFrame();
-      const bmp = await createImageBitmap(blob);
-      const size = { w: bmp.width, h: bmp.height }; bmp.close();
-      const file = screenshotFileName(new Date());
-      const id = uid('m');
-      await putMedia(id, blob);
-      ed.dispatch({ type: 'media/add', media: { id, name: file, type: 'image' } });
-      ed.addElement(screenshotElement(uid('el'), id, file, size.w, size.h));
-      onClose();
-    } catch (e) {
-      setError(captureErrorMessage(e, 'screen'));
-      setBusy(false);
-    }
-  };
-  return (
-    <Dialog title="화면 캡처" onClose={onClose} onOk={() => void go()} okLabel={busy ? '캡처 중…' : '캡처'} okDisabled={!supported || busy}>
-      {!supported ? <p style={ERR_STYLE}>{unsupportedMessage('screen')}</p> : <p style={HINT_STYLE}>캡처할 화면이나 창을 고르면 현재 슬라이드에 그림으로 삽입합니다.</p>}
-      {error && <p role="alert" style={ERR_STYLE}>{error}</p>}
-    </Dialog>
-  );
-}
+// Insert › Screenshot has its own file: source picker and crop.
+export { ScreenCaptureDialog } from './screenCaptureDialog';

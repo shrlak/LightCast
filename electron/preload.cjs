@@ -13,8 +13,12 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   spellSuggestions: (word) => webFrame.getWordSuggestions(String(word)),
   // Paste: PowerPoint's own copy of shapes (exact places, fonts and colours), read by the main process.
   readOfficeClipboard: () => ipcRenderer.invoke('desktop:readOfficeClipboard'),
+  // Insert › Screenshot: screens and windows to choose from, and the choice for the next getDisplayMedia.
+  captureSources: () => ipcRenderer.invoke('desktop:captureSources'),
+  selectCaptureSource: (id) => ipcRenderer.invoke('desktop:selectCaptureSource', id),
   openView: (url, displayId) => ipcRenderer.invoke('desktop:openView', url, displayId),
   present: (url) => ipcRenderer.invoke('desktop:present', url),
+  setShowDisplays: (audienceId, presenterId) => ipcRenderer.invoke('desktop:setShowDisplays', audienceId, presenterId),
   endShow: () => ipcRenderer.invoke('desktop:endShow'),
   setOnTop: (on) => ipcRenderer.invoke('desktop:setOnTop', on),
   setAiConfig: (patch) => ipcRenderer.invoke('desktop:setAiConfig', patch),

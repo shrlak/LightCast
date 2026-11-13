@@ -14,7 +14,7 @@ import { SlideDesigner } from './SlideDesigner';
 import { AutoTextarea } from './AutoTextarea';
 import { sequence } from '../domain/arrangement';
 import { isPdfSlide } from '../domain/importedSlides';
-import { filesToSlides } from './importFiles';
+import { POWERPOINT_FILE, filesToSlides } from './importFiles';
 import { ProtectedMaterialNotice } from './MaterialProtection';
 import { PROTECTED_MESSAGE } from '../domain/materialProtection';
 
@@ -53,7 +53,7 @@ export function SlideEditorModal({ state, dispatch, presentation: p, slideId, sl
     if (!file || importing) return;
     setImporting(true); setMessage('원본 PPT를 편집 가능한 슬라이드로 읽는 중…');
     try {
-      if (!/\.pptx?$/i.test(file.name)) throw new Error('PPTX 또는 PPT 파일을 선택해 주세요.');
+      if (!POWERPOINT_FILE.test(file.name)) throw new Error('PPTX 또는 PPT 파일을 선택해 주세요.');
       const slides = await filesToSlides([file], (media) => dispatch({ type: 'media/add', media }), setMessage);
       if (!slides.length) throw new Error('슬라이드를 읽지 못했습니다. 기존 자료는 유지됩니다.');
       dispatch({ type: 'presentation/update', id: p.id, patch: { slides, arrangements: undefined, arrangementId: null, slidesEdited: true } });
@@ -116,7 +116,7 @@ export function SlideEditorModal({ state, dispatch, presentation: p, slideId, sl
         <footer className="modal-foot">
           <span className="muted small grow">{message ?? (p.protected ? '보호를 해제한 뒤 편집할 수 있습니다' : '수정 내용은 자동 저장됩니다 · 실행 취소: ⌘/Ctrl+Z')}</span>
           <button disabled={!state.past.length} onClick={() => dispatch({ type: 'undo' })}>실행 취소</button>
-          {!isSong(p) && <><input ref={importRef} type="file" accept=".pptx,.ppt" hidden onChange={(e) => void reimport(e.target.files?.[0])} />
+          {!isSong(p) && <><input ref={importRef} type="file" accept=".pptx,.ppt,.pptm,.ppsx,.pps,.potx" hidden onChange={(e) => void reimport(e.target.files?.[0])} />
             <button disabled={importing || p.protected} onClick={() => importRef.current?.click()} title="이 자료의 모든 슬라이드를 원본 PPT로 교체합니다. 재생목록 연결과 프레젠테이션 설정은 유지됩니다.">{importing ? 'PPT 읽는 중…' : 'PPT 원본 다시 가져오기'}</button></>}
           <button disabled={importing || p.protected || p.slides.some(isPdfSlide)} onClick={onSource}>{isSong(p) ? '전체 가사 편집' : '전체 텍스트 편집'}</button>
           {shared && <button disabled={saving || p.protected} onClick={publishLyrics}>{saving ? '반영 중…' : '교회 찬양 라이브러리에 가사 반영'}</button>}

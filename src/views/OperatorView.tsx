@@ -43,7 +43,7 @@ import { fetchOnlineSongs } from '../domain/online';
 import { runExternal } from '../domain/effects';
 import type { Macro, SlideAction } from '../domain/types';
 import { AudioPlayer } from '../ui/AudioPanel';
-import { filesToSlides } from '../ui/importFiles';
+import { POWERPOINT_FILE, filesToSlides } from '../ui/importFiles';
 import { remoteInfoMessages, remotePositionMessage, remoteSlideInfo } from '../domain/remoteSlides';
 import { mediaIdsFor, resetSentMedia, sendMediaToRemotes } from '../domain/remoteMedia';
 import { x32 } from '../ui/x32';
@@ -492,9 +492,9 @@ export function OperatorView() {
         notify('Importing…');
         const approx: string[] = [];
         const toSlides = (list: File[]) => filesToSlides(list, (m) => dispatch({ type: 'media/add', media: m }), notify, (n) => approx.push(n));
-        const isPptx = (f: File) => /\.pptx?$/i.test(f.name);
+        const isPptx = (f: File) => POWERPOINT_FILE.test(f.name) || /\.odp$/i.test(f.name);
         let total = 0;
-        // Each PowerPoint file becomes its own presentation in a new 재생목록 named after the file.
+        // Each PowerPoint or OpenDocument (.odp) file becomes its own presentation in a new 재생목록 named after the file.
         for (const f of files.filter(isPptx)) {
           const title = f.name.replace(/\.[^.]+$/, '');
           const existing = state.library.presentations.filter((p) => p.folder === 'Imported' && p.title === title);

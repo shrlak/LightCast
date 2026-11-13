@@ -80,6 +80,9 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
           <Small icon="☑" label="수정 내용" active={ed.pane === 'revisions'} onClick={() => ed.setPane(ed.pane === 'revisions' ? null : 'revisions')} />
         </Col>
       </Group>
+      <Group label="버전 기록">
+        <Big icon="🕘" label="버전 기록" title="저장된 버전을 지금 것과 나란히 비교하고, 슬라이드 하나 또는 전체를 되돌립니다" disabled={!ed.p} onClick={() => ed.setDialog('versionHistory')} />
+      </Group>
       <Group label="메모">
         <Big icon={RI.comment} label="새 메모" disabled={!ed.slide} onClick={onComment} />
         <DropButton big icon={RI.deleteIcon} label="삭제" disabled={!total || !ed.canEdit} render={(close) => (
@@ -162,7 +165,7 @@ export function WorshipTab({ ed }: { ed: Ed }) {
   const upload = (kind: 'conti' | 'lyrics' | 'sermon') => {
     uploadKind.current = kind;
     const input = uploadRef.current!;
-    input.accept = kind === 'conti' ? 'application/pdf,.pdf' : kind === 'lyrics' ? ACCEPT.lyrics : '.pptx,.ppt,.pdf,image/*';
+    input.accept = kind === 'conti' ? 'application/pdf,.pdf' : kind === 'lyrics' ? ACCEPT.lyrics : '.pptx,.ppt,.pptm,.ppsx,.pps,.potx,.pdf,image/*';
     input.multiple = kind !== 'conti';
     input.click();
   };
