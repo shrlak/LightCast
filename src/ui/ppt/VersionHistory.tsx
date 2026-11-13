@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Library, Presentation } from '../../domain/types';
 import { libraryOf, listRestorePoints, saveRestorePoint, type RestorePoint } from '../../domain/restorePoints';
-import { alignSlides, changedCount, presentationIn, removeAdded, restoreSlide, restoreVersion, summary, type VersionRow } from '../../domain/versionHistory';
+import { alignSlides, changedCount, removeAdded, restoreSlide, restoreVersion, summary, type VersionRow } from '../../domain/versionHistory';
+import { MATCH_BASIS_LABEL, MATCH_BASIS_SHORT, VERSION_BASIS_LABEL, basisSummary, findVersion } from '../../domain/slideMatch';
 import { resolveBackground } from '../../domain/autoBackground';
 import { SlideCanvas } from '../SlideCanvas';
 import { Dialog } from './dialogs';
@@ -33,8 +34,10 @@ export function VersionHistoryDialog({ ed, onClose }: { ed: Ed; onClose: () => v
   // Each snapshot read once; those without this presentation are left out.
   const versions = useMemo(() => (points ?? []).map((pt) => {
     const lib = libraryOf(pt);
-    const old = p ? presentationIn(lib, p) : undefined;
-    return { pt, lib, old, rows: p && old ? alignSlides(p, old) : [] };
+    // By id; a presentation re-imported from the same file has new ids, so it is looked for by import source, then by text.
+    const link = p ? findVersion(lib, p) : null;
+    const old = link?.pres;
+    return { pt, lib, old, basis: link?.basis ?? 'id', rows: p && old ? alignSlides(p, old) : [] };
   }).filter((v) => v.old), [points, p?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // Rows are recomputed against the live presentation for the selected version.
   const sel = versions.find((v) => v.pt.id === pick) ?? null;
@@ -45,7 +48,7 @@ export function VersionHistoryDialog({ ed, onClose }: { ed: Ed; onClose: () => v
   const restoreOne = async (row: VersionRow) => {
     if (!sel?.old || !ed.canEdit) return;
     await safety();
-    ed.updatePres({ slides: row.status === 'added' ? removeAdded(p, row.id) : restoreSlide(p, sel.old, row.id) });
+    ed.updatePres({ slides: row.status === 'added' ? removeAdded(p, row.id) : restoreSlide(p, sel.old, row.old?.id ?? row.id, row.cur?.id) });
     ed.cmd.notify(row.status === 'added' ? '이 슬라이드를 뺐습니다' : '슬라이드를 이 버전으로 되돌렸습니다');
   };
   const restoreAll = async () => {
@@ -71,12 +74,13 @@ export function VersionHistoryDialog({ ed, onClose }: { ed: Ed; onClose: () => v
           <button type="button" onClick={saveNow}>지금 버전 저장</button>
           {points === null ? <p className="dlg-note">불러오는 중…</p> : !versions.length ? <p className="dlg-note">이 프레젠테이션의 저장된 버전이 아직 없습니다. LightCast가 자동으로 저장해 둡니다.</p> : (
             <ul>
-              {versions.map(({ pt, rows: r }) => (
+              {versions.map(({ pt, rows: r, basis }) => (
                 <li key={pt.id}>
                   <button type="button" className={pick === pt.id ? 'on' : ''} onClick={() => setPick(pt.id)}>
                     <b>{new Date(pt.at).toLocaleString()}</b>
                     <small>{KIND[pt.kind]}{pt.label ? ` · ${pt.label}` : ''}</small>
                     <small>{summary(r)}</small>
+                    {basis !== 'id' && <small className="vh-basis">{VERSION_BASIS_LABEL[basis]}</small>}
                   </button>
                 </li>
               ))}
@@ -89,6 +93,7 @@ export function VersionHistoryDialog({ ed, onClose }: { ed: Ed; onClose: () => v
               <div className="vh-bar">
                 <label className="rb-check"><input type="checkbox" checked={onlyChanged} onChange={(e) => setOnlyChanged(e.target.checked)} /> 바뀐 슬라이드만</label>
                 <span className="dlg-note">{summary(rows)}</span>
+                {rows.some((r) => r.basis && r.basis !== 'id') && <span className="dlg-note vh-basis" title="슬라이드를 짝지은 방법">짝짓기: {basisSummary(rows.filter((r) => r.basis).map((r) => ({ basis: r.basis! })))}</span>}
                 <button type="button" className="primary" disabled={!ed.canEdit || !changedCount(rows) || !!p.protected} onClick={restoreAll}>이 버전으로 모두 복원</button>
               </div>
               <div className="vh-head"><b>{new Date(sel.pt.at).toLocaleString()} 버전</b><b>현재 버전</b></div>
@@ -98,6 +103,7 @@ export function VersionHistoryDialog({ ed, onClose }: { ed: Ed; onClose: () => v
                   <div key={row.id} className={`vh-row ${row.status}`}>
                     <div><Thumb lib={ed.state.library} pres={sel.old!} row={row} side="old" /><small>{row.oldNo ? `슬라이드 ${row.oldNo}` : ''}</small></div>
                     <div className="vh-mid"><span className="vh-tag">{label[row.status]}</span>
+                      {row.basis && row.basis !== 'id' && <small className="vh-basis" title={MATCH_BASIS_LABEL[row.basis]}>연결: {MATCH_BASIS_SHORT[row.basis]}</small>}
                       {row.status !== 'same' && <button type="button" disabled={!ed.canEdit || !!p.protected} onClick={() => void restoreOne(row)}>{row.status === 'added' ? '빼기' : '이 슬라이드 복원'}</button>}
                     </div>
                     <div><Thumb lib={ed.state.library} pres={p} row={row} side="cur" /><small>{row.curNo ? `슬라이드 ${row.curNo}` : ''}</small></div>

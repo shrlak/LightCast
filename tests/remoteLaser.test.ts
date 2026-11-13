@@ -13,9 +13,10 @@ async function fixture() {
   const server = http.createServer(), relay = attachRelay(server);
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const address = server.address(); if (!address || typeof address === 'string') throw new Error('Missing port');
+  const port = address.port;
   const sockets: WebSocket[] = [];
   async function connect(role: string, token = '') {
-    const ws = new WebSocket(`ws://127.0.0.1:${address.port}/freecast-ws`);
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/freecast-ws`);
     sockets.push(ws);
     const packets: Packet[] = [];
     ws.on('message', (raw) => packets.push(JSON.parse(String(raw))));
