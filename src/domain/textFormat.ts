@@ -145,7 +145,7 @@ export function formatSpan(text: string, a: number, b: number): [number, number]
  */
 export function clearTextFormat(el: SlideElement): Partial<SlideElement> {
   return {
-    fontSize: undefined, fontFamily: undefined, color: undefined, bold: undefined, italic: undefined, underline: undefined, strike: undefined,
+    fontSize: undefined, fontFamily: undefined, color: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, strike: undefined,
     shadow: undefined, letterSpacing: undefined, highlight: undefined, caps: undefined, runs: undefined, maximizeFont: false, preferredFontSize: undefined,
     ...(el.paragraphs ? { paragraphs: el.paragraphs.map(({ runs: _r, fontSize: _s, bold: _b, italic: _i, color: _c, ...p }) => p) } : {}),
   };

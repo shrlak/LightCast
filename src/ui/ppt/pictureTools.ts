@@ -8,12 +8,13 @@ import type { PictureAdjust, SlideElement } from '../../domain/types';
 import { getMedia, putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
 import { processPicture, type PictureSteps } from '../../engine';
+import { bitmapOf } from '../../domain/svgRaster';
 import { compressPlan, fitUv, realCrop } from '../../domain/pictureFormat';
 
 async function pixels(mediaId: string): Promise<{ data: ImageData; w: number; h: number } | null> {
   const blob = await getMedia(mediaId);
   if (!blob) return null;
-  const bmp = await createImageBitmap(blob);
+  const bmp = await bitmapOf(blob);
   const c = document.createElement('canvas');
   c.width = bmp.width;
   c.height = bmp.height;
@@ -87,7 +88,7 @@ export async function colorAt(el: SlideElement, fx: number, fy: number): Promise
 export async function pictureSize(mediaId: string): Promise<{ w: number; h: number } | null> {
   const blob = await getMedia(mediaId);
   if (!blob) return null;
-  try { const b = await createImageBitmap(blob); return { w: b.width, h: b.height }; } catch { return null; }
+  try { const b = await bitmapOf(blob); return { w: b.width, h: b.height }; } catch { return null; }
 }
 
 /**

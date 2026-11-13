@@ -138,7 +138,7 @@ export const sizeOf = (el: SlideElement) => el.paragraphs?.find((p) => p.text.tr
 
 /** What the format panel shows for a text box. */
 export const textValue = (el: SlideElement): TextFormatValue => ({
-  fontFamily: el.fontFamily, fontSize: sizeOf(el), bold: !!el.bold, italic: !!el.italic, underline: !!el.underline, strike: !!el.strike,
+  fontFamily: el.fontFamily, fontSize: sizeOf(el), bold: !!el.bold, weight: el.weight, italic: !!el.italic, underline: !!el.underline, strike: !!el.strike,
   shadow: !!el.shadow, letterSpacing: el.letterSpacing ?? 0, color: (el.paragraphs?.find((p) => p.text.trim())?.color ?? el.color ?? '#ffffff').slice(0, 7),
   highlight: el.highlight, align: el.align ?? 'center', vAlign: el.vAlign ?? 'middle', lineHeight: el.lineHeight ?? (el.paragraphs ? 1.2 : 1.25),
   list: el.list, bulletPicture: el.bulletPicture, indent: el.indent ?? 0, columns: el.columns ?? 1, vertical: !!el.vertical, direction: el.direction, autoFit: el.autoFit !== false,

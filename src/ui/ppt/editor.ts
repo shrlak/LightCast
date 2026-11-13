@@ -68,12 +68,14 @@ export const selectedEls = (els: SlideElement[], sel: string[]) => {
   return els.filter((e) => ids.includes(e.id));
 };
 
-const RUN_KEYS = new Set(['fontSize', 'bold', 'italic', 'underline', 'color', 'strike', 'fontFamily', 'highlight']);
+const RUN_KEYS = new Set(['fontSize', 'bold', 'weight', 'italic', 'underline', 'color', 'strike', 'fontFamily', 'highlight']);
 
 /** A ribbon change as character formatting for the selected characters (false / empty clears it). */
 function runPatch(patch: Partial<TextFormatValue>): RunFormat {
   const out: Record<string, unknown> = {};
   for (const k of Object.keys(patch)) if (RUN_KEYS.has(k)) out[k] = (patch as Record<string, unknown>)[k] || undefined;
+  // The Bold button replaces a chosen weight (Light … Black), as Bold is 700.
+  if ('bold' in patch && !('weight' in patch)) out.weight = undefined;
   return out as RunFormat;
 }
 
@@ -102,7 +104,7 @@ export interface TextTarget {
 }
 
 /** Clear All Formatting on selected characters: their own formatting goes, the box's shows. */
-const CLEAR_RUN = { fontSize: undefined, bold: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined };
+const CLEAR_RUN = { fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined };
 
 /** The size of text with none of its own in this object (as the slide editor draws it). */
 const baseSize = (e: SlideElement) => (e.kind === 'shape' ? 40 : e.kind === 'table' ? 32 : 64);
@@ -122,7 +124,7 @@ export function textTarget(ed: Ed): TextTarget | null {
   const editor = activeTextEditor();
   const texty = ed.selEls.filter((e) => e.kind === 'text' || e.kind === 'shape' || e.kind === 'table' || e.kind === 'chart');
   const patchEls = (fn: (e: SlideElement) => Partial<SlideElement>) => ed.setElements((els) => els.map((e) => (texty.some((t) => t.id === e.id) ? patchElement(e, fn(e)) : e)));
-  const toEl = ({ fontSize, ...rest }: Partial<TextFormatValue>): Partial<SlideElement> => ({ ...rest, ...(fontSize === undefined ? {} : { fontSize }) });
+  const toEl = ({ fontSize, ...rest }: Partial<TextFormatValue>): Partial<SlideElement> => ({ ...rest, ...('bold' in rest && !('weight' in rest) ? { weight: undefined } : {}), ...(fontSize === undefined ? {} : { fontSize }) });
 
   if (texty.length) {
     const first = texty[0];
@@ -132,7 +134,7 @@ export function textTarget(ed: Ed): TextTarget | null {
     const typing = !!editor;
     if (editor && typing) {
       const c = editor.current();
-      value = { ...base, fontSize: c.fontSize ?? base.fontSize, bold: !!c.bold, italic: !!c.italic, underline: !!c.underline, strike: !!c.strike, color: (c.color ?? base.color).slice(0, 7) };
+      value = { ...base, fontSize: c.fontSize ?? base.fontSize, weight: c.weight ?? base.weight, bold: !!c.bold, italic: !!c.italic, underline: !!c.underline, strike: !!c.strike, color: (c.color ?? base.color).slice(0, 7) };
     }
     // PowerPoint's mixed state: a blank size box / font name when the selection mixes them.
     const mixed = mixedState(editor && typing ? editor.spans().map((r) => ({ fontSize: r.fontSize, fontFamily: r.fontFamily })) : texty.flatMap((e) => textSpans(e, baseSize(e))));
@@ -184,7 +186,7 @@ export function textTarget(ed: Ed): TextTarget | null {
     };
   }
   const slideValue: TextFormatValue = {
-    fontFamily: t.fontFamily, fontSize: t.fontSize, bold: t.fontWeight >= 700, italic: !!t.italic, underline: !!t.underline,
+    fontFamily: t.fontFamily, fontSize: t.fontSize, bold: t.fontWeight >= 700, weight: t.fontWeight !== 400 && t.fontWeight !== 700 ? t.fontWeight : undefined, italic: !!t.italic, underline: !!t.underline,
     strike: !!t.strike, shadow: t.shadow, letterSpacing: t.letterSpacing ?? 0, color: t.color, highlight: t.highlight,
     align: t.align, vAlign: t.vAlign, lineHeight: t.lineHeight, list: t.list, bulletPicture: t.bulletPicture, indent: t.indent ?? 0, columns: t.columns ?? 1,
     vertical: !!t.vertical, direction: t.direction, autoFit: t.autoFit !== false,
@@ -194,14 +196,15 @@ export function textTarget(ed: Ed): TextTarget | null {
   const cur = runSel ? editor!.current() : null;
   return {
     label: '슬라이드 텍스트',
-    value: cur ? { ...slideValue, fontSize: cur.fontSize ?? slideValue.fontSize, bold: !!cur.bold, italic: !!cur.italic, underline: !!cur.underline, strike: !!cur.strike, color: (cur.color ?? slideValue.color).slice(0, 7) } : slideValue,
+    value: cur ? { ...slideValue, fontSize: cur.fontSize ?? slideValue.fontSize, weight: cur.weight ?? slideValue.weight, bold: !!cur.bold, italic: !!cur.italic, underline: !!cur.underline, strike: !!cur.strike, color: (cur.color ?? slideValue.color).slice(0, 7) } : slideValue,
     onChange: (patch) => {
       if (runSel && editor && Object.keys(patch).every((k) => RUN_KEYS.has(k))) {
         editor.apply(runPatch(patch));
         return;
       }
-      const { bold, ...rest } = patch;
-      setStyle({ ...rest, ...(bold === undefined ? {} : { fontWeight: bold ? 700 : 400 }) });
+      const { bold, weight, ...rest } = patch;
+      // A chosen weight is the slide text's font weight; Bold sets 700 / 400.
+      setStyle({ ...rest, ...(weight !== undefined ? { fontWeight: weight } : bold === undefined ? ('weight' in patch ? { fontWeight: 400 } : {}) : { fontWeight: bold ? 700 : 400 }) });
     },
     onStep: (dir) => {
       if (runSel && editor) return editor.step(dir);

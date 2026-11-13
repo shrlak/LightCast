@@ -413,7 +413,10 @@ function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: stri
   const spPr = child(pic, 'spPr');
   const raw = xfrmOf(child(spPr, 'xfrm'));
   const blipFill = child(pic, 'blipFill');
-  const media = ctx.media?.(child(blipFill, 'blip')?.attrs['r:embed'] ?? '');
+  const blip = child(blipFill, 'blip');
+  // PowerPoint's SVG picture: the vector (asvg:svgBlip) when the file has it, else the PNG fallback blip.
+  const svgRid = find(blip ?? { name: '', attrs: {}, children: [] }, 'svgBlip')[0]?.attrs['r:embed'];
+  const media = (svgRid ? ctx.media?.(svgRid) : undefined) ?? ctx.media?.(blip?.attrs['r:embed'] ?? '');
   if (!raw || !media) return null;
   const b = place(raw);
   const src = child(blipFill, 'srcRect');

@@ -3,6 +3,7 @@ import type { HAlign, ListStyle, TextDirection, VAlign } from '../../domain/type
 import { LINE_SPACINGS, SINGLE_SPACING, TEXT_DIRECTIONS, directionId, directionPatch, listMarker, stepFontSize, type CaseKind } from '../../domain/textFormat';
 import { FontSize } from './FontSize';
 import { FontPicker } from './FontPicker';
+import { FontWeightPicker } from './FontWeightPicker';
 import { Icon } from './pptIcons';
 import { ColorGrid } from './ribbonParts';
 import { bulletPictureFromFile } from './pictureBulletFile';
@@ -13,6 +14,8 @@ export interface TextFormatValue {
   /** Canvas pixels (shown in points, as PowerPoint does). */
   fontSize: number;
   bold: boolean;
+  /** CSS font-weight 100–900 when the text has one beyond Regular / Bold (Light … Black). */
+  weight?: number;
   italic: boolean;
   underline: boolean;
   strike: boolean;
@@ -160,6 +163,7 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onS
       <div className="ppt-row">
         <FontPicker value={f.fontFamily} mixed={f.fontMixed} theme={theme} onChange={(fontFamily) => onChange({ fontFamily })} />
         <FontSize value={f.fontSize} blank={f.sizeMixed} onChange={(n) => onChange({ fontSize: n })} />
+        <FontWeightPicker family={f.fontFamily ?? theme} bold={f.bold} weight={f.weight} mixed={f.fontMixed} onChange={(patch) => onChange(patch)} />
         <Tog icon={Icon.growFont} title="글꼴 크기 크게 (Ctrl+Shift+>)" onClick={() => step(1)} />
         <Tog icon={Icon.shrinkFont} title="글꼴 크기 작게 (Ctrl+Shift+<)" onClick={() => step(-1)} />
         <Tog icon={Icon.clearFormat} title="모든 서식 지우기 (Ctrl+Space)" onClick={onClear} />

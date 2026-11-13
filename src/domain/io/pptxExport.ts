@@ -7,6 +7,9 @@ import { lineRuns } from '../richText';
 import { pptxVert } from '../textFormat';
 import { sequence } from '../arrangement';
 import { getMedia } from '../media';
+import { pptxWeightedFont } from '../fonts';
+import { containBox, isSvgBlob, svgForPptx, svgIntrinsicSize } from '../svgPicture';
+import { svgToPngBlob } from '../svgRaster';
 import { qrDataUrl } from './qr';
 import { stripChords } from '../lyrics';
 import { pptxFont } from '../fonts';
@@ -75,7 +78,8 @@ async function addShapeElement(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideEle
     list.push({ marker, name: el.name, fill: fillXml(el, blip?.id), ln: lnXml(el), sp3d: scene3dXml(el), blip });
     shapePatches.set(pptx, list);
   }
-  if (el.text) s.addText(el.text, { ...opts, shape: name, fontSize: (el.fontSize ?? 40) * 0.5, color: hex(el.color), bold: el.bold, italic: el.italic, align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fontFace: el.fontFamily ? pptxFont(el.fontFamily) : undefined });
+  const shapeFace = weightedFace(el.fontFamily ?? 'Malgun Gothic', el);
+  if (el.text) s.addText(el.text, { ...opts, shape: name, fontSize: (el.fontSize ?? 40) * 0.5, color: hex(el.color), bold: shapeFace.bold, italic: el.italic, align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fontFace: el.fontFamily || el.weight !== undefined ? shapeFace.face : undefined });
   else s.addShape(name, opts);
 }
 
@@ -223,14 +227,30 @@ function textOptions(f: { strike?: boolean; letterSpacing?: number; highlight?: 
   };
 }
 
-async function dataUrl(mediaId: string): Promise<string | null> {
+/** The source of an SVG picture in the media store (null: not an SVG). */
+async function svgSource(mediaId: string): Promise<string | null> {
   const blob = await getMedia(mediaId);
+  return blob && isSvgBlob(blob) ? blob.text() : null;
+}
+
+/** A picture as a data URL. An SVG (for fills and backgrounds, which PowerPoint reads as bitmaps) is drawn to a sharp PNG first. */
+async function dataUrl(mediaId: string): Promise<string | null> {
+  let blob = await getMedia(mediaId);
   if (!blob) return null;
+  if (isSvgBlob(blob)) {
+    try {
+      const svg = await blob.text();
+      const own = svgIntrinsicSize(svg) ?? { w: 1600, h: 1200 };
+      const k = 1600 / Math.max(own.w, own.h);
+      blob = await svgToPngBlob(svg, Math.round(own.w * k), Math.round(own.h * k));
+    } catch { /* keep the SVG as it is */ }
+  }
+  const file = blob;
   return new Promise((res) => {
     const r = new FileReader();
     r.onload = () => res(String(r.result));
     r.onerror = () => res(null);
-    r.readAsDataURL(blob);
+    r.readAsDataURL(file);
   });
 }
 
@@ -248,6 +268,14 @@ async function urlData(url: string): Promise<string | null> {
   }
 }
 
+/**
+ * A text's PowerPoint font and bold flag: with a weight (Light … Black) the family gets its weight
+ * name ("Noto Sans KR Light") and bold is the nearest bold / regular; without one it is the plain family and Bold as set.
+ */
+function weightedFace(family: string, own: { bold?: boolean; weight?: number }, inherited?: { bold?: boolean; weight?: number }): { face: string; bold: boolean | undefined } {
+  if (own.weight === undefined && inherited?.weight === undefined) return { face: pptxFont(family), bold: own.bold ?? inherited?.bold };
+  return pptxWeightedFont(family, own, inherited);
+}
 const fontFace = (t: Theme) => pptxFont(t.fontFamily);
 
 /*
@@ -323,17 +351,27 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
         // 줄 간격 고정 / 최소 are points already: spcPts for 고정, a multiple of the size at least that tall for 최소.
         const exactPts = (size: number) => (el.lineExact ? Math.round(Math.max(el.lineExact.px * 0.5, el.lineExact.mode === 'min' ? linePts(size, 1.2) : 0) * 10) / 10 : linePts(size, lh));
         // Characters formatted on their own (size, bold, italic, underline, colour) keep it.
+        const elFamily = el.fontFamily ?? baseTheme.fontFamily;
+        const boxFace = weightedFace(elFamily, el);
         const runs = lineRuns(el);
         const richLines = runs.some(Boolean) || el.text.includes('\u000b') ? (el.paragraphs?.map((x) => x.text) ?? el.text.split('\n')) : null;
         const rich: PptxGenJS.TextProps[] | null = richLines && richLines.flatMap((line, i) => {
           const parts = runs[i] ?? [{ text: line || ' ' }];
-          return parts.flatMap((r, k) => r.text.split('\u000b').map((piece, j) => ({ text: piece, options: { ...(j > 0 ? { softBreakBefore: true } : {}), ...(r.link ? { hyperlink: { url: r.link } } : {}), fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: r.bold ?? el.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), fontFace: r.fontFamily ? pptxFont(r.fontFamily) : undefined, highlight: r.highlight?.replace('#', ''), strike: r.strike ? ('sngStrike' as const) : undefined, superscript: r.baseline === 'super' || undefined, subscript: r.baseline === 'sub' || undefined, breakLine: k === parts.length - 1 && i < richLines.length - 1 && j === r.text.split('\u000b').length - 1 } })));
+          return parts.flatMap((r, k) => { const rf = weightedFace(r.fontFamily ?? elFamily, r, el); return r.text.split('\u000b').map((piece, j) => ({ text: piece, options: { ...(j > 0 ? { softBreakBefore: true } : {}), ...(r.link ? { hyperlink: { url: r.link } } : {}), fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: rf.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), fontFace: r.fontFamily || rf.face !== boxFace.face ? rf.face : undefined, highlight: r.highlight?.replace('#', ''), strike: r.strike ? ('sngStrike' as const) : undefined, superscript: r.baseline === 'super' || undefined, subscript: r.baseline === 'sub' || undefined, breakLine: k === parts.length - 1 && i < richLines.length - 1 && j === r.text.split('\u000b').length - 1 } })); });
         });
         const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: exactPts(p.fontSize ?? el.fontSize ?? 64), bold: p.bold ?? el.bold, italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: pptxAlign(p.align ?? el.align), breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
-        s.addText(content, { ...box, fontFace: pptxFont(el.fontFamily ?? baseTheme.fontFamily), lineSpacing: el.paragraphs?.length ? undefined : exactPts(el.fontSize ?? 64), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: el.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el, pptx), align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
+        s.addText(content, { ...box, fontFace: boxFace.face, lineSpacing: el.paragraphs?.length ? undefined : exactPts(el.fontSize ?? 64), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: boxFace.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el, pptx), align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
       } else if (el.kind === 'image' && el.mediaId) {
-        const data = await dataUrl(el.mediaId);
-        if (data) s.addImage({ ...box, data, sizing: { type: el.fit === 'cover' ? 'cover' : 'contain', w: box.w, h: box.h } });
+        const svg = await svgSource(el.mediaId);
+        if (svg) {
+          // An SVG goes in as PowerPoint's own SVG picture: the PNG fallback blip plus the svgBlip extension (pptxgenjs writes both).
+          const size = svgIntrinsicSize(svg);
+          const at = el.fit === 'fill' || el.fit === 'cover' || !size ? box : { ...box, ...containBox(box, size) };
+          s.addImage({ ...at, ...(el.fit === 'cover' ? { sizing: { type: 'cover' as const, w: at.w, h: at.h } } : {}), data: `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgForPptx(svg, at.w, at.h))))}` });
+        } else {
+          const data = await dataUrl(el.mediaId);
+          if (data) s.addImage({ ...box, data, sizing: { type: el.fit === 'cover' ? 'cover' : 'contain', w: box.w, h: box.h } });
+        }
       } else if (el.kind === 'qr' && el.link) {
         s.addImage({ ...box, data: qrDataUrl(el.link) });
       } else if (el.kind === 'shape') {
