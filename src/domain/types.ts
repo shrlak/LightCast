@@ -171,6 +171,8 @@ export interface TextRun {
   /** Canvas pixels. */
   fontSize?: number;
   bold?: boolean;
+  /** CSS font-weight 100–900 (Light 300 … Black 900); absent: Bold (700) / Regular (400) by `bold`. See domain/fontWeight. */
+  weight?: number;
   italic?: boolean;
   underline?: boolean;
   color?: string;
@@ -269,6 +271,8 @@ export interface SlideElement {
   fontFamily?: string;
   color?: string;
   bold?: boolean;
+  /** CSS font-weight 100–900 for the whole box; absent: Bold (700) / Regular by `bold`. */
+  weight?: number;
   italic?: boolean;
   align?: HAlign;
   vAlign?: VAlign;

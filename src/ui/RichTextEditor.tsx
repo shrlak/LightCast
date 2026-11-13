@@ -387,7 +387,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         if (document.activeElement === root) remember();
         const r = runAt(readLines(root), sel.current[0]) ?? { text: '' };
         const b = latest.current.base;
-        return { fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, italic: r.italic ?? b.italic, underline: r.underline, color: r.color ?? b.color, strike: r.strike, baseline: r.baseline };
+        return { fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, weight: r.weight, italic: r.italic ?? b.italic, underline: r.underline, color: r.color ?? b.color, strike: r.strike, baseline: r.baseline };
       },
       spans: () => {
         if (document.activeElement === root) remember();
@@ -423,7 +423,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         if (a === b) {
           // Nothing selected: the whole box takes it, as DeckCraft does when the selection is not a range.
           painterApi?.setBox((e) => applyFormat(e, textPart(p)));
-          reformat(() => ({ fontSize: undefined, bold: undefined, italic: undefined, underline: undefined, strike: undefined, color: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined }));
+          reformat(() => ({ fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, strike: undefined, color: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined }));
           return;
         }
         // Characters take the character formatting; the paragraph formatting only when the selection covers every paragraph.
@@ -648,14 +648,14 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
     if (e.shiftKey && k === 'c') { holdFormat(api.pick()); e.preventDefault(); return; }
     if (e.shiftKey && k === 'v' && heldFormat()) { api.drop(heldFormat()!); finishPainter(); e.preventDefault(); return; }
     const cur = api.current();
-    if (k === 'b') api.apply({ bold: !cur.bold });
+    if (k === 'b') api.apply({ bold: !cur.bold, weight: undefined });
     else if (k === 'i') api.apply({ italic: !cur.italic });
     else if (k === 'u') api.apply({ underline: !cur.underline || undefined });
     // Ctrl+= subscript, Ctrl+Shift+= (Ctrl++) superscript, as in PowerPoint.
     else if (k === '=' && !e.shiftKey) api.apply({ baseline: cur.baseline === 'sub' ? undefined : 'sub' });
     else if (k === '+' || (k === '=' && e.shiftKey)) api.apply({ baseline: cur.baseline === 'super' ? undefined : 'super' });
     // Ctrl+Space: Clear All Formatting of the selected characters (the word at the caret).
-    else if (k === ' ' && !e.shiftKey) api.apply({ fontSize: undefined, bold: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined });
+    else if (k === ' ' && !e.shiftKey) api.apply({ fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined });
     else if (k === ']' || (e.shiftKey && (k === '>' || k === '.'))) api.step(1);
     else if (k === '[' || (e.shiftKey && (k === '<' || k === ','))) api.step(-1);
     else return;

@@ -486,7 +486,7 @@ function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
   const bands = warpGuides(warpPreset(el.warp!), el.w, el.h);
   const size = el.fontSize ?? 64;
   const family = el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif';
-  const weight = el.bold ? 800 : 500;
+  const weight = el.weight ?? (el.bold ? 800 : 500);
   const font = `${el.italic ? 'italic ' : ''}${weight} ${size}px ${family}`;
   const lines = (el.text ?? '').split('\n').filter((l, _i, all) => l.length || all.length === 1);
   const paint = {
@@ -548,7 +548,7 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
       ...box, left: el.x, top: el.y, width: el.w, height: el.h, ...elementTextStyle(el), display: 'flex', flexDirection: 'column', whiteSpace: 'pre-wrap',
       justifyContent: V_ALIGN[el.vAlign ?? 'middle'], ...alignCss(el.align ?? 'center'),
       fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff', ['--link-color' as string]: linkColorFor(el.color), tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
-      fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500, fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, base, el.paragraphs ? 1.2 : 1.25),
+      fontWeight: el.weight ?? (el.bold ? 800 : el.paragraphs ? 400 : 500), fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, base, el.paragraphs ? 1.2 : 1.25),
       textDecoration: decoration(el), letterSpacing: el.letterSpacing ? el.letterSpacing : undefined,
       paddingLeft: el.indent ? el.indent * INDENT_PX : undefined, ...columnsAndDirection(el),
       // A box that does not fit itself to its text (a font size set by hand, Front) lets the text show

@@ -20,6 +20,7 @@
 // PowerPoint itself composites master → layout → slide. Skipping that
 // inheritance is what made such decks render squished/mispositioned, so
 // readSpTreeShapes/readTextShape below resolve it explicitly.
+import { SVG_MIME, sanitizeSvg } from '../svgPicture';
 import JSZip from 'jszip';
 
 const EMU_PER_POINT = 12700;
@@ -360,7 +361,11 @@ async function mediaUrl(zip: JSZip, mediaPath: string, urlCache: Map<string, str
   if (!url) {
     const file = zip.file(mediaPath);
     if (!file) return undefined;
-    url = URL.createObjectURL(await file.async('blob'));
+    if (/\.svg$/i.test(mediaPath)) {
+      const clean = sanitizeSvg(await file.async('string'));
+      if (!clean) return undefined;
+      url = URL.createObjectURL(new Blob([clean], { type: SVG_MIME }));
+    } else url = URL.createObjectURL(await file.async('blob'));
     urlCache.set(mediaPath, url);
   }
   return url;
@@ -388,18 +393,32 @@ async function readPictureShape(
   urlCache: Map<string, string>,
 ): Promise<RenderedPictureShape | null> {
   const blip = firstEl(pic, 'a:blip');
-  const rEmbed = blip?.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'embed');
-  if (!rEmbed) return null;
-  const target = relTargets.get(rEmbed);
-  if (!target) return null;
-  const mediaPath = resolvePartTarget(target);
-  let url = urlCache.get(mediaPath);
+  const REL = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships';
+  const rEmbed = blip?.getAttributeNS(REL, 'embed');
+  // PowerPoint's SVG picture (asvg:svgBlip) is drawn from the vector; the PNG blip is only its fallback.
+  const svgEl = blip ? allEls(blip, '*').find((e) => e.localName === 'svgBlip') : undefined;
+  const svgTarget = svgEl?.getAttributeNS(REL, 'embed');
+  const svgPath = svgTarget && relTargets.get(svgTarget) ? resolvePartTarget(relTargets.get(svgTarget)!) : undefined;
+  let mediaPath: string;
+  let url: string | undefined;
+  if (svgPath && zip.file(svgPath)) {
+    mediaPath = svgPath;
+    url = urlCache.get(mediaPath);
+    if (!url) {
+      const clean = sanitizeSvg(await zip.file(svgPath)!.async('string'));
+      if (clean) { url = URL.createObjectURL(new Blob([clean], { type: SVG_MIME })); urlCache.set(mediaPath, url); }
+    }
+  }
   if (!url) {
-    const file = zip.file(mediaPath);
-    if (!file) return null;
-    const bytes = await file.async('blob');
-    url = URL.createObjectURL(bytes);
-    urlCache.set(mediaPath, url);
+    if (!rEmbed) return null;
+    const target = relTargets.get(rEmbed);
+    if (!target) return null;
+    mediaPath = resolvePartTarget(target);
+    url = urlCache.get(mediaPath);
+    if (!url) {
+      url = await mediaUrl(zip, mediaPath, urlCache);
+      if (!url) return null;
+    }
   }
   // a:srcRect l/t/r/b are 1/1000 of a percent of the image cut off that side (PowerPoint's crop).
   const src = firstEl(pic, 'a:srcRect');

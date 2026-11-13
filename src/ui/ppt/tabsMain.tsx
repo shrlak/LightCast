@@ -2,6 +2,7 @@
 import { useRef, useState } from 'react';
 import type { SlideElement } from '../../domain/types';
 import { uid } from '../../domain/lyrics';
+import { svgPictureBox } from './svgInsert';
 import { putMedia } from '../../domain/media';
 import { PROTECTED_MESSAGE } from '../../domain/materialProtection';
 import { isPdfSlide } from '../../domain/importedSlides';
@@ -418,8 +419,8 @@ function PasteButton({ ed, paste }: { ed: Ed; paste: (mode?: PasteMode) => void 
         const blob = await item.getType(type);
         const id = uid('m');
         await putMedia(id, blob);
-        ed.dispatch({ type: 'media/add', media: { id, name: '붙여넣은 그림.png', type: 'image' } });
-        ed.addElement({ id: uid('el'), kind: 'image', mediaId: id, fit: 'contain', x: 320, y: 240, w: 800, h: 600, name: '그림' });
+        ed.dispatch({ type: 'media/add', media: { id, name: type.includes('svg') ? '붙여넣은 그림.svg' : '붙여넣은 그림.png', type: 'image' } });
+        ed.addElement({ id: uid('el'), kind: 'image', mediaId: id, fit: 'contain', ...((await svgPictureBox(blob)) ?? { x: 320, y: 240, w: 800, h: 600 }), name: '그림' });
         return;
       }
     } catch { /* clipboard not readable */ }
@@ -480,7 +481,10 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
     await putMedia(id, file);
     ed.dispatch({ type: 'media/add', media: { id, name: file.name, type: kind.current } });
     if (kind.current === 'audio') ed.addElement({ id: uid('el'), kind: 'audio', mediaId: id, x: 660, y: 480, w: 120, h: 120, name: file.name, playback: { autoplay: true } });
-    else ed.addElement({ id: uid('el'), kind: kind.current, mediaId: id, fit: kind.current === 'video' ? 'cover' : 'contain', x: 220, y: 240, w: 1000, h: 600, name: file.name });
+    else {
+      const box = kind.current === 'image' ? await svgPictureBox(file) : null;
+      ed.addElement({ id: uid('el'), kind: kind.current, mediaId: id, fit: kind.current === 'video' ? 'cover' : 'contain', ...(box ?? { x: 220, y: 240, w: 1000, h: 600 }), name: file.name });
+    }
   };
   const insertSymbol = (c: string) => {
     if (document.activeElement?.classList.contains('ce-rich')) document.execCommand('insertText', false, c);

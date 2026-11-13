@@ -10,6 +10,8 @@ import { DUPLICATE_OFFSET } from '../../domain/shapeOps';
 import { getMedia, putMedia } from '../../domain/media';
 import { desktop } from '../../domain/desktop';
 import { uid } from '../../domain/lyrics';
+import { svgPictureBox } from './svgInsert';
+import { SVG_MIME, looksLikeSvg } from '../../domain/svgPicture';
 
 /** What a paste found on the clipboard. */
 export interface ClipSource { custom?: string; html?: string; text?: string; images: Blob[] }
@@ -102,6 +104,8 @@ function destinationTheme(el: SlideElement): SlideElement {
 
 /** Where a picture of this size goes: centred, shrunk to fit the slide like PowerPoint. */
 async function pictureElement(blob: Blob, id: string): Promise<SlideElement> {
+  const vector = await svgPictureBox(blob);
+  if (vector) return { id: uid('el'), kind: 'image', mediaId: id, fit: 'fill', ...vector, name: '그림' };
   let w = 800, h = 600;
   try {
     const bmp = await createImageBitmap(blob);
@@ -152,6 +156,13 @@ export async function clipboardToElements(src: ClipSource, existing: SlideElemen
     return t ? { elements: [{ id: uid('el'), kind: 'text', text: t, x: 220, y: 340, w: 1000, h: 400, fontSize: 56, color: '#ffffff', align: 'left' }], media: [], from: 'text' } : null;
   }
   if (own) result = await fromLightCast(own, existing);
+  // SVG source copied as text (from an editor or a web page) is a picture, not a text box.
+  if (!result && text && /<\/svg>\s*$/i.test(text) && looksLikeSvg(undefined, undefined, text.slice(0, 2048))) {
+    const blob = new Blob([text], { type: SVG_MIME });
+    const id = uid('m');
+    await putMedia(id, blob);
+    return { elements: [await pictureElement(blob, id)], media: [{ id, name: '붙여넣은 그림.svg', type: 'image' }], from: 'picture' };
+  }
   if (!result && desktop?.readOfficeClipboard) result = await fromPowerPoint();
   // Foreign HTML pastes only while it says the same words as the plain text (DeckCraft same_words); stale HTML is ignored.
   if (!result && src.html && (text === undefined || !text.trim() || htmlMatchesText(src.html, text) || isOfficeHtml(src.html))) {
