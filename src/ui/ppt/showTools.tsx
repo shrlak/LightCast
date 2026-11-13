@@ -39,6 +39,13 @@ function sendLaser(p: LaserPoint | null) {
   try { (channel ??= openLiveChannel(() => undefined)).post(laserMessage(p)); } catch { /* no channel: no audience window to point on */ }
 }
 
+/** A laser dot driven from a phone remote (it came over the relay): shown on the audience screens like the presenter's own. */
+export function sendRemoteLaser(msg: unknown) {
+  const m = parseLaserMessage(msg);
+  if (!m) return;
+  try { (channel ??= openLiveChannel(() => undefined)).post(m); } catch { /* no channel: no audience window to point on */ }
+}
+
 /** The presenter's current slide: Ctrl + moving the mouse over it (or the menu's toggle) points on the audience view. */
 export function LaserArea({ children, cmd }: { children: ReactNode; cmd: Commands }) {
   const on = laserOn.use();

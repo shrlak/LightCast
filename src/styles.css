@@ -2154,3 +2154,13 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .bs-video-go { display: flex; gap: 8px; align-items: center; }
 .bs-print-go.bs-cancel { background: #fff6cc; color: #5c4a00; border: 1px solid #e0b400; }
 .bs-progress { width: 100%; max-width: 420px; height: 10px; accent-color: #1f8a52; }
+
+/* Phone remote: laser pointer driven by dragging over the slide preview */
+.remote-console .remote-laser.active { background: #2a0a0a; border-color: #ff2a2a; color: #ff6b6b; box-shadow: inset 0 0 0 1px #ff2a2a, 0 0 12px #ff2a2a55; }
+.remote-console .remote-laser svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.remote-current { position: relative; }
+.remote-current.remote-laser-on { touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
+.remote-laser-dot { position: absolute; z-index: 5; width: 22px; height: 22px; border-radius: 50%; transform: translate(-50%, -50%); pointer-events: none;
+  background: radial-gradient(circle, #fff 0 12%, #ff2a2a 30%, rgba(255, 42, 42, .55) 60%, rgba(255, 42, 42, 0) 72%); box-shadow: 0 0 14px 4px rgba(255, 42, 42, .6); }
+.remote-laser-hint { position: absolute; z-index: 4; left: 50%; bottom: 6px; transform: translateX(-50%); padding: 2px 10px; border-radius: 999px; background: #000a; color: #fff; font-size: 12px; pointer-events: none; white-space: nowrap; }
+.remote-laser-hint:empty { display: none; }

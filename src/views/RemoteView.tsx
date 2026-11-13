@@ -12,6 +12,7 @@ import { SlideCanvas } from '../ui/SlideCanvas';
 import { liveCanvasProps } from '../ui/liveProps';
 import { useRelay } from '../ui/hooks';
 
+import { LASER_STALE_MS, laserDue, laserFromMessage, laserPointClamped, parseLaserMessage, type LaserPoint } from '../domain/laserPointer';
 import { RemoteInfoReader, remoteSlideKey, type RemoteInfo } from '../domain/remoteSlides';
 export type { RemoteInfo } from '../domain/remoteSlides';
 
@@ -61,6 +62,19 @@ export function RemoteView() {
   const list = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [hostConnected, setHostConnected] = useState(false);
+  // 레이저 포인터: while it is on, dragging a finger over the slide preview moves the red dot on the audience screens.
+  const [laserMode, setLaserMode] = useState(false);
+  const [dot, setDot] = useState<LaserPoint | null>(null);
+  const dragging = useRef(false);
+  const laserSentAt = useRef(0);
+  const dotTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const previewRef = useRef<HTMLDivElement>(null);
+  const showDot = (p: LaserPoint | null) => {
+    clearTimeout(dotTimer.current);
+    setDot(p);
+    if (p) dotTimer.current = setTimeout(() => setDot(null), LASER_STALE_MS);
+  };
+  useEffect(() => () => clearTimeout(dotTimer.current), []);
   const { send, connected, status, quality } = useRelay({ type: 'hello', role: 'remote', pin, clientToken, name: initialName.current }, (m) => {
     if (m.type === 'team-requests') { setRequests(m.requests as TeamRequest[]); setRequestError(null); }
     if (m.type === 'team-request-error') setRequestError(String(m.message));
@@ -69,6 +83,8 @@ export function RemoteView() {
     if (m.type === 'welcome') send({ type: 'remote-control', action: 'rename', name: deviceName });
     if (m.type === 'host-status') setHostConnected(m.connected === true);
     if (m.type === 'state') setLive(m.state as LiveState);
+    // The dot as the audience sees it (the presenter's, or this phone's own coming back); while a finger is down the phone draws its own.
+    if (m.type === 'laser' && !dragging.current) { const lm = parseLaserMessage(m); if (lm) showDot(laserFromMessage(lm)); }
     if (m.type === 'info' || m.type === 'info-chunk' || m.type === 'info-position') { const updated = reader.current.accept(m); if (updated) setInfo(updated); }
     if (m.type === 'error') setError(String(m.error));
   });
@@ -77,6 +93,25 @@ export function RemoteView() {
   }, []);
   // Do not carry an old host/controller state over a disconnected relay session.
   useEffect(() => { if (!connected) { setHostConnected(false); setControl(null); } }, [connected]);
+  useEffect(() => { if (!control?.canControl || !connected) { setLaserMode(false); dragging.current = false; } }, [control?.canControl, connected]);
+  useEffect(() => { if (!laserMode) { if (dragging.current) { dragging.current = false; send({ type: 'laser', off: true }); } showDot(null); } }, [laserMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  const laserAt = (e: React.PointerEvent): LaserPoint | null => {
+    const frame = previewRef.current?.querySelector('.canvas-frame');
+    return frame ? laserPointClamped(frame.getBoundingClientRect(), e.clientX, e.clientY) : null;
+  };
+  const laserMove = (e: React.PointerEvent, first = false) => {
+    if (!laserMode || !control?.canControl || !ready || (!dragging.current && !first)) return;
+    const p = laserAt(e);
+    if (!p) return;
+    showDot(p);
+    if (first || laserDue(laserSentAt.current, Date.now(), p)) { laserSentAt.current = Date.now(); send({ type: 'laser', x: p.x, y: p.y }); }
+  };
+  const laserEnd = () => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    send({ type: 'laser', off: true });
+    showDot(null);
+  };
   const live = rehearsal?.active ? rehearsal.state ?? actualLive : actualLive;
   const ready = connected && hostConnected;
   const embedded = window.self !== window.top;
@@ -157,6 +192,10 @@ export function RemoteView() {
           <span>Start</span>
         </button>
         <HoldToEndButton disabled={!ready || !control?.canControl || requestsOpen} onConfirm={() => cmd({ type: 'show/end' })} />
+      <button className={`remote-laser ${laserMode ? 'active' : ''}`} aria-label="레이저 포인터" aria-pressed={laserMode} title={laserMode ? '레이저 포인터 끄기' : '슬라이드 미리보기를 손가락으로 끌어 청중 화면에 레이저 표시'} disabled={!control?.canControl} onClick={() => setLaserMode(!laserMode)}>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2" /><path d="M12 3v3M12 18v3M3 12h3M18 12h3" /></svg>
+        <span>레이저</span>
+      </button>
       <button className={`remote-black ${live?.black ? 'active' : ''}`} aria-label="Black screen" aria-pressed={live?.black ?? false} title={live?.black ? 'Show slide' : 'Black screen'} disabled={!control?.canControl} onClick={() => cmd({ type: 'live/toggleBlack' })}>
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg>
         <span>{live?.black ? 'Show' : 'Black'}</span>
@@ -171,7 +210,14 @@ export function RemoteView() {
         </button>
       </div>
       </fieldset></section>
-      <div className="remote-current">
+      <div ref={previewRef} className={`remote-current${laserMode ? ' remote-laser-on' : ''}`}
+        onPointerDown={laserMode ? (e) => { dragging.current = true; (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId); laserMove(e, true); } : undefined}
+        onPointerMove={laserMode ? (e) => laserMove(e) : undefined} onPointerUp={laserMode ? laserEnd : undefined} onPointerCancel={laserMode ? laserEnd : undefined}>
+        {laserMode && <span className="remote-laser-hint" aria-live="polite">{dot ? '' : '손가락으로 끌어 가리키세요'}</span>}
+        {dot && (() => {
+          const box = previewRef.current?.getBoundingClientRect(), fr = previewRef.current?.querySelector('.canvas-frame')?.getBoundingClientRect();
+          return box && fr ? <div className="remote-laser-dot" style={{ left: fr.left - box.left + dot.x * fr.width, top: fr.top - box.top + dot.y * fr.height }} /> : null;
+        })()}
         {live?.slide ? <SlideCanvas {...liveCanvasProps(live)} animate={!rehearsal?.active} /> : <div className="remote-empty">Nothing live</div>}
       </div>
       {(live?.nextText || live?.slide?.notes) && (
