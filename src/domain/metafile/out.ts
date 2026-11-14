@@ -123,7 +123,8 @@ export class Out {
     if (p.empty || (!fill && !stroke)) return;
     // GDI paints no partial pixels: gradients that a producer draws as hundreds of slivers narrower than a
     // pixel would blend with the page behind each of them and come out washed out when anti-aliased.
-    const thin = fill && !stroke && Math.min(p.hx - p.lx, p.hy - p.ly) < this.hair();
+    const extent = Math.min(p.hx - p.lx, p.hy - p.ly); // not finite for a path whose data was taken whole (a path bracket)
+    const thin = fill && !stroke && Number.isFinite(extent) && extent < this.hair();
     this.push(`<path d="${p.d}"${this.fillAttrs(fill, evenOdd)}${this.strokeAttrs(stroke)}${thin ? ' shape-rendering="crispEdges"' : ''}${blend ? ` style="mix-blend-mode:${blend}"` : ''}/>`);
   }
   /** Path data written without touching the bounds (for a huge "everything" rectangle). */

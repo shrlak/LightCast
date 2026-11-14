@@ -466,30 +466,28 @@ describe('EMF+ regions, texture brushes, relative paths and containers', () => {
     for (const n of nodes) { if (typeof n === 'number') b.u32(n); else { b.u32(0x10000000); b.f32(...n); } }
   });
 
-  it('region objects combine (exclude) and fill / clip as rectangle lists', () => {
+  it('region objects combine (exclude) and fill / clip through the clip expression', () => {
     const exclude = regionObj(1, 4, [0, 0, 100, 100], [25, 25, 50, 50]);
     const fill = plusRec(0x4013, 0x8000 | 1, (b) => b.u32(argb(255, 0, 0, 255)));
     const svg = metafileToSvg(emf([comment(plusHeader(false), exclude, fill)]))!.svg;
-    expect(countOf(svg, /<path /g)).toBe(4);
-    expect(svg).toContain('d="M0 0L100 0L100 25L0 25Z"');
-    expect(svg).toContain('d="M75 25L100 25L100 75L75 75Z"');
+    // the frame (100 x 100) minus the hole (25..75): a mask that is white over the frame and black over the hole
+    expect(svg).toContain('<mask');
+    expect(svg).toContain('d="M0 0L100 0L100 100L0 100Z"');
+    expect(svg).toContain('d="M25 25L75 25L75 75L25 75Z"');
     const clip = plusRec(0x4034, 1, () => undefined); // replace
     const clipped = metafileToSvg(emf([comment(plusHeader(false), exclude, clip, plusFillRects(argb(255, 255, 0, 0), 0, 0, 200, 200))]))!.svg;
-    expect(clipped).toMatch(/<clipPath id="c\d+"><path d="M0 0L100 0L100 25L0 25Z/);
+    expect(clipped).toContain('<mask');
+    expect(clipped).toContain('d="M25 25L75 25L75 75L25 75Z"');
   });
 
   it('region combine modes: and, or, xor, exclude, complement', () => {
-    const area = (mode: number) => {
-      const svg = metafileToSvg(emf([comment(plusHeader(false), regionObj(1, mode, [0, 0, 10, 10], [5, 5, 10, 10]), plusRec(0x4013, 0x8000 | 1, (b) => b.u32(argb(255, 0, 0, 0))))]))!.svg;
-      let sum = 0;
-      for (const m of svg.matchAll(/d="M(-?[\d.]+) (-?[\d.]+)L(-?[\d.]+) -?[\d.]+L-?[\d.]+ (-?[\d.]+)L[^Z]*Z/g)) sum += (+m[3] - +m[1]) * (+m[4] - +m[2]);
-      return sum;
-    };
-    expect(area(1)).toBe(25); // and
-    expect(area(2)).toBe(175); // or
-    expect(area(3)).toBe(150); // xor
-    expect(area(4)).toBe(75); // exclude
-    expect(area(5)).toBe(75); // complement
+    const run = (mode: number) => metafileToSvg(emf([comment(plusHeader(false), regionObj(1, mode, [0, 0, 10, 10], [5, 5, 10, 10]), plusRec(0x4013, 0x8000 | 1, (b) => b.u32(argb(255, 0, 0, 0))))]))!.svg;
+    expect(run(1)).not.toContain('<mask'); // and: two nested clip paths
+    expect(run(1)).toContain('<clipPath');
+    for (const mode of [2, 3, 4, 5]) expect(run(mode)).toContain('<mask'); // or, xor, exclude, complement
+    // The paint area of each mode (the fill box is the union, or a side of the operation) is the bounds of what can show.
+    expect(run(4)).toContain('d="M0 0L10 0L10 10L0 10Z"');
+    expect(run(5)).toContain('d="M5 5L15 5L15 15L5 15Z"');
   });
 
   it('a texture brush becomes a tiled image pattern with its transform', () => {
