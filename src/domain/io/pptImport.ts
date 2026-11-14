@@ -97,17 +97,48 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
     autoFit: 'shrink',
   };
   const runLines = lines.map((l, i) => (l.length ? l : [{ text: paras[i].text }]));
-  if (mixedAlign) fields.paragraphs = runLines.map((runs, i): ElementParagraph => ({ text: paras[i].text, runs, align: aligns[i] }));
-  else if (runLines.some((l) => l.some((r) => Object.keys(r).length > 1))) fields.runs = runLines;
-  // Bullets and the indent level belong to the whole box (the editor has no per-paragraph list).
+  // Bullets, indent level and spacing: one set for the whole box when every paragraph shares it, else each paragraph carries its own.
   const real = paras.filter((p) => p.text.trim() && !p.cont);
-  const bulleted = real.filter((p) => p.bullet);
-  if (bulleted.length && bulleted.length * 2 >= real.length) {
-    fields.list = bulletStyle(bulleted[0].bullet!);
-    if (bulleted[0].level) fields.indent = Math.min(8, bulleted[0].level);
+  const sizePx = (p: PptPara) => Math.round((p.runs.find((r) => r.text)?.size ?? 0) * sc.pt) || own.fontSize;
+  // Space before / after: positive = percent of a line, negative = master units; |v| of 1 is rounding noise.
+  const gap = (v: number | undefined, p: PptPara) => (!v ? 0 : v < 0 ? (-v > 2 ? Math.round(-v * sc.k) : 0) : Math.round((v / 100) * sizePx(p) * 1.2));
+  const listOf = (p: PptPara): ListStyle | undefined => (p.bullet ? bulletStyle(p.bullet) : undefined);
+  const lineOf = (p: PptPara) => (p.lineSpacing && p.lineSpacing !== 100 ? Math.round((p.lineSpacing / 100) * 1.2 * 100) / 100 : undefined);
+  const first = real[0];
+  const sameAll = !first || real.every((p) => listOf(p) === listOf(first) && p.level === first.level && gap(p.spaceBefore, p) === gap(first.spaceBefore, first) && gap(p.spaceAfter, p) === gap(first.spaceAfter, first) && lineOf(p) === lineOf(first));
+  if (mixedAlign || !sameAll) {
+    const anyList = real.some((p) => p.bullet);
+    fields.paragraphs = runLines.map((runs, i): ElementParagraph => {
+      const p = paras[i];
+      const para: ElementParagraph = { text: p.text, runs, align: aligns[i] };
+      if (!sameAll) {
+        const list = p.cont ? undefined : listOf(p);
+        if (list) para.list = list;
+        else if (anyList) para.list = 'none';
+        if (p.level) para.level = Math.min(8, p.level);
+        const sb = p.cont ? 0 : gap(p.spaceBefore, p), sa = gap(p.spaceAfter, p);
+        if (sb) para.spaceBefore = sb;
+        if (sa) para.spaceAfter = sa;
+        const lh = lineOf(p);
+        if (lh) para.lineHeight = lh;
+      }
+      return para;
+    });
+  } else {
+    if (runLines.some((l) => l.some((r) => Object.keys(r).length > 1))) fields.runs = runLines;
+    if (first) {
+      const list = listOf(first);
+      if (list) fields.list = list;
+      if (first.level) fields.indent = Math.min(8, first.level);
+      const sb = gap(first.spaceBefore, first), sa = gap(first.spaceAfter, first);
+      if (sb) fields.spaceBefore = sb;
+      if (sa) fields.spaceAfter = sa;
+      const lh = lineOf(first);
+      if (lh) fields.lineHeight = lh;
+    }
   }
-  const spacing = paras.find((p) => p.lineSpacing && p.lineSpacing !== 100)?.lineSpacing;
-  if (spacing) fields.lineHeight = Math.round(((spacing / 100) * 1.2) * 100) / 100;
+  const stops = real.find((p) => p.tabStops?.length)?.tabStops;
+  if (stops) fields.tabStops = stops.map((t) => ({ pos: Math.round(t.pos * sc.k), align: (['left', 'center', 'right', 'decimal'] as const)[t.type] ?? 'left' })).sort((x, y) => x.pos - y.pos);
   if (s.margins) fields.margins = s.margins.map((m) => Math.round(m * sc.emu)) as [number, number, number, number];
   if (s.wrap === false) fields.wrap = false;
   return fields;

@@ -57,7 +57,9 @@ describe('.ppt text styling', () => {
       slides: [{ shapes: [{ text, textType: 4, anchor: [100, 100, 3000, 900], style: { pf: [{ count: 7, level: 0, bullet: true, bulletChar: 0x2022, align: 1 }, { level: 1 }], cf: [{ count: 2, bold: true, size: 30, color: [255, 0, 0, 0xfe], font: 1 }, { count: 4, italic: true, underline: true, size: 20 }, {}] } }] }],
     });
     const el = r.slides[0].elements![0];
-    expect(el).toMatchObject({ kind: 'text', fontSize: 60, color: '#ff0000', fontFamily: '맑은 고딕', bold: true, align: 'center', list: 'bullet', text: '굵게 기울임\n둘째' });
+    expect(el).toMatchObject({ kind: 'text', fontSize: 60, color: '#ff0000', fontFamily: '맑은 고딕', bold: true, align: 'center', text: '굵게 기울임\n둘째' });
+    expect(el.paragraphs![0]).toMatchObject({ list: 'bullet' });
+    expect(el.paragraphs![1]).toMatchObject({ list: 'none', level: 1 });
     expect(el.paragraphs![0].runs).toEqual([{ text: '굵게' }, { text: ' 기울임', fontSize: 40, color: '#111111', bold: false, italic: true, underline: true }]);
   });
 

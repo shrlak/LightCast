@@ -8,7 +8,7 @@ import { FRAME_PLACEHOLDERS, PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
 import { bulletPictureOf } from '../domain/pictureBullet';
-import { INDENT_PX, alignCss, lineHeightCss, listMarkers, writingCss } from '../domain/textFormat';
+import { INDENT_PX, alignCss, elementMarkers, lineHeightCss, listMarkers, writingCss } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
 import { qrDataUrl } from '../domain/io/qr';
@@ -533,10 +533,11 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
   if (el.warp && el.text) return <WarpText el={el} box={box} />;
   const base = el.fontSize ?? 64;
   const lines = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
-  const markers = listMarkers(lines, el.list);
+  const { markers, levels } = elementMarkers(el);
+  const perPara = !!el.paragraphs?.some((p) => p.list !== undefined || p.level || p.spaceBefore || p.spaceAfter || p.lineHeight);
   const runs = lineRuns(el);
   const tabbed = !!el.tabStops?.length && lines.some((l) => l.includes('\t'));
-  const styled = !!(el.list || el.highlight || runs.some(Boolean) || tabbed) || byPara;
+  const styled = !!(el.list || perPara || el.highlight || runs.some(Boolean) || tabbed) || byPara;
   const lineBody = (text: string, i: number) => (
     <ListLine marker={markers[i]} picture={bulletPictureOf(el)} highlight={text.trim() ? el.highlight : undefined}>
       {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
@@ -563,6 +564,9 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
             <div key={i} data-para={i} style={{
               fontSize: (p.fontSize ?? base), fontWeight: p.weight !== undefined ? Math.min(900, Math.max(100, Math.round(p.weight / 100) * 100)) : p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
               color: p.color, ...alignCss(p.align), minHeight: '1.2em', flexShrink: 0,
+              ...(levels[i] ? { paddingLeft: levels[i] * INDENT_PX } : {}),
+              ...(p.spaceBefore ? { marginTop: p.spaceBefore } : {}), ...(p.spaceAfter ? { marginBottom: p.spaceAfter } : {}),
+              ...(p.lineHeight ? { lineHeight: p.lineHeight } : {}),
             }}>
               {lineBody(p.text, i)}
             </div>
