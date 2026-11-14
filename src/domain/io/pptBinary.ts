@@ -73,6 +73,8 @@ export interface PptTransition {
   effect: number;
   /** 0 slow, 1 medium, 2 fast. */
   speed: number;
+  /** effectDirection (what it means depends on the effect: 0 left, 1 up, 2 right, 3 down for wipes and pushes). */
+  direction?: number;
   /** Advance on a mouse click. */
   onClick: boolean;
   /** Automatic advance after this many milliseconds (0 = none). */
@@ -369,7 +371,7 @@ function readContainer(c: Ctx, at: number, defaults: Props): Parsed | null {
       }
       else if (k.type === T.SlideShowSlideInfo && k.end - k.pos >= 12) {
         const flags = c.v.getUint16(k.pos + 10, true);
-        parsed.info = { effect: c.b[k.pos + 9], speed: k.end - k.pos >= 13 ? c.b[k.pos + 12] : 1, onClick: (flags & 0x1) !== 0, afterMs: Math.max(0, c.v.getInt32(k.pos, true)), hidden: (flags & 0x4) !== 0 };
+        parsed.info = { effect: c.b[k.pos + 9], direction: c.b[k.pos + 8], speed: k.end - k.pos >= 13 ? c.b[k.pos + 12] : 1, onClick: (flags & 0x1) !== 0, afterMs: (flags & 0x400) !== 0 ? Math.max(0, c.v.getInt32(k.pos, true)) : 0, hidden: (flags & 0x4) !== 0 };
       }
     });
     return false;
@@ -631,8 +633,8 @@ function parse(bytes: Uint8Array): PptDocument {
       if (background) slide.background = background;
       if (parsed.info?.hidden) slide.hidden = true;
       if (parsed.info && (parsed.info.effect > 0 || parsed.info.afterMs > 0 || !parsed.info.onClick)) {
-        const { effect, speed, onClick, afterMs } = parsed.info;
-        slide.transition = { effect, speed, onClick, afterMs };
+        const { effect, direction, speed, onClick, afterMs } = parsed.info;
+        slide.transition = { effect, direction, speed, onClick, afterMs };
       }
     }
     return slide;

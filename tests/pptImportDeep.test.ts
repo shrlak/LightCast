@@ -291,7 +291,7 @@ describe('.ppt transitions and hidden slides', () => {
     expect(r.slides[0].autoAdvance).toBe(5);
     expect(r.slides[1].disabled).toBeUndefined();
     expect(r.slides[1].transition).toBeUndefined();
-    expect(r.slides[2].transition).toEqual({ kind: 'fx:blinds', duration: 1500 });
+    expect(r.slides[2].transition).toEqual({ kind: 'fx:blinds', duration: 1500, option: 'vert' });
   });
 
   it('maps unknown effects to a fade and a cut to nothing', () => {

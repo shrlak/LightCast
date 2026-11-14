@@ -178,14 +178,45 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
   return out;
 }
 
-const EFFECT: Record<number, Transition['kind']> = { 1: 'fx:random', 2: 'fx:blinds', 3: 'fx:checker', 4: 'fx:cover', 5: 'fx:dissolve', 6: 'fade', 7: 'fx:uncover', 8: 'fx:randomBar', 9: 'fx:wipe', 10: 'fx:wipe', 11: 'fx:shape' };
+/**
+ * SlideShowSlideInfoAtom effect type → LightCast transition and its option. The ids and directions were read from files
+ * LibreOffice wrote for known transitions (0 cut, 1 random, 2 blinds, 3 checker, 4 cover, 5 dissolve, 7 uncover, 8 random bars,
+ * 10 wipe, 13 split, 17 diamond, 18 plus, 19 wedge, 20 push, 21 comb, 22 newsflash, 23 fade, 26 wheel, 27 circle); 6, 9, 11 and 12
+ * follow the older PowerPoint numbering.
+ */
+const MOVE = ['l', 'u', 'r', 'd'];
+const SIDE = ['r', 'd', 'l', 'u'];
+const EFFECT: Record<number, (dir: number) => { kind: Transition['kind']; option?: string }> = {
+  1: () => ({ kind: 'fx:random' }),
+  2: (d) => ({ kind: 'fx:blinds', option: d === 1 ? 'horz' : 'vert' }),
+  3: (d) => ({ kind: 'fx:checker', option: d === 1 ? 'vert' : 'horz' }),
+  4: (d) => ({ kind: 'fx:cover', ...(SIDE[d] ? { option: SIDE[d] } : {}) }),
+  5: () => ({ kind: 'fx:dissolve' }),
+  6: () => ({ kind: 'fade' }),
+  7: (d) => ({ kind: 'fx:uncover', ...(SIDE[d] ? { option: SIDE[d] } : {}) }),
+  8: (d) => ({ kind: 'fx:randomBar', option: d === 1 ? 'vert' : 'horz' }),
+  9: () => ({ kind: 'fx:wipe' }),
+  10: (d) => ({ kind: 'fx:wipe', ...(MOVE[d] ? { option: MOVE[d] } : {}) }),
+  11: (d) => ({ kind: 'fx:shape', option: d === 1 ? 'in' : 'out' }),
+  12: (d) => ({ kind: 'fx:shape', option: d === 1 ? 'in' : 'out' }),
+  13: (d) => ({ kind: 'fx:split', option: d === 0 ? 'horzOut' : d === 1 ? 'horzIn' : d === 3 ? 'vertIn' : 'vertOut' }),
+  17: () => ({ kind: 'fx:shape', option: 'diamond' }),
+  18: () => ({ kind: 'fx:shape', option: 'plus' }),
+  19: () => ({ kind: 'fx:clock', option: 'wedge' }),
+  20: (d) => ({ kind: 'fx:push', ...(MOVE[d] ? { option: MOVE[d] } : {}) }),
+  21: (d) => ({ kind: 'fx:comb', option: d === 1 ? 'vert' : 'horz' }),
+  22: () => ({ kind: 'fx:flash' }),
+  23: () => ({ kind: 'fade', option: 'smoothly' }),
+  26: () => ({ kind: 'fx:clock', option: 'clockwise' }),
+  27: () => ({ kind: 'fx:shape', option: 'circle' }),
+};
 const SPEED_MS = [1500, 1000, 500];
 
 /** A slide's transition and automatic advance from its SlideShowSlideInfoAtom. */
 export function transitionOf(t: NonNullable<PptSlide['transition']>): { transition?: Transition; autoAdvance?: number } {
-  const kind = t.effect > 0 ? EFFECT[t.effect] ?? 'fade' : 'cut';
+  const mapped: { kind: Transition['kind']; option?: string } = t.effect > 0 ? (EFFECT[t.effect] ?? (() => ({ kind: 'fade' as const })))(t.direction ?? 0) : { kind: 'cut' };
   const out: { transition?: Transition; autoAdvance?: number } = {};
-  if (kind !== 'cut' || !t.onClick) out.transition = { kind, duration: kind === 'cut' ? 1 : SPEED_MS[t.speed] ?? 1000, ...(t.onClick ? {} : { advanceOnClick: false }) };
+  if (mapped.kind !== 'cut' || !t.onClick) out.transition = { kind: mapped.kind, duration: mapped.kind === 'cut' ? 1 : SPEED_MS[t.speed] ?? 1000, ...(mapped.option ? { option: mapped.option } : {}), ...(t.onClick ? {} : { advanceOnClick: false }) };
   if (t.afterMs > 0) out.autoAdvance = Math.round(t.afterMs / 100) / 10;
   return out;
 }
