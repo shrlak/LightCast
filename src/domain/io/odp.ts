@@ -849,7 +849,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
         const rows = t.rows.map((row, r) => `<table:table-row table:style-name="${rowStyle(t.heights[r] ?? 60)}">${row.map((cell) => {
           if (cell.hMerge || cell.vMerge) return '<table:covered-table-cell/>';
           const fill = hexColor(cell.fill);
-          const cs = st.name('table-cell', 'ce', `<style:table-cell-properties ${fill ? `fo:background-color="${fill}" ` : ''}fo:border="0.05pt solid #999999"/>`);
+          const cs = st.name('table-cell', 'ce', `<style:table-cell-properties fo:background-color="${fill ?? 'transparent'}" fo:border="0.05pt solid #999999"/>`);
           const lines = (cell.text || '').split('\n').map((text) => ({ align: cell.align as HAlign | undefined, runs: [{ text, bold: cell.bold, color: cell.color, fontSize: el.fontSize }] as TextRun[] }));
           const span = `${cell.span && cell.span > 1 ? ` table:number-columns-spanned="${cell.span}"` : ''}${cell.rowSpan && cell.rowSpan > 1 ? ` table:number-rows-spanned="${cell.rowSpan}"` : ''}`;
           return `<table:table-cell table:style-name="${cs}"${span} office:value-type="string">${paragraphsXml(st, lines)}</table:table-cell>`;
@@ -917,6 +917,19 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     masterFilled = fill !== 'draw:fill="none"';
     if (masterFilled) masterStyle = ` draw:style-name="${mst.name('drawing-page', 'dp', `<style:drawing-page-properties ${fill}/>`)}"`;
   }
+  // Each layout of the master is a master page of its own: the master's objects, the layout's own objects and its placeholders.
+  const PLACEHOLDER_CLASS: Record<string, string> = { title: 'title', body: 'outline', text: 'subtitle', content: 'outline', footer: 'footer', date: 'date-time', slideNumber: 'page-number' };
+  const layoutPages: { id: string; name: string; xml: string }[] = [];
+  const holderStyle = mst.name('presentation', 'pr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>');
+  for (const [li, lay] of (p.master?.layouts ?? []).entries()) {
+    const own = lay.elements.filter((e) => !e.placeholder && !e.hidden);
+    const holders = lay.elements.filter((e) => e.placeholder && !e.hidden && PLACEHOLDER_CLASS[e.placeholder]).map((e) => {
+      const cls = PLACEHOLDER_CLASS[e.placeholder!];
+      const prompt = cls === 'page-number' ? '<text:p><text:page-number>&lt;number&gt;</text:page-number></text:p>' : `<text:p>${odfText(e.text || e.name || cls)}</text:p>`;
+      return `<draw:frame presentation:style-name="${holderStyle}" presentation:class="${cls}" presentation:placeholder="true" draw:layer="layout" ${geo({ x: e.x, y: e.y, w: Math.max(1, e.w), h: Math.max(1, e.h) })}><draw:text-box>${prompt}</draw:text-box></draw:frame>`;
+    }).join('');
+    layoutPages.push({ id: lay.id, name: lay.name, xml: `<style:master-page style:name="Layout${li + 1}" style:display-name="${escapeXml(lay.name)}" style:page-layout-name="PM1"${masterStyle}>${masterBody}${(await renderElements(own, mst)).join('')}${holders}</style:master-page>` });
+  }
 
   const pages: string[] = [];
   for (const [i, slide] of p.slides.entries()) {
@@ -936,13 +949,13 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     const bgFill = !bg && masterFilled ? '' : backgroundFill(bg);
     const dp = st.name('drawing-page', 'dp', `<style:drawing-page-properties ${bgFill}${slide.disabled ? ' presentation:visibility="hidden"' : ''}${slide.hideMaster ? ' presentation:background-objects-visible="false"' : ''}${transitionAttrs(slide.transition, slide.autoAdvance)}/>`);
     const notes = slide.notes
-      ? `<presentation:notes><draw:page-thumbnail draw:layer="layout" svg:width="12.7cm" svg:height="9.525cm" svg:x="3.175cm" svg:y="1.905cm" draw:page-number="${i + 1}" presentation:class="page"/><draw:frame presentation:class="notes" draw:layer="layout" svg:width="16.8cm" svg:height="11.2cm" svg:x="2.1cm" svg:y="14.8cm"><draw:text-box>${slide.notes.split('\n').map((l) => `<text:p>${odfText(l)}</text:p>`).join('')}</draw:text-box></draw:frame></presentation:notes>`
+      ? `<presentation:notes><draw:page-thumbnail draw:layer="layout" svg:width="12.7cm" svg:height="9.525cm" svg:x="3.175cm" svg:y="1.905cm" draw:page-number="${i + 1}" presentation:class="page"/><draw:frame presentation:style-name="${st.name('presentation', 'pr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>')}" presentation:class="notes" draw:layer="layout" svg:width="16.8cm" svg:height="11.2cm" svg:x="2.1cm" svg:y="14.8cm"><draw:text-box>${slide.notes.split('\n').map((l) => `<text:p>${odfText(l)}</text:p>`).join('')}</draw:text-box></draw:frame></presentation:notes>`
       : '';
-    pages.push(`<draw:page draw:name="page${i + 1}" draw:style-name="${dp}" draw:master-page-name="Default">${parts.join('')}${notes}</draw:page>`);
+    pages.push(`<draw:page draw:name="page${i + 1}" draw:style-name="${dp}" draw:master-page-name="${(() => { const k = layoutPages.findIndex((l) => l.id === slide.layoutId); return k >= 0 ? `Layout${k + 1}` : 'Default'; })()}">${parts.join('')}${notes}</draw:page>`);
   }
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content ${NS} office:version="1.3"><office:automatic-styles>${st}</office:automatic-styles><office:body><office:presentation>${pages.join('')}</office:presentation></office:body></office:document-content>`;
-  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}${[...opacities].map(([body, name]) => `<draw:opacity draw:name="${name}" ${body}`).join('')}${[...dashes.values()].join('')}${[...markers.values()].join('')}</office:styles><office:automatic-styles>${mst}<style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="28cm" fo:page-height="21cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"${masterStyle}>${masterBody}</style:master-page></office:master-styles></office:document-styles>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}${[...opacities].map(([body, name]) => `<draw:opacity draw:name="${name}" ${body}`).join('')}${[...dashes.values()].join('')}${[...markers.values()].join('')}</office:styles><office:automatic-styles>${mst}<style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="28cm" fo:page-height="21cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"${masterStyle}>${masterBody}</style:master-page>${layoutPages.map((l) => l.xml).join('')}</office:master-styles></office:document-styles>`;
   const pr = p.properties ?? {};
   const meta = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-meta ${NS} office:version="1.3"><office:meta><dc:title>${escapeXml(pr.title ?? p.title)}</dc:title>${pr.subject ? `<dc:subject>${escapeXml(pr.subject)}</dc:subject>` : ''}${pr.author ? `<meta:initial-creator>${escapeXml(pr.author)}</meta:initial-creator><dc:creator>${escapeXml(pr.author)}</dc:creator>` : ''}${pr.comments ? `<dc:description>${escapeXml(pr.comments)}</dc:description>` : ''}<meta:generator>LightCast</meta:generator></office:meta></office:document-meta>`;
   const entries = [
