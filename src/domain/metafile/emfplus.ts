@@ -3,7 +3,7 @@
 // control back to the GDI records for a stretch.
 import { apply, compose, scaleOf, type Xf, Bytes } from './bytes';
 import { arcSegs } from './gdi';
-import { hex, num, Out, xmlText, type Clip, type Color, type Fill, type PathData, type Stroke } from './out';
+import { BIG, combineClips, hex, num, Out, xmlText, type Clip, type ClipNode, type Color, type Fill, type PathData, type Stroke } from './out';
 import { encodedImageUrl, pngDataUrl } from './png';
 import { textWidth } from './metrics';
 
@@ -31,7 +31,10 @@ interface ImageObj { href: string; w: number; h: number }
 interface FontObj { em: number; unit: number; style: number; family: string }
 interface FormatObj { align: number; lineAlign: number }
 type R4 = [number, number, number, number];
-type PlusObj = { k: 'region'; v: R4[] } | { k: 'brush'; v: BrushObj } | { k: 'pen'; v: PenObj } | { k: 'path'; v: Op[] } | { k: 'image'; v: ImageObj } | { k: 'font'; v: FontObj } | { k: 'format'; v: FormatObj };
+/** A region: rectangles and paths (world units) combined by the EMF+ operators, kept as a tree so it can be drawn and clipped exactly. */
+type RegionNode = { t: 'rect'; r: R4 } | { t: 'path'; ops: Op[] } | { t: 'inf' } | { t: 'empty' } | { t: 'op'; m: number; a: RegionNode; b: RegionNode };
+interface ImageAttrs { wrap: number; clamp: Color; clampObject: boolean }
+type PlusObj = { k: 'region'; v: RegionNode } | { k: 'attrs'; v: ImageAttrs } | { k: 'brush'; v: BrushObj } | { k: 'pen'; v: PenObj } | { k: 'path'; v: Op[] } | { k: 'image'; v: ImageObj } | { k: 'font'; v: FontObj } | { k: 'format'; v: FormatObj };
 
 let nesting = 0;
 
@@ -162,10 +165,10 @@ export class Plus {
       case 0x4031: this.out.clip = this.floor; break;
       case 0x4032: this.clip(rectOps(rects(r, 0, 1, compressed)[0]), (flags >> 8) & 0xf); break;
       case 0x4033: { const p = this.path(id); if (p) this.clip(p, (flags >> 8) & 0xf); break; }
-      case 0x4034: { const o = this.objects[id]; if (o?.k === 'region') this.clip(o.v.flatMap(rectOps), (flags >> 8) & 0xf, o.v.length === 0); break; } // SetClipRegion
+      case 0x4034: { const o = this.objects[id]; if (o?.k === 'region') this.clipRegion(o.v, (flags >> 8) & 0xf); break; } // SetClipRegion
       case 0x4013: { // FillRegion: brush (or colour), region in the flags
         const o = this.objects[id];
-        if (o?.k === 'region') { const fill = this.fillOf(flags, r.u32(0)); for (const rc of o.v) this.shape(rectOps(rc), fill, null); }
+        if (o?.k === 'region') this.fillRegion(o.v, this.fillOf(flags, r.u32(0)));
         break;
       }
       default: break; // rendering hints, regions, effects, terminal-server records: not drawn
@@ -184,6 +187,48 @@ export class Plus {
       this.out.clip = keep;
       this.out.combineClip(pd, keep ? 'and' : 'copy', true);
     } else this.out.combineClip(pd, m, true);
+  }
+
+  /** A region as a clip expression in device space (paths transformed by `m`). Null when the tree is too big to draw. */
+  private regionClip(n: RegionNode, m: Xf, budget = { left: 400 }): ClipNode | null {
+    if (budget.left-- <= 0) return null;
+    const path = (ops: Op[]): ClipNode => { const pd = this.toPath(ops, m); return { k: 'path', d: pd.empty ? 'M0 0' : pd.d, eo: false, n: 1 }; };
+    switch (n.t) {
+      case 'rect': return path(rectOps(n.r));
+      case 'path': return path(n.ops);
+      case 'empty': return { k: 'path', d: 'M0 0', eo: false, n: 1 };
+      case 'inf': return { k: 'path', d: BIG, eo: false, n: 1 };
+      default: {
+        const a = this.regionClip(n.a, m, budget), b = this.regionClip(n.b, m, budget);
+        if (!a || !b) return null;
+        const size = a.n + b.n + 1;
+        switch (n.m) {
+          case 1: return { k: 'and', a, b, n: size };
+          case 2: return { k: 'or', a, b, n: size };
+          case 3: return { k: 'xor', a, b, n: size };
+          case 4: return { k: 'diff', a, b, n: size };
+          default: return { k: 'diff', a: b, b: a, n: size }; // complement: b minus a
+        }
+      }
+    }
+  }
+  private clipRegion(region: RegionNode, mode: number) {
+    if (mode > 5) return;
+    const node = this.regionClip(region, this.xf());
+    if (!node) return;
+    const m = (['copy', 'and', 'or', 'xor', 'diff', 'complement'] as const)[mode];
+    if (m === 'copy') this.out.clip = this.floor;
+    this.out.clip = combineClips(this.out.clip, node, m === 'copy' ? (this.floor ? 'and' : 'copy') : m);
+  }
+  /** FillRegion: the brush painted over the region's bounds, clipped to the region. */
+  private fillRegion(region: RegionNode, brush: BrushObj | null) {
+    const node = this.regionClip(region, this.xf());
+    const box = regionBounds(region, this.frame);
+    if (!node || !box || !brush) return;
+    const keep = this.out.clip;
+    this.out.clip = combineClips(keep, node, 'and');
+    this.shape(rectOps(box), brush, null);
+    this.out.clip = keep;
   }
 
   private clear(c: number) {
@@ -272,14 +317,37 @@ export class Plus {
   // ---- images ----
 
   private image(id: number): ImageObj | null { const o = this.objects[id]; return o?.k === 'image' ? o.v : null; }
-  private place(img: ImageObj, src: [number, number, number, number], m: Xf) {
+  private attrs(id: number): ImageAttrs | null { const o = this.objects[id]; return o?.k === 'attrs' ? o.v : null; }
+  /**
+   * Draws the source rectangle `src` of `img` under `m`. Where the rectangle reaches past the image,
+   * the image attributes say what shows there: wrap modes 0..3 repeat the image (3 = flipped
+   * alternately in x and / or y), mode 4 (clamp) fills it with the clamp colour; with no attributes
+   * it stays transparent.
+   */
+  private place(img: ImageObj, src: [number, number, number, number], m: Xf, attrs: ImageAttrs | null = null) {
     const [sx, sy, sw, sh] = src;
     const whole = sx <= 0 && sy <= 0 && sx + sw >= img.w && sy + sh >= img.h;
+    const inside = sx >= 0 && sy >= 0 && sx + sw <= img.w && sy + sh <= img.h;
     for (const [px, py] of [[sx, sy], [sx + sw, sy], [sx + sw, sy + sh], [sx, sy + sh]]) this.out.grow(...apply(m, px, py));
-    const inner = `<image href="${img.href}" width="${num(img.w)}" height="${num(img.h)}" preserveAspectRatio="none"/>`;
-    this.out.element(whole || !(sw > 0 && sh > 0)
-      ? `<g transform="matrix(${m.map(num).join(' ')})">${inner}</g>`
-      : `<g transform="matrix(${m.map(num).join(' ')})"><svg x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" viewBox="${num(sx)} ${num(sy)} ${num(sw)} ${num(sh)}" preserveAspectRatio="none" overflow="hidden">${inner}</svg></g>`);
+    const one = (x: number, y: number, fx: boolean, fy: boolean) =>
+      `<image href="${img.href}" ${fx || fy ? `transform="matrix(${fx ? -1 : 1} 0 0 ${fy ? -1 : 1} ${num(fx ? x + img.w : x)} ${num(fy ? y + img.h : y)})" ` : `x="${num(x)}" y="${num(y)}" `}width="${num(img.w)}" height="${num(img.h)}" preserveAspectRatio="none"/>`;
+    if (!(sw > 0 && sh > 0) || (whole && inside) || (!attrs && whole)) {
+      this.out.element(`<g transform="matrix(${m.map(num).join(' ')})">${one(0, 0, false, false)}</g>`);
+      return;
+    }
+    let content = '';
+    if (!inside && attrs && attrs.wrap <= 3 && img.w > 0 && img.h > 0) {
+      const i0 = Math.floor(sx / img.w), i1 = Math.ceil((sx + sw) / img.w), j0 = Math.floor(sy / img.h), j1 = Math.ceil((sy + sh) / img.h);
+      if ((i1 - i0) * (j1 - j0) <= 400) {
+        for (let j = j0; j < j1; j++) for (let i = i0; i < i1; i++) {
+          content += one(i * img.w, j * img.h, (attrs.wrap === 1 || attrs.wrap === 3) && (i & 1) !== 0, (attrs.wrap === 2 || attrs.wrap === 3) && (j & 1) !== 0);
+        }
+      } else content = one(0, 0, false, false);
+    } else {
+      if (!inside && attrs && attrs.wrap === 4 && attrs.clamp.a > 0) content += `<rect x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" fill="${attrs.clamp.rgb}"${attrs.clamp.a < 1 ? ` fill-opacity="${num(attrs.clamp.a)}"` : ''}/>`;
+      content += one(0, 0, false, false);
+    }
+    this.out.element(`<g transform="matrix(${m.map(num).join(' ')})"><svg x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" viewBox="${num(sx)} ${num(sy)} ${num(sw)} ${num(sh)}" preserveAspectRatio="none" overflow="hidden">${content}</svg></g>`);
   }
   /** DrawImage: attributes id, source unit, source rectangle (floats), destination rectangle. */
   private drawImage(id: number, r: Bytes, compressed: boolean) {
@@ -289,7 +357,7 @@ export class Plus {
     const dst = rects(r, 24, 1, compressed)[0];
     if (!dst || !src[2] || !src[3]) return;
     const kx = dst[2] / src[2], ky = dst[3] / src[3];
-    this.place(img, src, compose(this.xf(), [kx, 0, 0, ky, dst[0] - src[0] * kx, dst[1] - src[1] * ky]));
+    this.place(img, src, compose(this.xf(), [kx, 0, 0, ky, dst[0] - src[0] * kx, dst[1] - src[1] * ky]), this.attrs(r.u32(0)));
   }
   /** DrawImagePoints: three corner points (top-left, top-right, bottom-left) give the parallelogram. */
   private drawImagePoints(id: number, r: Bytes, compressed: boolean) {
@@ -300,7 +368,7 @@ export class Plus {
     if (p.length < 3 || !src[2] || !src[3]) return;
     const [ul, ur, ll] = p;
     const a = (ur[0] - ul[0]) / src[2], b = (ur[1] - ul[1]) / src[2], c = (ll[0] - ul[0]) / src[3], d = (ll[1] - ul[1]) / src[3];
-    this.place(img, src, compose(this.xf(), [a, b, c, d, ul[0] - a * src[0] - c * src[1], ul[1] - b * src[0] - d * src[1]]));
+    this.place(img, src, compose(this.xf(), [a, b, c, d, ul[0] - a * src[0] - c * src[1], ul[1] - b * src[0] - d * src[1]]), this.attrs(r.u32(0)));
   }
 
   // ---- text ----
@@ -461,6 +529,7 @@ function parseObject(kind: number, r: Bytes): PlusObj | null {
       return { k: 'font', v: { em, unit: r.u32(8), style: r.u32(12), family: r.utf16(24, n).trim() || 'Arial' } };
     }
     case 7: return { k: 'format', v: { align: r.u32(12), lineAlign: r.u32(16) } };
+    case 8: return { k: 'attrs', v: { wrap: r.u32(8), clamp: argb(r.u32(12)), clampObject: r.u32(16) !== 0 } }; // image attributes: version, reserved, wrap mode, clamp colour, object clamp
     default: return null;
   }
 }
@@ -498,61 +567,54 @@ function parseBrush(r: Bytes): BrushObj | null {
   return null;
 }
 
-/** A region object: version, node count, then the node tree in pre-order. Rectangles, infinite and empty nodes and the combine operators are exact; a path node is approximated by its bounding box. */
-function parseRegion(r: Bytes): R4[] | null {
-  const INF: R4 = [-1e6, -1e6, 2e6, 2e6];
+/**
+ * A region object: version, node count, then the node tree in pre-order. A combine node (types 1..5)
+ * is followed by its left and right children. Leaf types: 0x10000000 rectangle (4 floats), 0x10000001
+ * path (size, then an EmfPlusPath), 0x10000002 empty, 0x10000003 infinite.
+ */
+function parseRegion(r: Bytes): RegionNode | null {
   let o = 8, guard = 0;
-  const node = (depth: number): R4[] | null => {
-    if (guard++ > 4096 || depth > 32 || !r.has(o, 4)) return null;
+  const node = (depth: number): RegionNode | null => {
+    if (guard++ > 4096 || depth > 64 || !r.has(o, 4)) return null;
     const type = r.u32(o); o += 4;
-    if (type === 0x10000000) { const v: R4 = [r.f32(o), r.f32(o + 4), r.f32(o + 8), r.f32(o + 12)]; o += 16; return v[2] > 0 && v[3] > 0 ? [v] : []; }
-    if (type === 0x10000002) return [];
-    if (type === 0x10000003) return [INF];
+    if (type === 0x10000000) { const v: R4 = [r.f32(o), r.f32(o + 4), r.f32(o + 8), r.f32(o + 12)]; o += 16; return v[2] > 0 && v[3] > 0 ? { t: 'rect', r: v } : { t: 'empty' }; }
+    if (type === 0x10000002) return { t: 'empty' };
+    if (type === 0x10000003) return { t: 'inf' };
     if (type === 0x10000001) {
       const size = r.u32(o); o += 4;
       const ops = parsePath(r.slice(o, size));
       o += size;
-      if (!ops) return [];
-      let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
-      for (const p of ops) {
-        const pts = p.t === 'C' ? [[p.p[0], p.p[1]], [p.p[2], p.p[3]], [p.p[4], p.p[5]]] : p.t === 'Z' ? [] : [[p.x, p.y]];
-        for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
-      }
-      return x1 > x0 && y1 > y0 ? [[x0, y0, x1 - x0, y1 - y0]] : [];
+      return ops && ops.length ? { t: 'path', ops } : { t: 'empty' };
     }
     if (type >= 1 && type <= 5) {
       const a = node(depth + 1), b = a && node(depth + 1);
-      if (!a || !b) return null;
-      return combineRects(a, b, type);
+      return a && b ? { t: 'op', m: type, a, b } : null;
     }
     return null;
   };
-  const out = node(0);
-  return out && out.length <= 20000 ? out : null;
+  return node(0);
 }
 
-/** A minus B for rectangles (x, y, w, h): the pieces of A not covered by B. */
-function subtractRect(a: R4, b: R4): R4[] {
-  const [ax, ay, aw, ah] = a, [bx, by, bw, bh] = b;
-  const ix0 = Math.max(ax, bx), iy0 = Math.max(ay, by), ix1 = Math.min(ax + aw, bx + bw), iy1 = Math.min(ay + ah, by + bh);
-  if (ix0 >= ix1 || iy0 >= iy1) return [a];
-  const out: R4[] = [];
-  if (iy0 > ay) out.push([ax, ay, aw, iy0 - ay]);
-  if (iy1 < ay + ah) out.push([ax, iy1, aw, ay + ah - iy1]);
-  if (ix0 > ax) out.push([ax, iy0, ix0 - ax, iy1 - iy0]);
-  if (ix1 < ax + aw) out.push([ix1, iy0, ax + aw - ix1, iy1 - iy0]);
-  return out;
-}
-const subtract = (as: R4[], bs: R4[]): R4[] => bs.reduce((acc, b) => acc.flatMap((a) => subtractRect(a, b)), as);
-/** Region combination on rectangle lists: 1 and, 2 or, 3 xor, 4 exclude (a minus b), 5 complement (b minus a). */
-export function combineRects(a: R4[], b: R4[], mode: number): R4[] {
-  switch (mode) {
-    case 1: return a.flatMap((p) => subtract([p], subtract([p], b)));
-    case 2: return [...a, ...subtract(b, a)];
-    case 3: return [...subtract(a, b), ...subtract(b, a)];
-    case 4: return subtract(a, b);
-    case 5: return subtract(b, a);
-    default: return a;
+/** The box a region fills (world units); an infinite region fills the picture frame. */
+function regionBounds(n: RegionNode, frame: [number, number, number, number] | null): R4 | null {
+  const box = (x0: number, y0: number, x1: number, y1: number): R4 | null => (x1 > x0 && y1 > y0 ? [x0, y0, x1 - x0, y1 - y0] : null);
+  const union = (a: R4 | null, b: R4 | null): R4 | null => (!a ? b : !b ? a : box(Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0] + a[2], b[0] + b[2]), Math.max(a[1] + a[3], b[1] + b[3])));
+  switch (n.t) {
+    case 'rect': return n.r;
+    case 'empty': return null;
+    case 'inf': return frame ? [...frame] as R4 : [-1e5, -1e5, 2e5, 2e5];
+    case 'path': {
+      let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+      for (const p of n.ops) {
+        const pts = p.t === 'C' ? [[p.p[0], p.p[1]], [p.p[2], p.p[3]], [p.p[4], p.p[5]]] : p.t === 'Z' ? [] : [[p.x, p.y]];
+        for (const [x, y] of pts) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+      }
+      return box(x0, y0, x1, y1);
+    }
+    default: {
+      const a = regionBounds(n.a, frame), b = regionBounds(n.b, frame);
+      return n.m === 4 ? a : n.m === 5 ? b : n.m === 1 ? union(a, b) : union(a, b);
+    }
   }
 }
 

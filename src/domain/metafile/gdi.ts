@@ -4,7 +4,7 @@
 import { apply, compose, scaleOf, type Xf, type Bytes } from './bytes';
 import { hex, num, Out, PathData, xmlText, BIG, type Clip, type Color, type Fill, type Stroke } from './out';
 import { textWidth } from './metrics';
-import { cropRgba, pngDataUrl, type Dib } from './png';
+import { cropRgba, pngDataUrl, type Dib, type Rgba } from './png';
 
 export interface GdiPen { style: number; width: number; color: Color; cap: 'butt' | 'round' | 'square'; join: 'miter' | 'round' | 'bevel'; cosmetic: boolean }
 export interface GdiBrush { style: number; color: Color; hatch: number; pattern?: { href: string; w: number; h: number } }
@@ -510,14 +510,19 @@ export class Gdi {
         }
         base = { ...base, px };
       }
-      const img = sw > 0 && sh > 0 ? cropRgba(base, sx, sy, sw, sh) : base;
+      let img = sw > 0 && sh > 0 ? cropRgba(base, sx, sy, sw, sh) : base;
       if (!img) return;
+      if (opt.mask && !opt.mask.dib.encoded) img = maskedRgba(img, opt.mask.dib.img, opt.mask.x, opt.mask.y);
       iw = img.w; ih = img.h;
       href = pngDataUrl(img);
     }
     const [dx, dy, dw, dh] = dst;
-    if (!dw || !dh || !iw || !ih) return;
-    const m = compose(this.xf(), [dw / iw, 0, 0, dh / ih, dx, dy]);
+    if (!opt.para && (!dw || !dh)) return;
+    if (!iw || !ih) return;
+    const pr = opt.para;
+    const m = pr
+      ? compose(this.xf(), [(pr[1][0] - pr[0][0]) / iw, (pr[1][1] - pr[0][1]) / iw, (pr[2][0] - pr[0][0]) / ih, (pr[2][1] - pr[0][1]) / ih, pr[0][0], pr[0][1]])
+      : compose(this.xf(), [dw / iw, 0, 0, dh / ih, dx, dy]);
     for (const [px, py] of [[0, 0], [iw, 0], [iw, ih], [0, ih]]) this.out.grow(...apply(m, px, py));
     const mode = opt.rop === undefined ? null : sourceRop(opt.rop);
     let extra = '';
@@ -566,6 +571,22 @@ export interface BlitOptions {
   alpha?: 'opaque' | 'premultiplied';
   /** TransparentBlt colour key as a COLORREF. */
   key?: number;
+  /** MaskBlt / PlgBlt: a 1-bit mask bitmap; where its pixel is 0 the destination keeps what it had (the usual background operation), where 1 the source is drawn. */
+  mask?: { dib: Dib; x: number; y: number };
+  /** PlgBlt: the destination is the parallelogram whose top-left, top-right and bottom-left corners are these logical points (the `dst` rectangle is ignored). */
+  para?: [[number, number], [number, number], [number, number]];
+}
+
+/** `img` with its alpha taken from a 1-bit `mask` laid over it at (mx, my); pixels the mask does not reach become transparent. */
+export function maskedRgba(img: Rgba, mask: Rgba, mx: number, my: number): Rgba {
+  const px = new Uint8ClampedArray(img.px);
+  for (let y = 0; y < img.h; y++) for (let x = 0; x < img.w; x++) {
+    const X = x + mx, Y = y + my;
+    let keep = false;
+    if (X >= 0 && Y >= 0 && X < mask.w && Y < mask.h) { const o = (Y * mask.w + X) * 4; keep = mask.px[o] + mask.px[o + 1] + mask.px[o + 2] > 382; }
+    if (!keep) px[(y * img.w + x) * 4 + 3] = 0;
+  }
+  return { w: img.w, h: img.h, px };
 }
 
 /** The look-alike of a ternary raster operation that combines a source bitmap with the destination. */

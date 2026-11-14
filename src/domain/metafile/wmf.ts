@@ -81,6 +81,7 @@ function record(g: Gdi, fn: number, r: Bytes): void {
     case 0x0410: g.scaleWindowExt(s(3), s(2), s(1), s(0)); break;
     case 0x0412: g.scaleViewportExt(s(3), s(2), s(1), s(0)); break;
     case 0x012d: g.select(u(0)); break;
+    case 0x0419: case 0x0548: break; // FloodFill / ExtFloodFill: need the pixels already drawn (see index.ts); nothing is drawn
     case 0x01f0: g.deleteObject(u(0)); break;
     case 0x02fa: // CreatePenIndirect: style, width (x, y), colour
       g.addObject({ k: 'pen', pen: { style: u(0), width: s(1), color: colorref(r.u32(12)), cap: 'round', join: 'round', cosmetic: s(1) <= 1 } });

@@ -121,7 +121,6 @@ function record(g: Gdi, type: number, r: Bytes): void {
     }
     case 30: { const [l, t, rr, bb] = rect(r, 8); g.intersectClipRect(l, t, rr, bb); break; }
     case 29: { const [l, t, rr, bb] = rect(r, 8); g.excludeClipRect(l, t, rr, bb); break; }
-    case 79: g.setObject(r.u32(8), { k: 'region', rects: regionRects(r, 16, r.u32(12)) }); break; // EXTCREATEREGION: handle, byte count, RGNDATA
     case 71: g.fillRegion(regionRects(r, 32, r.u32(24)), brushAt(g, r.u32(28))); break; // FILLRGN: bounds, bytes, brush, RGNDATA
     case 72: g.frameRegion(regionRects(r, 40, r.u32(24)), brushAt(g, r.u32(28)), r.i32(32), r.i32(36)); break; // FRAMERGN: .., brush, stroke w/h, RGNDATA
     case 73: g.invertRegion(regionRects(r, 28, r.u32(24))); break; // INVERTRGN
@@ -163,6 +162,25 @@ function record(g: Gdi, type: number, r: Bytes): void {
       blit(g, r, dst, src, 84, 92, { rop });
       break;
     }
+    case 78: { // MASKBLT: dest rect @24, rop @40, source x/y @44, bmi @84, bits @92, mask x/y @100, mask bmi @112, mask bits @120
+      const dst: [number, number, number, number] = [r.i32(24), r.i32(28), r.i32(32), r.i32(36)];
+      const rop = r.u32(40);
+      if (r.u32(96) === 0 || r.u32(88) === 0) { g.rop(rop, ...dst); break; }
+      const mask = maskOf(r, 100, 112, 120);
+      // The foreground operation (bits 16..23 of the ROP4) decides how a masked-in pixel is combined; SRCCOPY (0xCC) is the usual one.
+      blit(g, r, dst, [r.i32(44), r.i32(48), dst[2], dst[3]], 84, 92, { rop: FG_ROP[(rop >>> 16) & 0xff] ?? 0x00cc0020, mask });
+      break;
+    }
+    case 79: { // PLGBLT, or (in older files) EXTCREATEREGION: the region record is 16 bytes of header plus its RGNDATA, whose header starts with its own size, 32.
+      if (r.length === 16 + r.u32(12) && r.u32(16) === 32) { g.setObject(r.u32(8), { k: 'region', rects: regionRects(r, 16, r.u32(12)) }); break; }
+      // PLGBLT: three destination corners @24 (top-left, top-right, bottom-left), source x/y/w/h @48, bmi @96, bits @104, mask x/y @112, mask bmi @124, mask bits @132
+      if (r.u32(100) === 0 || r.u32(108) === 0) break;
+      const mask = maskOf(r, 112, 124, 132);
+      const para: [[number, number], [number, number], [number, number]] = [[r.i32(24), r.i32(28)], [r.i32(32), r.i32(36)], [r.i32(40), r.i32(44)]];
+      blit(g, r, [0, 0, 0, 0], [r.i32(48), r.i32(52), r.i32(56), r.i32(60)], 96, 104, { para, mask });
+      break;
+    }
+    case 53: break; // EXTFLOODFILL: needs the pixels already drawn (see index.ts); nothing is drawn
     case 114: case 116: { // ALPHABLEND / TRANSPARENTBLT: like STRETCHBLT with the blend function (BlendOp, flags, constant alpha, format) or colour key at 40
       const dst: [number, number, number, number] = [r.i32(24), r.i32(28), r.i32(32), r.i32(36)];
       const v = r.u32(40);
@@ -186,6 +204,17 @@ function record(g: Gdi, type: number, r: Bytes): void {
 }
 
 const brushAt = (g: Gdi, i: number): GdiBrush | undefined => { const o = g.objects[i]; return o?.k === 'brush' ? o.brush : undefined; };
+
+/** Foreground operation of a ROP4 (its bits 16..23) as the full ternary raster operation that BitBlt would take. */
+const FG_ROP: Record<number, number> = { 0xcc: 0x00cc0020, 0xee: 0x00ee0086, 0x88: 0x008800c6, 0x66: 0x00660046, 0x33: 0x00330008 };
+
+/** A mask bitmap: x / y of its origin at `xy`, its BITMAPINFO offset/size pair at `bmi`, its bits pair at `bits`. */
+function maskOf(r: Bytes, xy: number, bmi: number, bits: number): BlitOptions['mask'] {
+  const bl = r.u32(bmi + 4), pl = r.u32(bits + 4);
+  if (!bl || !pl) return undefined;
+  const dib = decodeDib(r.slice(r.u32(bmi), bl), r.slice(r.u32(bits), pl));
+  return dib ? { dib, x: r.i32(xy), y: r.i32(xy + 4) } : undefined;
+}
 
 /** The bitmap whose BITMAPINFO offset/size pair is at `bmi` and bits pair at `bits`, stretched into `dst`. */
 function blit(g: Gdi, r: Bytes, dst: [number, number, number, number], src: [number, number, number, number], bmi: number, bits: number, opt: BlitOptions = {}) {

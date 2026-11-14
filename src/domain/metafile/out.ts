@@ -34,7 +34,7 @@ export function combineClips(cur: Clip, s: ClipNode, mode: 'and' | 'or' | 'xor' 
     case 'copy': return s;
     case 'and': return cur ? make('and', cur, s) : s;
     case 'or':
-      if (cur && cur.k === 'path' && !cur.eo && !s.eo) return { k: 'path', d: cur.d + s.d, eo: false, n: 1 }; // two plain paths: one path (non-zero winding unites them)
+      if (cur && cur.k === 'path' && s.k === 'path' && !cur.eo && !s.eo) return { k: 'path', d: cur.d + s.d, eo: false, n: 1 }; // two plain paths: one path (non-zero winding unites them)
       return cur ? make('or', cur, s) : null; // everything or anything is everything
     case 'xor': return cur ? make('xor', cur, s) : make('diff', null, s);
     case 'diff': return make('diff', cur, s);
