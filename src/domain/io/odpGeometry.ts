@@ -213,7 +213,7 @@ export function readTransition(p: Record<string, string>): PageTiming {
   const seconds = parseDuration(p['presentation:duration']);
   if (seconds && (type === 'automatic' || type === 'semi-automatic')) {
     out.autoAdvance = seconds;
-    if (type === 'automatic') out.transition = { ...(out.transition ?? { kind: 'cut', duration: 1 }), advanceOnClick: false };
+    if (type === 'automatic' && p['lc:advance-on-click'] !== 'true') out.transition = { ...(out.transition ?? { kind: 'cut', duration: 1 }), advanceOnClick: false };
   }
   return out;
 }
@@ -235,7 +235,7 @@ export function transitionAttrs(t: Transition | undefined, autoAdvance: number |
     a.push(`presentation:transition-speed="${t!.duration <= 600 ? 'fast' : t!.duration <= 1200 ? 'medium' : 'slow'}"`);
   }
   if (autoAdvance && autoAdvance > 0) {
-    a.push(`presentation:transition-type="${t?.advanceOnClick === false ? 'automatic' : 'semi-automatic'}"`, `presentation:duration="${formatDuration(autoAdvance)}"`);
+    a.push('presentation:transition-type="automatic"', ...(t?.advanceOnClick === false ? [] : ['lc:advance-on-click="true"']), `presentation:duration="${formatDuration(autoAdvance)}"`);
   } else a.push('presentation:transition-type="manual"');
   return a.length ? ` ${a.join(' ')}` : '';
 }
