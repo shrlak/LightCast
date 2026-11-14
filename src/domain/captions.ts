@@ -70,20 +70,25 @@ export function wrapCaption(text: string, maxWidth: number, maxLines: number): s
 
 /** Sent from the presenter's window to the audience window(s). */
 export type CaptionMessage =
-  | { type: 'caption'; text: string; final: boolean; size: CaptionSize; lines: 1 | 2 }
+  | { type: 'caption'; text: string; final: boolean; size: CaptionSize; lines: 1 | 2; tr?: string; trOnly?: true }
   | { type: 'caption'; off: true };
 
-export const captionMessage = (text: string, final: boolean, size: CaptionSize, lines: 1 | 2): CaptionMessage => ({ type: 'caption', text, final, size, lines });
+/** `tr` is the optional translated line; `trOnly` asks the audience band to show just that (when it is there). */
+export const captionMessage = (text: string, final: boolean, size: CaptionSize, lines: 1 | 2, tr?: string, trOnly = false): CaptionMessage => {
+  const t = tr?.trim().slice(-CAPTION_KEEP);
+  return { type: 'caption', text, final, size, lines, ...(t ? { tr: t, ...(trOnly ? { trOnly: true as const } : {}) } : {}) };
+};
 export const captionOffMessage = (): CaptionMessage => ({ type: 'caption', off: true });
 
 /** A caption message that came over the network: anything not shaped right is dropped; text is length-limited. */
 export function parseCaptionMessage(m: unknown): CaptionMessage | null {
   if (!m || typeof m !== 'object' || (m as { type?: unknown }).type !== 'caption') return null;
-  const o = m as { off?: unknown; text?: unknown; final?: unknown; size?: unknown; lines?: unknown };
+  const o = m as { off?: unknown; text?: unknown; final?: unknown; size?: unknown; lines?: unknown; tr?: unknown; trOnly?: unknown };
   if (o.off === true) return { type: 'caption', off: true };
   if (typeof o.text !== 'string') return null;
   const size: CaptionSize = o.size === 'sm' || o.size === 'lg' ? o.size : 'md';
-  return { type: 'caption', text: o.text.slice(-CAPTION_KEEP), final: o.final === true, size, lines: o.lines === 1 ? 1 : 2 };
+  const tr = typeof o.tr === 'string' ? o.tr.trim().slice(-CAPTION_KEEP) : '';
+  return { type: 'caption', text: o.text.slice(-CAPTION_KEEP), final: o.final === true, size, lines: o.lines === 1 ? 1 : 2, ...(tr ? { tr, ...(o.trOnly === true ? { trOnly: true as const } : {}) } : {}) };
 }
 
 /** Plain-language reason speech recognition cannot run here, or null when it can. */

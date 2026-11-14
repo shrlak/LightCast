@@ -2116,6 +2116,7 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .caption-band { position: fixed; z-index: 90; left: 50%; bottom: 4vh; transform: translateX(-50%); max-width: 90vw; padding: .3em .8em; border-radius: .35em; text-align: center; font-weight: 700; line-height: 1.35;
   color: #fef08a; background: rgba(6, 40, 20, .82); border: 2px solid rgba(34, 197, 94, .7); text-shadow: 0 1px 3px #000; pointer-events: none; animation: caption-in .2s ease-out; }
 @keyframes caption-in { from { opacity: 0; } to { opacity: 1; } }
+.caption-tr { color: #fff; font-weight: 600; font-size: .86em; opacity: .95; }
 .caption-error { color: #b45309; font-size: 12px; font-weight: 600; }
 .speech-card { border-color: rgba(34, 197, 94, .45); }
 .speech-card .speech-choices button, .speech-card [role='radio'] { border-color: rgba(34, 197, 94, .5); }

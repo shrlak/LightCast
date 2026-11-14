@@ -147,7 +147,9 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
         // Live caption text for audience viewers: length-limited, passed on, never kept.
         if (msg.off === true) broadcast(JSON.stringify({ type: 'caption', off: true }), (c) => c.role === 'viewer');
         else if (typeof msg.text === 'string') {
-          broadcast(JSON.stringify({ type: 'caption', text: msg.text.slice(0, 400), final: msg.final === true, size: ['sm', 'md', 'lg'].includes(msg.size) ? msg.size : 'md', lines: msg.lines === 1 ? 1 : 2 }), (c) => c.role === 'viewer');
+          // `tr` is the optional translated line (trimmed, same limit); `trOnly` asks for just that line.
+          const tr = typeof msg.tr === 'string' ? msg.tr.trim().slice(-400) : '';
+          broadcast(JSON.stringify({ type: 'caption', text: msg.text.slice(-400), final: msg.final === true, size: ['sm', 'md', 'lg'].includes(msg.size) ? msg.size : 'md', lines: msg.lines === 1 ? 1 : 2, ...(tr ? { tr, ...(msg.trOnly === true ? { trOnly: true } : {}) } : {}) }), (c) => c.role === 'viewer');
         }
         return;
       }
