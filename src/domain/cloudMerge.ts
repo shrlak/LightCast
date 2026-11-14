@@ -92,8 +92,9 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
   const seen = new Set(usage.map(usageKey));
   for (const u of remote.usage ?? []) if (!seen.has(usageKey(u))) { usage.push(u); seen.add(usageKey(u)); }
   usage.sort((a, b) => a.at - b.at);
-  const m = <K extends 'themes' | 'playlists' | 'media' | 'timers' | 'props' | 'messageTemplates' | 'macros' | 'screens' | 'schedules' | 'looks' | 'stageLayouts'>(k: K) =>
+  const m = <K extends 'themes' | 'playlists' | 'media' | 'timers' | 'props' | 'messageTemplates' | 'macros' | 'screens' | 'schedules' | 'looks' | 'stageLayouts' | 'fonts'>(k: K) =>
     mergeById<{ id: string }>(base?.[k] as { id: string }[] | undefined, (local[k] ?? []) as { id: string }[], (remote[k] ?? []) as { id: string }[], (l, r) => [base ? l : r]) as Library[K];
+  const fonts = m('fonts') ?? [];
   return {
     conflicts,
     conflictPairs,
@@ -120,6 +121,7 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
       schedules: m('schedules'),
       looks: m('looks'),
       stageLayouts: m('stageLayouts'),
+      ...(fonts.length ? { fonts } : {}),
       usage: usage.slice(-5000),
       sunday: pick(base?.sunday, local.sunday, remote.sunday, !!base),
       logoMediaId: pick(base?.logoMediaId, local.logoMediaId, remote.logoMediaId, !!base),

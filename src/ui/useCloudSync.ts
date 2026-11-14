@@ -7,6 +7,10 @@ import { getDevice, initializeDevice, saveDeviceProfile } from '../domain/device
 import { type CloudStorageUsage } from '../domain/cloudStorage';
 import { saveSyncRestorePoint } from '../domain/restorePoints';
 import { normalizeLibrary } from '../domain/persistence';
+import { runFontSync, loadFontSyncSettings, fontKnownScope, freeBytesOf, FONT_SYNC_EVENT, type FontSyncReport, type CloudFont } from '../domain/fontSync';
+import { createFontCloud, createFontStore } from '../domain/fontSyncStore';
+import { refreshImportedFonts, subscribeImportedFonts } from '../domain/importedFonts';
+import { usedFamilies } from '../domain/io/pptxFonts';
 import { addConflicts, isOfflineError, loadConflicts, openConflicts, pendingChanges, retryDelay, saveConflicts, type PendingChanges, type SyncState } from '../domain/syncStatus';
 
 export interface CloudStatus {
@@ -18,6 +22,8 @@ export interface CloudStatus {
   lastSync: number | null;
   storageUsage?: CloudStorageUsage | null;
   storageError?: string | null;
+  /** The last font sync round (imported fonts follow the church cloud). */
+  fonts?: FontSyncReport | null;
 }
 
 const PUSH_DELAY = 1000;
@@ -38,6 +44,7 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
   const [device, setDevice] = useState(getDevice);
   const failures = useRef(0);
   const [pending, setPending] = useState<PendingChanges | null>(null);
+  const [fontReport, setFontReport] = useState<FontSyncReport | null>(null);
   const [savedConflicts, setSavedConflicts] = useState(loadConflicts);
   const resumedToken = useRef(loadSession()?.token ?? null);
   useEffect(() => {
@@ -161,9 +168,34 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
       lastPushed.current = JSON.stringify(current);
       const { failed } = await syncMedia(session.token, current, (m) => setStatus((s) => ({ ...s, message: m })));
       if (loadSession()?.token !== session.token) return;
+      // Imported fonts: files both ways + the font list in the library (a changed list is pushed by the next round).
+      let fontNote: string | null = null;
+      try {
+        await refreshImportedFonts();
+        const usage = (await getCloudStorageUsage(session.token).catch(() => null))?.server;
+        const used = new Set(usedFamilies(current.presentations).map((f) => f.trim().toLowerCase()));
+        const out = await runFontSync(
+          { cloud: createFontCloud(session.token, current.cloudResetId), store: createFontStore(fontKnownScope(session.username, current.cloudResetId)) },
+          { manifest: current.fonts ?? [], settings: loadFontSyncSettings(), used, freeBytes: freeBytesOf(usage) },
+          (m) => setStatus((st) => ({ ...st, message: m })),
+        );
+        if (loadSession()?.token !== session.token) return;
+        setFontReport(out.report);
+        if (out.manifest) {
+          const fonts = out.manifest.length ? out.manifest : undefined;
+          const { fonts: _old, ...rest } = syncable(libRef.current);
+          dispatch({ type: 'library/merge', library: { ...rest, ...(fonts ? { fonts } : {}) } });
+        }
+        if (out.report.failed.length) fontNote = `글꼴 ${out.report.failed.length}개를 주고받지 못해 다음 동기화에서 다시 시도합니다: ${out.report.failed.slice(0, 3).join(', ')}`;
+      } catch (e) {
+        const err = e as { status?: number; network?: boolean };
+        if (err.status === 401 || err.network) throw e;
+        fontNote = `글꼴 동기화를 마치지 못했습니다(${(e as Error).message}). 다음에 다시 시도합니다.`;
+      }
       failures.current = 0;
       // The library itself is in step; a few files that could not be moved are tried again next time.
-      const skipped = failed.length ? `미디어 ${failed.length}개를 주고받지 못해 다음 동기화에서 다시 시도합니다: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ' …' : ''}` : null;
+      const skippedMedia = failed.length ? `미디어 ${failed.length}개를 주고받지 못해 다음 동기화에서 다시 시도합니다: ${failed.slice(0, 3).join(', ')}${failed.length > 3 ? ' …' : ''}` : null;
+      const skipped = [skippedMedia, fontNote].filter(Boolean).join(' · ') || null;
       setStatus((s) => ({ ...s, state: 'synced', message: skipped, lastSync: Date.now() }));
       succeeded = true;
       void refreshStorage();
@@ -226,6 +258,28 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
     return () => { alive = false; clearTimeout(t); };
   }, [library, status.state, status.session?.token]);
 
+  // A font imported, removed or switched on / off sends and receives fonts soon (offline: at the next round).
+  useEffect(() => {
+    if (!status.session) return;
+    let t: ReturnType<typeof setTimeout>;
+    const soon = () => { clearTimeout(t); t = setTimeout(() => void sync('push'), 2000); };
+    const off = subscribeImportedFonts(soon);
+    window.addEventListener(FONT_SYNC_EVENT, soon);
+    return () => { clearTimeout(t); off(); window.removeEventListener(FONT_SYNC_EVENT, soon); };
+  }, [status.session?.token, sync]);
+
+  /** Delete a font from the church cloud (its entry and its file); every computer drops its copy at its next sync. */
+  const removeFont = useCallback(async (id: string) => {
+    const session = loadSession();
+    if (!session) throw new Error('먼저 로그인해 주세요.');
+    const { fonts: old, ...rest } = syncable(libRef.current);
+    const fonts = (old ?? []).filter((f) => f.id !== id);
+    dispatch({ type: 'library/merge', library: { ...rest, ...(fonts.length ? { fonts } : {}) } });
+    await cloudApi.deleteMedia(session.token, id).catch((e) => { if ((e as { status?: number }).status !== 404) throw e; });
+    void refreshStorage();
+    setTimeout(() => void sync('push'), PUSH_DELAY);
+  }, [dispatch, refreshStorage, sync]);
+
   const conflicts = useMemo(() => openConflicts(savedConflicts, library), [savedConflicts, library]);
   useEffect(() => {
     if (conflicts.length !== savedConflicts.length) { saveConflicts(conflicts); setSavedConflicts(conflicts); }
@@ -252,6 +306,7 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
     if (s) { record('account/logout', s.username); await cloudApi.logout(s.token); }
     setSession(null);
     setStorage({ loading: false, usage: null, error: null });
+    setFontReport(null);
   };
 
   const pauseSync = useCallback(() => { paused.current = true; }, []);
@@ -276,7 +331,7 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
     return result.deleted;
   };
 
-  return { status: { ...status, pending, storageUsage: storage.usage, storageError: storage.error }, conflicts, dismissConflict, storage, refreshStorage, device, registeredDevices: library.devices ?? [], renameDevice, login, logout, pauseSync, resumeSync, clearAll, syncNow: () => sync('pull') };
+  return { status: { ...status, pending, fonts: fontReport, storageUsage: storage.usage, storageError: storage.error }, conflicts, dismissConflict, cloudFonts: (library.fonts ?? []) as CloudFont[], removeFont, storage, refreshStorage, device, registeredDevices: library.devices ?? [], renameDevice, login, logout, pauseSync, resumeSync, clearAll, syncNow: () => sync('pull') };
 }
 
 export type CloudSync = ReturnType<typeof useCloudSync>;

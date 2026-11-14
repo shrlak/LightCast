@@ -6,6 +6,7 @@ import { getMedia, putMedia, deleteMedia } from './media';
 import { parseFontFile, cssWeightDescriptor, embeddingForbidden, woffToSfnt, type FontFileFormat, type ParsedFont } from './fontFile';
 import { usedFamilies, type FontStyle } from './io/pptxFonts';
 import type { NativeFont } from './io/lcastFile';
+import { sha256Hex, type CloudFont } from './fontSync';
 
 export interface ImportedFont {
   id: string;
@@ -20,6 +21,12 @@ export interface ImportedFont {
   /** 'user' = imported from a font file; anything else names the .pptx it came from. */
   source: string;
   at: number;
+  /** SHA-256 of the file (hex): the same bytes are one entry in the church cloud. Older entries get it at their first sync. */
+  hash?: string;
+  /** This font's own cloud-sync switch; undefined = the default (fonts the person imported: on; deck fonts: only when a synced deck uses them). */
+  sync?: boolean;
+  /** The person confirmed sharing it although its licence (fsType) forbids embedding. */
+  allowRestricted?: boolean;
 }
 
 const INDEX_KEY = 'impfont:index';
@@ -176,6 +183,7 @@ export async function keepParsedFonts(parsed: { face: ParsedFont; fileName: stri
         const id = `impfont:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         const font: ImportedFont = { id, family: face.family, subfamily: face.subfamily, weight: face.weight, weightRange: face.weightRange, italic: face.italic, format: face.format, bytes: face.data.length, fsType: face.fsType, source, at: Date.now() };
         const buf = toArrayBuffer(face.data);
+        try { font.hash = await sha256Hex(buf); } catch { /* hashed at the first sync instead */ }
         if (!(await register(font, buf))) { report.skipped.push({ name: fileName, reason: '브라우저가 이 글꼴을 읽지 못했습니다.' }); continue; }
         await putMedia(id, new Blob([buf], { type: mime(face.format) }));
         const merged = mergeFont(list, font);
@@ -301,4 +309,45 @@ export async function restoreNativeFonts(fonts: NativeFont[], source: string): P
     face: { family: f.family, subfamily: f.subfamily, fullName: f.family, weight: f.weight, weightRange: f.weightRange, italic: f.italic, fsType: 0, format: f.format, nameFromFile: false, data: f.bytes },
   })), source);
   return res.added.length;
+}
+
+// ── Cloud sync of imported fonts (the plan itself is in fontSync.ts) ───────────────────────────
+/** Change a few fields of one stored font (its hash, its sync switch). */
+export async function updateImportedFont(id: string, patch: Partial<ImportedFont>): Promise<void> {
+  return serial(async () => {
+    const list = await readIndex();
+    const next = list.map((x) => (x.id === id ? { ...x, ...patch } : x));
+    for (const [k, v] of Object.entries(patch)) if (v === undefined) for (const x of next) if (x.id === id) delete (x as unknown as Record<string, unknown>)[k];
+    await writeIndex(next).catch(() => undefined);
+    cache = next;
+    notify();
+  });
+}
+
+/** Keep a font that came from the church cloud (already checked against its hash): stored and registered like an imported one. */
+export async function addCloudFont(entry: CloudFont, data: ArrayBuffer): Promise<boolean> {
+  return serial(async () => {
+    const list = await readIndex();
+    const hash = entry.id.slice('font-'.length);
+    if (list.some((x) => x.hash === hash)) return true;
+    const id = `impfont:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const font: ImportedFont = { id, family: entry.family, subfamily: entry.subfamily, weight: entry.weight, weightRange: entry.weightRange, italic: entry.italic, format: entry.format, bytes: data.byteLength, fsType: entry.fsType, source: entry.source, at: Date.now(), hash, ...(entry.restrictedOk ? { allowRestricted: true } : {}) };
+    try {
+      if (!(await register(font, data))) return false;
+      await putMedia(id, new Blob([data], { type: mime(entry.format) }));
+      const next = [...list, font];
+      await writeIndex(next);
+      cache = next;
+      notify();
+      tell();
+      return true;
+    } catch { unregister(id); await deleteMedia(id).catch(() => undefined); return false; }
+  });
+}
+
+/** Re-read the stored list (after a change made by sync). */
+export async function refreshImportedFonts(): Promise<ImportedFont[]> {
+  const list = await readIndex();
+  cache = list;
+  return list;
 }

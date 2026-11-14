@@ -919,6 +919,8 @@ export interface Library {
   logoMediaId: string | null;
   looks: Look[];
   stageLayouts: StageLayout[];
+  /** Imported fonts shared through the church cloud (the file of each is the cloud media `font-<sha256>`). */
+  fonts?: import('./fontSync').CloudFont[];
   /** 수련회 moving background; decks with `retreatBg` follow it. */
   retreat?: RetreatLook;
 }

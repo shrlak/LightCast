@@ -20,7 +20,7 @@ export function isOfflineError(e: unknown): boolean {
   return !!err && (err.network === true || [502, 503, 504].includes(err.status ?? 0));
 }
 
-const LISTS = ['presentations', 'playlists', 'themes', 'media', 'timers', 'props', 'messageTemplates', 'macros', 'screens', 'schedules', 'looks', 'stageLayouts'] as const;
+const LISTS = ['presentations', 'playlists', 'themes', 'media', 'timers', 'props', 'messageTemplates', 'macros', 'screens', 'schedules', 'looks', 'stageLayouts', 'fonts'] as const;
 
 export interface PendingChanges {
   presentations: number;
