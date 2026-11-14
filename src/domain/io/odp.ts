@@ -846,7 +846,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
   const opacityName = (el: SlideElement, base: OdfGradient): string | undefined => {
     const o = opacityGradient(el, base);
     if (!o) return undefined;
-    const op = (c: string) => Math.round((parseInt(c.slice(1, 3), 16) / 255) * 1000) / 1000;
+    const op = (c: string) => Math.round((parseInt(c.slice(1, 3), 16) / 255) * 100) / 100;
     const body = `draw:style="${o.style}" draw:start="${Math.round(op(o.start) * 100)}%" draw:end="${Math.round(op(o.end) * 100)}%" draw:angle="${o.angle}deg" draw:border="0%"${o.style === 'radial' ? ' draw:cx="50%" draw:cy="50%"' : ''}>${(o.stops ?? []).map((x) => `<loext:opacity-stop svg:offset="${Math.round(x.pos * 100) / 10000}" svg:stop-opacity="${op(x.color)}"/>`).join('')}</draw:opacity>`;
     let name = opacities.get(body);
     if (!name) { name = `Transparency${opacities.size + 1}`; opacities.set(body, name); }
