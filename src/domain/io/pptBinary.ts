@@ -14,7 +14,7 @@
 import { isCfb, readCfb } from './cfb';
 import { inflateZlib } from './inflate';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
-import { customPathOf, fillOf, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
+import { customPathOf, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
 import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
 export { PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES };
@@ -51,6 +51,7 @@ export interface PptShape {
   shape?: string;
   fill?: FillSpec;
   line?: LineSpec;
+  shadow?: ShadowSpec;
   /** Freeform / custom geometry: SVG path data in a `w`×`h` space that is stretched to the shape's box. */
   path?: { d: string; w: number; h: number };
   /** Text frame: margins left, top, right, bottom in EMU; vertical anchor; false = no word wrap. */
@@ -472,11 +473,13 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   for (const i of raw.items) if (itemText(i).trim()) paras.push(...buildParas(i.raw, i.style, i.type, textEnv));
   const text = paras.map((p) => p.text).join('\n');
   const textType = raw.items[0]?.type;
-  const custom = !preset && raw.placeholder === undefined ? customPathOf(raw.props) : null;
+  const custom = !preset && raw.placeholder === undefined ? customPathOf(raw.props, placed && placed.h > 0 ? placed.w / placed.h : undefined) : null;
   let fill = fillOf(props, env.scheme);
   let line = lineOf(props, env.scheme, isLineType(spType));
   if (custom?.noFill) fill = undefined;
   if (custom?.noLine) line = undefined;
+  const shadow = fill || line || (props.get(P.pib) ?? 0) > 0 ? shadowOf(props, env.scheme) : undefined;
+  if (shadow) base.shadow = shadow;
   const pib = props.get(P.pib) ?? 0;
   const frame: Partial<PptShape> = {};
   const m = [P.textLeft, P.textTop, P.textRight, P.textBottom].map((id, k) => props.get(id) ?? MARGIN[k]);
@@ -491,6 +494,7 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
     if (line) out.line = line;
     if (preset && !isBoxType(spType) && !isLineType(spType) && raw.placeholder === undefined) out.shape = preset;
     else if (custom) out.path = { d: custom.path, w: custom.w, h: custom.h };
+    else if (!preset && raw.placeholder === undefined && (fill || line)) { const g = guessPreset(raw.props); if (g) out.shape = g; }
     return out;
   }
   if (pib > 0 && !isLineType(spType)) {
@@ -506,7 +510,7 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   if (!preset) {
     if (!fill && !line) return null;
     c.warnings.add('일부 도형(자유형 등)은 사각형으로 바꿔 가져왔습니다.');
-    return { kind: 'shape', ...base, shape: 'rect', ...(fill ? { fill } : {}), ...(line ? { line } : {}) };
+    return { kind: 'shape', ...base, shape: guessPreset(raw.props) ?? 'rect', ...(fill ? { fill } : {}), ...(line ? { line } : {}) };
   }
   if (isLineType(spType)) return line ? { kind: 'shape', ...base, shape: 'line', line } : null;
   if (!fill && !line) return null;

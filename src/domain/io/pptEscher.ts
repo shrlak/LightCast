@@ -9,7 +9,7 @@ export type Props = Map<number, number>;
 export const P = {
   rotation: 0x0004, geoLeft: 0x0140, geoTop: 0x0141, geoRight: 0x0142, geoBottom: 0x0143, pVertices: 0x0145, pSegmentInfo: 0x0146, shadowColor: 0x0201, shadowOpacity: 0x0204, shadowOffX: 0x0205, shadowOffY: 0x0206, shadowFlags: 0x023f, cropTop: 0x0100, cropBottom: 0x0101, cropLeft: 0x0102, cropRight: 0x0103, pib: 0x0104,
   textLeft: 0x0081, textTop: 0x0082, textRight: 0x0083, textBottom: 0x0084, wrapText: 0x0085, anchorText: 0x0087, textFlags: 0x00bf,
-  fillType: 0x0180, fillColor: 0x0181, fillOpacity: 0x0182, fillBack: 0x0183, fillBlip: 0x0186, fillAngle: 0x018d, fillFlags: 0x01bf,
+  fillType: 0x0180, fillColor: 0x0181, fillOpacity: 0x0182, fillBack: 0x0183, fillBlip: 0x0186, fillAngle: 0x018b, fillFocus: 0x018c, fillShadeColors: 0x0197, fillFlags: 0x01bf,
   lineColor: 0x01c0, lineWidth: 0x01cb, lineDash: 0x01ce, lineStartArrow: 0x01d0, lineEndArrow: 0x01d1, lineFlags: 0x01ff,
 };
 
@@ -70,7 +70,7 @@ export interface FillSpec {
   /** Solid fill. */
   color?: string;
   /** Shaded fill: start and end colour, CSS-style angle (0 = left to right, 90 = top to bottom). */
-  gradient?: { from: string; to: string; angle: number; radial?: boolean };
+  gradient?: { from: string; to: string; angle: number; radial?: boolean; /** Three or more stops (position 0-100). */ stops?: { pos: number; color: string }[] };
   /** Picture / texture fill: 1-based picture index. */
   picture?: number;
   /** Fill is the slide's background (fillType 9). */
@@ -99,13 +99,43 @@ export function fillOf(p: Props, scheme: Scheme | undefined): FillSpec | undefin
     const backV = p.get(P.fillBack);
     const to = backV !== undefined ? colorRef(backV, scheme) : '#ffffff';
     if (color && to) {
-      const angle = ((-fixed(p.get(P.fillAngle)) % 360) + 360) % 360;
+      // Escher's angle (16.16 degrees, read from real files: -270 is left to right, -180 is bottom to top) → LightCast's (0 left to right, 90 top to bottom).
+      const angle = (((90 - fixed(p.get(P.fillAngle))) % 360) + 360) % 360;
       out.gradient = { from: color, to, angle: Math.round(angle * 100) / 100, ...(type === 5 || type === 6 ? { radial: true } : {}) };
+      const stops = shadeStops(p, scheme);
+      if (stops) out.gradient.stops = stops;
       return out;
     }
   }
   if (color) out.color = color;
   return out.color || out.picture ? out : undefined;
+}
+
+/** fillShadeColors: (colour, position in 16.16) pairs; null when there are fewer than three. */
+function shadeStops(p: Props, scheme: Scheme | undefined): { pos: number; color: string }[] | null {
+  const b = complexOf(p, P.fillShadeColors);
+  if (!b || b.length < 6) return null;
+  const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+  const n = Math.min(v.getUint16(0, true), Math.floor((b.length - 6) / 8), 32);
+  const out: { pos: number; color: string }[] = [];
+  for (let i = 0; i < n; i++) {
+    const color = colorRef(v.getUint32(6 + i * 8, true), scheme);
+    const pos = v.getInt32(6 + i * 8 + 4, true) / 65536;
+    if (color && pos >= -0.001 && pos <= 1.001) out.push({ pos: Math.round(Math.max(0, Math.min(1, pos)) * 100), color });
+  }
+  return out.length >= 3 ? out.sort((a, c) => a.pos - c.pos) : null;
+}
+
+export interface ShadowSpec { color: string; /** 0-1. */ transparency: number; /** EMU. */ dx: number; dy: number }
+
+/** The shape's drop shadow (fShadow of the shadow boolean group; offsets in EMU, default 25400). */
+export function shadowOf(p: Props, scheme: Scheme | undefined): ShadowSpec | undefined {
+  if (!boolOf(p.get(P.shadowFlags), 0x2)) return undefined;
+  const colorV = p.get(P.shadowColor);
+  const color = colorV !== undefined ? colorRef(colorV, scheme) : '#808080';
+  if (!color) return undefined;
+  const op = p.get(P.shadowOpacity);
+  return { color, transparency: op === undefined ? 0 : Math.max(0, Math.min(1, 1 - op / 65536)), dx: p.get(P.shadowOffX) ?? 25400, dy: p.get(P.shadowOffY) ?? 25400 };
 }
 
 const DASH: Record<number, DashStyle> = { 1: 'sysDash', 2: 'sysDot', 3: 'sysDashDot', 4: 'sysDashDotDot', 5: 'dot', 6: 'dash', 7: 'lgDash', 8: 'dashDot', 9: 'lgDashDot', 10: 'lgDashDotDot' };
@@ -143,7 +173,7 @@ const MAX_PATH_POINTS = 20000;
  * Custom geometry of a freeform (msosptNotPrimitive): pVertices + pSegmentInfo (MS-ODRAW 2.3.6) as an SVG path.
  * Vertices that are guide formulas and the arc escapes are not read: null.
  */
-export function customPathOf(p: Props): CustomPath | null {
+export function customPathOf(p: Props, aspect?: number): CustomPath | null {
   const vb = complexOf(p, P.pVertices), sb = complexOf(p, P.pSegmentInfo);
   if (!vb || vb.length < 6) return null;
   const vv = new DataView(vb.buffer, vb.byteOffset, vb.byteLength);
@@ -178,8 +208,13 @@ export function customPathOf(p: Props): CustomPath | null {
     right = Math.max(...rp.map((q) => q[0])); bottom = Math.max(...rp.map((q) => q[1]));
     if (right <= left) right = left + 1;
     if (bottom <= top) bottom = top + 1;
-    // Guide formulas without a geometry rectangle (LibreOffice's presets) do not evaluate to a faithful outline: not drawn.
-    if (formulaUsed) return null;
+    // Guide formulas without a geometry rectangle (LibreOffice's presets): only plain arithmetic ones whose points span the box are trusted;
+    // those with conditions or trigonometry did not evaluate to the right outline against LibreOffice's own rendering.
+    if (formulaUsed) {
+      if (!guideOps(p).every((op) => op <= 5)) return null;
+      const r = aspect ? (right - left) / (bottom - top) / aspect : 1;
+      if (r < 0.9 || r > 1.1) return null;
+    }
   }
   const gw = right - left, gh = bottom - top;
   const at = (i: number) => `${f(rp[i][0] - left)} ${f(rp[i][1] - top)}`;
@@ -207,6 +242,16 @@ export function customPathOf(p: Props): CustomPath | null {
 }
 
 /** The guide formulas (pGuides) of a shape: index → value, with the adjust values (adjust1-8) and the geometry rectangle as inputs. */
+function guideOps(p: Props): number[] {
+  const gb = complexOf(p, 0x156);
+  if (!gb || gb.length < 6) return [];
+  const gv = new DataView(gb.buffer, gb.byteOffset, gb.byteLength);
+  const out: number[] = [];
+  const m = Math.min(gv.getUint16(0, true), Math.floor((gb.length - 6) / 8), 512);
+  for (let i = 0; i < m; i++) out.push(gv.getUint16(6 + i * 8, true) & 0x1fff);
+  return out;
+}
+
 function guideValues(p: Props, left: number, top: number, right: number, bottom: number): (i: number) => number {
   const gb = complexOf(p, 0x156);
   const list: { op: number; a: number; b: number; c: number; fa: boolean; fb: boolean; fc: boolean }[] = [];
@@ -265,6 +310,15 @@ function guideValues(p: Props, left: number, top: number, right: number, bottom:
     return r;
   };
   return value;
+}
+
+/**
+ * A custom shape whose guide formulas are not evaluated (LibreOffice writes its presets that way): a guess of the preset
+ * from the kind of formulas it uses: sine and cosine mean an ellipse.
+ */
+export function guessPreset(p: Props): string | undefined {
+  const ops = guideOps(p);
+  return ops.filter((o) => o === 9).length === 1 && ops.filter((o) => o === 10).length === 1 && ops.length <= 40 ? 'ellipse' : undefined;
 }
 
 /** Rotation in degrees clockwise (0-360). */

@@ -220,11 +220,17 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       ...(s.line.arrowStart ? { arrowStart: true } : {}),
       ...(s.line.arrowEnd ? { arrowEnd: true } : {}),
     } : {};
+    const shadowFields: Partial<SlideElement> = s.shadow ? (() => {
+      const dist = Math.hypot(s.shadow.dx, s.shadow.dy) * sc.emu;
+      const dir = ((Math.atan2(s.shadow.dy, s.shadow.dx) * 180) / Math.PI + 360) % 360;
+      return { dropShadow: true, shadowOpts: { color: s.shadow.color, transparency: Math.round(s.shadow.transparency * 100) / 100, blur: 0, dist: Math.round(dist), dir: Math.round(dir) } };
+    })() : {};
+    Object.assign(lineFields, shadowFields);
     const fillFields = (): Partial<SlideElement> => {
       const f = s.fill;
       if (!f) return {};
       const t = f.transparency ? { fillTransparency: f.transparency } : {};
-      if (f.gradient) return { fill: f.gradient.from, gradient: [f.gradient.from, f.gradient.to], gradientAngle: f.gradient.angle, ...(f.gradient.radial ? { gradientType: 'radial' as const } : {}), ...t };
+      if (f.gradient) return { fill: f.gradient.from, gradient: [f.gradient.from, f.gradient.to], gradientAngle: f.gradient.angle, ...(f.gradient.stops ? { gradientStops: f.gradient.stops.map((st) => ({ pos: st.pos, color: st.color })) } : {}), ...(f.gradient.radial ? { gradientType: 'radial' as const } : {}), ...t };
       if (f.picture) { const id = mediaOf(f.picture); return id ? { fillImage: id, fill: '#ffffff', ...t } : {}; }
       return f.color ? { fill: f.color, ...t } : {};
     };
