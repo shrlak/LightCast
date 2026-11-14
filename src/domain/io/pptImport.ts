@@ -3,10 +3,12 @@
 // the slide's own), with background, transition, hidden flag and speaker notes. Pure apart from the
 // `store` callback that keeps a picture's bytes in the media library (and the metafile → SVG / PNG
 // conversion of WMF / EMF pictures).
+import type { TableCell, TableData } from '../../engine';
 import type { ElementParagraph, HAlign, ListStyle, Slide, SlideElement, TextRun, Transition } from '../types';
 import { CANVAS_H, CANVAS_W } from '../canvas';
 import { gradientCss } from '../backgroundFormat';
 import { metafileToBlob } from '../metafile/image';
+import { detectTables, type TablePlan } from './pptTable';
 import { parsePpt, type PptDocument, type PptPara, type PptPicture, type PptShape, type PptSlide } from './pptBinary';
 
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/bmp': 'bmp', 'image/tiff': 'tiff', 'image/svg+xml': 'svg' } as const;
@@ -97,20 +99,83 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
     autoFit: 'shrink',
   };
   const runLines = lines.map((l, i) => (l.length ? l : [{ text: paras[i].text }]));
-  if (mixedAlign) fields.paragraphs = runLines.map((runs, i): ElementParagraph => ({ text: paras[i].text, runs, align: aligns[i] }));
-  else if (runLines.some((l) => l.some((r) => Object.keys(r).length > 1))) fields.runs = runLines;
-  // Bullets and the indent level belong to the whole box (the editor has no per-paragraph list).
+  // Bullets, indent level and spacing: one set for the whole box when every paragraph shares it, else each paragraph carries its own.
   const real = paras.filter((p) => p.text.trim() && !p.cont);
-  const bulleted = real.filter((p) => p.bullet);
-  if (bulleted.length && bulleted.length * 2 >= real.length) {
-    fields.list = bulletStyle(bulleted[0].bullet!);
-    if (bulleted[0].level) fields.indent = Math.min(8, bulleted[0].level);
+  const sizePx = (p: PptPara) => Math.round((p.runs.find((r) => r.text)?.size ?? 0) * sc.pt) || own.fontSize;
+  // Space before / after: positive = percent of a line, negative = master units; |v| of 1 is rounding noise.
+  const gap = (v: number | undefined, p: PptPara) => (!v ? 0 : v < 0 ? (-v > 2 ? Math.round(-v * sc.k) : 0) : Math.round((v / 100) * sizePx(p) * 1.2));
+  const listOf = (p: PptPara): ListStyle | undefined => (p.bullet ? bulletStyle(p.bullet) : undefined);
+  const lineOf = (p: PptPara) => (p.lineSpacing && p.lineSpacing !== 100 ? Math.round((p.lineSpacing / 100) * 1.2 * 100) / 100 : undefined);
+  const first = real[0];
+  const sameAll = !first || real.every((p) => listOf(p) === listOf(first) && p.level === first.level && gap(p.spaceBefore, p) === gap(first.spaceBefore, first) && gap(p.spaceAfter, p) === gap(first.spaceAfter, first) && lineOf(p) === lineOf(first));
+  if (mixedAlign || !sameAll) {
+    const anyList = real.some((p) => p.bullet);
+    fields.paragraphs = runLines.map((runs, i): ElementParagraph => {
+      const p = paras[i];
+      const para: ElementParagraph = { text: p.text, runs, align: aligns[i] };
+      if (!sameAll) {
+        const list = p.cont ? undefined : listOf(p);
+        if (list) para.list = list;
+        else if (anyList) para.list = 'none';
+        if (p.level) para.level = Math.min(8, p.level);
+        const sb = p.cont ? 0 : gap(p.spaceBefore, p), sa = gap(p.spaceAfter, p);
+        if (sb) para.spaceBefore = sb;
+        if (sa) para.spaceAfter = sa;
+        const lh = lineOf(p);
+        if (lh) para.lineHeight = lh;
+      }
+      return para;
+    });
+  } else {
+    if (runLines.some((l) => l.some((r) => Object.keys(r).length > 1))) fields.runs = runLines;
+    if (first) {
+      const list = listOf(first);
+      if (list) fields.list = list;
+      if (first.level) fields.indent = Math.min(8, first.level);
+      const sb = gap(first.spaceBefore, first), sa = gap(first.spaceAfter, first);
+      if (sb) fields.spaceBefore = sb;
+      if (sa) fields.spaceAfter = sa;
+      const lh = lineOf(first);
+      if (lh) fields.lineHeight = lh;
+    }
   }
-  const spacing = paras.find((p) => p.lineSpacing && p.lineSpacing !== 100)?.lineSpacing;
-  if (spacing) fields.lineHeight = Math.round(((spacing / 100) * 1.2) * 100) / 100;
+  const stops = real.find((p) => p.tabStops?.length)?.tabStops;
+  if (stops) fields.tabStops = stops.map((t) => ({ pos: Math.round(t.pos * sc.k), align: (['left', 'center', 'right', 'decimal'] as const)[t.type] ?? 'left' })).sort((x, y) => x.pos - y.pos);
   if (s.margins) fields.margins = s.margins.map((m) => Math.round(m * sc.emu)) as [number, number, number, number];
   if (s.wrap === false) fields.wrap = false;
   return fields;
+}
+
+/** A table rebuilt from a group of cell rectangles. */
+function tableElement(plan: TablePlan, sc: Scale, newId: (p: string) => string): SlideElement {
+  const cols = plan.colWidths.map((w) => Math.max(1, Math.round(w * sc.k)));
+  const heights = plan.rowHeights.map((h) => Math.max(1, Math.round(h * sc.k)));
+  const grid: TableCell[][] = plan.rowHeights.map(() => plan.colWidths.map((): TableCell => ({ text: '' })));
+  const border = plan.border ? { color: plan.border.color, width: Math.max(1, Math.round(plan.border.width * sc.emu)) } : undefined;
+  for (const c of plan.cells) {
+    const sh = c.shape;
+    const cell: TableCell = { text: sh.text ?? '' };
+    const run = sh.paras?.flatMap((p) => p.runs).find((r) => r.text);
+    if (run?.bold) cell.bold = true;
+    if (run?.color) cell.color = run.color;
+    const align = sh.paras?.find((p) => p.text)?.align;
+    if (align) cell.align = align;
+    if (sh.fill?.color) cell.fill = sh.fill.color;
+    if (sh.vAlign) cell.anchor = sh.vAlign;
+    if (border) cell.borders = { t: border, r: border, b: border, l: border };
+    if (c.colSpan > 1) cell.span = c.colSpan;
+    if (c.rowSpan > 1) cell.rowSpan = c.rowSpan;
+    grid[c.row][c.col] = cell;
+    for (let r = c.row; r < c.row + c.rowSpan; r++) for (let k = c.col; k < c.col + c.colSpan; k++) {
+      if (r === c.row && k === c.col) continue;
+      grid[r][k] = { text: '', ...(k > c.col ? { hMerge: true } : {}), ...(r > c.row ? { vMerge: true } : {}) };
+    }
+  }
+  const data: TableData = { rows: grid, cols, heights, style: '', firstRow: false, firstCol: false, lastRow: false, lastCol: false, bandRow: false, bandCol: false };
+  return {
+    id: newId('e'), kind: 'table', x: Math.round(sc.ox + plan.x * sc.k), y: Math.round(sc.oy + plan.y * sc.k),
+    w: cols.reduce((a, b) => a + b, 0), h: heights.reduce((a, b) => a + b, 0), table: data,
+  };
 }
 
 /** The elements of one slide, for a canvas scale `k` and offset. */
@@ -118,7 +183,14 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
   const sc = scaleOf(doc);
   const groups = new Map<number, string>();
   const out: SlideElement[] = [];
-  for (const s of shapes) {
+  const tables = detectTables(shapes);
+  const tableAt = new Map<number, TablePlan>();
+  const inTable = new Set<number>();
+  for (const plan of tables.values()) { tableAt.set(Math.min(...plan.members), plan); for (const m of plan.members) inTable.add(m); }
+  for (const [at, s] of shapes.entries()) {
+    const plan = tableAt.get(at);
+    if (plan) { out.push(tableElement(plan, sc, newId)); continue; }
+    if (inTable.has(at)) continue;
     const isLine = s.kind === 'shape' && s.shape === 'line';
     let box: { x: number; y: number; w: number; h: number };
     if (s.x !== undefined && s.y !== undefined && s.w !== undefined && s.h !== undefined && (s.w > 0 || s.h > 0) && (isLine || (s.w > 0 && s.h > 0))) box = { x: sc.ox + s.x * sc.k, y: sc.oy + s.y * sc.k, w: s.w * sc.k, h: s.h * sc.k };
@@ -148,11 +220,17 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       ...(s.line.arrowStart ? { arrowStart: true } : {}),
       ...(s.line.arrowEnd ? { arrowEnd: true } : {}),
     } : {};
+    const shadowFields: Partial<SlideElement> = s.shadow ? (() => {
+      const dist = Math.hypot(s.shadow.dx, s.shadow.dy) * sc.emu;
+      const dir = ((Math.atan2(s.shadow.dy, s.shadow.dx) * 180) / Math.PI + 360) % 360;
+      return { dropShadow: true, shadowOpts: { color: s.shadow.color, transparency: Math.round(s.shadow.transparency * 100) / 100, blur: 0, dist: Math.round(dist), dir: Math.round(dir) } };
+    })() : {};
+    Object.assign(lineFields, shadowFields);
     const fillFields = (): Partial<SlideElement> => {
       const f = s.fill;
       if (!f) return {};
       const t = f.transparency ? { fillTransparency: f.transparency } : {};
-      if (f.gradient) return { fill: f.gradient.from, gradient: [f.gradient.from, f.gradient.to], gradientAngle: f.gradient.angle, ...(f.gradient.radial ? { gradientType: 'radial' as const } : {}), ...t };
+      if (f.gradient) return { fill: f.gradient.from, gradient: [f.gradient.from, f.gradient.to], gradientAngle: f.gradient.angle, ...(f.gradient.stops ? { gradientStops: f.gradient.stops.map((st) => ({ pos: st.pos, color: st.color })) } : {}), ...(f.gradient.radial ? { gradientType: 'radial' as const } : {}), ...t };
       if (f.picture) { const id = mediaOf(f.picture); return id ? { fillImage: id, fill: '#ffffff', ...t } : {}; }
       return f.color ? { fill: f.color, ...t } : {};
     };
@@ -160,7 +238,7 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       const mediaId = s.picture ? mediaOf(s.picture) : null;
       if (mediaId) out.push({ id: newId('e'), kind: 'image', ...rounded, mediaId, fit: 'fill', ...(s.crop ? { crop: s.crop } : {}), ...lineFields, ...common });
     } else if (s.kind === 'shape') {
-      const el: SlideElement = { id: newId('e'), kind: 'shape', shape: s.shape ?? 'rect', ...rounded, ...common };
+      const el: SlideElement = { id: newId('e'), kind: 'shape', ...(s.path ? { path: s.path.d, pathW: s.path.w, pathH: s.path.h } : { shape: s.shape ?? 'rect' }), ...rounded, ...common };
       if (isLine) Object.assign(el, { stroke: s.line?.color ?? '#000000', strokeWidth: Math.max(1, Math.round((s.line?.width ?? 9525) * sc.emu)) }, lineFields);
       else Object.assign(el, { fill: 'transparent' }, fillFields(), lineFields);
       out.push(el);
@@ -168,7 +246,7 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       const title = isTitle(s);
       const tf = textFields(s, sc);
       const frame = s.vAlign ?? (title ? 'middle' : 'top');
-      if (s.shape) out.push({ id: newId('e'), kind: 'shape', shape: s.shape, ...rounded, fill: 'transparent', ...fillFields(), ...lineFields, ...tf, vAlign: s.vAlign ?? 'middle', ...common });
+      if (s.shape || s.path) out.push({ id: newId('e'), kind: 'shape', ...(s.path ? { path: s.path.d, pathW: s.path.w, pathH: s.path.h } : { shape: s.shape }), ...rounded, fill: 'transparent', ...fillFields(), ...lineFields, ...tf, vAlign: s.vAlign ?? 'middle', ...common });
       else out.push({ id: newId('e'), kind: 'text', ...rounded, ...fillFields(), ...lineFields, ...tf, vAlign: frame, ...common });
     } else if (s.fill || s.line) {
       // A box with no text but a fill or outline.
@@ -178,14 +256,45 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
   return out;
 }
 
-const EFFECT: Record<number, Transition['kind']> = { 1: 'fx:random', 2: 'fx:blinds', 3: 'fx:checker', 4: 'fx:cover', 5: 'fx:dissolve', 6: 'fade', 7: 'fx:uncover', 8: 'fx:randomBar', 9: 'fx:wipe', 10: 'fx:wipe', 11: 'fx:shape' };
+/**
+ * SlideShowSlideInfoAtom effect type → LightCast transition and its option. The ids and directions were read from files
+ * LibreOffice wrote for known transitions (0 cut, 1 random, 2 blinds, 3 checker, 4 cover, 5 dissolve, 7 uncover, 8 random bars,
+ * 10 wipe, 13 split, 17 diamond, 18 plus, 19 wedge, 20 push, 21 comb, 22 newsflash, 23 fade, 26 wheel, 27 circle); 6, 9, 11 and 12
+ * follow the older PowerPoint numbering.
+ */
+const MOVE = ['l', 'u', 'r', 'd'];
+const SIDE = ['r', 'd', 'l', 'u'];
+const EFFECT: Record<number, (dir: number) => { kind: Transition['kind']; option?: string }> = {
+  1: () => ({ kind: 'fx:random' }),
+  2: (d) => ({ kind: 'fx:blinds', option: d === 1 ? 'horz' : 'vert' }),
+  3: (d) => ({ kind: 'fx:checker', option: d === 1 ? 'vert' : 'horz' }),
+  4: (d) => ({ kind: 'fx:cover', ...(SIDE[d] ? { option: SIDE[d] } : {}) }),
+  5: () => ({ kind: 'fx:dissolve' }),
+  6: () => ({ kind: 'fade' }),
+  7: (d) => ({ kind: 'fx:uncover', ...(SIDE[d] ? { option: SIDE[d] } : {}) }),
+  8: (d) => ({ kind: 'fx:randomBar', option: d === 1 ? 'vert' : 'horz' }),
+  9: () => ({ kind: 'fx:wipe' }),
+  10: (d) => ({ kind: 'fx:wipe', ...(MOVE[d] ? { option: MOVE[d] } : {}) }),
+  11: (d) => ({ kind: 'fx:shape', option: d === 1 ? 'in' : 'out' }),
+  12: (d) => ({ kind: 'fx:shape', option: d === 1 ? 'in' : 'out' }),
+  13: (d) => ({ kind: 'fx:split', option: d === 0 ? 'horzOut' : d === 1 ? 'horzIn' : d === 3 ? 'vertIn' : 'vertOut' }),
+  17: () => ({ kind: 'fx:shape', option: 'diamond' }),
+  18: () => ({ kind: 'fx:shape', option: 'plus' }),
+  19: () => ({ kind: 'fx:clock', option: 'wedge' }),
+  20: (d) => ({ kind: 'fx:push', ...(MOVE[d] ? { option: MOVE[d] } : {}) }),
+  21: (d) => ({ kind: 'fx:comb', option: d === 1 ? 'vert' : 'horz' }),
+  22: () => ({ kind: 'fx:flash' }),
+  23: () => ({ kind: 'fade', option: 'smoothly' }),
+  26: () => ({ kind: 'fx:clock', option: 'clockwise' }),
+  27: () => ({ kind: 'fx:shape', option: 'circle' }),
+};
 const SPEED_MS = [1500, 1000, 500];
 
 /** A slide's transition and automatic advance from its SlideShowSlideInfoAtom. */
 export function transitionOf(t: NonNullable<PptSlide['transition']>): { transition?: Transition; autoAdvance?: number } {
-  const kind = t.effect > 0 ? EFFECT[t.effect] ?? 'fade' : 'cut';
+  const mapped: { kind: Transition['kind']; option?: string } = t.effect > 0 ? (EFFECT[t.effect] ?? (() => ({ kind: 'fade' as const })))(t.direction ?? 0) : { kind: 'cut' };
   const out: { transition?: Transition; autoAdvance?: number } = {};
-  if (kind !== 'cut' || !t.onClick) out.transition = { kind, duration: kind === 'cut' ? 1 : SPEED_MS[t.speed] ?? 1000, ...(t.onClick ? {} : { advanceOnClick: false }) };
+  if (mapped.kind !== 'cut' || !t.onClick) out.transition = { kind: mapped.kind, duration: mapped.kind === 'cut' ? 1 : SPEED_MS[t.speed] ?? 1000, ...(mapped.option ? { option: mapped.option } : {}), ...(t.onClick ? {} : { advanceOnClick: false }) };
   if (t.afterMs > 0) out.autoAdvance = Math.round(t.afterMs / 100) / 10;
   return out;
 }

@@ -7,14 +7,17 @@
 //   autoshapes, group child coordinate spaces), master / title-master inheritance (placeholder position,
 //   size, text frame and style, plus the master's own objects), pictures (JPEG, PNG, DIB, TIFF and the
 //   compressed WMF / EMF), slide transitions, hidden slides and speaker notes.
-// Not read: animations, tables as such (old tables are groups of rectangles and come through as those),
-//   freeform / custom-geometry shapes, auto-numbered bullets (PowerPoint 2002 extension tags), OLE objects.
+//   Also read: per-paragraph bullets, levels, spacing and tab stops; freeforms (pVertices / pSegmentInfo, and plain-arithmetic guide
+//   formulas); fillShadeColors stops and shadows; cell-rectangle groups are rebuilt as tables (pptTable.ts). Checked against files
+//   LibreOffice writes (tests/fixtures/real/ppt).
+// Not read: animations, auto-numbered bullets (PowerPoint 2002 extension tags), PICT pictures, arc escapes and guide formulas with
+//   conditions or trigonometry in custom shapes, OLE objects.
 // Written for hostile input: it never throws, records are bounds-checked, recursion and the number of
 // records, slides, shapes and pictures are capped, and what cannot be read is reported in `warnings`.
 import { isCfb, readCfb } from './cfb';
 import { inflateZlib } from './inflate';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
-import { fillOf, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
+import { customPathOf, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
 import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
 export { PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES };
@@ -51,6 +54,9 @@ export interface PptShape {
   shape?: string;
   fill?: FillSpec;
   line?: LineSpec;
+  shadow?: ShadowSpec;
+  /** Freeform / custom geometry: SVG path data in a `w`×`h` space that is stretched to the shape's box. */
+  path?: { d: string; w: number; h: number };
   /** Text frame: margins left, top, right, bottom in EMU; vertical anchor; false = no word wrap. */
   margins?: [number, number, number, number];
   vAlign?: 'top' | 'middle' | 'bottom';
@@ -71,6 +77,8 @@ export interface PptTransition {
   effect: number;
   /** 0 slow, 1 medium, 2 fast. */
   speed: number;
+  /** effectDirection (what it means depends on the effect: 0 left, 1 up, 2 right, 3 down for wipes and pushes). */
+  direction?: number;
   /** Advance on a mouse click. */
   onClick: boolean;
   /** Automatic advance after this many milliseconds (0 = none). */
@@ -367,7 +375,7 @@ function readContainer(c: Ctx, at: number, defaults: Props): Parsed | null {
       }
       else if (k.type === T.SlideShowSlideInfo && k.end - k.pos >= 12) {
         const flags = c.v.getUint16(k.pos + 10, true);
-        parsed.info = { effect: c.b[k.pos + 9], speed: k.end - k.pos >= 13 ? c.b[k.pos + 12] : 1, onClick: (flags & 0x1) !== 0, afterMs: Math.max(0, c.v.getInt32(k.pos, true)), hidden: (flags & 0x4) !== 0 };
+        parsed.info = { effect: c.b[k.pos + 9], direction: c.b[k.pos + 8], speed: k.end - k.pos >= 13 ? c.b[k.pos + 12] : 1, onClick: (flags & 0x1) !== 0, afterMs: (flags & 0x400) !== 0 ? Math.max(0, c.v.getInt32(k.pos, true)) : 0, hidden: (flags & 0x4) !== 0 };
       }
     });
     return false;
@@ -468,8 +476,13 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   for (const i of raw.items) if (itemText(i).trim()) paras.push(...buildParas(i.raw, i.style, i.type, textEnv));
   const text = paras.map((p) => p.text).join('\n');
   const textType = raw.items[0]?.type;
-  const fill = fillOf(props, env.scheme);
-  const line = lineOf(props, env.scheme, isLineType(spType));
+  const custom = !preset && raw.placeholder === undefined ? customPathOf(raw.props, placed && placed.h > 0 ? placed.w / placed.h : undefined) : null;
+  let fill = fillOf(props, env.scheme);
+  let line = lineOf(props, env.scheme, isLineType(spType));
+  if (custom?.noFill) fill = undefined;
+  if (custom?.noLine) line = undefined;
+  const shadow = fill || line || (props.get(P.pib) ?? 0) > 0 ? shadowOf(props, env.scheme) : undefined;
+  if (shadow) base.shadow = shadow;
   const pib = props.get(P.pib) ?? 0;
   const frame: Partial<PptShape> = {};
   const m = [P.textLeft, P.textTop, P.textRight, P.textBottom].map((id, k) => props.get(id) ?? MARGIN[k]);
@@ -483,6 +496,8 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
     if (fill) out.fill = fill;
     if (line) out.line = line;
     if (preset && !isBoxType(spType) && !isLineType(spType) && raw.placeholder === undefined) out.shape = preset;
+    else if (custom) out.path = { d: custom.path, w: custom.w, h: custom.h };
+    else if (!preset && raw.placeholder === undefined && (fill || line)) { const g = guessPreset(raw.props); if (g) out.shape = g; }
     return out;
   }
   if (pib > 0 && !isLineType(spType)) {
@@ -494,7 +509,12 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   }
   // An empty placeholder carries no text but marks where the layout's text would be (kept for the master lookup, dropped later).
   if (raw.placeholder !== undefined) return { kind: 'text', ...base, text: '', ...frame };
-  if (!preset) { if (fill || line) c.warnings.add('일부 도형(자유형 등)은 가져오지 못했습니다.'); return null; }
+  if (custom && (fill || line)) return { kind: 'shape', ...base, path: { d: custom.path, w: custom.w, h: custom.h }, ...(fill ? { fill } : {}), ...(line ? { line } : {}) };
+  if (!preset) {
+    if (!fill && !line) return null;
+    c.warnings.add('일부 도형(자유형 등)은 사각형으로 바꿔 가져왔습니다.');
+    return { kind: 'shape', ...base, shape: guessPreset(raw.props) ?? 'rect', ...(fill ? { fill } : {}), ...(line ? { line } : {}) };
+  }
   if (isLineType(spType)) return line ? { kind: 'shape', ...base, shape: 'line', line } : null;
   if (!fill && !line) return null;
   return { kind: 'shape', ...base, shape: preset, ...(fill ? { fill } : {}), ...(line ? { line } : {}) };
@@ -620,8 +640,8 @@ function parse(bytes: Uint8Array): PptDocument {
       if (background) slide.background = background;
       if (parsed.info?.hidden) slide.hidden = true;
       if (parsed.info && (parsed.info.effect > 0 || parsed.info.afterMs > 0 || !parsed.info.onClick)) {
-        const { effect, speed, onClick, afterMs } = parsed.info;
-        slide.transition = { effect, speed, onClick, afterMs };
+        const { effect, direction, speed, onClick, afterMs } = parsed.info;
+        slide.transition = { effect, direction, speed, onClick, afterMs };
       }
     }
     return slide;

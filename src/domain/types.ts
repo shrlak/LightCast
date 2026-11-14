@@ -260,6 +260,14 @@ export interface ElementParagraph {
   italic?: boolean;
   color?: string;
   align?: HAlign;
+  /** This paragraph's own bullet or numbering ('none': no marker although the box has one); unset: the box's `list`. */
+  list?: ListStyle | 'none';
+  /** Indent level (steps of one indent, 0-8) of this paragraph. */
+  level?: number;
+  /** Space before / after this paragraph in canvas px, and its line height multiple (the box's when unset). */
+  spaceBefore?: number;
+  spaceAfter?: number;
+  lineHeight?: number;
 }
 
 /** A free-positioned object on a slide (slide editor), in 1440×1080 canvas pixels. */
