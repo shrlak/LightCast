@@ -69,9 +69,9 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
   `.wmf` / `.emf` files (`ui/importFiles.ts`, `ui/ppt/pasteObjects.ts`), and `putMedia` (`domain/media.ts`), which
   draws any metafile it is handed into an ordinary image before it is stored.
 - When `craft-metafile` changes (check `git log -- Cargo.toml Cargo.lock` and commits mentioning "metafile"): port the
-  change into `src/domain/metafile/` and add a test to `tests/metafile.test.ts`. Not drawn yet (DeckCraft's reader does
-  draw some of these): pen end caps and joins on cosmetic pens, region combinations other than AND/COPY, clipping to
-  anything but rectangles and paths, texture and path-gradient brushes (a path gradient is its centre colour),
-  glyph-index text, raster operations that read the destination, EMF+ relative paths and container mappings.
+  change into `src/domain/metafile/` and add a test to `tests/metafile.test.ts` or `tests/metafileReal.test.ts` (real files
+  in `tests/fixtures/real/metafile/`, see its README). Not drawn (see the header of `src/domain/metafile/index.ts`):
+  flood fills (the reader draws vectors, there is no pixel surface), EMF+ image effects and colour matrices,
+  path gradients beyond their centre colour, glyph-index text (pale boxes instead of letters).
 - DeckCraft plays the GDI records of an EMF+ "dual" file; LightCast prefers the EMF+ records and uses the GDI
   fallback only when EMF+ draws nothing, or between an EMF+ `GetDC` and the next EMF+ record.
