@@ -2,7 +2,7 @@
 // EMF+ comment records go to the EMF+ player. Records not understood are skipped.
 import { type Xf, Bytes } from './bytes';
 import type { BlitOptions } from './gdi';
-import { BS_HATCHED, BS_NULL, colorref, decode8, Gdi, MAX_POINTS, patternBrush, PS_NULL, type GdiBrush, type Rect } from './gdi';
+import { BS_HATCHED, BS_NULL, colorref, decode8, decode8dx, Gdi, MAX_POINTS, patternBrush, PS_NULL, type GdiBrush, type Rect } from './gdi';
 import { Plus } from './emfplus';
 import { decodeDib } from './png';
 import type { Played } from './wmf';
@@ -74,6 +74,7 @@ function record(g: Gdi, type: number, r: Bytes): void {
     case 32: g.scaleWindowExt(r.i32(8), r.i32(12), r.i32(16), r.i32(20)); break;
     case 17: g.setMapMode(r.u32(8)); break;
     case 18: d.bkMode = r.u32(8); break;
+    case 21: d.stretchMode = r.u32(8); break; // SETSTRETCHBLTMODE
     case 19: d.polyFill = r.u32(8); break;
     case 20: d.rop2 = r.u32(8); break;
     case 22: d.textAlign = r.u32(8); break;
@@ -253,11 +254,11 @@ function extTextOut(g: Gdi, r: Bytes, wide: boolean) {
     g.glyphText(x, y, n, gdx.length === n ? gdx : null);
     return;
   }
-  const str = wide ? r.utf16(off, n) : decode8(r.slice(off, n).u8, g.dc.font.charset);
   const step = opts & ETO_PDY ? 8 : 4;
   const dx: number[] = [];
-  if (dxOff) for (let i = 0; i < str.length && r.has(dxOff + i * step, 4); i++) dx.push(r.i32(dxOff + i * step));
-  g.text(x, y, str, dx.length === str.length && str.length === n ? dx : null, bounds, (opts & ETO_OPAQUE) !== 0);
+  if (dxOff) for (let i = 0; i < n && r.has(dxOff + i * step, 4); i++) dx.push(r.i32(dxOff + i * step));
+  const t = wide ? { str: r.utf16(off, n), dx: dx.length === n ? dx : null } : decode8dx(r.slice(off, n).u8, g.dc.font.charset, dx.length === n ? dx : null);
+  g.text(x, y, t.str, t.dx, bounds, (opts & ETO_OPAQUE) !== 0);
 }
 
 /** SMALLTEXTOUT: x, y @8, chars @16, options @20, then bounds (unless ETO_NO_RECT) and the characters. */

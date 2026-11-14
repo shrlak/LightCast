@@ -33,7 +33,7 @@ interface DC {
   vpOrg: [number, number]; vpExt: [number, number];
   world: Xf;
   pen: GdiPen; brush: GdiBrush; font: GdiFont;
-  textColor: Color; bkColor: Color; bkMode: number; textAlign: number; polyFill: number; rop2: number; arcCcw: boolean;
+  textColor: Color; bkColor: Color; bkMode: number; stretchMode: number; textAlign: number; polyFill: number; rop2: number; arcCcw: boolean;
   cur: [number, number];
   dcPen: Color; dcBrush: Color;
 }
@@ -44,7 +44,7 @@ const newDc = (): DC => ({
   pen: { style: 0, width: 1, color: BLACK, cap: 'round', join: 'round', cosmetic: true },
   brush: { style: BS_SOLID, color: WHITE, hatch: 0 },
   font: defaultFont(),
-  textColor: BLACK, bkColor: WHITE, bkMode: 2, textAlign: 0, polyFill: 1, rop2: 13, arcCcw: true, cur: [0, 0],
+  textColor: BLACK, bkColor: WHITE, bkMode: 2, stretchMode: 1, textAlign: 0, polyFill: 1, rop2: 13, arcCcw: true, cur: [0, 0],
   dcPen: BLACK, dcBrush: WHITE,
 });
 
@@ -55,6 +55,34 @@ export function decode8(u8: Uint8Array, charset: number): string {
     try { return new TextDecoder(label).decode(u8); } catch { /* label unknown here */ }
   }
   return String.fromCharCode(...u8);
+}
+
+/** Lead bytes of the double-byte code pages (Shift-JIS has single-byte katakana 0xa1..0xdf). */
+const isLead = (b: number, charset: number) => charset === 128 ? (b >= 0x81 && b <= 0x9f) || (b >= 0xe0 && b <= 0xfc) : b >= 0x81 && b <= 0xfe;
+
+/**
+ * An 8-bit string with its per-byte advance array as per-character text: in a double-byte code page
+ * (Korean, Japanese, Chinese) a character takes two bytes and the array holds one entry per byte, the
+ * trailing byte's entry usually 0, so the advances of a character's bytes are added up.
+ * `dx` comes back null when the array does not fit the bytes.
+ */
+export function decode8dx(u8: Uint8Array, charset: number, dx: number[] | null): { str: string; dx: number[] | null } {
+  if (![128, 129, 130, 134, 136].includes(charset) || !u8.some((b) => b >= 0x81)) {
+    const str = decode8(u8, charset);
+    return { str, dx: dx && dx.length === u8.length && str.length === u8.length ? dx : null };
+  }
+  let str = '';
+  const out: number[] = [];
+  const ok = !!dx && dx.length === u8.length;
+  for (let i = 0; i < u8.length;) {
+    const two = isLead(u8[i], charset) && i + 1 < u8.length;
+    const n = two ? 2 : 1;
+    const ch = decode8(u8.subarray(i, i + n), charset);
+    str += ch;
+    if (ok) { let a = 0; for (let k = 0; k < n; k++) a += dx![i + k]; out.push(a); if (ch.length > 1) for (let k = 1; k < ch.length; k++) out.push(0); }
+    i += n;
+  }
+  return { str, dx: ok && out.length === str.length ? out : null };
 }
 
 /** Appends an elliptical arc between parameters t0 and t1 (a rising parameter runs clockwise on screen) as cubic Béziers; `P` maps to device units. */
@@ -79,6 +107,9 @@ export class Gdi {
   pxPerMm: [number, number] = [96 / 25.4, 96 / 25.4];
   /** WMF has no device: its coordinates stay logical and only the sign of the window extent counts. */
   wmf = false;
+  /** Output units per CSS pixel: 1 where the output is in pixels, larger for a WMF drawn in its own logical units (set by the WMF player). */
+  get hair() { return this.out.hair; }
+  set hair(f: () => number) { this.out.hair = f; }
   private pathOpen = false;
   private pathD = '';
   private figure = false;
@@ -187,8 +218,9 @@ export class Gdi {
     const style = p.style & 0xf;
     if (style === PS_NULL) return null;
     const s = scaleOf(this.xf());
-    const width = p.cosmetic || p.width <= 0 ? 1 : Math.max(p.width * s, 0.25);
-    const u = Math.max(width, 1);
+    const hr = this.out.hair();
+    const width = p.cosmetic || p.width <= 0 ? hr : Math.max(p.width * s, 0.25 * hr);
+    const u = Math.max(width, hr);
     const dash = style === 1 ? [u * 6, u * 2] : style === 2 ? [u, u * 2] : style === 3 ? [u * 6, u * 2, u, u * 2] : style === 4 ? [u * 6, u * 2, u, u * 2, u, u * 2] : undefined;
     return { color: p.color, width, dash, cap: p.cosmetic ? 'butt' : p.cap, join: p.join };
   }

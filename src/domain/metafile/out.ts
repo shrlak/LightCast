@@ -28,7 +28,16 @@ export interface Stroke { color: Color; width: number; dash?: number[]; cap?: 'b
 export class PathData {
   d = '';
   constructor(private out: Out) {}
-  private pt(x: number, y: number) { this.out.grow(x, y); return `${num(x)} ${num(y)}`; }
+  /** Extent of this path's points (a sliver thinner than a pixel is drawn without anti-aliasing). */
+  lx = Infinity; ly = Infinity; hx = -Infinity; hy = -Infinity;
+  private pt(x: number, y: number) {
+    this.out.grow(x, y);
+    if (x < this.lx) this.lx = x;
+    if (x > this.hx) this.hx = x;
+    if (y < this.ly) this.ly = y;
+    if (y > this.hy) this.hy = y;
+    return `${num(x)} ${num(y)}`;
+  }
   m(x: number, y: number) { this.d += `M${this.pt(x, y)}`; return this; }
   l(x: number, y: number) { this.d += `L${this.pt(x, y)}`; return this; }
   c(x1: number, y1: number, x2: number, y2: number, x: number, y: number) { this.d += `C${this.pt(x1, y1)} ${this.pt(x2, y2)} ${this.pt(x, y)}`; return this; }
@@ -51,6 +60,8 @@ export class Out {
   minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
   /** While true nothing is drawn (EMF+ files play their own records, not the GDI fallback). */
   muted = false;
+  /** Output units per CSS pixel (see Gdi.hair). */
+  hair: () => number = () => 1;
 
   get full() { return this.items >= MAX_ITEMS || this.chars >= MAX_CHARS; }
   grow(x: number, y: number) {
@@ -84,7 +95,10 @@ export class Out {
   /** One filled and/or stroked path. `blend` is a CSS mix-blend-mode that stands in for a raster operation that reads the destination. */
   drawPath(p: PathData, fill: Fill, stroke: Stroke | null, evenOdd = false, blend?: string) {
     if (p.empty || (!fill && !stroke)) return;
-    this.push(`<path d="${p.d}"${this.fillAttrs(fill, evenOdd)}${this.strokeAttrs(stroke)}${blend ? ` style="mix-blend-mode:${blend}"` : ''}/>`);
+    // GDI paints no partial pixels: gradients that a producer draws as hundreds of slivers narrower than a
+    // pixel would blend with the page behind each of them and come out washed out when anti-aliased.
+    const thin = fill && !stroke && Math.min(p.hx - p.lx, p.hy - p.ly) < this.hair();
+    this.push(`<path d="${p.d}"${this.fillAttrs(fill, evenOdd)}${this.strokeAttrs(stroke)}${thin ? ' shape-rendering="crispEdges"' : ''}${blend ? ` style="mix-blend-mode:${blend}"` : ''}/>`);
   }
   /** Path data written without touching the bounds (for a huge "everything" rectangle). */
   rawPath(d: string) { const p = new PathData(this); p.d = d; return p; }
