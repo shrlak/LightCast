@@ -1,4 +1,5 @@
 import { CloudMediaList } from './CloudMediaList';
+import { CloudFontList } from './CloudFontList';
 import { CloudClearPanel } from './CloudClearPanel';
 import type { CloudSync } from './useCloudSync';
 import { formatStorageBytes, formatStoragePercent, formatQuotaBytes } from '../domain/cloudStorage';
@@ -26,6 +27,7 @@ export function CloudStoragePanel({ cloud }: { cloud: CloudSync }) {
     </> : !error && <p role="status">{loading ? '서버 용량을 확인하고 있습니다…' : '서버 저장공간을 조회합니다.'}</p>}
     {error && <p role="alert">서버 용량 조회 실패: {error}</p>}
     {cloud.status.session && <CloudMediaList key={cloud.status.session.token} token={cloud.status.session.token} />}
+    {cloud.status.session && <CloudFontList key={`f${cloud.status.session.token}`} cloud={cloud} token={cloud.status.session.token} />}
     <CloudClearPanel cloud={cloud} />
   </section>;
 }

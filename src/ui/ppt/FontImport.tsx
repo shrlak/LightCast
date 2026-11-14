@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   FONT_ACCEPT, groupFamilies, importFontFiles, importSummary, importedFonts, isFontFileName, missingFamilies, removeImportedFonts,
-  subscribeImportedFonts, type ImportedFont,
+  subscribeImportedFonts, updateImportedFont, type ImportedFont,
 } from '../../domain/importedFonts';
+import { loadFontSyncSettings, saveFontSyncSettings, type FontSyncSettings } from '../../domain/fontSync';
+import { embeddingForbidden } from '../../domain/fontFile';
 import { listEmbeddedFonts, removeEmbeddedFont } from '../../domain/embeddedFonts';
 import { weightLabel } from '../../domain/fontWeight';
 import { FONT_OPTIONS } from '../../domain/fonts';
@@ -53,6 +55,13 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
   const [fromDecks, setFromDecks] = useState<ImportedFont[]>([]);
   const [filter, setFilter] = useState<Source>('all');
   const [tick, setTick] = useState(0);
+  const [sync, setSync] = useState<FontSyncSettings>(loadFontSyncSettings);
+  const change = (patch: Partial<FontSyncSettings>) => { const next = { ...sync, ...patch }; setSync(next); saveFontSyncSettings(next); };
+  const setFontSync = (f: ImportedFont, v: string) => {
+    if (v === 'on' && embeddingForbidden(f.fsType) && !f.allowRestricted && !confirm(`“${f.family}”은(는) 저작권상 문서에 포함하거나 공유할 수 없는 글꼴입니다. 그래도 교회 서버에 올려 다른 컴퓨터와 공유할까요? (라이선스를 확인하세요)`)) return;
+    void updateImportedFont(f.id, v === 'auto' ? { sync: undefined } : v === 'on' ? { sync: true, ...(embeddingForbidden(f.fsType) ? { allowRestricted: true } : {}) } : { sync: false });
+    window.dispatchEvent(new Event('lightcast-fontsync'));
+  };
   useEffect(() => {
     let live = true;
     void listEmbeddedFonts().then((list) => live && setFromDecks(list.map((s) => ({
@@ -66,7 +75,7 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
   const remove = async (f: ImportedFont) => {
     if (f.id.startsWith('embfont:')) await removeEmbeddedFont(f.id); else await removeImportedFonts({ id: f.id });
     setTick((t) => t + 1);
-    onNotice?.(`“${f.family}” 글꼴을 지웠습니다.`);
+    onNotice?.(`“${f.family}” 글꼴을 지웠습니다.${f.id.startsWith('impfont:') && f.sync !== false ? ' 동기화 중이면 서버와 다른 기기에서도 지워집니다.' : ''}`);
   };
   const mb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
   return (
@@ -76,6 +85,11 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
         <select value={filter} aria-label="글꼴 출처" onChange={(e) => setFilter(e.target.value as Source)}>
           <option value="all">모든 출처</option><option value="user">내가 가져온 글꼴 파일</option><option value="pptx">PPTX 파일에서 온 글꼴</option><option value="lcast">LightCast 파일에서 온 글꼴</option>
         </select>
+      </div>
+      <div className="font-sync-settings" style={{ borderLeft: '3px solid #2e7d32', background: '#f1f8e9', padding: '4px 8px', marginBottom: 6, fontSize: 12 }}>
+        <label style={{ display: 'block' }}><input type="checkbox" checked={sync.enabled} onChange={(e) => change({ enabled: e.target.checked })} /> 교회 서버와 글꼴 동기화 (로그인했을 때)</label>
+        <label style={{ display: 'block', opacity: sync.enabled ? 1 : 0.5 }}><input type="checkbox" disabled={!sync.enabled} checked={sync.includeDeckFonts} onChange={(e) => change({ includeDeckFonts: e.target.checked })} /> PPTX · LightCast 파일에서 온 글꼴도 동기화 (끄면 동기화되는 프레젠테이션이 쓰는 글꼴만)</label>
+        <span className="muted">내가 직접 가져온 글꼴은 기본으로 동기화됩니다. 저작권상 공유할 수 없는 글꼴은 확인 없이는 올리지 않습니다.</span>
       </div>
       {!groups.length && <p className="muted small">가져온 글꼴이 없습니다. 글꼴 파일(.ttf .otf .ttc .woff .woff2)을 여기에 끌어다 놓아도 됩니다.</p>}
       {groups.map((g) => (
@@ -87,6 +101,8 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
           {g.fonts.map((f) => (
             <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}>
               <span>{weightLabel(f.weight)}{f.weightRange ? ` (${f.weightRange[0]}–${f.weightRange[1]})` : ''}{f.italic ? ' · 기울임' : ''} · <span className="muted">{f.source === 'user' ? '파일' : f.source.startsWith('lcast:') ? `LightCast: ${f.source.slice(6)}` : `PPTX: ${f.source}`}</span></span>
+              {f.id.startsWith('impfont:') && <select aria-label={`${f.family} 동기화`} value={f.sync === true ? 'on' : f.sync === false ? 'off' : 'auto'} onChange={(e) => setFontSync(f, e.target.value)} style={{ fontSize: 11 }}>
+                <option value="auto">동기화: 자동</option><option value="on">동기화: 켬</option><option value="off">동기화: 끔</option></select>}
               <button type="button" className="btn small" aria-label={`${f.family} 지우기`} onClick={() => void remove(f)}>지우기</button>
             </div>
           ))}

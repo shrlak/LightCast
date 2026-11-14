@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { cloudApi } from '../domain/cloud';
 import { rankServerMedia, type ServerMediaFile } from '../domain/cloudMedia';
+import { isCloudFontId } from '../domain/fontSync';
 import { formatStorageBytes } from '../domain/cloudStorage';
 
 function mediaType(type: string) {
@@ -28,7 +29,7 @@ export function CloudMediaList({ token }: { token: string }) {
       setLoading(true);
       try {
         const [items, remote] = await Promise.all([cloudApi.listMedia(token), cloudApi.getLibrary(token)]);
-        const ranked = rankServerMedia(items, remote?.data);
+        const ranked = rankServerMedia(items.filter((i) => !isCloudFontId(i.id)), remote?.data); // fonts have their own list
         const media = (remote?.data as { media?: { id?: unknown }[] } | undefined)?.media;
         if (active) { setFiles(ranked); setListed(new Set(Array.isArray(media) ? media.flatMap((m) => (typeof m?.id === 'string' ? [m.id] : [])) : [])); setError(''); }
       } catch (e) {
