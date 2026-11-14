@@ -14,7 +14,7 @@
 import { isCfb, readCfb } from './cfb';
 import { inflateZlib } from './inflate';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
-import { fillOf, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
+import { customPathOf, fillOf, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
 import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
 export { PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES };
@@ -51,6 +51,8 @@ export interface PptShape {
   shape?: string;
   fill?: FillSpec;
   line?: LineSpec;
+  /** Freeform / custom geometry: SVG path data in a `w`×`h` space that is stretched to the shape's box. */
+  path?: { d: string; w: number; h: number };
   /** Text frame: margins left, top, right, bottom in EMU; vertical anchor; false = no word wrap. */
   margins?: [number, number, number, number];
   vAlign?: 'top' | 'middle' | 'bottom';
@@ -468,8 +470,11 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   for (const i of raw.items) if (itemText(i).trim()) paras.push(...buildParas(i.raw, i.style, i.type, textEnv));
   const text = paras.map((p) => p.text).join('\n');
   const textType = raw.items[0]?.type;
-  const fill = fillOf(props, env.scheme);
-  const line = lineOf(props, env.scheme, isLineType(spType));
+  const custom = !preset && raw.placeholder === undefined ? customPathOf(raw.props) : null;
+  let fill = fillOf(props, env.scheme);
+  let line = lineOf(props, env.scheme, isLineType(spType));
+  if (custom?.noFill) fill = undefined;
+  if (custom?.noLine) line = undefined;
   const pib = props.get(P.pib) ?? 0;
   const frame: Partial<PptShape> = {};
   const m = [P.textLeft, P.textTop, P.textRight, P.textBottom].map((id, k) => props.get(id) ?? MARGIN[k]);
@@ -483,6 +488,7 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
     if (fill) out.fill = fill;
     if (line) out.line = line;
     if (preset && !isBoxType(spType) && !isLineType(spType) && raw.placeholder === undefined) out.shape = preset;
+    else if (custom) out.path = { d: custom.path, w: custom.w, h: custom.h };
     return out;
   }
   if (pib > 0 && !isLineType(spType)) {
@@ -494,7 +500,12 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   }
   // An empty placeholder carries no text but marks where the layout's text would be (kept for the master lookup, dropped later).
   if (raw.placeholder !== undefined) return { kind: 'text', ...base, text: '', ...frame };
-  if (!preset) { if (fill || line) c.warnings.add('일부 도형(자유형 등)은 가져오지 못했습니다.'); return null; }
+  if (custom && (fill || line)) return { kind: 'shape', ...base, path: { d: custom.path, w: custom.w, h: custom.h }, ...(fill ? { fill } : {}), ...(line ? { line } : {}) };
+  if (!preset) {
+    if (!fill && !line) return null;
+    c.warnings.add('일부 도형(자유형 등)은 사각형으로 바꿔 가져왔습니다.');
+    return { kind: 'shape', ...base, shape: 'rect', ...(fill ? { fill } : {}), ...(line ? { line } : {}) };
+  }
   if (isLineType(spType)) return line ? { kind: 'shape', ...base, shape: 'line', line } : null;
   if (!fill && !line) return null;
   return { kind: 'shape', ...base, shape: preset, ...(fill ? { fill } : {}), ...(line ? { line } : {}) };

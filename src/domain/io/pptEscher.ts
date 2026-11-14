@@ -7,7 +7,7 @@ import type { DashStyle } from '../types';
 export type Props = Map<number, number>;
 
 export const P = {
-  rotation: 0x0004, cropTop: 0x0100, cropBottom: 0x0101, cropLeft: 0x0102, cropRight: 0x0103, pib: 0x0104,
+  rotation: 0x0004, geoLeft: 0x0140, geoTop: 0x0141, geoRight: 0x0142, geoBottom: 0x0143, pVertices: 0x0145, pSegmentInfo: 0x0146, shadowColor: 0x0201, shadowOpacity: 0x0204, shadowOffX: 0x0205, shadowOffY: 0x0206, shadowFlags: 0x023f, cropTop: 0x0100, cropBottom: 0x0101, cropLeft: 0x0102, cropRight: 0x0103, pib: 0x0104,
   textLeft: 0x0081, textTop: 0x0082, textRight: 0x0083, textBottom: 0x0084, wrapText: 0x0085, anchorText: 0x0087, textFlags: 0x00bf,
   fillType: 0x0180, fillColor: 0x0181, fillOpacity: 0x0182, fillBack: 0x0183, fillBlip: 0x0186, fillAngle: 0x018d, fillFlags: 0x01bf,
   lineColor: 0x01c0, lineWidth: 0x01cb, lineDash: 0x01ce, lineStartArrow: 0x01d0, lineEndArrow: 0x01d1, lineFlags: 0x01ff,
@@ -16,11 +16,36 @@ export const P = {
 /** SpAtom flags. */
 export const SP = { group: 0x1, child: 0x2, patriarch: 0x4, deleted: 0x8, flipH: 0x40, flipV: 0x80, background: 0x400 };
 
-/** Add the properties of an OPT / secondary / tertiary OPT record (earlier values are overwritten). */
+/** The complex (variable length) data of a property table, by property id; kept beside the Props map it was read with. */
+const COMPLEX = new WeakMap<Props, Map<number, Uint8Array>>();
+const ARRAYS = new Set([0x145, 0x146, 0x151, 0x152, 0x155, 0x156, 0x157, 0x197, 0x383]);
+const MAX_COMPLEX = 4 * 1024 * 1024;
+export const complexOf = (p: Props, id: number): Uint8Array | undefined => COMPLEX.get(p)?.get(id);
+
+/** Add the properties of an OPT / secondary / tertiary OPT record (earlier values are overwritten). Complex data follows the table, in property order. */
 export function readOpt(c: Ctx, r: Rec, into: Props) {
-  for (let i = 0; i < r.inst && r.pos + (i + 1) * 6 <= r.end; i++) {
-    const id = c.v.getUint16(r.pos + i * 6, true) & 0x3fff;
-    into.set(id, c.v.getInt32(r.pos + i * 6 + 2, true));
+  const n = Math.min(r.inst, Math.floor((r.end - r.pos) / 6));
+  let data = r.pos + n * 6;
+  let store = COMPLEX.get(into);
+  for (let i = 0; i < n; i++) {
+    const raw = c.v.getUint16(r.pos + i * 6, true);
+    const id = raw & 0x3fff;
+    const val = c.v.getInt32(r.pos + i * 6 + 2, true);
+    into.set(id, val);
+    if (raw & 0x8000) {
+      // Complex: the value is the byte length of its data.
+      let len = Math.max(0, val);
+      // An IMsoArray starts with a 6-byte header (count, allocated, element size); LibreOffice's length leaves the header out.
+      if (ARRAYS.has(id) && len >= 0 && data + 6 <= r.end) {
+        const cb = c.v.getUint16(data + 4, true), elem = cb === 0xfff0 ? 4 : cb;
+        if (elem > 0 && c.v.getUint16(data, true) * elem === len) len += 6;
+      }
+      if (data + len <= r.end && len <= MAX_COMPLEX) {
+        if (!store) COMPLEX.set(into, (store = new Map()));
+        store.set(id, c.b.subarray(data, data + len));
+      }
+      data += len;
+    } else store?.delete(id);
   }
 }
 
@@ -100,6 +125,146 @@ export function lineOf(p: Props, scheme: Scheme | undefined, always: boolean): L
   if ((p.get(P.lineStartArrow) ?? 0) > 0) out.arrowStart = true;
   if ((p.get(P.lineEndArrow) ?? 0) > 0) out.arrowEnd = true;
   return out;
+}
+
+export interface CustomPath {
+  /** SVG path data in a `w`×`h` space (the geometry rectangle, moved to the origin). */
+  path: string;
+  w: number;
+  h: number;
+  /** The path asks for no fill / no outline (msopathEscapeNoFill / NoLine). */
+  noFill?: boolean;
+  noLine?: boolean;
+}
+
+const MAX_PATH_POINTS = 20000;
+
+/**
+ * Custom geometry of a freeform (msosptNotPrimitive): pVertices + pSegmentInfo (MS-ODRAW 2.3.6) as an SVG path.
+ * Vertices that are guide formulas and the arc escapes are not read: null.
+ */
+export function customPathOf(p: Props): CustomPath | null {
+  const vb = complexOf(p, P.pVertices), sb = complexOf(p, P.pSegmentInfo);
+  if (!vb || vb.length < 6) return null;
+  const vv = new DataView(vb.buffer, vb.byteOffset, vb.byteLength);
+  const n = vv.getUint16(0, true), size = vv.getUint16(4, true);
+  const elem = size === 0xfff0 ? 4 : size;
+  if (elem !== 4 && elem !== 8) return null;
+  const count = Math.min(n, Math.floor((vb.length - 6) / elem), MAX_PATH_POINTS);
+  const pts: [number, number][] = [];
+  for (let i = 0; i < count; i++) {
+    const o = 6 + i * elem;
+    pts.push(elem === 8 ? [vv.getInt32(o, true), vv.getInt32(o + 4, true)] : [vv.getInt16(o, true), vv.getInt16(o + 2, true)]);
+  }
+  let segs: number[] = [];
+  if (sb && sb.length >= 6) {
+    const sv = new DataView(sb.buffer, sb.byteOffset, sb.byteLength);
+    const m = Math.min(sv.getUint16(0, true), Math.floor((sb.length - 6) / 2), MAX_PATH_POINTS);
+    for (let i = 0; i < m; i++) segs.push(sv.getUint16(6 + i * 2, true));
+  } else if (pts.length) segs = [0x4000, Math.max(0, pts.length - 1)];
+  let left = p.get(P.geoLeft) ?? 0, top = p.get(P.geoTop) ?? 0;
+  let right = p.get(P.geoRight) ?? 0, bottom = p.get(P.geoBottom) ?? 0;
+  const hasGeo = right > left && bottom > top;
+  if (!hasGeo) { left = 0; top = 0; right = 21600; bottom = 21600; }
+  const f = (v: number) => String(Math.round(v * 100) / 100);
+  // Coordinates with the formula flag (the high bit) are results of the shape's guides.
+  const guides = guideValues(p, left, top, right, bottom);
+  const coord = (v: number) => (v < 0 ? guides(v & (elem === 8 ? 0xffff : 0x7fff)) : v);
+  const formulaUsed = pts.some(([x, y]) => x < 0 || y < 0);
+  const rp = pts.map(([x, y]): [number, number] => [coord(x), coord(y)]);
+  if (!hasGeo && rp.length) {
+    // No geometry rectangle (LibreOffice, freeforms): the extent of the points is the space.
+    left = Math.min(...rp.map((q) => q[0])); top = Math.min(...rp.map((q) => q[1]));
+    right = Math.max(...rp.map((q) => q[0])); bottom = Math.max(...rp.map((q) => q[1]));
+    if (right <= left) right = left + 1;
+    if (bottom <= top) bottom = top + 1;
+    // Guide formulas without a geometry rectangle (LibreOffice's presets) do not evaluate to a faithful outline: not drawn.
+    if (formulaUsed) return null;
+  }
+  const gw = right - left, gh = bottom - top;
+  const at = (i: number) => `${f(rp[i][0] - left)} ${f(rp[i][1] - top)}`;
+  let d = '', i = 0;
+  const out: CustomPath = { path: '', w: gw, h: gh };
+  for (const s of segs) {
+    const type = (s >> 13) & 7;
+    const k = s & 0x1fff;
+    if (type === 2) { if (i >= pts.length) return null; d += `M${at(i++)}`; }
+    else if (type === 0) { const m = k || pts.length - i; if (i + m > pts.length) return null; for (let j = 0; j < m; j++) d += `L${at(i++)}`; }
+    else if (type === 1) { if (i + 3 * k > pts.length) return null; for (let j = 0; j < k; j++, i += 3) d += `C${at(i)} ${at(i + 1)} ${at(i + 2)}`; }
+    else if (type === 3) d += 'Z';
+    else if (type === 4) break;
+    else if (type === 5) {
+      const code = (s >> 8) & 0x1f, m = (s & 0xff) || pts.length - i;
+      if (code === 10) out.noFill = true;
+      else if (code === 11) out.noLine = true;
+      else if (code === 12 || code === 16 || code === 18) { if (i + m > pts.length) return null; for (let j = 0; j < m; j++) d += `L${at(i++)}`; }
+      else return null; // arcs, auto curves and the like
+    } else return null;
+  }
+  if (!d) return null;
+  out.path = d;
+  return out;
+}
+
+/** The guide formulas (pGuides) of a shape: index → value, with the adjust values (adjust1-8) and the geometry rectangle as inputs. */
+function guideValues(p: Props, left: number, top: number, right: number, bottom: number): (i: number) => number {
+  const gb = complexOf(p, 0x156);
+  const list: { op: number; a: number; b: number; c: number; fa: boolean; fb: boolean; fc: boolean }[] = [];
+  if (gb && gb.length >= 6) {
+    const gv = new DataView(gb.buffer, gb.byteOffset, gb.byteLength);
+    const m = Math.min(gv.getUint16(0, true), Math.floor((gb.length - 6) / 8), 512);
+    for (let i = 0; i < m; i++) {
+      const o = 6 + i * 8, w = gv.getUint16(o, true);
+      list.push({ op: w & 0x1fff, fa: (w & 0x2000) === 0, fb: (w & 0x4000) === 0, fc: (w & 0x8000) === 0, a: gv.getInt16(o + 2, true), b: gv.getInt16(o + 4, true), c: gv.getInt16(o + 6, true) });
+    }
+  }
+  const memo = new Map<number, number>();
+  const active = new Set<number>();
+  const param = (v: number, constant: boolean): number => {
+    if (constant) return v;
+    if (v & 0x400) return value(v & 0xff);
+    if (v >= 0x147 && v <= 0x14e) return p.get(v) ?? 0;
+    if (v === 0x140) return left;
+    if (v === 0x141) return top;
+    if (v === 0x142) return right;
+    if (v === 0x143) return bottom;
+    return 0;
+  };
+  const rad = (fixed16: number) => ((fixed16 / 65536) * Math.PI) / 180;
+  const value = (i: number): number => {
+    if (memo.has(i)) return memo.get(i)!;
+    const g = list[i];
+    if (!g || active.has(i)) return 0;
+    active.add(i);
+    const a = param(g.a, g.fa), b = param(g.b, g.fb), c = param(g.c, g.fc);
+    let r = 0;
+    switch (g.op) {
+      case 0: r = a + b - c; break;
+      case 1: r = c ? (a * b) / c : 0; break;
+      case 2: r = (a + b) / 2; break;
+      case 3: r = Math.abs(a); break;
+      case 4: r = Math.min(a, b); break;
+      case 5: r = Math.max(a, b); break;
+      case 6: r = a > 0 ? b : c; break;
+      case 7: r = Math.sqrt(a * a + b * b + c * c); break;
+      case 8: r = (Math.atan2(b, a) * 180 / Math.PI) * 65536; break;
+      case 9: r = a * Math.sin(rad(b)); break;
+      case 10: r = a * Math.cos(rad(b)); break;
+      case 11: r = a * Math.cos(Math.atan2(c, b)); break;
+      case 12: r = a * Math.sin(Math.atan2(c, b)); break;
+      case 13: r = Math.sqrt(Math.max(0, a)); break;
+      case 14: r = a + b - c; break; // sum of angles (16.16 degrees): same arithmetic
+      case 15: r = b ? c * Math.sqrt(Math.max(0, 1 - (a / b) ** 2)) : 0; break;
+      case 16: r = a * Math.tan(rad(b)); break;
+      case 0x17: case 0x1e: r = a; break; // val
+      default: r = 0;
+    }
+    active.delete(i);
+    if (!Number.isFinite(r)) r = 0;
+    memo.set(i, r);
+    return r;
+  };
+  return value;
 }
 
 /** Rotation in degrees clockwise (0-360). */

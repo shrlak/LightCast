@@ -160,7 +160,7 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       const mediaId = s.picture ? mediaOf(s.picture) : null;
       if (mediaId) out.push({ id: newId('e'), kind: 'image', ...rounded, mediaId, fit: 'fill', ...(s.crop ? { crop: s.crop } : {}), ...lineFields, ...common });
     } else if (s.kind === 'shape') {
-      const el: SlideElement = { id: newId('e'), kind: 'shape', shape: s.shape ?? 'rect', ...rounded, ...common };
+      const el: SlideElement = { id: newId('e'), kind: 'shape', ...(s.path ? { path: s.path.d, pathW: s.path.w, pathH: s.path.h } : { shape: s.shape ?? 'rect' }), ...rounded, ...common };
       if (isLine) Object.assign(el, { stroke: s.line?.color ?? '#000000', strokeWidth: Math.max(1, Math.round((s.line?.width ?? 9525) * sc.emu)) }, lineFields);
       else Object.assign(el, { fill: 'transparent' }, fillFields(), lineFields);
       out.push(el);
@@ -168,7 +168,7 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       const title = isTitle(s);
       const tf = textFields(s, sc);
       const frame = s.vAlign ?? (title ? 'middle' : 'top');
-      if (s.shape) out.push({ id: newId('e'), kind: 'shape', shape: s.shape, ...rounded, fill: 'transparent', ...fillFields(), ...lineFields, ...tf, vAlign: s.vAlign ?? 'middle', ...common });
+      if (s.shape || s.path) out.push({ id: newId('e'), kind: 'shape', ...(s.path ? { path: s.path.d, pathW: s.path.w, pathH: s.path.h } : { shape: s.shape }), ...rounded, fill: 'transparent', ...fillFields(), ...lineFields, ...tf, vAlign: s.vAlign ?? 'middle', ...common });
       else out.push({ id: newId('e'), kind: 'text', ...rounded, ...fillFields(), ...lineFields, ...tf, vAlign: frame, ...common });
     } else if (s.fill || s.line) {
       // A box with no text but a fill or outline.
