@@ -3,7 +3,7 @@
 // control back to the GDI records for a stretch.
 import { apply, compose, scaleOf, type Xf, Bytes } from './bytes';
 import { arcSegs } from './gdi';
-import { hex, num, Out, xmlText, BIG, type Color, type Fill, type PathData, type Stroke } from './out';
+import { hex, num, Out, xmlText, type Clip, type Color, type Fill, type PathData, type Stroke } from './out';
 import { encodedImageUrl, pngDataUrl } from './png';
 import { textWidth } from './metrics';
 
@@ -46,7 +46,9 @@ export class Plus {
   private objectBytes = 0;
   /** Container mapping (BeginContainer's source to destination rectangles), applied after the world transform. */
   private base: Xf = [1, 0, 0, 1, 0, 0];
-  private stack: { id: number; world: Xf; base: Xf; unit: number; scale: number; clip: number }[] = [];
+  private stack: { id: number; world: Xf; base: Xf; unit: number; scale: number; clip: Clip; floor: Clip }[] = [];
+  /** The clip a container starts from: ResetClip and a replacing clip fall back to it, since a container's clip adds to its parent's. */
+  private floor: Clip = null;
   private partial: { id: number; kind: number; total: number; data: number[] } | null = null;
 
   constructor(private out: Out, private frame: [number, number, number, number] | null) {}
@@ -78,7 +80,6 @@ export class Plus {
     }
   }
   private xf(): Xf { const k = this.unitFactor(this.unit) * this.scale; return compose([k, 0, 0, k, 0, 0], compose(this.base, this.world)); }
-  private clipBase() { return this.stack.length ? this.stack[this.stack.length - 1].clip : 0; }
 
   private record(type: number, flags: number, r: Bytes): void {
     if (type === 0x4001) {
@@ -128,7 +129,8 @@ export class Plus {
       case 0x4036: this.drawDriverString(flags, r); break;
       case 0x4025: case 0x4028: case 0x4027: // Save, BeginContainerNoParams, BeginContainer
         if (this.stack.length < MAX_STACK) {
-          this.stack.push({ id: r.u32(type === 0x4027 ? 32 : 0), world: this.world, base: this.base, unit: this.unit, scale: this.scale, clip: this.out.clipDepth });
+          this.stack.push({ id: r.u32(type === 0x4027 ? 32 : 0), world: this.world, base: this.base, unit: this.unit, scale: this.scale, clip: this.out.clip, floor: this.floor });
+          if (type !== 0x4025) this.floor = this.out.clip;
           if (type === 0x4027) {
             // The source rectangle (in the unit named by the flags) is mapped onto the destination rectangle (in the current units); the container starts with an identity world transform.
             const [dx, dy, dw, dh, sx, sy, sw, sh] = [r.f32(0), r.f32(4), r.f32(8), r.f32(12), r.f32(16), r.f32(20), r.f32(24), r.f32(28)];
@@ -147,7 +149,7 @@ export class Plus {
         const s = this.stack[i];
         this.stack.length = i;
         this.world = s.world; this.base = s.base; this.unit = s.unit; this.scale = s.scale;
-        this.out.popClipsTo(s.clip);
+        this.out.clip = s.clip; this.floor = s.floor;
         break;
       }
       case 0x402a: this.world = xform(r, 0); break;
@@ -157,7 +159,7 @@ export class Plus {
       case 0x402e: this.mult([r.f32(0), 0, 0, r.f32(4), 0, 0], flags); break;
       case 0x402f: { const a = (r.f32(0) * Math.PI) / 180; this.mult([Math.cos(a), Math.sin(a), -Math.sin(a), Math.cos(a), 0, 0], flags); break; }
       case 0x4030: this.unit = flags & 0xff; this.scale = r.f32(0) > 0 ? r.f32(0) : 1; break;
-      case 0x4031: this.out.popClipsTo(this.clipBase()); break;
+      case 0x4031: this.out.clip = this.floor; break;
       case 0x4032: this.clip(rectOps(rects(r, 0, 1, compressed)[0]), (flags >> 8) & 0xf); break;
       case 0x4033: { const p = this.path(id); if (p) this.clip(p, (flags >> 8) & 0xf); break; }
       case 0x4034: { const o = this.objects[id]; if (o?.k === 'region') this.clip(o.v.flatMap(rectOps), (flags >> 8) & 0xf, o.v.length === 0); break; } // SetClipRegion
@@ -172,20 +174,16 @@ export class Plus {
 
   private mult(m: Xf, flags: number) { this.world = flags & 0x2000 ? compose(m, this.world) : compose(this.world, m); }
 
-  /** CombineMode: 0 replace, 1 intersect, 2 union, 3 xor, 4 exclude (clip minus shape), 5 complement (shape minus clip; approximated by replace under an open clip). */
+  /** CombineMode: 0 replace, 1 intersect, 2 union, 3 xor, 4 exclude (clip minus shape), 5 complement (shape minus clip). All exact, however many clips are nested. */
   private clip(ops: Op[], mode: number, empty = false) {
     if (mode > 5) return;
-    const base = this.clipBase(), open = this.out.clipDepth > base;
-    if (empty) { // an empty region: replace / intersect leave nothing visible, exclude and union change nothing
-      if (mode === 0 || mode === 1 || mode === 5) { if (mode !== 1) this.out.popClipsTo(base); this.out.pushClip(this.out.rawPath('M0 0')); }
-      return;
-    }
-    const pd = this.toPath(ops, this.xf());
-    if (mode === 0 || (mode === 5 && open)) { this.out.popClipsTo(base); this.out.pushClip(pd, true); }
-    else if (mode === 1 || mode === 5) this.out.pushClip(pd, true);
-    else if (mode === 4) this.out.pushClip(this.out.rawPath(BIG + pd.d), true);
-    else if (open) this.out.combineTopClip(pd, mode === 3);
-    else if (mode === 3) this.out.pushClip(this.out.rawPath(BIG + pd.d), true);
+    const pd = empty ? this.out.rawPath('M0 0') : this.toPath(ops, this.xf());
+    const m = (['copy', 'and', 'or', 'xor', 'diff', 'complement'] as const)[mode];
+    if (m === 'copy') { // replaces the clip, inside the container's own (parent) clip
+      const keep = this.floor;
+      this.out.clip = keep;
+      this.out.combineClip(pd, keep ? 'and' : 'copy', true);
+    } else this.out.combineClip(pd, m, true);
   }
 
   private clear(c: number) {

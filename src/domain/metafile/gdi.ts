@@ -2,7 +2,7 @@
 // font, window-viewport and world transforms, paths and clip groups. Drawing goes to an `Out`
 // (SVG) in device units; the picture's frame is mapped to the SVG view box afterwards.
 import { apply, compose, scaleOf, type Xf, type Bytes } from './bytes';
-import { hex, num, Out, PathData, xmlText, BIG, type Color, type Fill, type Stroke } from './out';
+import { hex, num, Out, PathData, xmlText, BIG, type Clip, type Color, type Fill, type Stroke } from './out';
 import { textWidth } from './metrics';
 import { cropRgba, pngDataUrl, type Dib } from './png';
 
@@ -102,7 +102,7 @@ export class Gdi {
   out = new Out();
   objects: (GdiObject | undefined)[] = [];
   dc = newDc();
-  private stack: { dc: DC; clip: number }[] = [];
+  private stack: { dc: DC; clip: Clip }[] = [];
   /** Device pixels per millimetre (EMF header); a fixed map mode scales by it. */
   pxPerMm: [number, number] = [96 / 25.4, 96 / 25.4];
   /** WMF has no device: its coordinates stay logical and only the sign of the window extent counts. */
@@ -193,7 +193,7 @@ export class Gdi {
   }
   setDcPen(c: Color) { this.dc.dcPen = c; if (this.dc.pen.cosmetic && this.dc.pen.width === 0) this.dc.pen = { ...this.dc.pen, color: c }; }
   setDcBrush(c: Color) { this.dc.dcBrush = c; }
-  save() { if (this.stack.length < MAX_STACK) this.stack.push({ dc: { ...this.dc }, clip: this.out.clipDepth }); }
+  save() { if (this.stack.length < MAX_STACK) this.stack.push({ dc: { ...this.dc }, clip: this.out.clip }); }
   restore(n: number) {
     const idx = n < 0 ? this.stack.length + n : n - 1;
     if (idx < 0 || idx >= this.stack.length) return;
@@ -201,9 +201,8 @@ export class Gdi {
     this.stack.length = idx;
     const cur = this.dc.cur;
     this.dc = { ...saved.dc, cur };
-    this.out.popClipsTo(saved.clip);
+    this.out.clip = saved.clip;
   }
-  private clipBase() { return this.stack.length ? this.stack[this.stack.length - 1].clip : 0; }
 
   // ---- paint selection ----
 
@@ -359,14 +358,12 @@ export class Gdi {
     this.out.drawPath(pd, r.fill, r.stroke, this.dc.polyFill === 1, r.blend);
     this.lastPath = '';
   }
-  /** Combines `pd` into the clip: RGN_AND 1, OR 2, XOR 3, DIFF 4 (the clip minus the shape), COPY 5. */
-  private applyClip(pd: PathData, mode: number, evenOdd: boolean) {
-    const base = this.clipBase(), open = this.out.clipDepth > base;
-    if (mode === 5) { this.out.popClipsTo(base); this.out.pushClip(pd, evenOdd); }
-    else if (mode === 1) this.out.pushClip(pd, evenOdd);
-    else if (mode === 4) this.out.pushClip(this.out.rawPath(BIG + pd.d), true);
-    else if (mode === 2) { if (open) this.out.combineTopClip(pd, false); }
-    else if (mode === 3) { if (open) this.out.combineTopClip(pd, true); else this.out.pushClip(this.out.rawPath(BIG + pd.d), true); }
+  /** Combines `pd` into the clip: RGN_AND 1, OR 2, XOR 3, DIFF 4 (the clip minus the shape), COPY 5. All exact, nested or not. */
+  private applyClip(pd: PathData, mode: number, evenOdd: boolean, disjoint = false) {
+    // Rectangles that do not overlap: "everything but them" is one even-odd path, so no mask is needed.
+    if (mode === 4 && disjoint) { this.out.combineClip(this.out.rawPath(BIG + pd.d), 'and', true); return; }
+    const m = (['', 'and', 'or', 'xor', 'diff', 'copy'] as const)[mode];
+    if (m) this.out.combineClip(pd, m, evenOdd);
   }
   /** SELECTCLIPPATH with the RGN_ mode. */
   clipPath(mode: number) {
@@ -385,9 +382,9 @@ export class Gdi {
   }
   /** Rectangles in logical units as a region combined into the clip by `mode` (1 AND, 2 OR, 3 XOR, 4 DIFF, 5 COPY; an empty list with COPY removes the clip). */
   clipRects(rects: Rect[], mode: number) {
-    if (!rects.length) { if (mode === 5) this.out.popClipsTo(this.clipBase()); return; }
+    if (!rects.length) { if (mode === 5) this.out.clip = null; return; }
     if (mode < 1 || mode > 5) return;
-    this.applyClip(this.rectsPath(rects), mode, false);
+    this.applyClip(this.rectsPath(rects), mode, false, true);
   }
 
   // ---- regions ----
@@ -402,16 +399,17 @@ export class Gdi {
     if (!rects.length || this.out.muted || this.pathOpen) return;
     const fill = this.fill(brush ?? this.dc.brush);
     const w2 = Math.max(Math.abs(w), 1), h2 = Math.max(Math.abs(h), 1);
-    this.out.pushClip(this.out.rawPath(BIG + this.rectsPath(rects).d), true);
+    const prev = this.out.clip;
+    this.out.combineClip(this.out.rawPath(BIG + this.rectsPath(rects).d), 'and', true);
     this.out.drawPath(this.rectsPath(rects.map(([l, t, r, b]): Rect => [Math.min(l, r) - w2, Math.min(t, b) - h2, Math.max(l, r) + w2, Math.max(t, b) + h2])), fill, null, false);
-    this.out.popClip();
+    this.out.clip = prev;
   }
   /** InvertRgn: the destination inverted (a white fill in `difference` blend mode). */
   invertRegion(rects: Rect[]) {
     if (!rects.length || this.out.muted || this.pathOpen) return;
     this.out.drawPath(this.rectsPath(rects), { color: WHITE }, null, false, 'difference');
   }
-  resetClip() { this.out.popClipsTo(this.clipBase()); }
+  resetClip() { this.out.clip = null; }
 
   // ---- text ----
 

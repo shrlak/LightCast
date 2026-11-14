@@ -347,7 +347,7 @@ describe('EMF regions and clips', () => {
     expect(diff).toContain('M-1e7 -1e7');
     expect(diff).toContain('M20 20L60 20L60 60L20 60Z');
     const or = metafileToSvg(emf([emfClipRgn(5, [[0, 0, 10, 10]]), emfClipRgn(2, [[50, 50, 60, 60]]), emfBrush(1, RED), emfSelect(1), emfRect(0, 0, 100, 100)]))!.svg;
-    const clip = or.match(/<clipPath id="c\d+"><path[^>]*\/><path[^>]*\/><\/clipPath>/);
+    const clip = or.match(/<clipPath id="c\d+"><path[^>]*\/><\/clipPath>/);
     expect(clip).not.toBeNull();
     expect(clip![0]).toContain('M0 0L10 0');
     expect(clip![0]).toContain('M50 50L60 50');
