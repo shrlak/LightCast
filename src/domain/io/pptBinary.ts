@@ -7,8 +7,11 @@
 //   autoshapes, group child coordinate spaces), master / title-master inheritance (placeholder position,
 //   size, text frame and style, plus the master's own objects), pictures (JPEG, PNG, DIB, TIFF and the
 //   compressed WMF / EMF), slide transitions, hidden slides and speaker notes.
-// Not read: animations, tables as such (old tables are groups of rectangles and come through as those),
-//   freeform / custom-geometry shapes, auto-numbered bullets (PowerPoint 2002 extension tags), OLE objects.
+//   Also read: per-paragraph bullets, levels, spacing and tab stops; freeforms (pVertices / pSegmentInfo, and plain-arithmetic guide
+//   formulas); fillShadeColors stops and shadows; cell-rectangle groups are rebuilt as tables (pptTable.ts). Checked against files
+//   LibreOffice writes (tests/fixtures/real/ppt).
+// Not read: animations, auto-numbered bullets (PowerPoint 2002 extension tags), PICT pictures, arc escapes and guide formulas with
+//   conditions or trigonometry in custom shapes, OLE objects.
 // Written for hostile input: it never throws, records are bounds-checked, recursion and the number of
 // records, slides, shapes and pictures are capped, and what cannot be read is reported in `warnings`.
 import { isCfb, readCfb } from './cfb';
