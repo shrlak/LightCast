@@ -3,10 +3,12 @@
 // the slide's own), with background, transition, hidden flag and speaker notes. Pure apart from the
 // `store` callback that keeps a picture's bytes in the media library (and the metafile → SVG / PNG
 // conversion of WMF / EMF pictures).
+import type { TableCell, TableData } from '../../engine';
 import type { ElementParagraph, HAlign, ListStyle, Slide, SlideElement, TextRun, Transition } from '../types';
 import { CANVAS_H, CANVAS_W } from '../canvas';
 import { gradientCss } from '../backgroundFormat';
 import { metafileToBlob } from '../metafile/image';
+import { detectTables, type TablePlan } from './pptTable';
 import { parsePpt, type PptDocument, type PptPara, type PptPicture, type PptShape, type PptSlide } from './pptBinary';
 
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/bmp': 'bmp', 'image/tiff': 'tiff', 'image/svg+xml': 'svg' } as const;
@@ -144,12 +146,51 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
   return fields;
 }
 
+/** A table rebuilt from a group of cell rectangles. */
+function tableElement(plan: TablePlan, sc: Scale, newId: (p: string) => string): SlideElement {
+  const cols = plan.colWidths.map((w) => Math.max(1, Math.round(w * sc.k)));
+  const heights = plan.rowHeights.map((h) => Math.max(1, Math.round(h * sc.k)));
+  const grid: TableCell[][] = plan.rowHeights.map(() => plan.colWidths.map((): TableCell => ({ text: '' })));
+  const border = plan.border ? { color: plan.border.color, width: Math.max(1, Math.round(plan.border.width * sc.emu)) } : undefined;
+  for (const c of plan.cells) {
+    const sh = c.shape;
+    const cell: TableCell = { text: sh.text ?? '' };
+    const run = sh.paras?.flatMap((p) => p.runs).find((r) => r.text);
+    if (run?.bold) cell.bold = true;
+    if (run?.color) cell.color = run.color;
+    const align = sh.paras?.find((p) => p.text)?.align;
+    if (align) cell.align = align;
+    if (sh.fill?.color) cell.fill = sh.fill.color;
+    if (sh.vAlign) cell.anchor = sh.vAlign;
+    if (border) cell.borders = { t: border, r: border, b: border, l: border };
+    if (c.colSpan > 1) cell.span = c.colSpan;
+    if (c.rowSpan > 1) cell.rowSpan = c.rowSpan;
+    grid[c.row][c.col] = cell;
+    for (let r = c.row; r < c.row + c.rowSpan; r++) for (let k = c.col; k < c.col + c.colSpan; k++) {
+      if (r === c.row && k === c.col) continue;
+      grid[r][k] = { text: '', ...(k > c.col ? { hMerge: true } : {}), ...(r > c.row ? { vMerge: true } : {}) };
+    }
+  }
+  const data: TableData = { rows: grid, cols, heights, style: '', firstRow: false, firstCol: false, lastRow: false, lastCol: false, bandRow: false, bandCol: false };
+  return {
+    id: newId('e'), kind: 'table', x: Math.round(sc.ox + plan.x * sc.k), y: Math.round(sc.oy + plan.y * sc.k),
+    w: cols.reduce((a, b) => a + b, 0), h: heights.reduce((a, b) => a + b, 0), table: data,
+  };
+}
+
 /** The elements of one slide, for a canvas scale `k` and offset. */
 export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'width' | 'height'>, newId: (p: string) => string, mediaOf: (picture: number) => string | null): SlideElement[] {
   const sc = scaleOf(doc);
   const groups = new Map<number, string>();
   const out: SlideElement[] = [];
-  for (const s of shapes) {
+  const tables = detectTables(shapes);
+  const tableAt = new Map<number, TablePlan>();
+  const inTable = new Set<number>();
+  for (const plan of tables.values()) { tableAt.set(Math.min(...plan.members), plan); for (const m of plan.members) inTable.add(m); }
+  for (const [at, s] of shapes.entries()) {
+    const plan = tableAt.get(at);
+    if (plan) { out.push(tableElement(plan, sc, newId)); continue; }
+    if (inTable.has(at)) continue;
     const isLine = s.kind === 'shape' && s.shape === 'line';
     let box: { x: number; y: number; w: number; h: number };
     if (s.x !== undefined && s.y !== undefined && s.w !== undefined && s.h !== undefined && (s.w > 0 || s.h > 0) && (isLine || (s.w > 0 && s.h > 0))) box = { x: sc.ox + s.x * sc.k, y: sc.oy + s.y * sc.k, w: s.w * sc.k, h: s.h * sc.k };
