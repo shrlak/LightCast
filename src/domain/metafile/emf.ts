@@ -81,8 +81,6 @@ function record(g: Gdi, type: number, r: Bytes): void {
     case 24: d.textColor = colorref(r.u32(8)); break;
     case 25: d.bkColor = colorref(r.u32(8)); break;
     case 57: d.arcCcw = r.u32(8) !== 2; break;
-    case 122: g.setDcBrush(colorref(r.u32(8))); break;
-    case 123: g.setDcPen(colorref(r.u32(8))); break;
     case 33: g.save(); break;
     case 34: g.restore(r.i32(8)); break;
     case 35: g.modifyWorld(xform(r, 8), 4); break;
