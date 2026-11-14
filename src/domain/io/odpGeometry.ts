@@ -239,3 +239,54 @@ export function transitionAttrs(t: Transition | undefined, autoAdvance: number |
   } else a.push('presentation:transition-type="manual"');
   return a.length ? ` ${a.join(' ')}` : '';
 }
+
+// ── Gradient transparency ───────────────────────────────────────────────────────────────────────
+const lcStops = (g: LcGradient): GradientStop[] => g.gradientStops && g.gradientStops.length >= 2 ? g.gradientStops : [{ pos: 0, color: g.gradient[0] }, { pos: 100, color: g.gradient[1] }];
+const stopOpacity = (list: GradientStop[], pos: number): number => {
+  const v = (c: string) => parseInt(c.slice(1, 3), 16) / 255;
+  if (pos <= list[0].pos) return v(list[0].color);
+  for (let i = 1; i < list.length; i++) {
+    if (pos <= list[i].pos) {
+      const a = list[i - 1], b = list[i], t = b.pos === a.pos ? 1 : (pos - a.pos) / (b.pos - a.pos);
+      return v(a.color) + (v(b.color) - v(a.color)) * t;
+    }
+  }
+  return v(list[list.length - 1].color);
+};
+
+/**
+ * A gradient with the per-stop transparency of an ODF opacity gradient (`opacity` is {@link gradientToLc} of a
+ * draw:opacity whose colours are greys of the opacity). Stops are placed at the union of both gradients' stops.
+ */
+export function withOpacity(lc: LcGradient, opacity: LcGradient): LcGradient {
+  const colors = lcStops(lc), ops = lcStops(opacity).slice().sort((a, b) => a.pos - b.pos);
+  const colorAt = (pos: number): string => {
+    const list = colors.slice().sort((a, b) => a.pos - b.pos);
+    const ch = (c: string, k: number) => parseInt(c.slice(1 + 2 * k, 3 + 2 * k), 16);
+    let a = list[0], b = list[list.length - 1];
+    for (let i = 1; i < list.length; i++) if (pos <= list[i].pos) { a = list[i - 1]; b = list[i]; break; }
+    const t = pos <= a.pos || b.pos === a.pos ? 0 : pos >= b.pos ? 1 : (pos - a.pos) / (b.pos - a.pos);
+    return `#${[0, 1, 2].map((k) => Math.round(ch(a.color, k) + (ch(b.color, k) - ch(a.color, k)) * t).toString(16).padStart(2, '0')).join('')}`;
+  };
+  const positions = [...new Set([...colors.map((s) => s.pos), ...ops.map((s) => s.pos)])].sort((a, b) => a - b);
+  const stops = positions.map((pos) => {
+    const t = Math.round((1 - stopOpacity(ops, pos)) * 100) / 100;
+    return { pos, color: colors.find((s) => s.pos === pos)?.color ?? colorAt(pos), ...(t > 0 ? { transparency: t } : {}) };
+  });
+  if (!stops.some((s) => s.transparency)) return lc;
+  return { ...lc, gradient: [stops[0].color, stops[stops.length - 1].color], gradientStops: stops };
+}
+
+/** The per-stop transparency of a gradient as an ODF opacity gradient (null when no stop is transparent). */
+export function opacityGradient(el: { gradient?: [string, string]; gradientStops?: GradientStop[]; gradientAngle?: number; gradientType?: 'linear' | 'radial' }, base: OdfGradient): OdfGradient | null {
+  const stops = el.gradientStops;
+  if (!stops || !stops.some((s) => s.transparency)) return null;
+  const grey = (t: number | undefined) => `#${Math.round((1 - (t ?? 0)) * 255).toString(16).padStart(2, '0').repeat(3)}`;
+  const list = [...stops].sort((a, b) => a.pos - b.pos).map((s) => ({ pos: s.pos, color: grey(s.transparency) }));
+  const first = list[0].color, last = list[list.length - 1].color;
+  if (base.style === 'radial') {
+    const rs = list.map((s) => ({ ...s, pos: Math.round((100 - s.pos) * 10) / 10 })).reverse();
+    return { style: 'radial', start: last, end: first, angle: 0, stops: rs };
+  }
+  return { style: 'linear', start: first, end: last, angle: base.angle, stops: list };
+}
