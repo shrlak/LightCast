@@ -148,7 +148,12 @@ export interface OdpReadOptions {
   /** Keep a picture; returns the media id the slide refers to it by. */
   storeImage: (bytes: Uint8Array, mime: string, name: string) => string | Promise<string>;
 }
-export interface OdpDocument { title: string; properties: DocProperties; slides: Slide[] }
+export interface OdpDocument {
+  title: string; properties: DocProperties; slides: Slide[];
+  /** The file's own page size (cm) and the notes about it (Korean): content was scaled onto LightCast's 4:3 canvas. */
+  pageCm: { w: number; h: number };
+  warnings: string[];
+}
 
 const MIME_BY_EXT: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp' };
 const EXT_BY_MIME: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/bmp': 'bmp' };
@@ -163,6 +168,8 @@ interface Ctx {
   lib: StyleLib;
   /** xml:id / draw:id → the element made from that object (for animations), per slide. */
   ids: Map<string, string>;
+  /** Things the file has that LightCast cannot keep (Korean wording), each once. */
+  warnings: Set<string>;
 }
 
 type Line = { runs: TextRun[]; align?: HAlign; list?: ListStyle };
@@ -542,7 +549,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   const lp = layout ? childNamed(layout, 'style:page-layout-properties') : undefined;
   const pw = lengthToCm(lp?.attrs['fo:page-width']), ph = lengthToCm(lp?.attrs['fo:page-height']);
   if (pw && ph) page = { w: pw, h: ph };
-  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map() };
+  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map(), warnings: new Set() };
 
   const body = childNamed(childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] }, 'office:presentation');
   if (!body) throw new Error('OpenDocument 파일에 슬라이드가 없습니다.');
@@ -567,7 +574,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     if (own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name']) elements.push(...await masterElements(pg.attrs['draw:master-page-name']));
     ctx.ids.clear();
     await readShapes(ctx, pg, elements);
-    const slide: Slide = { id: uid('s'), group: '', text: '', elements, importSource: { format: 'odp', name: sourceName, page: slides.length + 1 } };
+    const slide: Slide = { id: uid('s'), group: '', text: '', elements, importSource: { format: 'odp', name: sourceName, page: slides.length + 1, pageCm: page } };
     const animations = readAnimations(pg, ctx.ids);
     if (animations.length) slide.animations = animations;
     const fill = fillOf(ctx, pageStyle);
@@ -578,7 +585,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     const flags = { ...own, ...pg.attrs };
     if (flags['presentation:visibility'] === 'hidden' || flags['draw:display'] === 'none' || flags['draw:display'] === 'false' || flags['presentation:display'] === 'false') slide.disabled = true;
     const filter = (function find(n: XNode): XNode | undefined { for (const c of elementsOf(n)) { if (c.name === 'anim:transitionFilter') return c; const f = find(c); if (f) return f; } return undefined; })(pg);
-    const timing = readTransition({ ...own, ...pg.attrs, ...(filter ? { 'smil:type': filter.attrs['smil:type'], 'smil:dur': filter.attrs['smil:dur'] } : {}) });
+    const timing = readTransition({ ...own, ...pg.attrs, ...(filter ? { 'smil:type': filter.attrs['smil:type'], 'smil:dur': filter.attrs['smil:dur'], 'smil:subtype': filter.attrs['smil:subtype'], 'smil:direction': filter.attrs['smil:direction'] } : {}) });
     if (timing.transition) slide.transition = timing.transition;
     if (timing.autoAdvance) slide.autoAdvance = timing.autoAdvance;
     const notes = childNamed(pg, 'presentation:notes');
@@ -602,11 +609,14 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     properties.comments = pick('dc:description');
     for (const k of Object.keys(properties) as (keyof DocProperties)[]) if (!properties[k]) delete properties[k];
   }
-  return { title: properties.title ?? '', properties, slides };
+  if (Math.abs(page.w / page.h - 4 / 3) > 0.02) ctx.warnings.add(`원본 슬라이드 크기는 ${Math.round(page.w * 100) / 100} × ${Math.round(page.h * 100) / 100}cm 입니다. LightCast는 4:3 슬라이드만 지원하므로 내용을 4:3 크기에 맞춰 늘이거나 줄였습니다.`);
+  return { title: properties.title ?? '', properties, slides, pageCm: page, warnings: [...ctx.warnings] };
 }
 
 // ── Writing ───────────────────────────────────────────────────────────────────────────────────
 export interface OdpWriteOptions {
+  /** The page size (cm) the deck came in with: the file is written at the largest 4:3 page inside it. */
+  pageCm?: { w: number; h: number };
   /** The bytes and type of a stored picture (null when it is missing; the picture is then left out). */
   loadMedia: (id: string) => Promise<{ bytes: Uint8Array; mime: string } | null> | { bytes: Uint8Array; mime: string } | null;
 }
@@ -755,7 +765,9 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     pictures.set(id, { path, bytes: m.bytes, mime: m.mime });
     return path;
   };
-  const K = 28 / CANVAS_W; // canvas px → cm
+  // The page the file is written at: 4:3 like the canvas, as large as the original page allows (28 x 21 cm when it is not known).
+  const K = opts.pageCm ? Math.max(0.001, Math.min(opts.pageCm.w / CANVAS_W, opts.pageCm.h / CANVAS_H)) : 28 / CANVAS_W; // canvas px → cm
+  const pageW = Math.round(CANVAS_W * K * 1000) / 1000, pageH = Math.round(CANVAS_H * K * 1000) / 1000;
   const geo = (b: Box) => `svg:x="${fmtCm(b.x, K)}" svg:y="${fmtCm(b.y, K)}" svg:width="${fmtCm(b.w, K)}" svg:height="${fmtCm(b.h, K)}"`;
   /** Position attributes: svg:x / y / width / height, or a draw:transform when the object is turned. */
   const place = (b: Box, rot?: number) => {
@@ -987,7 +999,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
   }
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content ${NS} office:version="1.3"><office:automatic-styles>${st}</office:automatic-styles><office:body><office:presentation>${pages.join('')}</office:presentation></office:body></office:document-content>`;
-  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}${[...opacities].map(([body, name]) => `<draw:opacity draw:name="${name}" ${body}`).join('')}${[...dashes.values()].join('')}${[...markers.values()].join('')}</office:styles><office:automatic-styles>${mst}<style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="28cm" fo:page-height="21cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"${masterStyle}>${masterBody}</style:master-page>${layoutPages.map((l) => l.xml).join('')}</office:master-styles></office:document-styles>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}${[...opacities].map(([body, name]) => `<draw:opacity draw:name="${name}" ${body}`).join('')}${[...dashes.values()].join('')}${[...markers.values()].join('')}</office:styles><office:automatic-styles>${mst}<style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="${pageW}cm" fo:page-height="${pageH}cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"${masterStyle}>${masterBody}</style:master-page>${layoutPages.map((l) => l.xml).join('')}</office:master-styles></office:document-styles>`;
   const pr = p.properties ?? {};
   const meta = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-meta ${NS} office:version="1.3"><office:meta><dc:title>${escapeXml(pr.title ?? p.title)}</dc:title>${pr.subject ? `<dc:subject>${escapeXml(pr.subject)}</dc:subject>` : ''}${pr.author ? `<meta:initial-creator>${escapeXml(pr.author)}</meta:initial-creator><dc:creator>${escapeXml(pr.author)}</dc:creator>` : ''}${pr.comments ? `<dc:description>${escapeXml(pr.comments)}</dc:description>` : ''}<meta:generator>LightCast</meta:generator></office:meta></office:document-meta>`;
   const entries = [

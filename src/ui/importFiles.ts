@@ -101,6 +101,7 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       const doc = await parseOdp(file, { storeImage: (bytes, mime, name) => storeImage(new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: mime }), name, (m) => addMedia({ ...m, backgroundHidden: true })) })
         .catch((e: Error) => { throw new Error(`${file.name}: ${e.message} 기존 자료는 유지됩니다.`); });
       if (!doc.slides.length) throw new Error(`${file.name}: 슬라이드를 읽지 못했습니다. 기존 자료는 유지됩니다.`);
+      doc.warnings.forEach((w) => onProgress?.(w));
       doc.slides.forEach((s) => slides.push({ ...s, group: base }));
     } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
       onProgress?.(`Rendering ${file.name}…`);
