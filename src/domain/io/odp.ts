@@ -613,6 +613,12 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   return { title: properties.title ?? '', properties, slides, pageCm: page, warnings: [...ctx.warnings] };
 }
 
+/** A slide's title (its first text), body (the other texts, one per line) and notes: what Review › Compare looks at. */
+export function odpSlideText(s: Slide): { title: string; text: string; notes: string } {
+  const texts = (s.elements ?? []).filter((e) => !e.name?.startsWith('마스터:') && (e.kind === 'text' || e.kind === 'shape') && e.text?.trim()).map((e) => e.text!.trim());
+  return { title: texts[0] ?? '', text: texts.slice(1).join('\n'), notes: s.notes ?? '' };
+}
+
 // ── Writing ───────────────────────────────────────────────────────────────────────────────────
 export interface OdpWriteOptions {
   /** The page size (cm) the deck came in with: the file is written at the largest 4:3 page inside it. */
