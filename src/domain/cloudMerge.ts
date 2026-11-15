@@ -2,6 +2,7 @@ import type { Library, Presentation, UsageEntry } from './types';
 import { uid } from './lyrics';
 import { mergeActivity, mergeDevices, newestModification } from './activity';
 import { clearTransitions } from './persistence';
+import { mergePrefs } from './fontPrefs';
 import { keepProtectedMaterials, protectionWinners, mergeProtectionChanges } from './materialProtection';
 
 /** The part of the library that is shared through the cloud (online songs come from GitHub instead). */
@@ -95,6 +96,8 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
   const m = <K extends 'themes' | 'playlists' | 'media' | 'timers' | 'props' | 'messageTemplates' | 'macros' | 'screens' | 'schedules' | 'looks' | 'stageLayouts' | 'fonts'>(k: K) =>
     mergeById<{ id: string }>(base?.[k] as { id: string }[] | undefined, (local[k] ?? []) as { id: string }[], (remote[k] ?? []) as { id: string }[], (l, r) => [base ? l : r]) as Library[K];
   const fonts = m('fonts') ?? [];
+  const fontTrash = mergeById(base?.fontTrash, local.fontTrash ?? [], remote.fontTrash ?? []);
+  const fontPrefs = mergePrefs(local.fontPrefs, remote.fontPrefs);
   return {
     conflicts,
     conflictPairs,
@@ -122,6 +125,8 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
       looks: m('looks'),
       stageLayouts: m('stageLayouts'),
       ...(fonts.length ? { fonts } : {}),
+      ...(fontTrash.length ? { fontTrash } : {}),
+      ...(fontPrefs ? { fontPrefs } : {}),
       usage: usage.slice(-5000),
       sunday: pick(base?.sunday, local.sunday, remote.sunday, !!base),
       logoMediaId: pick(base?.logoMediaId, local.logoMediaId, remote.logoMediaId, !!base),

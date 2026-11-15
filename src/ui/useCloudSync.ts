@@ -7,9 +7,12 @@ import { getDevice, initializeDevice, saveDeviceProfile } from '../domain/device
 import { type CloudStorageUsage } from '../domain/cloudStorage';
 import { saveSyncRestorePoint } from '../domain/restorePoints';
 import { normalizeLibrary } from '../domain/persistence';
-import { runFontSync, loadFontSyncSettings, fontKnownScope, freeBytesOf, FONT_SYNC_EVENT, type FontSyncReport, type CloudFont } from '../domain/fontSync';
+import { runFontSync, loadFontSyncSettings, saveFontSyncSettings, fontKnownScope, freeBytesOf, conflictNotice, FONT_SYNC_EVENT, type FontSyncReport, type CloudFont } from '../domain/fontSync';
+import { addToFontTrash, restoreFontEntry, type CloudFontTrash } from '../domain/fontTrash';
+import { setFontConflicts } from '../domain/fontConflictStore';
 import { createFontCloud, createFontStore } from '../domain/fontSyncStore';
 import { refreshImportedFonts, subscribeImportedFonts } from '../domain/importedFonts';
+import { refreshEmbeddedFonts } from '../domain/embeddedFonts';
 import { usedFamilies } from '../domain/io/pptxFonts';
 import { addConflicts, isOfflineError, loadConflicts, openConflicts, pendingChanges, retryDelay, saveConflicts, type PendingChanges, type SyncState } from '../domain/syncStatus';
 
@@ -172,21 +175,28 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
       let fontNote: string | null = null;
       try {
         await refreshImportedFonts();
+        await refreshEmbeddedFonts();
         const usage = (await getCloudStorageUsage(session.token).catch(() => null))?.server;
         const used = new Set(usedFamilies(current.presentations).map((f) => f.trim().toLowerCase()));
         const out = await runFontSync(
           { cloud: createFontCloud(session.token, current.cloudResetId), store: createFontStore(fontKnownScope(session.username, current.cloudResetId)) },
-          { manifest: current.fonts ?? [], settings: loadFontSyncSettings(), used, freeBytes: freeBytesOf(usage) },
+          { manifest: current.fonts ?? [], trash: current.fontTrash ?? [], prefs: current.fontPrefs, settings: loadFontSyncSettings(), used, freeBytes: freeBytesOf(usage) },
           (m) => setStatus((st) => ({ ...st, message: m })),
         );
         if (loadSession()?.token !== session.token) return;
         setFontReport(out.report);
-        if (out.manifest) {
-          const fonts = out.manifest.length ? out.manifest : undefined;
-          const { fonts: _old, ...rest } = syncable(libRef.current);
-          dispatch({ type: 'library/merge', library: { ...rest, ...(fonts ? { fonts } : {}) } });
+        setFontConflicts(out.conflicts);
+        // Switches another computer changed later than this one are taken over here (keeping the other computer's change time).
+        if (out.settings) saveFontSyncSettings(out.settings, false);
+        if (out.manifest || out.trash || out.prefs) {
+          const { fonts: oldFonts, fontTrash: oldTrash, fontPrefs: oldPrefs, ...rest } = syncable(libRef.current);
+          const fonts = out.manifest ?? oldFonts;
+          const fontTrash = out.trash ?? oldTrash;
+          const fontPrefs = out.prefs ?? oldPrefs;
+          dispatch({ type: 'library/merge', library: { ...rest, ...(fonts?.length ? { fonts } : {}), ...(fontTrash?.length ? { fontTrash } : {}), ...(fontPrefs ? { fontPrefs } : {}) } });
         }
-        if (out.report.failed.length) fontNote = `글꼴 ${out.report.failed.length}개를 주고받지 못해 다음 동기화에서 다시 시도합니다: ${out.report.failed.slice(0, 3).join(', ')}`;
+        fontNote = conflictNotice(out.report);
+        if (out.report.failed.length) fontNote = [fontNote, `글꼴 ${out.report.failed.length}개를 주고받지 못해 다음 동기화에서 다시 시도합니다: ${out.report.failed.slice(0, 3).join(', ')}`].filter(Boolean).join(' · ');
       } catch (e) {
         const err = e as { status?: number; network?: boolean };
         if (err.status === 401 || err.network) throw e;
@@ -268,14 +278,34 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
     return () => { clearTimeout(t); off(); window.removeEventListener(FONT_SYNC_EVENT, soon); };
   }, [status.session?.token, sync]);
 
-  /** Delete a font from the church cloud (its entry and its file); every computer drops its copy at its next sync. */
+  /** Move a font to the font trash: its entry leaves the list (every computer drops its copy at its next sync) but the file stays on the server for the trash period, so it can be restored. */
   const removeFont = useCallback(async (id: string) => {
     const session = loadSession();
     if (!session) throw new Error('먼저 로그인해 주세요.');
-    const { fonts: old, ...rest } = syncable(libRef.current);
+    const { fonts: old, fontTrash: oldTrash, ...rest } = syncable(libRef.current);
+    const entry = (old ?? []).find((f) => f.id === id);
     const fonts = (old ?? []).filter((f) => f.id !== id);
-    dispatch({ type: 'library/merge', library: { ...rest, ...(fonts.length ? { fonts } : {}) } });
+    const fontTrash = entry ? addToFontTrash(oldTrash ?? [], [entry], Date.now()) : oldTrash;
+    dispatch({ type: 'library/merge', library: { ...rest, ...(fonts.length ? { fonts } : {}), ...(fontTrash?.length ? { fontTrash } : {}) } });
+    setTimeout(() => void sync('push'), PUSH_DELAY);
+  }, [dispatch, sync]);
+
+  /** Bring a trashed font back into the list; the other computers download it again. */
+  const restoreFont = useCallback((id: string) => {
+    const { fonts: old, fontTrash: oldTrash, ...rest } = syncable(libRef.current);
+    const r = restoreFontEntry(old ?? [], oldTrash ?? [], id, Date.now());
+    dispatch({ type: 'library/merge', library: { ...rest, ...(r.manifest.length ? { fonts: r.manifest } : {}), ...(r.trash.length ? { fontTrash: r.trash } : {}) } });
+    setTimeout(() => void sync('push'), PUSH_DELAY);
+  }, [dispatch, sync]);
+
+  /** Delete a trashed font for good (its file leaves the server now). */
+  const purgeFont = useCallback(async (id: string) => {
+    const session = loadSession();
+    if (!session) throw new Error('먼저 로그인해 주세요.');
+    const { fontTrash: oldTrash, ...rest } = syncable(libRef.current);
     await cloudApi.deleteMedia(session.token, id).catch((e) => { if ((e as { status?: number }).status !== 404) throw e; });
+    const fontTrash = (oldTrash ?? []).filter((t) => t.id !== id);
+    dispatch({ type: 'library/merge', library: { ...rest, ...(fontTrash.length ? { fontTrash } : {}) } });
     void refreshStorage();
     setTimeout(() => void sync('push'), PUSH_DELAY);
   }, [dispatch, refreshStorage, sync]);
@@ -331,7 +361,7 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
     return result.deleted;
   };
 
-  return { status: { ...status, pending, fonts: fontReport, storageUsage: storage.usage, storageError: storage.error }, conflicts, dismissConflict, cloudFonts: (library.fonts ?? []) as CloudFont[], removeFont, storage, refreshStorage, device, registeredDevices: library.devices ?? [], renameDevice, login, logout, pauseSync, resumeSync, clearAll, syncNow: () => sync('pull') };
+  return { status: { ...status, pending, fonts: fontReport, storageUsage: storage.usage, storageError: storage.error }, conflicts, dismissConflict, cloudFonts: (library.fonts ?? []) as CloudFont[], fontTrash: (library.fontTrash ?? []) as CloudFontTrash[], removeFont, restoreFont, purgeFont, storage, refreshStorage, device, registeredDevices: library.devices ?? [], renameDevice, login, logout, pauseSync, resumeSync, clearAll, syncNow: () => sync('pull') };
 }
 
 export type CloudSync = ReturnType<typeof useCloudSync>;

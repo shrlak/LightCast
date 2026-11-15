@@ -95,6 +95,9 @@ export function normalizeLibrary(value: unknown): Library | null {
     stageLayouts: arr(value.stageLayouts, seed.stageLayouts),
     ...(arr<import('./fontSync').CloudFont>(value.fonts, []).filter((f) => f && typeof f.id === 'string' && f.id.startsWith('font-') && typeof f.family === 'string' && Number.isSafeInteger(f.bytes)).length
       ? { fonts: arr<import('./fontSync').CloudFont>(value.fonts, []).filter((f) => f && typeof f.id === 'string' && f.id.startsWith('font-') && typeof f.family === 'string' && Number.isSafeInteger(f.bytes)) } : {}),
+    ...(arr<import('./fontTrash').CloudFontTrash>(value.fontTrash, []).filter((t) => t && typeof t.id === 'string' && t.id.startsWith('font-') && isObj(t.entry) && Number.isFinite(t.expiresAt)).length
+      ? { fontTrash: arr<import('./fontTrash').CloudFontTrash>(value.fontTrash, []).filter((t) => t && typeof t.id === 'string' && t.id.startsWith('font-') && isObj(t.entry) && Number.isFinite(t.expiresAt)) } : {}),
+    ...(isObj(value.fontPrefs) ? { fontPrefs: value.fontPrefs as import('./fontPrefs').FontPrefs } : {}),
     logoMediaId: typeof value.logoMediaId === 'string' ? value.logoMediaId : null,
     ...(normalizeRetreatLook(value.retreat) ? { retreat: normalizeRetreatLook(value.retreat) } : {}),
     sunday: churchStyle({ ...seed.sunday, ...(isObj(value.sunday) ? value.sunday : {}) }, isObj(value.sunday) ? value.sunday.styleVersion : undefined),
