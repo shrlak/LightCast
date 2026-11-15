@@ -188,7 +188,11 @@ export function decodeDib(info: Bytes, bits: Bytes, packed = false): Dib | null 
         const o = ro + x * 4;
         if (isMask) {
           const v = pixelBytes.u32(o);
-          put(x, y, scale((v & masks[0]) >>> rs, rm), scale((v & masks[1]) >>> gs, gm), scale((v & masks[2]) >>> bs, bm));
+          // The bits no colour mask claims are the alpha channel (a V4 / V5 header names them; else the top byte of the usual 8-8-8 masks).
+          const am = hs >= 56 ? info.u32(52) : (masks[0] | masks[1] | masks[2]) === 0xffffff ? 0xff000000 : 0;
+          const a = am ? scale((v & am) >>> shiftOf(am)[0], shiftOf(am)[1]) : 255;
+          if (am && a) anyAlpha = true;
+          put(x, y, scale((v & masks[0]) >>> rs, rm), scale((v & masks[1]) >>> gs, gm), scale((v & masks[2]) >>> bs, bm), a);
         } else {
           const a = pixelBytes.u8At(o + 3);
           if (a) anyAlpha = true;
@@ -206,7 +210,7 @@ export function decodeDib(info: Bytes, bits: Bytes, packed = false): Dib | null 
     }
   }
   // A 32-bit BI_RGB bitmap whose fourth byte is all zero carries no alpha: it is opaque.
-  if (bpp === 32 && !isMask && !anyAlpha) for (let i = 3; i < px.length; i += 4) px[i] = 255;
+  if (bpp === 32 && !anyAlpha) for (let i = 3; i < px.length; i += 4) px[i] = 255;
   return { img: { w, h, px } };
 }
 
