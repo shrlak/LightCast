@@ -8,12 +8,12 @@ import { ODP_PRESETS } from '../src/domain/io/odpPresets';
 import type { Presentation, Slide, SlideElement } from '../src/domain/types';
 
 const fixture = (n: string) => new Uint8Array(readFileSync(new URL(`./fixtures/real/odp/${n}`, import.meta.url)));
-const read = (n: string) => parseOdp(fixture(n), { storeImage: (b, m) => `img:${m}:${b.length}` });
+const read = (n: string, extra = {}) => parseOdp(fixture(n), { storeImage: (b, m) => `img:${m}:${b.length}`, ...extra });
 const named = (s: Slide, name: string) => s.elements!.find((e) => e.name === name)!;
 
 describe('real LibreOffice .odp: shapes, text and slides', () => {
   it('reads rotation (rotate-then-translate, counter-clockwise), preset shapes and the notes', async () => {
-    const doc = await read('libreoffice-rich.odp');
+    const doc = await read('libreoffice-rich.odp', { masterMode: 'flatten' });
     expect(doc.slides).toHaveLength(5);
     const s1 = doc.slides[0];
     const rect = named(s1, 'Rectangle 2');
@@ -61,7 +61,7 @@ describe('real LibreOffice .odp: shapes, text and slides', () => {
     expect(cells).toHaveLength(4);
     expect(cells.every((e) => e.rotation === 15 && e.groupId === cells[0].groupId)).toBe(true);
     expect(s3.elements!.find((e) => e.kind === 'image')).toMatchObject({ rotation: 10, mediaId: expect.stringContaining('image/png') });
-    expect(named(s3, 'Connector 7')).toMatchObject({ shape: 'line', arrowEnd: true, arrowEndKind: 'triangle', flipV: true, strokeWidth: 4 });
+    expect(named(s3, 'Connector 7')).toMatchObject({ shape: 'straightConnector1', arrowEnd: true, arrowEndKind: 'triangle', flipV: true, strokeWidth: 4 });
     const box = named(s3, 'Rectangle 8');
     expect(box.dropShadow).toBe(true);
     expect(box.shadowOpts).toMatchObject({ color: '#000000', dir: 45 });

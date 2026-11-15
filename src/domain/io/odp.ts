@@ -2,7 +2,7 @@
 // Pure logic — pictures go in and out through callbacks so tests need no browser storage.
 import { splitWeightedFace, weightPatch } from '../fontWeight';
 import JSZip from 'jszip';
-import type { ArrowKind, Background, DashStyle, DocProperties, ListStyle, SlideAnimation, ElementParagraph, HAlign, Presentation, Slide, SlideElement, TextRun } from '../types';
+import type { MasterLayout, ArrowKind, Background, DashStyle, DocProperties, ListStyle, SlideAnimation, ElementParagraph, HAlign, Presentation, Slide, SlideElement, TextRun } from '../types';
 import type { TableData } from '../../engine';
 import { CANVAS_H, CANVAS_W } from '../canvas';
 import { uid } from '../lyrics';
@@ -13,6 +13,7 @@ import {
   parseStopsCss, rotationTransform, stopsCss, transformBox, transitionAttrs, withOpacity, opacityGradient, type Mat, type OdfGradient,
 } from './odpGeometry';
 import { animationsXml, readAnimations } from './odpAnim';
+import { makePlaceholder, withMaster } from '../master';
 
 export { hexColor, lengthToCm, animationsXml };
 
@@ -147,9 +148,17 @@ export interface OdpReadOptions {
   name?: string;
   /** Keep a picture; returns the media id the slide refers to it by. */
   storeImage: (bytes: Uint8Array, mime: string, name: string) => string | Promise<string>;
+  /**
+   * What becomes of the master pages. 'model' (default): the objects every used master page has go to the deck's master, each master
+   * page is a layout (its placeholders and own objects) and slides keep their `layoutId`. 'flatten': each slide gets its master page's
+   * objects as shapes of its own (for adding the slides to a deck that has a master already).
+   */
+  masterMode?: 'model' | 'flatten';
 }
 export interface OdpDocument {
   title: string; properties: DocProperties; slides: Slide[];
+  /** The master page(s) as LightCast's master and layouts (masterMode 'model'; absent when the file has none). */
+  master?: NonNullable<Presentation['master']>;
   /** The file's own page size (cm) and the notes about it (Korean): content was scaled onto LightCast's 4:3 canvas. */
   pageCm: { w: number; h: number };
   warnings: string[];
@@ -302,6 +311,8 @@ function startsVertical(d: string | undefined): boolean {
 const GLUE_TO_SITE = [0, 3, 2, 1];
 const siteToGlue = (site: number) => GLUE_TO_SITE.indexOf(site);
 
+
+const PH_KIND: Record<string, NonNullable<SlideElement['placeholder']>> = { title: 'title', outline: 'body', subtitle: 'text', footer: 'footer', 'date-time': 'date', 'page-number': 'slideNumber' };
 
 const SHAPES: Record<string, string> = {
   rectangle: 'rect', ellipse: 'ellipse', 'round-rectangular': 'roundRect', diamond: 'diamond', 'isosceles-triangle': 'triangle', 'right-triangle': 'rtTriangle', 'mso-spt20': 'line',
@@ -602,11 +613,14 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     }
     return list.map((el) => ({ ...structuredClone(el), id: uid('el') }));
   };
+  const slideMaster: { name: string; flat: SlideElement[]; hide: boolean }[] = [];
   for (const pg of childrenNamed(body, 'draw:page')) {
     const elements: SlideElement[] = [];
     const own = resolveStyle(styles, 'drawing-page', pg.attrs['draw:style-name']);
     const pageStyle = { ...resolveStyle(styles, 'drawing-page', masterPages.get(pg.attrs['draw:master-page-name'] ?? '')?.attrs['draw:style-name']), ...own };
-    if (own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name']) elements.push(...await masterElements(pg.attrs['draw:master-page-name']));
+    const flat = own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name'] ? await masterElements(pg.attrs['draw:master-page-name']) : [];
+    elements.push(...flat);
+    slideMaster.push({ name: pg.attrs['draw:master-page-name'] ?? '', flat, hide: own['presentation:background-objects-visible'] === 'false' });
     ctx.ids.clear();
     ctx.glued = [];
     await readShapes(ctx, pg, elements);
@@ -644,6 +658,56 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     slides.push(slide);
   }
 
+  // The master pages as the deck's master and layouts.
+  let master: OdpDocument['master'];
+  if (opts.masterMode !== 'flatten' && masterPages.size) {
+    const sig = (e: SlideElement) => JSON.stringify([e.kind, e.shape, e.x, e.y, e.w, e.h, e.fill, e.stroke, e.text, e.mediaId, e.rotation]);
+    const used = [...new Set(slideMaster.map((s) => s.name).filter((n) => masterPages.has(n)))];
+    const objects = (name: string) => masterObjects.get(name) ?? [];
+    for (const n of used) await masterElements(n);
+    // What every used master page shows is the deck's master; the rest stays with the layout / slides of that page.
+    const sets = used.map((n) => new Set(objects(n).map(sig)));
+    const common = used.length ? objects(used[0]).filter((e) => sets.every((s) => s.has(sig(e)))) : [];
+    const commonSigs = new Set(common.map(sig));
+    const layouts: MasterLayout[] = [];
+    const layoutOf = new Map<string, string>();
+    for (const [name, mp] of masterPages) {
+      // The "Default" page LightCast itself writes beside its layouts is no layout unless a slide uses it.
+      if (name === 'Default' && masterPages.size > 1 && !used.includes(name)) continue;
+      const id = uid('lay');
+      layoutOf.set(name, id);
+      if (!objects(name).length && !used.includes(name)) await masterElements(name);
+      const holders: SlideElement[] = [];
+      for (const f of elementsOf(mp)) {
+        const kind = PH_KIND[f.attrs['presentation:class'] ?? ''];
+        const placed = kind ? boxOf(ctx, f, IDENTITY) : undefined;
+        if (!kind || !placed) continue;
+        holders.push({ ...makePlaceholder(kind), id: uid('el'), x: placed.x, y: placed.y, w: placed.w, h: placed.h });
+      }
+      const own = objects(name).filter((e) => !commonSigs.has(sig(e))).map((e) => ({ ...structuredClone(e), id: uid('el') }));
+      layouts.push({ id, name: (mp.attrs['style:display-name'] ?? mp.attrs['style:name']).replace(/_20_/g, ' '), elements: [...own, ...holders] });
+    }
+    const first = used[0] ? masterPages.get(used[0]) : undefined;
+    const mfill = first ? fillOf(ctx, resolveStyle(styles, 'drawing-page', first.attrs['draw:style-name'])) : undefined;
+    const mstyle = first ? resolveStyle(styles, 'drawing-page', first.attrs['draw:style-name']) : {};
+    master = {
+      elements: common.map((e) => ({ ...structuredClone(e), id: uid('el'), name: e.name?.replace(/^마스터: /, '') })), layouts,
+      ...(mstyle['draw:fill'] === 'solid' && mfill?.fill ? { background: { kind: 'color' as const, value: mfill.fill } } : {}),
+    };
+    slides.forEach((s, i) => {
+      const m = slideMaster[i];
+      if (!m.name || !layoutOf.has(m.name)) return;
+      s.layoutId = layoutOf.get(m.name);
+      // The master page's own objects that are not the deck's master stay on the slide; the deck's master comes as master copies.
+      const keep = new Set(m.flat.filter((e) => commonSigs.has(sig(e))).map((e) => e.id));
+      const kept = (s.elements ?? []).filter((e) => !keep.has(e.id));
+      s.elements = kept;
+      if (m.hide) s.hideMaster = true;
+      Object.assign(s, withMaster(s, master!.elements));
+      s.elements ??= [];
+    });
+  }
+
   const metaXml = await zip.file('meta.xml')?.async('string');
   const properties: DocProperties = {};
   if (metaXml) {
@@ -657,7 +721,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     for (const k of Object.keys(properties) as (keyof DocProperties)[]) if (!properties[k]) delete properties[k];
   }
   if (Math.abs(page.w / page.h - 4 / 3) > 0.02) ctx.warnings.add(`원본 슬라이드 크기는 ${Math.round(page.w * 100) / 100} × ${Math.round(page.h * 100) / 100}cm 입니다. LightCast는 4:3 슬라이드만 지원하므로 내용을 4:3 크기에 맞춰 늘이거나 줄였습니다.`);
-  return { title: properties.title ?? '', properties, slides, pageCm: page, warnings: [...ctx.warnings] };
+  return { title: properties.title ?? '', properties, slides, ...(master ? { master } : {}), pageCm: page, warnings: [...ctx.warnings] };
 }
 
 /** A slide's title (its first text), body (the other texts, one per line) and notes: what Review › Compare looks at. */
