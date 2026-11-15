@@ -8,13 +8,15 @@ import { StageChords } from '../ui/StageChords';
 import { DEFAULT_STAGE_LAYOUTS } from '../domain/defaults';
 import { SlideCanvas } from '../ui/SlideCanvas';
 import { liveCanvasProps } from '../ui/liveProps';
+import { PacingChip, useTimerFeed } from '../ui/pacingFeed';
 
 /**
  * Confidence monitor. `?layout=<id>` picks a stage layout (edit them in 🖥 Screens):
  * clock, timers, current/next slide, notes, live screen preview, chords, video countdown.
  */
 export function StageView() {
-  const live = useLiveFeed();
+  const live = useLiveFeed({ stage: true });
+  const { view: sermon } = useTimerFeed();
   const now = useNow(250);
   const id = new URLSearchParams(location.search).get('layout') ?? 'lyrics';
   useEffect(() => {
@@ -41,6 +43,7 @@ export function StageView() {
           <span className="stage-timer"><small>Key</small> {live?.chordShift ? `${live.chordShift > 0 ? '+' : ''}${live.chordShift}` : '±0'}{live?.capo ? ` · Capo ${live.capo}` : ''}</span>
         )}
         {L.videoCountdown && videoLeft != null && videoLeft > 0 && <span className="stage-timer"><small>Video</small> {formatClock(-videoLeft)}</span>}
+        {L.timers && <PacingChip view={sermon} />}
         {L.timers && running.slice(0, 3).map((t) => {
           const v = timerValue(t, now);
           return <span key={t.id} className={`stage-timer ${v < 0 && t.kind !== 'elapsed' ? 'over' : ''}`}><small>{t.name}</small> {formatClock(v)}</span>;

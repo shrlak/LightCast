@@ -11,6 +11,7 @@ import type { LiveState } from '../domain/types';
 import { SlideCanvas } from '../ui/SlideCanvas';
 import { liveCanvasProps } from '../ui/liveProps';
 import { useRelay } from '../ui/hooks';
+import { PacingChip, useTimerFeed } from '../ui/pacingFeed';
 
 import { LASER_STALE_MS, laserDue, laserFromMessage, laserPointClamped, parseLaserMessage, type LaserPoint } from '../domain/laserPointer';
 import { RemoteInfoReader, remoteSlideKey, type RemoteInfo } from '../domain/remoteSlides';
@@ -57,6 +58,7 @@ export function RemoteView() {
   const [rehearsal, setRehearsal] = useState<{ active: boolean; state?: LiveState; cursor?: Cursor | null } | null>(null);
   const [actualLive, setLive] = useState<LiveState | null>(null);
   const [info, setInfo] = useState<RemoteInfo | null>(null);
+  const timer = useTimerFeed();
   const reader = useRef(new RemoteInfoReader());
   const [slideTab, setSlideTab] = useState<'all' | 'next'>('all');
   const list = useRef<HTMLDivElement>(null);
@@ -76,6 +78,7 @@ export function RemoteView() {
   };
   useEffect(() => () => clearTimeout(dotTimer.current), []);
   const { send, connected, status, quality } = useRelay({ type: 'hello', role: 'remote', pin, clientToken, name: initialName.current }, (m) => {
+    if (m.type === 'timer') timer.receive(m);
     if (m.type === 'team-requests') { setRequests(m.requests as TeamRequest[]); setRequestError(null); }
     if (m.type === 'team-request-error') setRequestError(String(m.message));
     if (m.type === 'remote-control') setControl(m as unknown as RemoteControlState);
@@ -157,6 +160,7 @@ export function RemoteView() {
       <header className="remote-head">
         <strong>LightCast</strong>
         <span className="muted small truncate">{live?.title ?? 'Nothing live'}</span>
+        <PacingChip view={timer.view} />
         {!embedded && <button className="remote-appearance-toggle" aria-label={appearance === 'dark' ? '밝은 화면으로 전환' : '어두운 화면으로 전환'} onClick={() => {
           const next = appearance === 'dark' ? 'light' : 'dark';
           setAppearance(next);

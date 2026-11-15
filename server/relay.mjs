@@ -8,6 +8,7 @@ import { isPublicHost } from './tunnel.mjs';
 
 /** The least time between two laser dots from one phone (ms). */
 const LASER_MIN_MS = 25;
+const TIMER_MIN_MS = 500;
 const PIN = process.env.FREECAST_REMOTE_PIN || '';
 const COMMANDS = new Set([
   'live/next', 'live/prev', 'live/clearAll', 'live/clearText', 'live/clearBackground', 'live/toggleBlack',
@@ -41,6 +42,9 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
   } });
   const control = remoteControl(wss);
   const team = teamRequests(wss);
+  // The presenter's sermon timer (small; phones and stage displays only, never the audience).
+  let lastTimer = null;
+  const wantsTimer = (c) => c.role === 'remote' || c.role === 'team' || (c.role === 'viewer' && c.stage === true);
   let rehearsal = null;
   let lastState = null;
   let lastInfo = [];
@@ -99,12 +103,14 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
           return ws.close();
         }
         ws.role = role;
+        ws.stage = role === 'viewer' && msg.stage === true;
         ws.send(JSON.stringify({ type: 'welcome', pinRequired: Boolean(pin) }));
         if (['remote', 'team'].includes(role)) control.register(ws, msg);
         else if (role === 'host') control.publish();
         if (['remote', 'team', 'host'].includes(role)) { tellHosts(); tellRemotes(); team.publish(); }
         if (role !== 'host') {
           if (lastState) ws.send(lastState);
+          if (lastTimer && wantsTimer(ws)) ws.send(lastTimer);
           if (role === 'remote') {
             if (rehearsal) ws.send(rehearsal);
             for (const packet of lastInfo) ws.send(packet);
@@ -141,6 +147,23 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
         const out = JSON.stringify(off ? { type: 'laser', off: true } : { type: 'laser', x: msg.x, y: msg.y });
         if (fromPhone) broadcast(JSON.stringify({ ...JSON.parse(out), remote: true }), (c) => c.role === 'host');
         else broadcast(out, (c) => c.role === 'viewer' || c.role === 'remote' || c.role === 'team');
+        return;
+      }
+      if (ws.role === 'host' && msg?.type === 'timer') {
+        // The sermon timer: validated, at most twice a second, kept only as the latest value for late joiners.
+        const num = (n) => typeof n === 'number' && Number.isFinite(n);
+        const MAX = 100 * 3600_000;
+        let out;
+        if (msg.off === true) out = { type: 'timer', off: true };
+        else if (num(msg.elapsedMs) && num(msg.targetMs) && msg.targetMs > 0) {
+          const now = Date.now();
+          if (now - (ws.timerAt ?? 0) < TIMER_MIN_MS) return;
+          ws.timerAt = now;
+          out = { type: 'timer', running: msg.running === true, elapsedMs: Math.min(MAX, Math.max(0, Math.round(msg.elapsedMs))), targetMs: Math.min(MAX, Math.round(msg.targetMs)) };
+          if (['ahead', 'on', 'behind'].includes(msg.pace)) { out.pace = msg.pace; if (num(msg.paceMs)) out.paceMs = Math.max(-MAX, Math.min(MAX, Math.round(msg.paceMs))); }
+        } else return;
+        lastTimer = out.off ? null : JSON.stringify(out);
+        broadcast(JSON.stringify(out), wantsTimer);
         return;
       }
       if (ws.role === 'host' && msg?.type === 'caption') {
@@ -181,7 +204,7 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
       }
     });
   });
-  wss.on('connection', (ws) => ws.on('close', () => { if (['remote', 'team'].includes(ws.role)) { control.close(ws); tellHosts(); } if (ws.role === 'host') { rehearsal = null; broadcast(JSON.stringify({ type: 'rehearsal', active: false }), (c) => c.role === 'remote'); if (pendingInfo?.owner === ws) pendingInfo = null; tellRemotes(); } }));
+  wss.on('connection', (ws) => ws.on('close', () => { if (['remote', 'team'].includes(ws.role)) { control.close(ws); tellHosts(); } if (ws.role === 'host') { rehearsal = null; if (lastTimer) { lastTimer = null; broadcast(JSON.stringify({ type: 'timer', off: true }), wantsTimer); } broadcast(JSON.stringify({ type: 'rehearsal', active: false }), (c) => c.role === 'remote'); if (pendingInfo?.owner === ws) pendingInfo = null; tellRemotes(); } }));
   wss.toHost = (command) => {
     if (!validCommand(command)) return false;
     let sent = false;
