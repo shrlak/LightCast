@@ -54,6 +54,7 @@ import { x32 } from '../ui/x32';
 import { loadX32Settings, saveX32Settings, type X32Settings } from '../domain/x32';
 import { UpdateBanner } from '../ui/UpdateBanner';
 import { useCloudSync } from '../ui/useCloudSync';
+import { useWindowSync } from '../ui/useWindowSync';
 import { deleteMedia, forgetMediaUrl } from '../domain/media';
 import { finishedServices } from '../domain/sunday/cleanup';
 import { useServiceUploads } from '../ui/ppt/useServiceUploads';
@@ -181,6 +182,7 @@ export function OperatorView() {
     return () => { clearTimeout(first); clearInterval(t); };
   }, []);
   const cloud = useCloudSync(state.library, dispatch, (m) => notifyRef.current(m));
+  useWindowSync(state.library, dispatch);
   // The first login on this computer (or a logged-in computer never named): register its name and user right away.
   const [deviceSetup, setDeviceSetup] = useState(false);
   useEffect(() => {

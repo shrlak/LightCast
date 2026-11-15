@@ -59,6 +59,10 @@ export interface DesktopBridge {
   setShowDisplays?(audienceId: number | null, presenterId: number | null): Promise<void>;
   /** Slide show ends: close the window `present` opened. */
   endShow(): Promise<void>;
+  /** View › New Window: another editor window on the same app (`hash` like "#presentation=<id>" shows that deck); older apps lack it. */
+  newWindow?(hash?: string): Promise<boolean>;
+  /** View › Arrange All: tile the app's editor windows on the display of this one; resolves to how many were placed. */
+  arrangeAll?(): Promise<number>;
   /** The mixer window: float above everything (true) or not; without an argument, just report. Older apps lack it. */
   setOnTop?(on?: boolean): Promise<boolean>;
   setAiConfig(patch: { proxyUrl?: string; geminiKey?: string; openrouterKey?: string; speechBaseUrl?: string; speechKey?: string; speechModel?: string }): Promise<void>;
