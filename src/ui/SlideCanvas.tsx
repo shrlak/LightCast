@@ -358,6 +358,8 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
       const end = atEnd(v.currentTime, pb, d);
       if (end === 'loop') v.currentTime = playStart(pb);
       else if (end !== 'play') { v.pause(); if (end === 'rewind') v.currentTime = pb.poster ?? playStart(pb); }
+      // Animations › Trigger › On Bookmark: tell the show how far the clip has played.
+      if (live && pb.bookmarks?.length) window.dispatchEvent(new CustomEvent('lightcast-mediatime', { detail: { id: el.id, t: v.currentTime, marks: pb.bookmarks } }));
       if (!v.paused) raf = requestAnimationFrame(tick);
     };
     const onPlay = () => { setPlaying(true); raf = requestAnimationFrame(tick); };

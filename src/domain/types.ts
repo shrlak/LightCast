@@ -489,6 +489,8 @@ export interface SlideAnimation {
   rewind?: boolean;
   /** Trigger › On Click of: the object (id) whose click plays this effect, outside the slide's clicks. */
   trigger?: string;
+  /** Trigger › On Bookmark: with `trigger` a video / audio object, the name of its bookmark whose arrival plays this effect (instead of a click). */
+  bookmark?: string;
   /** Motion Paths › Custom Path: `M 0 0 L dx dy …` in slide fractions from where the object sits. */
   path?: string;
   /**
