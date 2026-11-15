@@ -12,7 +12,9 @@ import { resolveBackground } from '../../domain/autoBackground';
 import { findText } from '../../engine';
 import { findItems, parseFindKey, replaceMatches } from '../../domain/findReplace';
 import { SlideCanvas } from '../SlideCanvas';
-import { clickTrigger, triggerObjects, type LiveBuild } from '../../domain/animations';
+import { clickTrigger, type LiveBuild } from '../../domain/animations';
+import { clickTriggerObjects } from '../../domain/mediaBookmarkTriggers';
+import { useBookmarkTriggers } from './useBookmarkTriggers';
 import type { Ed } from './editor';
 import { ACCEPT } from './commands';
 import { RI } from './ribbonParts';
@@ -171,6 +173,7 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
   const shownAt = useRef(Date.now());
   const [now, setNow] = useState(Date.now());
   const slide = pages[i]?.slide ?? null;
+  useBookmarkTriggers(slide ?? undefined, ed.p?.showSetup?.noAnimation ? false : true, setBuild);
   const ref = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
@@ -246,7 +249,7 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
       const [x, y] = [(e.clientX - r.left) * k, (e.clientY - r.top) * k];
       // Animations › Trigger: a click on a trigger object plays its sequence (a link on it still goes).
       if (slide && !ed.p?.showSetup?.noAnimation) {
-        const ids = triggerObjects(slide);
+        const ids = clickTriggerObjects(slide);
         const on = [...(slide.elements ?? [])].reverse().find((el) => ids.includes(el.id) && !el.hidden && x >= el.x && x <= el.x + el.w && y >= el.y && y <= el.y + Math.max(el.h, 1));
         const b = on && clickTrigger(slide, build, on.id, Date.now());
         if (b) { setBuild(b); const hit = actionAt(slide, x, y); if (hit?.id === on!.id) act(hit); return; }

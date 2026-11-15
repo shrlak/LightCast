@@ -23,6 +23,7 @@
 import { SVG_MIME, sanitizeSvg } from '../svgPicture';
 import JSZip from 'jszip';
 import { metafileToBlob } from '../metafile/image';
+import { OLE_MAX_BYTES, oleExtOf, oleRelTypeOf, readOleFrame } from './oleObjects';
 
 const EMU_PER_POINT = 12700;
 
@@ -65,6 +66,8 @@ export interface RenderedPictureShape extends ShapeBase {
   imageUrl: string;
   /** PowerPoint's crop (`a:srcRect`): fractions of the image cut off each side; absent when uncropped. */
   crop?: { l: number; t: number; r: number; b: number };
+  /** The picture is the preview of an embedded OLE object (see oleObjects.ts); `part` is its file (absent: too big, or linked). */
+  ole?: { progId: string; name?: string; ext: string; relType: 'oleObject' | 'package'; part?: Blob; bytes: number; icon: boolean; imgW?: number; imgH?: number };
 }
 
 export type RenderedShape = RenderedTextShape | RenderedPictureShape;
@@ -439,6 +442,26 @@ async function readPictureShape(
   return { kind: 'picture', ...box, imageUrl: url, ...(cropped ? { crop: cropped } : {}) };
 }
 
+async function readOleShape(node: Element, zip: JSZip, relTargets: Map<string, string>, urlCache: Map<string, string>): Promise<RenderedPictureShape | null> {
+  const frame = readOleFrame(node);
+  if (!frame?.xfrm) return null;
+  const off = firstEl(frame.xfrm, 'a:off'), ext = firstEl(frame.xfrm, 'a:ext');
+  if (!off || !ext) return null;
+  const box: ShapeBase = { xEmu: Number(off.getAttribute('x')), yEmu: Number(off.getAttribute('y')), wEmu: Number(ext.getAttribute('cx')), hEmu: Number(ext.getAttribute('cy')) };
+  const shape = await readPictureShape(frame.pic, box, zip, relTargets, urlCache);
+  if (!shape) return null;
+  const target = frame.embedRId ? relTargets.get(frame.embedRId) : undefined;
+  const path = target ? resolvePartTarget(target) : undefined;
+  const file = path ? zip.file(path) : null;
+  let part: Blob | undefined;
+  if (file && path) {
+    const bytes = await file.async('uint8array');
+    if (bytes.length <= OLE_MAX_BYTES) part = new Blob([bytes as BlobPart], { type: 'application/octet-stream' });
+    return { ...shape, ole: { progId: frame.progId, name: frame.name, ext: oleExtOf(path), relType: oleRelTypeOf(path), ...(part ? { part } : {}), bytes: bytes.length, icon: frame.icon, imgW: frame.imgW, imgH: frame.imgH } };
+  }
+  return shape;
+}
+
 /** Geometry/font inheritance sources for a spTree's placeholder shapes — undefined when reading a layout/master's own (non-placeholder) art, which never needs it. */
 interface InheritSources {
   layoutSpTree: Element | null;
@@ -475,6 +498,11 @@ async function readSpTreeShapes(
         ...(s.kind === 'text' ? { paragraphs: s.paragraphs.map((p) => ({ ...p, runs: p.runs.map((r) => ({ ...r, ...(r.sizePt ? { sizePt: r.sizePt * sy } : {}) })) })) } : {}),
       });
       continue;
+    }
+    // An embedded OLE object (an Excel sheet, a Word file…): its preview picture, remembering the embedded file.
+    if (child.localName === 'AlternateContent' || child.tagName === 'p:graphicFrame') {
+      const ole = await readOleShape(child, zip, relTargets, urlCache);
+      if (ole) { shapes.push(ole); continue; }
     }
     if (child.tagName === 'p:graphicFrame') {
       const xfrm = firstEl(child, 'p:xfrm');

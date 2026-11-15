@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 // LightCast desktop app: runs the LightCast server inside the app and shows the console,
 // audience outputs and stage displays as native windows placed on your displays.
 import { app, BrowserWindow, desktopCapturer, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, session, shell, dialog, systemPreferences } from 'electron';
+import { tileRects } from './windowTiles.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -341,6 +342,27 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// View › New Window / Arrange All: more editor windows on the same app (they share the library through the storage event).
+const editorWindows = new Set();
+function openEditorWindow(hash = '') {
+  if (!mainWindow) return false;
+  const win = new BrowserWindow({
+    width: 1280, height: 820, minWidth: 1000, minHeight: 640, title: 'LightCast', icon: APP_ICON, backgroundColor: '#0b0d12', show: false, webPreferences,
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try { if (['http:', 'https:'].includes(new URL(url).protocol)) shell.openExternal(url); } catch { /* ignore */ }
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(origin())) { e.preventDefault(); shell.openExternal(url); } });
+  win.once('ready-to-show', () => win.show());
+  win.on('closed', () => editorWindows.delete(win));
+  editorWindows.add(win);
+  win.loadURL(`${origin()}/${/^#presentation=[\w%.\-]{1,200}$/.test(hash) ? hash : ''}`);
+  return true;
+}
+/** The app's editor windows that are on screen (the first one and the extra ones). */
+const editorList = () => [mainWindow, ...editorWindows].filter((w) => w && !w.isDestroyed() && w.isVisible() && !w.isMinimized());
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1000, minHeight: 640, title: 'LightCast', icon: APP_ICON,
@@ -482,6 +504,16 @@ function moveConsoleToPresenterDisplay() {
   mainWindow.setBounds(display.workArea);
   mainWindow.maximize();
 }
+ipcMain.handle('desktop:newWindow', (e, hash) => (fromMain(e) ? openEditorWindow(typeof hash === 'string' ? hash : '') : false));
+// Arrange All: the editor windows are tiled on the display the asking window is on; returns how many were placed.
+ipcMain.handle('desktop:arrangeAll', (e) => {
+  if (!fromMain(e)) return 0;
+  const asker = BrowserWindow.fromWebContents(e.sender);
+  const area = screen.getDisplayMatching((asker ?? mainWindow).getBounds()).workArea;
+  const wins = editorList().filter((w) => screen.getDisplayMatching(w.getBounds()).id === screen.getDisplayMatching((asker ?? mainWindow).getBounds()).id);
+  tileRects(area, wins.length).forEach((r, i) => { if (wins[i].isMaximized() || wins[i].isFullScreen()) wins[i].unmaximize(); wins[i].setBounds(r); });
+  return wins.length;
+});
 ipcMain.handle('desktop:endShow', (e) => {
   if (fromMain(e)) closeShow();
 });

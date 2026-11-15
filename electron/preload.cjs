@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   // Insert › Screenshot: screens and windows to choose from, and the choice for the next getDisplayMedia.
   captureSources: () => ipcRenderer.invoke('desktop:captureSources'),
   selectCaptureSource: (id) => ipcRenderer.invoke('desktop:selectCaptureSource', id),
+  newWindow: (hash) => ipcRenderer.invoke('desktop:newWindow', hash),
+  arrangeAll: () => ipcRenderer.invoke('desktop:arrangeAll'),
   openView: (url, displayId) => ipcRenderer.invoke('desktop:openView', url, displayId),
   present: (url) => ipcRenderer.invoke('desktop:present', url),
   setShowDisplays: (audienceId, presenterId) => ipcRenderer.invoke('desktop:setShowDisplays', audienceId, presenterId),

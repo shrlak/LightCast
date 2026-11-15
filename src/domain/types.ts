@@ -271,6 +271,23 @@ export interface ElementParagraph {
 }
 
 /** A free-positioned object on a slide (slide editor), in 1440×1080 canvas pixels. */
+/** An embedded OLE object of a .pptx, kept for the export (LightCast only draws its preview picture). */
+export interface OleObject {
+  progId: string;
+  /** Media id of the embedded part (not synced through the cloud; travels in .lcast files). */
+  partId: string;
+  /** File extension of the part ('bin', 'xlsx', 'docx', …) and how the slide refers to it. */
+  ext: string;
+  relType: 'oleObject' | 'package';
+  name?: string;
+  bytes: number;
+  /** Shown as an icon, not as the content. */
+  icon?: boolean;
+  /** PowerPoint's own image size hint (EMU), kept for the round trip. */
+  imgW?: number;
+  imgH?: number;
+}
+
 export interface SlideElement {
   /** Legacy maximum-fit request; automatic layout no longer enlarges fonts. */
   maximizeFont?: boolean;
@@ -437,6 +454,8 @@ export interface SlideElement {
   /** Picture Format › Crop › Crop to Shape: the preset the picture is cut to. */
   maskShape?: string;
   playback?: MediaPlayback;
+  /** A PowerPoint OLE object (Excel sheet, Word file, …) kept as it came: `mediaId` is its preview picture, `ole.partId` the embedded file. */
+  ole?: OleObject;
   action?: ElementAction;
   /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */
   targetSlideId?: string;
@@ -489,6 +508,8 @@ export interface SlideAnimation {
   rewind?: boolean;
   /** Trigger › On Click of: the object (id) whose click plays this effect, outside the slide's clicks. */
   trigger?: string;
+  /** Trigger › On Bookmark: with `trigger` a video / audio object, the name of its bookmark whose arrival plays this effect (instead of a click). */
+  bookmark?: string;
   /** Motion Paths › Custom Path: `M 0 0 L dx dy …` in slide fractions from where the object sits. */
   path?: string;
   /**
@@ -929,6 +950,10 @@ export interface Library {
   stageLayouts: StageLayout[];
   /** Imported fonts shared through the church cloud (the file of each is the cloud media `font-<sha256>`). */
   fonts?: import('./fontSync').CloudFont[];
+  /** Fonts removed from the church cloud, kept (with their files) for the trash period so they can be restored. */
+  fontTrash?: import('./fontTrash').CloudFontTrash[];
+  /** Font-sync switches (global and per font) that follow the account; the later change wins. */
+  fontPrefs?: import('./fontPrefs').FontPrefs;
   /** 수련회 moving background; decks with `retreatBg` follow it. */
   retreat?: RetreatLook;
 }

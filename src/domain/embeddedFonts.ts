@@ -4,9 +4,14 @@
 import { getMedia, putMedia, deleteMedia } from './media';
 import { embedFontsInZip, mayEmbed, readEmbeddedFonts, sfntFormat, usedFamilies, type FontStyle, type ReadFont } from './io/pptxFonts';
 import JSZip from 'jszip';
-import { importedFonts, importedSfnt, registerImportedFonts, embedStyleOf } from './importedFonts';
+import { importedFonts, importedSfnt, registerImportedFonts, embedStyleOf, notifyImportedFontsChanged, type ImportedFont } from './importedFonts';
+import { sha256Hex, type CloudFont } from './fontSync';
 
-export interface StoredEmbedded { id: string; family: string; style: FontStyle; bytes: number; source: string; at: number }
+export interface StoredEmbedded {
+  id: string; family: string; style: FontStyle; bytes: number; source: string; at: number;
+  /** For church-cloud sync (see fontSync.ts): the file format, the SHA-256 of the file, and this font's own sync switch with its change time. */
+  format?: 'truetype' | 'opentype'; hash?: string; sync?: boolean; syncAt?: number;
+}
 
 const INDEX_KEY = 'embfont:index';
 /** All imported fonts together stay under this; the oldest go first. */
@@ -27,7 +32,10 @@ async function readIndex(): Promise<StoredEmbedded[]> {
     return Array.isArray(list) ? list : [];
   } catch { return []; }
 }
-const writeIndex = (list: StoredEmbedded[]) => putMedia(INDEX_KEY, new Blob([JSON.stringify(list)], { type: 'application/json' }));
+let cache: StoredEmbedded[] = [];
+const writeIndex = async (list: StoredEmbedded[]) => { await putMedia(INDEX_KEY, new Blob([JSON.stringify(list)], { type: 'application/json' })); cache = list; };
+/** Re-read the stored list of deck fonts (before a sync round). */
+export async function refreshEmbeddedFonts(): Promise<StoredEmbedded[]> { cache = await readIndex(); return cache; }
 
 const registered = new Set<string>();
 async function register(id: string, family: string, style: FontStyle, data: ArrayBuffer): Promise<void> {
@@ -54,7 +62,8 @@ export async function keepEmbeddedFonts(fonts: ReadFont[], source: string): Prom
         const id = `embfont:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         const buf = f.data.buffer.slice(f.data.byteOffset, f.data.byteOffset + f.data.byteLength) as ArrayBuffer;
         await putMedia(id, new Blob([buf], { type: f.format === 'opentype' ? 'font/otf' : 'font/ttf' }));
-        list.push({ id, family: f.family, style: f.style, bytes: f.data.length, source, at: Date.now() });
+        const hash = await sha256Hex(buf).catch(() => undefined);
+        list.push({ id, family: f.family, style: f.style, bytes: f.data.length, source, at: Date.now(), format: f.format, ...(hash ? { hash } : {}) });
         await register(id, f.family, f.style, buf);
         n++;
       } catch { /* storage full or unavailable: skip this font */ }
@@ -63,6 +72,7 @@ export async function keepEmbeddedFonts(fonts: ReadFont[], source: string): Prom
     let total = list.reduce((s, x) => s + x.bytes, 0);
     while (total > MAX_STORE_BYTES && list.length > 1) { const x = list.shift()!; total -= x.bytes; await deleteMedia(x.id).catch(() => undefined); }
     await writeIndex(list).catch(() => undefined);
+    if (n) notifyImportedFontsChanged();
     return n;
   });
 }
@@ -100,6 +110,62 @@ export function removeEmbeddedFont(id: string): Promise<void> {
     await writeIndex(list.filter((x) => x.id !== id)).catch(() => undefined);
     registered.delete(id);
     await deleteMedia(id).catch(() => undefined);
+    notifyImportedFontsChanged();
+  });
+}
+
+// ── Cloud sync of deck fonts (the plan itself is in fontSync.ts; these map this store onto it) ──────────────
+/** A deck font as the sync sees it: weight 400 / 700 from its slot, `embedded` set, the id still "embfont:…". */
+export function embeddedAsFont(s: StoredEmbedded): ImportedFont {
+  const bold = s.style === 'bold' || s.style === 'boldItalic';
+  return {
+    id: s.id, family: s.family, subfamily: s.style, weight: bold ? 700 : 400, italic: s.style === 'italic' || s.style === 'boldItalic',
+    format: s.format ?? 'truetype', bytes: s.bytes, fsType: 0, source: s.source, at: s.at, embedded: true,
+    ...(s.hash ? { hash: s.hash } : {}), ...(typeof s.sync === 'boolean' ? { sync: s.sync } : {}), ...(s.syncAt ? { syncAt: s.syncAt } : {}),
+  };
+}
+/** The deck-font slot a cloud entry fills. */
+export const styleOfFace = (f: { weight: number; italic: boolean }): FontStyle => (f.weight >= 600 ? (f.italic ? 'boldItalic' : 'bold') : f.italic ? 'italic' : 'regular');
+
+/** The deck fonts as sync entries (read from the list kept in memory; call refreshEmbeddedFonts first). */
+export const embeddedFontsForSync = (): ImportedFont[] => cache.map(embeddedAsFont);
+
+export async function embeddedFontBytes(id: string): Promise<Uint8Array | null> {
+  try { const b = await getMedia(id); return b ? new Uint8Array(await b.arrayBuffer()) : null; } catch { return null; }
+}
+
+/** Change the sync fields of one deck font (hash, switch). */
+export function updateEmbeddedFont(id: string, patch: Partial<Pick<ImportedFont, 'hash' | 'sync' | 'syncAt'>>): Promise<void> {
+  return serial(async () => {
+    const list = await readIndex();
+    const next = list.map((x) => {
+      if (x.id !== id) return x;
+      const y: StoredEmbedded = { ...x, ...patch };
+      if (patch.sync === undefined && 'sync' in patch) delete y.sync;
+      return y;
+    });
+    await writeIndex(next).catch(() => undefined);
+    notifyImportedFontsChanged();
+  });
+}
+
+/** Keep a deck font that came from the church cloud (its hash already checked). `familySuffix` renames it ("keep both"). */
+export function addCloudEmbedded(entry: CloudFont, data: ArrayBuffer, familySuffix = ''): Promise<boolean> {
+  return serial(async () => {
+    const list = await readIndex();
+    const hash = entry.id.slice('font-'.length);
+    if (list.some((x) => x.hash === hash)) return true;
+    if (list.reduce((t, x) => t + x.bytes, 0) + data.byteLength > MAX_STORE_BYTES) return false;
+    const id = `embfont:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const family = entry.family + familySuffix;
+    const style = styleOfFace(entry);
+    try {
+      await putMedia(id, new Blob([data], { type: entry.format === 'opentype' ? 'font/otf' : 'font/ttf' }));
+      await writeIndex([...list, { id, family, style, bytes: data.byteLength, source: entry.source, at: Date.now(), format: entry.format === 'opentype' ? 'opentype' : 'truetype', hash }]);
+      await register(id, family, style, data);
+      notifyImportedFontsChanged();
+      return true;
+    } catch { await deleteMedia(id).catch(() => undefined); return false; }
   });
 }
 

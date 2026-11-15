@@ -4,6 +4,8 @@ import { cloudApi } from '../domain/cloud';
 import { formatStorageBytes } from '../domain/cloudStorage';
 import { isCloudFontId, totalFontBytes } from '../domain/fontSync';
 import { weightLabel } from '../domain/fontWeight';
+import { TRASH_DAYS } from '../domain/trash';
+import { daysLeft } from '../domain/fontTrash';
 import type { CloudSync } from './useCloudSync';
 
 export function CloudFontList({ cloud, token }: { cloud: CloudSync; token: string }) {
@@ -20,11 +22,13 @@ export function CloudFontList({ cloud, token }: { cloud: CloudSync; token: strin
     return () => { alive = false; };
   }, [token, refresh, listed]);
   const ids = new Set(listed.map((f) => f.id));
-  const orphans = sizes ? [...sizes].filter(([id]) => !ids.has(id)) : [];
+  const trash = cloud.fontTrash;
+  const trashIds = new Set(trash.map((t) => t.id));
+  const orphans = sizes ? [...sizes].filter(([id]) => !ids.has(id) && !trashIds.has(id)) : [];
   const remove = async (id: string, label: string, size: number, orphan: boolean) => {
     const msg = orphan
       ? `서버에서 쓰지 않는 글꼴 파일 "${label}" (${formatStorageBytes(size)})을(를) 삭제할까요? 되돌릴 수 없습니다.`
-      : `서버에서 글꼴 "${label}" (${formatStorageBytes(size)})을(를) 삭제할까요? 다른 기기에서도 다음 동기화 때 이 글꼴이 지워지고, 이 컴퓨터의 글꼴도 지워집니다. 되돌릴 수 없습니다.`;
+      : `서버에서 글꼴 "${label}" (${formatStorageBytes(size)})을(를) 삭제할까요? 다른 기기에서도 다음 동기화 때 이 글꼴이 지워지지만, 서버에는 ${TRASH_DAYS}일 동안 휴지통에 보관되어 복원할 수 있습니다.`;
     if (!confirm(msg)) return;
     setRemoving(id);
     try {
@@ -36,7 +40,7 @@ export function CloudFontList({ cloud, token }: { cloud: CloudSync; token: strin
   const status = cloud.status.fonts;
   return <section className="cloud-media-list cloud-font-list" aria-label="서버 글꼴">
     <div className="row"><h4 className="grow">서버 글꼴</h4><button onClick={() => setRefresh((n) => n + 1)}>새로고침</button></div>
-    <p className="hint">가져온 글꼴 중 동기화가 켜진 것이 교회 서버에 저장되어 다른 컴퓨터로 전달됩니다(같은 파일은 한 번만 저장). 여기서 지우면 모든 기기에서 지워집니다. 글꼴별 · 전체 동기화 설정은 설정 › 글꼴에 있습니다.</p>
+    <p className="hint">가져온 글꼴 중 동기화가 켜진 것이 교회 서버에 저장되어 다른 컴퓨터로 전달됩니다(같은 파일은 한 번만 저장). 여기서 지우면 모든 기기에서 지워지고 서버에는 30일간 휴지통으로 보관됩니다. 글꼴별 · 전체 동기화 설정은 설정 › 글꼴에 있습니다.</p>
     {error && <p role="alert">글꼴 목록 조회 실패: {error}</p>}
     {listed.length || orphans.length ? <>
       <p className="small">글꼴 {listed.length}개 · {formatStorageBytes(totalFontBytes(listed))}{status ? ` · 마지막 동기화: 올림 ${status.uploaded} · 받음 ${status.downloaded}` : ''}</p>
@@ -49,5 +53,12 @@ export function CloudFontList({ cloud, token }: { cloud: CloudSync; token: strin
             <td><button className="danger" disabled={removing !== null} onClick={() => void remove(id, id.slice(0, 14), size, true)}>삭제</button></td></tr>)}
         </tbody></table></div>
     </> : <p>서버에 저장된 글꼴이 없습니다.</p>}
+    {trash.length > 0 && <div className="cloud-font-trash" style={{ borderLeft: '3px solid #f9a825', background: '#fffde7', padding: '4px 8px', marginTop: 6 }}>
+      <h5>글꼴 휴지통</h5>
+      <p className="small">지운 글꼴은 {TRASH_DAYS}일 동안 서버에 보관됩니다. 복원하면 다른 기기에서도 다시 받습니다.</p>
+      {trash.map((t) => <div className="row gap-s" key={t.id}><span className="grow">{t.entry.family} · {weightLabel(t.entry.weight)}{t.entry.italic ? ' · 기울임' : ''} · {formatStorageBytes(t.entry.bytes)} · {daysLeft(t, Date.now())}일 후 자동 삭제</span>
+        <button onClick={() => cloud.restoreFont(t.id)}>복원</button>
+        <button className="danger" onClick={() => { if (confirm(`글꼴 "${t.entry.family}"을(를) 지금 영구 삭제할까요? 되돌릴 수 없습니다.`)) void cloud.purgeFont(t.id).catch((e) => setError(e instanceof Error ? e.message : '삭제에 실패했습니다.')); }}>영구 삭제</button></div>)}
+    </div>}
   </section>;
 }
