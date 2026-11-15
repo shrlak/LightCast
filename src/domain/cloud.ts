@@ -97,12 +97,15 @@ export const saveBase = (lib: Library) => putMedia(BASE_KEY, new Blob([JSON.stri
  * cannot be sent or received is skipped (and tried again next time); it no longer stops the rest,
  * nor marks the whole sync as failed. `failed` lists the names of the files skipped this time.
  */
-export async function syncMedia(token: string, lib: Library, onProgress: (msg: string) => void) {
+export interface MediaStore { get(id: string): Promise<Blob | undefined>; put(id: string, blob: Blob): Promise<unknown> }
+const deviceMedia: MediaStore = { get: (id) => getMedia(id), put: (id, blob) => putMedia(id, blob) };
+
+export async function syncMedia(token: string, lib: Library, onProgress: (msg: string) => void, store: MediaStore = deviceMedia) {
   const items = await cloudApi.listMedia(token);
   const remote = new Set(items.map((m) => m.id));
   const failed: string[] = [];
   for (const m of lib.media) {
-    const local = await getMedia(m.id).catch(() => undefined);
+    const local = await store.get(m.id).catch(() => undefined);
     try {
       if (local && !remote.has(m.id)) {
         if (local.size > 50 * 1024 * 1024) continue;
@@ -111,7 +114,7 @@ export async function syncMedia(token: string, lib: Library, onProgress: (msg: s
         remote.add(m.id); items.push({ id: m.id, size: local.size });
       } else if (!local && remote.has(m.id)) {
         onProgress(`미디어 받는 중: ${m.name}`);
-        await putMedia(m.id, await cloudApi.downloadMedia(token, m.id));
+        await store.put(m.id, await cloudApi.downloadMedia(token, m.id));
       }
     } catch (e) {
       // A signed-out session or a lost connection ends this round; anything else skips just this file.
