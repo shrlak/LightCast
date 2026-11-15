@@ -170,6 +170,10 @@ interface Ctx {
   ids: Map<string, string>;
   /** Things the file has that LightCast cannot keep (Korean wording), each once. */
   warnings: Set<string>;
+  /** xml:id → whether the object's geometry lists glue points of its own (their ids start after the four default ones). */
+  customGlue: Set<string>;
+  /** Glued connectors of the slide being read, to be tied to their objects once all of them are known. */
+  glued: { el: SlideElement; node: XNode }[];
 }
 
 type Line = { runs: TextRun[]; align?: HAlign; list?: ListStyle };
@@ -283,6 +287,21 @@ function boxOf(ctx: Ctx, n: XNode, m: Mat): Placed | undefined {
   if (t.rotation) out.rotation = t.rotation;
   return out;
 }
+
+/** draw:connector draw:type → LightCast connector (an elbow is draw:type standard, also when it is not written). */
+const CONNECTOR_SHAPE: Record<string, string> = { line: 'straightConnector1', standard: 'bentConnector3', curve: 'curvedConnector3' };
+/** Does a connector's path (svg:d) leave its start vertically? (an elbow's first segment, a curve's first control point). */
+function startsVertical(d: string | undefined): boolean {
+  const m = /^\s*M\s*[-\d.]+[\s,]+[-\d.]+\s*([vVhHcC])\s*([-\d.]+)?[\s,]*([-\d.]+)?/.exec(d ?? '');
+  if (!m) return false;
+  if (m[1] === 'v' || m[1] === 'V') return true;
+  if (m[1] === 'c' || m[1] === 'C') return Number(m[2]) === 0 && Number(m[3]) !== 0;
+  return false;
+}
+/** LibreOffice's default glue points of an object are its four sides (top, right, bottom, left); PowerPoint's sites run top, left, bottom, right. */
+const GLUE_TO_SITE = [0, 3, 2, 1];
+const siteToGlue = (site: number) => GLUE_TO_SITE.indexOf(site);
+
 
 const SHAPES: Record<string, string> = {
   rectangle: 'rect', ellipse: 'ellipse', 'round-rectangular': 'roundRect', diamond: 'diamond', 'isosceles-triangle': 'triangle', 'right-triangle': 'rtTriangle', 'mso-spt20': 'line',
@@ -497,14 +516,27 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
       }
     } else if (/^draw:(rect|ellipse|circle|custom-shape|line|connector|polygon)$/.test(n.name)) {
       const type = childNamed(n, 'draw:enhanced-geometry')?.attrs['draw:type'];
-      const shape = n.name === 'draw:ellipse' || n.name === 'draw:circle' ? 'ellipse' : n.name === 'draw:line' || n.name === 'draw:connector' ? 'line' : n.name === 'draw:rect' ? ((n.attrs['draw:corner-radius'] ?? n.attrs['svg:rx']) ? 'roundRect' : 'rect') : presetOf(type);
+      const connectorType = n.name === 'draw:connector' ? n.attrs['draw:type'] ?? 'standard' : undefined;
+      const shape = n.name === 'draw:ellipse' || n.name === 'draw:circle' ? 'ellipse' : n.name === 'draw:connector' ? CONNECTOR_SHAPE[connectorType ?? ''] ?? 'bentConnector3' : n.name === 'draw:line' ? 'line' : n.name === 'draw:rect' ? ((n.attrs['draw:corner-radius'] ?? n.attrs['svg:rx']) ? 'roundRect' : 'rect') : presetOf(type);
       const el: SlideElement = { id: uid('el'), kind: 'shape', shape, ...box };
       if (name) el.name = name;
       shapeStyle(ctx, el, graphicStyle(ctx, n));
-      if (shape === 'line') {
+      if (shape === 'line' || connectorType) {
         if (flipH) el.flipH = true;
         if (flipV) el.flipV = true;
         el.stroke ??= '#000000';
+      }
+      if (connectorType) {
+        // An elbow or curve that leaves its start going up or down is the PowerPoint connector turned a quarter.
+        if (CONNECTOR_SHAPE[connectorType] !== 'straightConnector1' && startsVertical(n.attrs['svg:d'])) {
+          const cx = el.x + el.w / 2, cy = el.y + el.h / 2, w = el.h, h = el.w;
+          Object.assign(el, { x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), w, h, rotation: 90 });
+          el.flipV = !flipH || undefined;
+          el.flipH = !!flipV || undefined;
+          if (!el.flipV) delete el.flipV;
+          if (!el.flipH) delete el.flipH;
+        }
+        if (n.attrs['draw:start-shape'] || n.attrs['draw:end-shape']) ctx.glued.push({ el, node: n });
       }
       applyText(el, textLines(ctx, n));
       // LibreOffice writes a PowerPoint text box as a plain custom shape: no fill, no line, a rectangle.
@@ -512,7 +544,10 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
       out.push(el);
     }
     const xid = n.attrs['xml:id'] ?? n.attrs['draw:id'];
-    if (xid && out.length > first) ctx.ids.set(xid, out[first].id);
+    if (xid && out.length > first) {
+      ctx.ids.set(xid, out[first].id);
+      if (childNamed(n, 'draw:enhanced-geometry')?.attrs['draw:glue-points']) ctx.customGlue.add(xid);
+    }
     for (const el of out.slice(first)) {
       if (rotation && el.kind !== 'table') el.rotation = rotation;
       if (walk.group) { el.groupId = walk.group.id; if (walk.group.name) el.groupName = walk.group.name; }
@@ -549,7 +584,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   const lp = layout ? childNamed(layout, 'style:page-layout-properties') : undefined;
   const pw = lengthToCm(lp?.attrs['fo:page-width']), ph = lengthToCm(lp?.attrs['fo:page-height']);
   if (pw && ph) page = { w: pw, h: ph };
-  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map(), warnings: new Set() };
+  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map(), warnings: new Set(), customGlue: new Set(), glued: [] };
 
   const body = childNamed(childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] }, 'office:presentation');
   if (!body) throw new Error('OpenDocument 파일에 슬라이드가 없습니다.');
@@ -573,7 +608,19 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     const pageStyle = { ...resolveStyle(styles, 'drawing-page', masterPages.get(pg.attrs['draw:master-page-name'] ?? '')?.attrs['draw:style-name']), ...own };
     if (own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name']) elements.push(...await masterElements(pg.attrs['draw:master-page-name']));
     ctx.ids.clear();
+    ctx.glued = [];
     await readShapes(ctx, pg, elements);
+    for (const { el, node } of ctx.glued) {
+      const end = (side: 'start' | 'end') => {
+        const ref = node.attrs[`draw:${side}-shape`];
+        const target = ref ? ctx.ids.get(ref) : undefined;
+        const gp = Number(node.attrs[`draw:${side}-glue-point`] ?? NaN);
+        if (!target || !Number.isFinite(gp)) return undefined;
+        return { id: target, site: gp >= 4 && ctx.customGlue.has(ref) ? gp - 4 : GLUE_TO_SITE[gp] ?? 0 };
+      };
+      const from = end('start'), to = end('end');
+      if (from || to) el.connect = { ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    }
     const slide: Slide = { id: uid('s'), group: '', text: '', elements, importSource: { format: 'odp', name: sourceName, page: slides.length + 1, pageCm: page } };
     const animations = readAnimations(pg, ctx.ids);
     if (animations.length) slide.animations = animations;
@@ -855,6 +902,8 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
   let shapeNo = 0;
   let xmlIdNo = 0;
   const xmlIds = new Map<string, string>();
+  /** A glued connector names its objects by placeholder while the page is written; here the ids they got. */
+  const fixGlue = (xml: string) => xml.replace(/ draw:(start|end)-shape="@@G:([^@]*)@@" draw:\1-glue-point="(\d+)"/g, (_m, side: string, id: string, gp: string) => (xmlIds.has(id) ? ` draw:${side}-shape="${xmlIds.get(id)}" draw:${side}-glue-point="${gp}"` : ''));
   let presets: PresetTable | undefined;
   const presetTable = async () => (presets ??= (await import('./odpPresets')).ODP_PRESETS);
 
@@ -886,10 +935,30 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
         parts.push(`<draw:frame draw:style-name="${plainFrame}" draw:name="${escapeXml(name)}" ${geo(b)}><table:table table:name="${escapeXml(name)}">${t.cols.map((w) => `<table:table-column table:style-name="${colStyle(w)}"/>`).join('')}${rows}</table:table></draw:frame>`);
       } else if (el.kind === 'shape') {
         const shape = el.shape ?? (el.ellipse ? 'ellipse' : el.radius ? 'roundRect' : 'rect');
-        const g = `<style:graphic-properties ${fillAttrs(el)} ${strokeAttrs(el, shape === 'line')}${shadowAttrs(el)} ${fitAttrs(el)}${el.vAlign ? ` draw:textarea-vertical-align="${el.vAlign}"` : ''}/>`;
+        const g = `<style:graphic-properties ${fillAttrs(el)} ${strokeAttrs(el, shape === 'line' || /^(straightConnector\d|bentConnector\d|curvedConnector\d)$/.test(shape))}${shadowAttrs(el)} ${fitAttrs(el)}${el.vAlign ? ` draw:textarea-vertical-align="${el.vAlign}"` : ''}/>`;
         const style = st.name('graphic', 'gr', g);
         const body = el.text ? paragraphsXml(st, elementLines(el)) : '';
-        if (shape === 'line') {
+        if (/^(straightConnector\d|bentConnector\d|curvedConnector\d)$/.test(shape)) {
+          // A connector: its end points (the box's corners, turned about its centre), its type and the objects it is glued to.
+          const th = ((el.rotation ?? 0) * Math.PI) / 180, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+          const turn = (x: number, y: number): [number, number] => [cx + (x - cx) * Math.cos(th) - (y - cy) * Math.sin(th), cy + (x - cx) * Math.sin(th) + (y - cy) * Math.cos(th)];
+          const [x1, y1] = turn(el.flipH ? b.x + b.w : b.x, el.flipV ? b.y + b.h : b.y);
+          const [x2, y2] = turn(el.flipH ? b.x : b.x + b.w, el.flipV ? b.y : b.y + b.h);
+          const u = (n: number) => Math.round(n * K * 1000); // 1/100 mm
+          const dx = u(x2) - u(x1), dy = u(y2) - u(y1);
+          const vertical = Math.round(Math.abs(el.rotation ?? 0) % 180) === 90;
+          const type = shape.startsWith('straight') ? 'line' : shape.startsWith('curved') ? 'curve' : 'standard';
+          const d = type === 'line' ? `l${dx} ${dy}` : type === 'standard' ? (vertical ? `v${Math.round(dy / 2)}h${dx}v${dy - Math.round(dy / 2)}` : `h${Math.round(dx / 2)}v${dy}h${dx - Math.round(dx / 2)}`) : vertical ? `c0 ${Math.round(dy / 2)} ${dx} ${Math.round(dy / 2)} ${dx} ${dy}` : `c${Math.round(dx / 2)} 0 ${Math.round(dx / 2)} ${dy} ${dx} ${dy}`;
+          const tbl = await presetTable();
+          const glue = (side: 'start' | 'end', c?: { id: string; site: number }) => {
+            const target = c && elements.find((e) => e.id === c.id);
+            if (!c || !target) return '';
+            const custom = !!(target.kind === 'shape' && target.shape && tbl[target.shape]?.a['draw:glue-points']);
+            const id = custom ? 4 + c.site : siteToGlue(c.site);
+            return id >= 0 ? ` draw:${side}-shape="@@G:${c.id}@@" draw:${side}-glue-point="${id}"` : '';
+          };
+          parts.push(`<draw:connector draw:style-name="${style}" draw:name="${escapeXml(name)}"${type === 'standard' ? '' : ` draw:type="${type}"`} svg:x1="${fmtCm(x1, K)}" svg:y1="${fmtCm(y1, K)}" svg:x2="${fmtCm(x2, K)}" svg:y2="${fmtCm(y2, K)}"${glue('start', el.connect?.from)}${glue('end', el.connect?.to)} svg:d="M${u(x1)} ${u(y1)}${d}" svg:viewBox="0 0 ${Math.abs(dx) + 1} ${Math.abs(dy) + 1}">${body}</draw:connector>`);
+        } else if (shape === 'line') {
           let [x1, x2] = el.flipH ? [b.x + b.w, b.x] : [b.x, b.x + b.w];
           let [y1, y2] = el.flipV ? [b.y + b.h, b.y] : [b.y, b.y + b.h];
           if (el.rotation) {
@@ -947,7 +1016,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
       const path = await pic(mbg.mediaId);
       if (path) masterBody += imageXml(path, { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H }, 'Background', plainOf(mst));
     }
-    masterBody += (await renderElements(masterObjects, mst)).join('');
+    masterBody += fixGlue((await renderElements(masterObjects, mst)).join(''));
     const fill = backgroundFill(mbg);
     masterFilled = fill !== 'draw:fill="none"';
     if (masterFilled) masterStyle = ` draw:style-name="${mst.name('drawing-page', 'dp', `<style:drawing-page-properties ${fill}/>`)}"`;
@@ -963,7 +1032,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
       const prompt = cls === 'page-number' ? '<text:p><text:page-number>&lt;number&gt;</text:page-number></text:p>' : `<text:p>${odfText(e.text || e.name || cls)}</text:p>`;
       return `<draw:frame presentation:style-name="${holderStyle}" presentation:class="${cls}" presentation:placeholder="true" draw:layer="layout" ${geo({ x: e.x, y: e.y, w: Math.max(1, e.w), h: Math.max(1, e.h) })}><draw:text-box>${prompt}</draw:text-box></draw:frame>`;
     }).join('');
-    layoutPages.push({ id: lay.id, name: lay.name, xml: `<style:master-page style:name="Layout${li + 1}" style:display-name="${escapeXml(lay.name)}" style:page-layout-name="PM1"${masterStyle}>${masterBody}${(await renderElements(own, mst)).join('')}${holders}</style:master-page>` });
+    layoutPages.push({ id: lay.id, name: lay.name, xml: fixGlue(`<style:master-page style:name="Layout${li + 1}" style:display-name="${escapeXml(lay.name)}" style:page-layout-name="PM1"${masterStyle}>${masterBody}${(await renderElements(own, mst)).join('')}${holders}</style:master-page>`) });
   }
 
   // A preset motion path (Lines, Arcs…) is traced by the engine (when it is loaded) and written as the points it passes.
@@ -1001,7 +1070,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     const notes = slide.notes
       ? `<presentation:notes><draw:page-thumbnail draw:layer="layout" svg:width="12.7cm" svg:height="9.525cm" svg:x="3.175cm" svg:y="1.905cm" draw:page-number="${i + 1}" presentation:class="page"/><draw:frame presentation:style-name="${st.name('presentation', 'pr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>')}" presentation:class="notes" draw:layer="layout" svg:width="16.8cm" svg:height="11.2cm" svg:x="2.1cm" svg:y="14.8cm"><draw:text-box>${slide.notes.split('\n').map((l) => `<text:p>${odfText(l)}</text:p>`).join('')}</draw:text-box></draw:frame></presentation:notes>`
       : '';
-    pages.push(`<draw:page draw:name="page${i + 1}" draw:style-name="${dp}" draw:master-page-name="${(() => { const k = layoutPages.findIndex((l) => l.id === slide.layoutId); return k >= 0 ? `Layout${k + 1}` : 'Default'; })()}">${parts.join('')}${anims}${notes}</draw:page>`);
+    pages.push(`<draw:page draw:name="page${i + 1}" draw:style-name="${dp}" draw:master-page-name="${(() => { const k = layoutPages.findIndex((l) => l.id === slide.layoutId); return k >= 0 ? `Layout${k + 1}` : 'Default'; })()}">${fixGlue(parts.join(''))}${anims}${notes}</draw:page>`);
   }
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content ${NS} office:version="1.3"><office:automatic-styles>${st}</office:automatic-styles><office:body><office:presentation>${pages.join('')}</office:presentation></office:body></office:document-content>`;
