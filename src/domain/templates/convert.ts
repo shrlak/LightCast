@@ -82,7 +82,7 @@ export const pictureKey = (p: RenderedPictureShape) => `${p.imageUrl}|${p.crop ?
  * A rendered slide → LightCast slide, given the media id of its baked background and of each
  * picture (by pictureKey). A picture without a media id is left out.
  */
-export function slideFromRendered(rs: RenderedSlide, backgroundMediaId: string, group: string, pictures: Map<string, string> = new Map()): Slide {
+export function slideFromRendered(rs: RenderedSlide, backgroundMediaId: string, group: string, pictures: Map<string, string> = new Map(), oleParts: Map<RenderedPictureShape, string> = new Map()): Slide {
   const f = frameFor(rs.widthEmu, rs.heightEmu);
   const box = (s: { xEmu: number; yEmu: number; wEmu: number; hEmu: number }) => ({
     x: Math.round(f.x + s.xEmu * f.k), y: Math.round(f.y + s.yEmu * f.k), w: Math.round(s.wEmu * f.k), h: Math.round(s.hEmu * f.k),
@@ -91,7 +91,10 @@ export function slideFromRendered(rs: RenderedSlide, backgroundMediaId: string, 
   for (const s of rs.shapes) {
     if (s.kind === 'picture') {
       const mediaId = pictures.get(pictureKey(s));
-      if (mediaId) elements.push({ id: uid('e'), kind: 'image', ...box(s), mediaId, fit: 'fill' });
+      const partId = oleParts.get(s);
+      if (mediaId) elements.push({ id: uid('e'), kind: 'image', ...box(s), mediaId, fit: 'fill',
+        // An embedded OLE object stays an object: the picture is its preview (src/domain/io/oleObjects.ts).
+        ...(s.ole && partId ? { name: s.ole.name || s.ole.progId, ole: { progId: s.ole.progId, partId, ext: s.ole.ext, relType: s.ole.relType, name: s.ole.name, bytes: s.ole.bytes, ...(s.ole.icon ? { icon: true } : {}), ...(s.ole.imgW ? { imgW: s.ole.imgW } : {}), ...(s.ole.imgH ? { imgH: s.ole.imgH } : {}) } } : {}) });
       continue;
     }
     if (s.fill || s.outline) elements.push({ id: uid('e'), kind: 'shape', ...box(s), fill: s.fill ?? 'transparent', stroke: s.outline?.color });

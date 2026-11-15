@@ -271,6 +271,23 @@ export interface ElementParagraph {
 }
 
 /** A free-positioned object on a slide (slide editor), in 1440×1080 canvas pixels. */
+/** An embedded OLE object of a .pptx, kept for the export (LightCast only draws its preview picture). */
+export interface OleObject {
+  progId: string;
+  /** Media id of the embedded part (not synced through the cloud; travels in .lcast files). */
+  partId: string;
+  /** File extension of the part ('bin', 'xlsx', 'docx', …) and how the slide refers to it. */
+  ext: string;
+  relType: 'oleObject' | 'package';
+  name?: string;
+  bytes: number;
+  /** Shown as an icon, not as the content. */
+  icon?: boolean;
+  /** PowerPoint's own image size hint (EMU), kept for the round trip. */
+  imgW?: number;
+  imgH?: number;
+}
+
 export interface SlideElement {
   /** Legacy maximum-fit request; automatic layout no longer enlarges fonts. */
   maximizeFont?: boolean;
@@ -437,6 +454,8 @@ export interface SlideElement {
   /** Picture Format › Crop › Crop to Shape: the preset the picture is cut to. */
   maskShape?: string;
   playback?: MediaPlayback;
+  /** A PowerPoint OLE object (Excel sheet, Word file, …) kept as it came: `mediaId` is its preview picture, `ole.partId` the embedded file. */
+  ole?: OleObject;
   action?: ElementAction;
   /** Slide Zoom: the slide it shows (and jumps to in a slide show), with a copy to draw it from. */
   targetSlideId?: string;
