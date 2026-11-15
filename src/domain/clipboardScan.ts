@@ -18,7 +18,7 @@ export type ClipClass =
   | 'empty' | 'too-large' | 'unread' | 'unknown';
 
 /** A whole presentation found on the clipboard, in a form File › Open reads. */
-export interface ClipDeck { format: 'pptx' | 'ppt' | 'odp' | 'fodp'; bytes: Uint8Array; /** Which clipboard format it came from. */ from: string }
+export interface ClipDeck { format: 'pptx' | 'ppt' | 'odp' | 'fodp'; bytes: Uint8Array; /** Which clipboard format it came from. */ from: string; /** Slides in it, when cheap to know (.pptx). */ slideCount?: number }
 
 export interface ClipEntry { name: string; size: number; bytes?: Uint8Array; error?: string }
 export interface ClipRow { name: string; size: number; cls: ClipClass; label: string; detail?: string }
@@ -59,7 +59,10 @@ async function inspectZip(bytes: Uint8Array): Promise<Found> {
   const names = Object.keys(zip.files);
   const mime = (await zip.file('mimetype')?.async('string').catch(() => ''))?.trim();
   if (mime && ODF_DECK.test(mime)) return { cls: 'odp', deck: { format: 'odp', bytes }, detail: mime };
-  if (zip.file('ppt/presentation.xml')) return { cls: 'pptx', deck: { format: 'pptx', bytes }, detail: `${names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).length}개 슬라이드` };
+  if (zip.file('ppt/presentation.xml')) {
+    const slideCount = names.filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n)).length;
+    return { cls: 'pptx', deck: { format: 'pptx', bytes, slideCount }, detail: `${slideCount}개 슬라이드` };
+  }
   const ct = (await zip.file('[Content_Types].xml')?.async('string').catch(() => '')) ?? '';
   if (/presentationml\.(presentation|slideshow|template)\.main/.test(ct)) return { cls: 'pptx', deck: { format: 'pptx', bytes }, detail: 'Content_Types' };
   if (names.some((n) => /^(word\/document|xl\/workbook)\.xml$/.test(n))) return { cls: 'office-other', detail: names.some((n) => n.startsWith('word/')) ? 'Word' : 'Excel' };
@@ -89,10 +92,10 @@ async function inspectCfb(bytes: Uint8Array, depth: number): Promise<Found> {
   if (cfb.stream('PowerPoint Document')) return { cls: 'ppt', deck: { format: 'ppt', bytes } };
   if (depth >= 3) return { cls: 'cfb' };
   // An embedded object: the presentation itself rides in one of these streams.
-  for (const name of ['Package', 'Ole10Native', 'CONTENTS', 'Contents', 'EmbeddedPackage']) {
+  for (const name of ['Package', '\u0001Ole10Native', 'Ole10Native', 'CONTENTS', 'EmbeddedPackage']) {
     const raw = cfb.stream(name);
     if (!raw || raw.length < 8) continue;
-    const inner = name === 'Ole10Native' ? ole10Payload(raw) : raw;
+    const inner = name.endsWith('Ole10Native') ? ole10Payload(raw) : raw;
     if (!inner) continue;
     const r = await inspectBytes(inner, depth + 1);
     if (r.deck) return { cls: r.deck.format === 'ppt' ? 'ppt-in-ole' : r.deck.format === 'pptx' ? 'pptx-in-ole' : r.cls, deck: r.deck, detail: name };

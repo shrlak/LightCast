@@ -18,7 +18,7 @@ import type { TextFormatValue } from './TextFormatPanel';
 export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'designer' | 'spelling' | 'revisions' | null;
 
 /** The dialog boxes (Font, Paragraph, Replace Fonts, Header & Footer, Set Up Show, …). */
-export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect' | 'language' | 'compare' | 'albumEdit' | 'tabs' | 'autocorrect' | 'viewZoom' | 'sizePosition' | 'compress' | 'altText' | 'hyperlink' | 'dateTime' | 'equation' | 'insertTable' | 'themeColors' | 'themeFonts' | 'slideSize' | 'recordAudio' | 'screenCapture' | 'versionHistory';
+export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect' | 'language' | 'compare' | 'albumEdit' | 'tabs' | 'autocorrect' | 'viewZoom' | 'sizePosition' | 'compress' | 'altText' | 'hyperlink' | 'dateTime' | 'equation' | 'insertTable' | 'themeColors' | 'themeFonts' | 'slideSize' | 'recordAudio' | 'screenCapture' | 'versionHistory' | 'clipboardFormats';
 
 export interface Ed {
   state: AppState;
@@ -28,6 +28,8 @@ export interface Ed {
   play: (opts?: { ids?: string[]; rehearse?: boolean }) => void;
   dispatch: Dispatch<Action>;
   cmd: Commands;
+  /** Paste slides found on the clipboard after the current slide (one undo step); false when the clipboard has none. */
+  pasteSlides?: (opts?: { preferShapes?: boolean; browserRead?: boolean }) => Promise<boolean>;
   p: Presentation | null;
   slide: Slide | null;
   theme: Theme | null;
