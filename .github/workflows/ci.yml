@@ -31,6 +31,45 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  # Real Chromium against the built app (tests/e2e). Playwright is not a project dependency, so it is
+  # installed here without touching package.json; keep the version in step with tests/e2e/README.md.
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PLAYWRIGHT_VERSION: 1.63.0
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.pw-browsers
+      E2E_SHOTS: ${{ github.workspace }}/e2e-shots
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm i --no-save --no-audit --no-fund playwright@${{ env.PLAYWRIGHT_VERSION }}
+      - name: Cache Chromium
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-${{ runner.os }}-${{ env.PLAYWRIGHT_VERSION }}
+      - name: Install Chromium
+        if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx playwright install --with-deps chromium
+      - name: Install Chromium system libraries
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+      # Builds the app (the committed engine .wasm is used), serves dist/ and runs every check.
+      - run: npm run e2e
+      - name: Upload screenshots of failing checks
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-shots
+          path: e2e-shots
+          if-no-files-found: ignore
+
   # The iPhone app (ios/) is Swift and cannot be built on Linux: compile it for the simulator on a Mac.
   ios:
     runs-on: macos-latest

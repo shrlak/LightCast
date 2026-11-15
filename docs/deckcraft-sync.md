@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=ef9ac9ac7a1f610656144981b53688efdb9ef518
+DECKCRAFT_SYNCED=69379cf689f908d23cab9313d59fb9e1fd4b7a4f
 ```
 
-(`Merge pull request #2062 from cloutier/fix/2060-large-adjustment-guides`.)
+(`Naming: use Diagram and Decorative Text for own features (#1981)`.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -55,6 +55,10 @@ DECKCRAFT_SYNCED=ef9ac9ac7a1f610656144981b53688efdb9ef518
     slide-list limits and unresolved relationships), automation roots, About window, CI.
   - WMF / EMF / EMF+ reading (`craft-metafile`, a new external crate replacing `crates/metafile`) was ported later, in
     TypeScript: see "Windows metafiles" below. No Rust changed, so the wasm was not rebuilt.
+- `ef9ac9a..69379cf` (2 commits, 2026-11-14): nothing to port. `7a24b20c` only documents DeckCraft's PPTX
+  slide-list import limit; `69379cf6` renames DeckCraft's own feature labels in English ("Diagram", "Decorative
+  Text"), while LightCast uses PowerPoint's Korean names (SmartArt, WordArt). The Rust renames are display strings
+  only; the wasm was not rebuilt.
 
 ## Windows metafiles (WMF, EMF, EMF+): handled in TypeScript, not by the engine
 
