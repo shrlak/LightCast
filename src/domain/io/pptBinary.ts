@@ -7,17 +7,17 @@
 //   autoshapes, group child coordinate spaces), master / title-master inheritance (placeholder position,
 //   size, text frame and style, plus the master's own objects), pictures (JPEG, PNG, DIB, TIFF and the
 //   compressed WMF / EMF), slide transitions, hidden slides and speaker notes.
-//   Also read: per-paragraph bullets, levels, spacing and tab stops; freeforms (pVertices / pSegmentInfo, and plain-arithmetic guide
-//   formulas); fillShadeColors stops and shadows; cell-rectangle groups are rebuilt as tables (pptTable.ts). Checked against files
+//   Also read: per-paragraph bullets, levels, spacing, tab stops, auto-numbering (StyleTextProp9), ruler margins and hanging indents;
+//   custom geometry with every guide formula operation and arc / curve escape evaluated (pptGeometry.ts), LibreOffice's presets
+//   recognised by their formulas (pptLoPresets.ts); fillShadeColors stops and shadows; cell-rectangle groups are rebuilt as tables (pptTable.ts). Checked against files
 //   LibreOffice writes (tests/fixtures/real/ppt).
-// Not read: animations, auto-numbered bullets (PowerPoint 2002 extension tags), PICT pictures, arc escapes and guide formulas with
-//   conditions or trigonometry in custom shapes, OLE objects.
+// Not read: animations, PICT pictures, TextMasterStyle9 numbering, OLE objects.
 // Written for hostile input: it never throws, records are bounds-checked, recursion and the number of
 // records, slides, shapes and pictures are capped, and what cannot be read is reported in `warnings`.
 import { isCfb, readCfb } from './cfb';
 import { inflateZlib } from './inflate';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
-import { customPathOf, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
+import { customPathOf, recognisedPreset, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
 import type { Ext9 } from './pptText';
 import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readRuler, readStyleExt9, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
@@ -56,6 +56,8 @@ export interface PptShape {
   fill?: FillSpec;
   line?: LineSpec;
   shadow?: ShadowSpec;
+  /** The preset's adjust values (DrawingML units), for presets recognised from their formulas. */
+  adj?: number[];
   /** Freeform / custom geometry: SVG path data in a `w`×`h` space that is stretched to the shape's box. */
   path?: { d: string; w: number; h: number };
   /** Text frame: margins left, top, right, bottom in EMU; vertical anchor; false = no word wrap. */
@@ -480,8 +482,11 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   const props: Props = mp ? new Map([...mp.props, ...raw.props]) : raw.props;
   const placed = raw.placed ?? mp?.placed;
   const spType = raw.spType || (mp?.spType ?? 0);
-  const preset = presetOf(spType);
-  const geom: Partial<PptShape> = placed ? { x: placed.x, y: placed.y, w: placed.w, h: placed.h } : {};
+  const recognised = !presetOf(spType) && raw.placeholder === undefined ? recognisedPreset(raw.props) : undefined;
+  const preset = presetOf(spType) ?? recognised?.shape;
+  const adjList = recognised ? recognised.adjust.slice(0, recognised.adjust.findIndex((v) => v === undefined) < 0 ? 8 : recognised.adjust.findIndex((v) => v === undefined)) as number[] : [];
+  const geom: Partial<PptShape> & { adj?: number[] } = placed ? { x: placed.x, y: placed.y, w: placed.w, h: placed.h } : {};
+  if (adjList.length) geom.adj = adjList;
   if (placed?.rot) geom.rotation = placed.rot;
   if (raw.placed?.flipH) geom.flipH = true;
   if (raw.placed?.flipV) geom.flipV = true;
