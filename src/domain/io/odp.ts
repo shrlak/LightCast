@@ -12,8 +12,9 @@ import {
   IDENTITY, applyPoint, gradientToLc, hexColor, isIdentity, lcToGradient, lengthToCm, mul, parseAngle, parseTransform, readTransition,
   parseStopsCss, rotationTransform, stopsCss, transformBox, transitionAttrs, withOpacity, opacityGradient, type Mat, type OdfGradient,
 } from './odpGeometry';
+import { animationsXml, readAnimations } from './odpAnim';
 
-export { hexColor, lengthToCm };
+export { hexColor, lengthToCm, animationsXml };
 
 export const ODP_MIME = 'application/vnd.oasis.opendocument.presentation';
 
@@ -512,36 +513,6 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
   }
 }
 
-const PRESET_EFFECT: Record<string, string> = {
-  'ooo-entrance-appear': 'appear', 'ooo-entrance-fade-in': 'fade', 'ooo-entrance-fly-in': 'fly', 'ooo-entrance-wipe': 'wipe',
-  'ooo-exit-disappear': 'disappear', 'ooo-exit-fade-out': 'fadeOut', 'ooo-exit-wipe': 'wipeOut',
-};
-const beginMs = (v: string | undefined): number => { const m = /^([\d.]+)(ms|s)$/.exec((v ?? '').trim()); return m ? Math.round(Number(m[1]) * (m[2] === 's' ? 1000 : 1)) : 0; };
-
-/** The slide's animation timing tree (LibreOffice's anim:par): the effects it names a preset for, on objects that were read. */
-function readAnimations(ctx: Ctx, pg: XNode): SlideAnimation[] {
-  const find = (n: XNode, type: string): XNode | undefined => { for (const c of elementsOf(n)) { if (c.attrs['presentation:node-type'] === type) return c; const f = find(c, type); if (f) return f; } return undefined; };
-  const seq = find(pg, 'main-sequence');
-  if (!seq) return [];
-  const targetOf = (n: XNode): string | undefined => { for (const c of elementsOf(n)) { const t = c.attrs['smil:targetElement']; if (t) return t; const d = targetOf(c); if (d) return d; } return undefined; };
-  const durOf = (n: XNode): number => { let best = 0; const walk = (x: XNode) => { for (const c of elementsOf(x)) { if (c.name === 'anim:transitionFilter' || c.name === 'anim:animate') best = Math.max(best, beginMs(c.attrs['smil:dur'])); walk(c); } }; walk(n); return best || 500; };
-  const out: SlideAnimation[] = [];
-  for (const step of elementsOf(seq).filter((c) => c.name === 'anim:par')) {
-    for (const group of elementsOf(step).filter((c) => c.name === 'anim:par')) {
-      for (const eff of elementsOf(group).filter((c) => c.name === 'anim:par')) {
-        const effect = PRESET_EFFECT[eff.attrs['presentation:preset-id'] ?? ''];
-        const target = ctx.ids.get(targetOf(eff) ?? '');
-        if (!effect || !target) continue;
-        const node = eff.attrs['presentation:node-type'];
-        out.push({
-          id: uid('an'), elementId: target, effect, class: eff.attrs['presentation:preset-class'] === 'exit' ? 'exit' : 'entrance',
-          start: node === 'with-previous' ? 'with' : node === 'after-previous' ? 'after' : 'click', durationMs: durOf(eff), delayMs: beginMs(eff.attrs['smil:begin']),
-        });
-      }
-    }
-  }
-  return out;
-}
 
 /** Read a .odp: slides with text boxes (paragraphs, bold / italic / size / colour), pictures, simple shapes, tables and notes. */
 export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpReadOptions): Promise<OdpDocument> {
@@ -597,7 +568,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     ctx.ids.clear();
     await readShapes(ctx, pg, elements);
     const slide: Slide = { id: uid('s'), group: '', text: '', elements, importSource: { format: 'odp', name: sourceName, page: slides.length + 1 } };
-    const animations = readAnimations(ctx, pg);
+    const animations = readAnimations(pg, ctx.ids);
     if (animations.length) slide.animations = animations;
     const fill = fillOf(ctx, pageStyle);
     if (pageStyle['draw:fill'] === 'solid' && fill?.fill) slide.background = { kind: 'color', value: fill.fill };
@@ -739,44 +710,6 @@ function paragraphsXml(st: Styles, lines: { align?: HAlign; runs: TextRun[]; lis
     i = j;
   }
   return out.join('');
-}
-
-/** The animation effects ODF can carry here, by LightCast effect id: [LibreOffice preset id, class]. */
-const ANIM_PRESETS: Record<string, [string, 'entrance' | 'exit']> = {
-  appear: ['ooo-entrance-appear', 'entrance'], fade: ['ooo-entrance-fade-in', 'entrance'], fly: ['ooo-entrance-fly-in', 'entrance'], wipe: ['ooo-entrance-wipe', 'entrance'],
-  disappear: ['ooo-exit-disappear', 'exit'], fadeOut: ['ooo-exit-fade-out', 'exit'], wipeOut: ['ooo-exit-wipe', 'exit'],
-};
-const secs = (ms: number) => `${Math.round(ms) / 1000}s`;
-
-/** A slide's animations as LibreOffice's anim:par timing tree (clicks are steps; with / after effects share the step). */
-export function animationsXml(list: SlideAnimation[] | undefined, ids: Map<string, string>): string {
-  const usable = (list ?? []).filter((a) => ANIM_PRESETS[a.effect] && ids.has(a.elementId));
-  if (!usable.length) return '';
-  const steps: SlideAnimation[][] = [];
-  for (const a of usable) { if (a.start === 'click' || !steps.length) steps.push([a]); else steps[steps.length - 1].push(a); }
-  const body = (a: SlideAnimation, id: string, exit: boolean): string => {
-    const dur = secs(Math.max(1, a.durationMs));
-    const set = `<anim:set smil:begin="0s" smil:dur="0.001s" smil:fill="hold" smil:targetElement="${id}" smil:attributeName="visibility" smil:to="${exit ? 'hidden' : 'visible'}"/>`;
-    if (a.effect === 'fade' || a.effect === 'fadeOut') return `${set}<anim:transitionFilter smil:dur="${dur}" smil:targetElement="${id}" smil:type="fade" smil:subtype="crossfade"${exit ? ' smil:mode="out"' : ''}/>`;
-    if (a.effect === 'wipe' || a.effect === 'wipeOut') return `${set}<anim:transitionFilter smil:dur="${dur}" smil:targetElement="${id}" smil:type="barWipe" smil:subtype="leftToRight"${exit ? ' smil:mode="out"' : ''}/>`;
-    if (a.effect === 'fly') return `${set}<anim:animate smil:dur="${dur}" smil:fill="hold" smil:targetElement="${id}" smil:attributeName="y" smil:values="1+height/2;y" smil:keyTimes="0;1"/>`;
-    return set;
-  };
-  const stepXml = steps.map((step) => {
-    // Groups of effects that start together: an "after previous" effect begins when the group before it ends.
-    const groups: { begin: number; effects: SlideAnimation[] }[] = [];
-    let clock = 0;
-    for (const a of step) {
-      if (a.start === 'after' && groups.length) { clock = Math.max(...groups[groups.length - 1].effects.map((e) => e.delayMs + e.durationMs)) + groups[groups.length - 1].begin; groups.push({ begin: clock, effects: [a] }); } else if (groups.length) groups[groups.length - 1].effects.push(a); else groups.push({ begin: 0, effects: [a] });
-    }
-    const inner = groups.map((g) => `<anim:par smil:begin="${secs(g.begin * 1000)}" smil:fill="hold">${g.effects.map((a) => {
-      const [preset, cls] = ANIM_PRESETS[a.effect];
-      const node = a === step[0] ? 'on-click' : a.start === 'after' ? 'after-previous' : 'with-previous';
-      return `<anim:par smil:begin="${secs(a.delayMs)}" smil:fill="hold" presentation:node-type="${node}" presentation:preset-class="${cls}" presentation:preset-id="${preset}">${body(a, ids.get(a.elementId)!, cls === 'exit')}</anim:par>`;
-    }).join('')}</anim:par>`).join('');
-    return `<anim:par smil:begin="next" smil:fill="hold">${inner}</anim:par>`;
-  }).join('');
-  return `<anim:par smil:dur="indefinite" smil:restart="never" presentation:node-type="timing-root"><anim:seq smil:dur="indefinite" presentation:node-type="main-sequence">${stepXml}</anim:seq></anim:par>`;
 }
 
 type PresetTable = typeof import('./odpPresets').ODP_PRESETS;
@@ -1015,6 +948,9 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     layoutPages.push({ id: lay.id, name: lay.name, xml: `<style:master-page style:name="Layout${li + 1}" style:display-name="${escapeXml(lay.name)}" style:page-layout-name="PM1"${masterStyle}>${masterBody}${(await renderElements(own, mst)).join('')}${holders}</style:master-page>` });
   }
 
+  // A preset motion path (Lines, Arcs…) is traced by the engine (when it is loaded) and written as the points it passes.
+  let tracePath: ((a: SlideAnimation, el: SlideElement) => [number, number][]) | undefined;
+  try { const mp = await import('../motionPath'); tracePath = mp.presetMotionPoints; } catch { /* no engine: such paths are left out */ }
   const pages: string[] = [];
   for (const [i, slide] of p.slides.entries()) {
     const parts: string[] = [];
@@ -1032,7 +968,18 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     // A slide with no background of its own shows the master's (the fill property is left out so it is inherited).
     const bgFill = !bg && masterFilled ? '' : backgroundFill(bg);
     const dp = st.name('drawing-page', 'dp', `<style:drawing-page-properties ${bgFill}${slide.disabled ? ' presentation:visibility="hidden"' : ''}${slide.hideMaster ? ' presentation:background-objects-visible="false"' : ''}${transitionAttrs(slide.transition, slide.autoAdvance)}/>`);
-    const anims = animationsXml(slide.animations, xmlIds);
+    const pathOf = (a: SlideAnimation): string | undefined => {
+      const el = all.find((e) => e.id === a.elementId);
+      if (!el || !tracePath) return undefined;
+      try {
+        const pts = tracePath(a, el);
+        if (pts.length < 2) return undefined;
+        const cx = el.x + el.w / 2, cy = el.y + el.h / 2;
+        const f = (n: number) => Math.round(n * 10000) / 10000;
+        return `M 0 0 ${pts.slice(1).map(([x, y]) => `L ${f((x - cx) / CANVAS_W)} ${f((y - cy) / CANVAS_H)}`).join(' ')}`;
+      } catch { return undefined; }
+    };
+    const anims = animationsXml(slide.animations, xmlIds, pathOf);
     const notes = slide.notes
       ? `<presentation:notes><draw:page-thumbnail draw:layer="layout" svg:width="12.7cm" svg:height="9.525cm" svg:x="3.175cm" svg:y="1.905cm" draw:page-number="${i + 1}" presentation:class="page"/><draw:frame presentation:style-name="${st.name('presentation', 'pr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>')}" presentation:class="notes" draw:layer="layout" svg:width="16.8cm" svg:height="11.2cm" svg:x="2.1cm" svg:y="14.8cm"><draw:text-box>${slide.notes.split('\n').map((l) => `<text:p>${odfText(l)}</text:p>`).join('')}</draw:text-box></draw:frame></presentation:notes>`
       : '';

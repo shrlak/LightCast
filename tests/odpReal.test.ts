@@ -173,7 +173,7 @@ describe('writing for LibreOffice', () => {
   });
 
   it('leaves out animations whose effect ODF cannot carry here, or whose object is not on the slide', () => {
-    expect(animationsXml([{ id: 'x', elementId: 'a', effect: 'spin', class: 'emphasis', start: 'click', durationMs: 500, delayMs: 0 }], new Map([['a', 'id1']]))).toBe('');
+    expect(animationsXml([{ id: 'x', elementId: 'a', effect: 'wave', class: 'emphasis', start: 'click', durationMs: 500, delayMs: 0 }], new Map([['a', 'id1']]))).toBe('');
     expect(animationsXml([{ id: 'x', elementId: 'zz', effect: 'fade', class: 'entrance', start: 'click', durationMs: 500, delayMs: 0 }], new Map())).toBe('');
   });
 });
