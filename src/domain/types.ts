@@ -264,6 +264,12 @@ export interface ElementParagraph {
   list?: ListStyle | 'none';
   /** Indent level (steps of one indent, 0-8) of this paragraph. */
   level?: number;
+  /** Left margin in canvas px from the text area (replaces the level's own indent, e.g. imported .ppt ruler positions). */
+  marginLeft?: number;
+  /** First-line indent in canvas px relative to `marginLeft`; negative = hanging (the bullet sits left of the wrapped lines). */
+  firstIndent?: number;
+  /** Numbered lists: the number this run of paragraphs starts at (1 when unset). */
+  startAt?: number;
   /** Space before / after this paragraph in canvas px, and its line height multiple (the box's when unset). */
   spaceBefore?: number;
   spaceAfter?: number;

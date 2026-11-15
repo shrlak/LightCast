@@ -6,6 +6,7 @@
 import type { TableCell, TableData } from '../../engine';
 import type { ElementParagraph, HAlign, ListStyle, Slide, SlideElement, TextRun, Transition } from '../types';
 import { CANVAS_H, CANVAS_W } from '../canvas';
+import { INDENT_PX } from '../textFormat';
 import { gradientCss } from '../backgroundFormat';
 import { metafileToBlob } from '../metafile/image';
 import { detectTables, type TablePlan } from './pptTable';
@@ -44,6 +45,8 @@ const scaleOf = (doc: Pick<PptDocument, 'width' | 'height'>): Scale => {
 };
 
 const BULLET_BY_CODE: Record<number, ListStyle> = { 0xfc: 'check', 0xfe: 'check', 0xa7: 'square', 0x6e: 'square', 0x71: 'square', 0xd8: 'arrow', 0xe0: 'arrow', 0x76: 'diamond', 0x2022: 'bullet', 0x25cf: 'bullet', 0x25a0: 'square', 0x25aa: 'square', 0x2013: 'dash', 0x2014: 'dash', 0x2d: 'dash', 0x2605: 'star', 0x25cb: 'circle', 0x2192: 'arrow', 0x2713: 'check' };
+/** PowerPoint's TextAutoNumberScheme ids (MS-PPT 2.13.? ANM_*) → LightCast's numbering styles. */
+const NUMBER_SCHEME: Record<number, ListStyle> = { 0: 'alpha-lower', 1: 'alpha', 2: 'number-paren', 3: 'number', 4: 'roman-lower', 5: 'roman-lower', 6: 'roman-lower', 7: 'roman', 8: 'alpha-lower-paren', 9: 'alpha-lower-paren', 10: 'alpha', 11: 'alpha', 12: 'number-paren', 13: 'number' };
 function bulletStyle(b: { char?: number; font?: string }): ListStyle {
   const code = b.char ?? 0x2022;
   if (/wingdings|symbol/i.test(b.font ?? '')) return BULLET_BY_CODE[code] ?? 'bullet';
@@ -104,10 +107,16 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
   const sizePx = (p: PptPara) => Math.round((p.runs.find((r) => r.text)?.size ?? 0) * sc.pt) || own.fontSize;
   // Space before / after: positive = percent of a line, negative = master units; |v| of 1 is rounding noise.
   const gap = (v: number | undefined, p: PptPara) => (!v ? 0 : v < 0 ? (-v > 2 ? Math.round(-v * sc.k) : 0) : Math.round((v / 100) * sizePx(p) * 1.2));
-  const listOf = (p: PptPara): ListStyle | undefined => (p.bullet ? bulletStyle(p.bullet) : undefined);
+  const listOf = (p: PptPara): ListStyle | undefined => (p.bullet ? (p.numbering ? NUMBER_SCHEME[p.numbering.scheme] ?? 'number' : bulletStyle(p.bullet)) : undefined);
+  // Left margin and first-line indent in canvas px (the file's indent is the absolute first-line position; hanging = negative).
+  const marginOf = (p: PptPara): { left: number; first: number } | undefined => (p.leftMargin === undefined && p.indent === undefined ? undefined : (() => {
+    const lm = p.leftMargin ?? 0;
+    return { left: Math.round(lm * sc.k), first: Math.round(((p.indent ?? 0) - lm) * sc.k) };
+  })());
+  const startOf = (p: PptPara) => (p.numbering && p.numbering.startAt > 1 ? p.numbering.startAt : undefined);
   const lineOf = (p: PptPara) => (p.lineSpacing && p.lineSpacing !== 100 ? Math.round((p.lineSpacing / 100) * 1.2 * 100) / 100 : undefined);
   const first = real[0];
-  const sameAll = !first || real.every((p) => listOf(p) === listOf(first) && p.level === first.level && gap(p.spaceBefore, p) === gap(first.spaceBefore, first) && gap(p.spaceAfter, p) === gap(first.spaceAfter, first) && lineOf(p) === lineOf(first));
+  const sameAll = !first || real.every((p) => listOf(p) === listOf(first) && p.level === first.level && gap(p.spaceBefore, p) === gap(first.spaceBefore, first) && gap(p.spaceAfter, p) === gap(first.spaceAfter, first) && lineOf(p) === lineOf(first) && marginOf(p)?.left === marginOf(first)?.left && marginOf(p)?.first === marginOf(first)?.first && startOf(p) === startOf(first));
   if (mixedAlign || !sameAll) {
     const anyList = real.some((p) => p.bullet);
     fields.paragraphs = runLines.map((runs, i): ElementParagraph => {
@@ -118,6 +127,10 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
         if (list) para.list = list;
         else if (anyList) para.list = 'none';
         if (p.level) para.level = Math.min(8, p.level);
+        const mg = p.cont ? undefined : marginOf(p);
+        if (mg) { para.marginLeft = mg.left; if (mg.first) para.firstIndent = mg.first; }
+        else if (p.cont) { const own = marginOf(p); if (own) para.marginLeft = own.left; }
+        if (list && startOf(p)) para.startAt = startOf(p);
         const sb = p.cont ? 0 : gap(p.spaceBefore, p), sa = gap(p.spaceAfter, p);
         if (sb) para.spaceBefore = sb;
         if (sa) para.spaceAfter = sa;
@@ -131,7 +144,9 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
     if (first) {
       const list = listOf(first);
       if (list) fields.list = list;
-      if (first.level) fields.indent = Math.min(8, first.level);
+      const mg = marginOf(first);
+      if (mg) { if (mg.left) fields.indent = Math.round((mg.left / INDENT_PX) * 1000) / 1000; if (mg.first) fields.firstIndent = mg.first; }
+      else if (first.level) fields.indent = Math.min(8, first.level);
       const sb = gap(first.spaceBefore, first), sa = gap(first.spaceAfter, first);
       if (sb) fields.spaceBefore = sb;
       if (sa) fields.spaceAfter = sa;

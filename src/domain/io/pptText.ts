@@ -27,6 +27,8 @@ export interface PptPara {
   align?: 'left' | 'center' | 'right' | 'justify';
   /** The paragraph starts with a bullet; `char` is its character code and `font` its typeface (Wingdings and the like). */
   bullet?: { char?: number; font?: string };
+  /** Auto-numbered bullet (PowerPoint 2002 extension): TextAutoNumberScheme id and the number the run starts at. */
+  numbering?: { scheme: number; startAt: number };
   /** PowerPoint's line spacing: a percentage of the line (100 = single). */
   lineSpacing?: number;
   /** Space before / after: positive = percent of a line, negative = master units (1/576 inch). */
@@ -170,7 +172,11 @@ export function readEnvironmentStyles(c: Ctx, doc: Rec): TextStyles {
   return out;
 }
 
-export interface StyleRuns { pf: { count: number; level: number; pf: PF }[]; cf: { count: number; cf: CF }[] }
+/** The ruler of a text box (TextRulerAtom): left margin and first-line position per indent level, master units. */
+export interface Ruler { leftMargin: (number | undefined)[]; indent: (number | undefined)[]; tabStops?: { pos: number; type: number }[] }
+/** The PowerPoint 2002 extension of one paragraph run (StyleTextProp9Atom): auto-numbering. */
+export interface Ext9 { scheme?: number; startAt?: number }
+export interface StyleRuns { pf: { count: number; level: number; pf: PF }[]; cf: { count: number; cf: CF }[]; ruler?: Ruler; ext9?: Ext9[] }
 
 /** A StyleTextPropAtom for a text of `length` characters (the runs cover the text plus the final implicit paragraph mark). */
 export function readStyleRuns(c: Ctx, r: Rec, length: number): StyleRuns {
@@ -194,6 +200,69 @@ export function readStyleRuns(c: Ctx, r: Rec, length: number): StyleRuns {
     out.cf.push({ count, cf: cf.cf });
     covered += count;
     o = cf.next;
+  }
+  return out;
+}
+
+/** A TextRulerAtom: masks, then the optional cLevels, default tab, tab stops, five left margins and five indents. */
+export function readRuler(c: Ctx, r: Rec): Ruler | null {
+  let o = r.pos;
+  if (r.end - o < 4) return null;
+  const masks = c.v.getUint32(o, true);
+  o += 4;
+  const out: Ruler = { leftMargin: [], indent: [] };
+  const need = (n: number) => o + n <= r.end;
+  if (masks & 0x2) { if (!need(2)) return null; o += 2; }
+  if (masks & 0x1) { if (!need(2)) return null; o += 2; }
+  if (masks & 0x4) {
+    if (!need(2)) return null;
+    const n = c.v.getUint16(o, true);
+    if (!need(2 + n * 4)) return null;
+    const stops: { pos: number; type: number }[] = [];
+    for (let i = 0; i < Math.min(n, 64); i++) stops.push({ pos: c.v.getUint16(o + 2 + i * 4, true), type: c.v.getUint16(o + 4 + i * 4, true) });
+    if (stops.length) out.tabStops = stops;
+    o += 2 + n * 4;
+  }
+  for (let i = 0; i < 5; i++) if (masks & (0x8 << i)) { if (!need(2)) return null; out.leftMargin[i] = c.v.getInt16(o, true); o += 2; }
+  for (let i = 0; i < 5; i++) if (masks & (0x100 << i)) { if (!need(2)) return null; out.indent[i] = c.v.getInt16(o, true); o += 2; }
+  return out;
+}
+
+/**
+ * A StyleTextProp9Atom: one TextPFException9 / TextCFException9 / TextSIException per paragraph run of the StyleTextPropAtom.
+ * Only the auto-number scheme and start number are kept; an entry with fields this reader does not know ends the list.
+ */
+export function readStyleExt9(c: Ctx, r: Rec): Ext9[] {
+  const out: Ext9[] = [];
+  let o = r.pos;
+  const need = (n: number) => o + n <= r.end;
+  while (need(4) && out.length < MAX_RUNS) {
+    const e: Ext9 = {};
+    const pf = c.v.getUint32(o, true);
+    o += 4;
+    if (pf & ~0x03800000) return out;
+    if (pf & 0x800000) { if (!need(2)) return out; o += 2; }
+    let has = true;
+    if (pf & 0x1000000) { if (!need(2)) return out; has = c.v.getUint16(o, true) !== 0; o += 2; }
+    if (pf & 0x2000000) {
+      if (!need(4)) return out;
+      if (has) { e.scheme = c.v.getUint16(o, true); e.startAt = c.v.getUint16(o + 2, true) || 1; }
+      o += 4;
+    }
+    if (!need(4)) { out.push(e); return out; }
+    const cf = c.v.getUint32(o, true);
+    o += 4;
+    if (cf & ~0x00380000) return out;
+    for (const bit of [0x80000, 0x100000]) if (cf & bit) { if (!need(2)) return out; o += 2; }
+    if (cf & 0x200000) { if (!need(4)) return out; o += 4; }
+    if (!need(4)) { out.push(e); return out; }
+    const si = c.v.getUint32(o, true);
+    o += 4;
+    if (si & ~0x67) return out;
+    for (const bit of [0x2, 0x4]) if (si & bit) { if (!need(2)) return out; o += 2; }
+    if (si & 0x40) { if (!need(2)) return out; o += 2; }
+    if (si & 0x20) { if (!need(4)) return out; o += 4; }
+    out.push(e);
   }
   return out;
 }
@@ -231,11 +300,11 @@ export function buildParas(raw: string, sty: StyleRuns | null, textType: number,
     while (lo <= hi) { const mid = (lo + hi) >> 1; if (cfBounds[mid].from <= i) { best = mid; lo = mid + 1; } else hi = mid - 1; }
     return best >= 0 ? cfBounds[best].cf : {};
   };
-  const pfRuns: { from: number; level: number; pf: PF }[] = [];
+  const pfRuns: { from: number; level: number; pf: PF; ext?: Ext9 }[] = [];
   at = 0;
-  for (const r of sty?.pf ?? []) { pfRuns.push({ from: at, level: r.level, pf: r.pf }); at += r.count; }
+  for (const [k, r] of (sty?.pf ?? []).entries()) { pfRuns.push({ from: at, level: r.level, pf: r.pf, ext: sty?.ext9?.[k] }); at += r.count; }
   const pfAt = (i: number) => {
-    let best: { level: number; pf: PF } = { level: 0, pf: {} };
+    let best: { level: number; pf: PF; ext?: Ext9 } = { level: 0, pf: {} };
     for (const r of pfRuns) { if (r.from <= i) best = r; else break; }
     return best;
   };
@@ -263,7 +332,9 @@ export function buildParas(raw: string, sty: StyleRuns | null, textType: number,
     if (!hasMark && p0 === raw.length && out.length) break; // text ended with a paragraph mark
     const own = pfAt(p0);
     const lv = levelStyle(env, textType, own.level);
-    const pf = { ...(lv?.pf ?? {}), ...own.pf };
+    const rl = sty?.ruler;
+    const ruled: PF = rl ? { ...(rl.leftMargin[own.level] !== undefined ? { leftMargin: rl.leftMargin[own.level] } : {}), ...(rl.indent[own.level] !== undefined ? { indent: rl.indent[own.level] } : {}), ...(rl.tabStops ? { tabStops: rl.tabStops } : {}) } : {};
+    const pf = { ...(lv?.pf ?? {}), ...ruled, ...own.pf };
     // Characters of the paragraph, broken into lines at \v and into runs where the character style changes.
     let lineRuns: PptRun[] = [];
     let first = true;
@@ -274,11 +345,12 @@ export function buildParas(raw: string, sty: StyleRuns | null, textType: number,
       if (pf.lineSpacing && pf.lineSpacing > 0) para.lineSpacing = pf.lineSpacing;
       if (pf.spaceBefore) para.spaceBefore = pf.spaceBefore;
       if (pf.spaceAfter) para.spaceAfter = pf.spaceAfter;
-      if (pf.leftMargin) para.leftMargin = pf.leftMargin;
-      if (pf.indent) para.indent = pf.indent;
+      if (pf.leftMargin !== undefined) para.leftMargin = pf.leftMargin;
+      if (pf.indent !== undefined) para.indent = pf.indent;
       if (pf.tabStops) para.tabStops = pf.tabStops;
       if (first) {
         if (pf.bullet) para.bullet = { char: pf.bulletChar, font: pf.bulletFont !== undefined ? env.fonts[pf.bulletFont] : undefined };
+        if (pf.bullet && own.ext?.scheme !== undefined) para.numbering = { scheme: own.ext.scheme, startAt: own.ext.startAt ?? 1 };
       } else para.cont = true;
       out.push(para);
       lineRuns = [];

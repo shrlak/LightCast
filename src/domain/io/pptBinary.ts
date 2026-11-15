@@ -18,7 +18,8 @@ import { isCfb, readCfb } from './cfb';
 import { inflateZlib } from './inflate';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
 import { customPathOf, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
-import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
+import type { Ext9 } from './pptText';
+import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readRuler, readStyleExt9, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
 export { PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES };
 export type { PptPara, PptRun } from './pptText';
@@ -117,6 +118,16 @@ const plain = (raw: string) => raw.replace(/[\r\v\u2028]/g, '\n').replace(/[\u00
 interface TextItem { type: number; raw: string; style: StyleRuns | null }
 const itemText = (i: TextItem) => plain(i.raw);
 
+/** The StyleTextProp9Atom inside a ProgTags container (ProgBinaryTag → BinaryTagData), if any. */
+function ext9Of(c: Ctx, tags: Rec, depth = 0): Ext9[] | undefined {
+  let out: Ext9[] | undefined;
+  each(c, tags.pos, tags.end, (r) => {
+    if (r.type === T.StyleTextProp9) { out ??= readStyleExt9(c, r); return false; }
+    if (depth < 4 && (r.type === T.ProgStringTag || r.type === T.ProgBinaryTag || r.type === T.BinaryTagData)) { out ??= ext9Of(c, r, depth + 1); }
+  });
+  return out;
+}
+
 /** Text atoms from a ClientTextbox / SlideListWithText run: TextHeaderAtom starts an item, chars / bytes atoms fill it, a StyleTextPropAtom styles it. */
 function textItems(c: Ctx, from: number, to: number, stopAtPersist = false): TextItem[] {
   const out: TextItem[] = [];
@@ -128,7 +139,9 @@ function textItems(c: Ctx, from: number, to: number, stopAtPersist = false): Tex
       const raw = decodeRaw(c, r, r.type === T.TextChars);
       if (cur && !cur.raw) cur.raw = raw;
       else out.push((cur = { type: 4, raw, style: null }));
-    } else if (r.type === T.StyleTextProp && cur && !cur.style) cur.style = readStyleRuns(c, r, cur.raw.length);
+    } else if (r.type === T.StyleTextProp && cur && !cur.style?.pf.length) cur.style = { ...readStyleRuns(c, r, cur.raw.length), ruler: cur.style?.ruler };
+    else if (r.type === T.TextRuler && cur) { const ruler = readRuler(c, r); if (ruler) cur.style = { ...(cur.style ?? { pf: [], cf: [] }), ruler }; }
+    else if (r.type === T.ProgTags && isContainer(r) && cur) { const e = ext9Of(c, r); if (e) cur.style = { ...(cur.style ?? { pf: [], cf: [] }), ext9: e }; }
   });
   return out;
 }
@@ -273,7 +286,7 @@ const rectOf = (l: number, t: number, r: number, b: number): Rect => ({ l: Math.
 function readRawShape(c: Ctx, sp: Rec, map: Mapper, st: DrawState, group: number | undefined): RawShape {
   const props: Props = new Map(st.defaults);
   const raw: RawShape = { props, flags: 0, spType: 0, items: [], group };
-  let abs: Rect | undefined, child: Rect | undefined;
+  let abs: Rect | undefined, child: Rect | undefined, ext9: Ext9[] | undefined;
   each(c, sp.pos, sp.end, (r) => {
     const len = r.end - r.pos;
     if (r.type === T.SpAtom && len >= 8) { raw.spType = r.inst; raw.flags = c.v.getUint32(r.pos + 4, true); }
@@ -284,9 +297,13 @@ function readRawShape(c: Ctx, sp: Rec, map: Mapper, st: DrawState, group: number
     } else if (r.type === T.ChildAnchor && len >= 16) child = rectOf(c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true));
     else if (r.type === T.ClientTextbox) raw.items = textItems(c, r.pos, r.end);
     else if (r.type === T.ClientData) {
-      each(c, r.pos, r.end, (d) => { if (d.type === T.OEPlaceholder && d.end - d.pos >= 5) raw.placeholder = c.b[d.pos + 4]; });
+      each(c, r.pos, r.end, (d) => {
+        if (d.type === T.OEPlaceholder && d.end - d.pos >= 5) raw.placeholder = c.b[d.pos + 4];
+        else if (d.type === T.ProgTags && isContainer(d)) ext9 ??= ext9Of(c, d);
+      });
     } else if (r.type === T.Opt || r.type === T.SecondaryOpt || r.type === T.TertiaryOpt) readOpt(c, r, props);
   });
+  if (ext9 && raw.items[0] && !raw.items[0].style?.ext9) raw.items[0].style = { ...(raw.items[0].style ?? { pf: [], cf: [] }), ext9 };
   const rect = abs ?? child;
   if (rect && (rect.r > rect.l || rect.b > rect.t)) {
     const p: Placed = { x: rect.l, y: rect.t, w: rect.r - rect.l, h: rect.b - rect.t, rot: rotationOf(props), flipH: (raw.flags & SP.flipH) !== 0, flipV: (raw.flags & SP.flipV) !== 0 };

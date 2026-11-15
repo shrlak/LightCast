@@ -13,7 +13,7 @@ export const T = {
   Document: 0x03e8, DocumentAtom: 0x03e9, Slide: 0x03ee, SlideAtom: 0x03ef, Notes: 0x03f0, MainMaster: 0x03f8, SlideListWithText: 0x0ff0,
   SlidePersistAtom: 0x03f3, PPDrawing: 0x040c, DrawingGroup: 0x040b, UserEdit: 0x0ff5, PersistDirectory: 0x1772,
   Environment: 0x03fa, SlideShowSlideInfo: 0x03f9, ColorSchemeAtom: 0x07f0, FontCollection: 0x07d5, FontEntityAtom: 0x0fb7,
-  TextHeader: 0x0f9f, TextChars: 0x0fa0, TextBytes: 0x0fa8, StyleTextProp: 0x0fa1, TextMasterStyle: 0x0fa3, OEPlaceholder: 0x0bc3,
+  TextHeader: 0x0f9f, TextRuler: 0x0fa6, StyleTextProp9: 0x0fac, ProgTags: 0x1388, ProgStringTag: 0x1389, ProgBinaryTag: 0x138a, BinaryTagData: 0x138b, TextChars: 0x0fa0, TextBytes: 0x0fa8, StyleTextProp: 0x0fa1, TextMasterStyle: 0x0fa3, OEPlaceholder: 0x0bc3,
   Dgg: 0xf000, BStore: 0xf001, Dg: 0xf002, Spgr: 0xf003, Sp: 0xf004, SpgrAtom: 0xf009, SpAtom: 0xf00a, Opt: 0xf00b, ClientTextbox: 0xf00d, ClientAnchor: 0xf010, ClientData: 0xf011, ChildAnchor: 0xf00f, BSE: 0xf007,
   SecondaryOpt: 0xf121, TertiaryOpt: 0xf122,
 };
