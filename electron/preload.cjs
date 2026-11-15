@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   spellSuggestions: (word) => webFrame.getWordSuggestions(String(word)),
   // Paste: PowerPoint's own copy of shapes (exact places, fonts and colours), read by the main process.
   readOfficeClipboard: () => ipcRenderer.invoke('desktop:readOfficeClipboard'),
+  scanClipboard: () => ipcRenderer.invoke('desktop:scanClipboard'),
   // Insert › Screenshot: screens and windows to choose from, and the choice for the next getDisplayMedia.
   captureSources: () => ipcRenderer.invoke('desktop:captureSources'),
   selectCaptureSource: (id) => ipcRenderer.invoke('desktop:selectCaptureSource', id),
