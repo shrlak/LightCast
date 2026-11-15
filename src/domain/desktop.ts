@@ -44,6 +44,8 @@ export interface DesktopBridge {
   printToPdf?(): Promise<Uint8Array | null>;
   /** Legacy binary PPT → editable PPTX via locally installed PowerPoint or LibreOffice. */
   pptToPptx(bytes: Uint8Array): Promise<Uint8Array | null>;
+  /** The opposite: a .pptx as legacy .ppt via PowerPoint (Windows) or LibreOffice; null when neither is installed. Older apps lack it. */
+  pptxToPpt?(bytes: Uint8Array): Promise<Uint8Array | null>;
   /** Review › Spelling (desktop app versions that have it). */
   isMisspelled?(word: string): boolean;
   spellSuggestions?(word: string): string[];

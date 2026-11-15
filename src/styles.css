@@ -294,6 +294,7 @@ body.transparent, body.transparent #root { background: transparent !important; }
 .ann-preview { flex-direction: row; justify-content: space-between; align-items: flex-start; }
 .ann-preview img { width: 64px; height: 64px; background: #fff; border-radius: 4px; }
 .opening-song { gap: 8px; }
+.opening-song.drop-over { outline: 2px dashed var(--accent, #2f9e44); outline-offset: 2px; }
 .opening-song .row input { flex: 1; min-width: 0; }
 .opening-thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; }
 .opening-thumbs > div { aspect-ratio: 4 / 3; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); }

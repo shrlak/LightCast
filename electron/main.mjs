@@ -13,7 +13,7 @@ import { setAiConfigProvider } from '../server/ai.mjs';
 import { startTunnel } from '../server/tunnel.mjs';
 import { aiConfig, DEFAULT_PROXY } from '../server/aiProviders.mjs';
 import { linkAddress, remoteWebAppAddress, remotePairingAddress, teamWebAppAddress, teamPairingAddress, newLinkCredentials, registerLink, removeLink } from '../server/remoteLink.mjs';
-import { pptxToPdf, pptToPptx } from './pptxToPdf.mjs';
+import { pptxToPdf, pptToPptx, pptxToPpt } from './pptxToPdf.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, '..');
@@ -418,6 +418,7 @@ ipcMain.handle('desktop:printToPdf', async (e) => {
   }
 });
 ipcMain.handle('desktop:pptToPptx', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptToPptx(bytes) : null));
+ipcMain.handle('desktop:pptxToPpt', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptxToPpt(bytes) : null));
 // Paste from PowerPoint: Office puts the copied shapes on the clipboard as a small Office package
 // (DrawingML), under this name on Windows and as a pasteboard type on macOS.
 // Insert › Screenshot: the screens and windows with small pictures, and the one chosen for the next capture.
