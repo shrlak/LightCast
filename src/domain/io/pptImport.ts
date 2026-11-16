@@ -272,31 +272,32 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
 }
 
 /**
- * SlideShowSlideInfoAtom effect type → LightCast transition and its option. The ids and directions were read from files
- * LibreOffice wrote for known transitions (0 cut, 1 random, 2 blinds, 3 checker, 4 cover, 5 dissolve, 7 uncover, 8 random bars,
- * 10 wipe, 13 split, 17 diamond, 18 plus, 19 wedge, 20 push, 21 comb, 22 newsflash, 23 fade, 26 wheel, 27 circle); 6, 9, 11 and 12
- * follow the older PowerPoint numbering.
+ * SlideShowSlideInfoAtom effect type and direction → LightCast transition and option (the engine's options are PowerPoint's
+ * pptx `dir` values: the direction of motion). Checked by converting pptx decks with every transition and direction to .ppt with
+ * LibreOffice 24.2 and reading the atoms back: cover / uncover / push number the motion r, u, l, d, then the diagonals lu, ru,
+ * ld, rd; wipe numbers it l, u, r, d; split 0-3 are horizontal out / in, vertical out / in; blinds 0 vertical, 1 horizontal;
+ * checker, random bars and comb 0 horizontal, 1 vertical; wheel's direction is its number of spokes. 6 is fade through black,
+ * 23 smooth fade; 9 (strips) uses the diagonal numbers of cover; 11 is box in / out (pptx zoom).
  */
-const MOVE = ['l', 'u', 'r', 'd'];
-const SIDE = ['r', 'd', 'l', 'u'];
+const WIPE_DIR = ['l', 'u', 'r', 'd'];
+const MOTION_DIR = ['r', 'u', 'l', 'd', 'lu', 'ru', 'ld', 'rd'];
 const EFFECT: Record<number, (dir: number) => { kind: Transition['kind']; option?: string }> = {
   1: () => ({ kind: 'fx:random' }),
   2: (d) => ({ kind: 'fx:blinds', option: d === 1 ? 'horz' : 'vert' }),
   3: (d) => ({ kind: 'fx:checker', option: d === 1 ? 'vert' : 'horz' }),
-  4: (d) => ({ kind: 'fx:cover', ...(SIDE[d] ? { option: SIDE[d] } : {}) }),
+  4: (d) => ({ kind: 'fx:cover', ...(MOTION_DIR[d] ? { option: MOTION_DIR[d] } : {}) }),
   5: () => ({ kind: 'fx:dissolve' }),
-  6: () => ({ kind: 'fade' }),
-  7: (d) => ({ kind: 'fx:uncover', ...(SIDE[d] ? { option: SIDE[d] } : {}) }),
+  6: () => ({ kind: 'fade', option: 'throughBlack' }),
+  7: (d) => ({ kind: 'fx:uncover', ...(MOTION_DIR[d] ? { option: MOTION_DIR[d] } : {}) }),
   8: (d) => ({ kind: 'fx:randomBar', option: d === 1 ? 'vert' : 'horz' }),
-  9: () => ({ kind: 'fx:wipe' }),
-  10: (d) => ({ kind: 'fx:wipe', ...(MOVE[d] ? { option: MOVE[d] } : {}) }),
+  9: (d) => ({ kind: 'fx:wipe', option: d >= 4 && d <= 7 ? MOTION_DIR[d] : 'rd' }),
+  10: (d) => ({ kind: 'fx:wipe', ...(WIPE_DIR[d] ? { option: WIPE_DIR[d] } : {}) }),
   11: (d) => ({ kind: 'fx:shape', option: d === 1 ? 'in' : 'out' }),
-  12: (d) => ({ kind: 'fx:shape', option: d === 1 ? 'in' : 'out' }),
   13: (d) => ({ kind: 'fx:split', option: d === 0 ? 'horzOut' : d === 1 ? 'horzIn' : d === 3 ? 'vertIn' : 'vertOut' }),
   17: () => ({ kind: 'fx:shape', option: 'diamond' }),
   18: () => ({ kind: 'fx:shape', option: 'plus' }),
   19: () => ({ kind: 'fx:clock', option: 'wedge' }),
-  20: (d) => ({ kind: 'fx:push', ...(MOVE[d] ? { option: MOVE[d] } : {}) }),
+  20: (d) => ({ kind: 'fx:push', ...(d < 4 && MOTION_DIR[d] ? { option: MOTION_DIR[d] } : {}) }),
   21: (d) => ({ kind: 'fx:comb', option: d === 1 ? 'vert' : 'horz' }),
   22: () => ({ kind: 'fx:flash' }),
   23: () => ({ kind: 'fade', option: 'smoothly' }),
