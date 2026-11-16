@@ -73,8 +73,12 @@ export const cloudApi = {
   putLibrary: (token: string, baseVersion: number, data: Library) =>
     call<{ version: number; conflict?: boolean; data?: unknown }>('library', { method: 'PUT', token, body: JSON.stringify({ baseVersion, data }) }),
   listMedia: (token: string) => call<{ items: { id: string; size: number; type?: string }[] }>('media', { token }).then((r) => r.data.items),
-  uploadMedia: (token: string, id: string, blob: Blob, resetId?: string) =>
-    call(`media/${encodeURIComponent(id)}`, { method: 'PUT', token, body: blob, headers: { 'content-type': blob.type || 'application/octet-stream', ...(resetId ? { 'X-Freecast-Reset-Id': resetId } : {}) } }),
+  uploadMedia: async (token: string, id: string, blob: Blob, resetId?: string) => {
+    const r = await call<{ error?: string } | null>(`media/${encodeURIComponent(id)}`, { method: 'PUT', token, body: blob, headers: { 'content-type': blob.type || 'application/octet-stream', ...(resetId ? { 'X-Freecast-Reset-Id': resetId } : {}) } });
+    // `call` lets 409 through for the library; for a file it means "not stored" (e.g. sent from before a server reset).
+    if (r.status === 409) throw Object.assign(new Error(r.data?.error ?? '서버가 이 파일을 받지 않았습니다'), { status: 409 });
+    return r;
+  },
   deleteMedia: (token: string, id: string) => call(`media/${encodeURIComponent(id)}`, { method: 'DELETE', token }),
   downloadMedia: (token: string, id: string) => call<Blob>(`media/${encodeURIComponent(id)}`, { token }).then((r) => r.data),
 };
