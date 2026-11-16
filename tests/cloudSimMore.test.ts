@@ -205,6 +205,7 @@ describe('accounts, reset, scale and clocks', () => {
     // Nothing the youth account had is lost; the church song comes along as this computer's own (no shared history).
     expect(youth.presentations.map((p) => p.title)).toEqual(expect.arrayContaining(['청년부 곡']));
     expect(a.titles()).toContain('청년부 곡');
+    expect(a.titles()).toContain('교회 곡');
   });
 
   it('a cloud reset empties every computer and old media are not uploaded back', async () => {

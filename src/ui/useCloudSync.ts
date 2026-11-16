@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch } from 'react';
 import type { Action } from '../domain/reducer';
 import type { Library } from '../domain/types';
-import { cloudApi, loadBase, loadSession, saveBase, saveSession, getCloudStorageUsage, type CloudSession } from '../domain/cloud';
+import { baseOwnerChanges, clearBase, cloudApi, loadBase, loadSession, saveBase, saveSession, getCloudStorageUsage, type CloudSession } from '../domain/cloud';
 import { libraryKey, syncable } from '../domain/cloudMerge';
 import { PUSH_DELAY, syncOnce, type SyncControl, type SyncEnv } from '../domain/cloudSyncRound';
 import { getDevice, initializeDevice, saveDeviceProfile } from '../domain/device';
@@ -226,6 +226,8 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
 
   const login = async (username: string, password: string) => {
     const r = await cloudApi.login(username, password);
+    // Another account than last time: no shared history with this one (its base would delete what it lacks).
+    if (baseOwnerChanges(r.data.username)) await clearBase();
     setSession({ token: r.data.token, username: r.data.username, version: 0 });
     record('account/login', r.data.username);
     notify(`${r.data.username}(으)로 로그인했습니다 — 라이브러리를 동기화합니다`);

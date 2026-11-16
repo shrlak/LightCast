@@ -1,6 +1,6 @@
 // Client for the church cloud library (Worker /freecast/* via this app's /api/cloud proxy).
 import type { Library } from './types';
-import { getMedia, putMedia } from './media';
+import { deleteMedia, getMedia, putMedia } from './media';
 import { summarizeCloudStorage, parseServerStorage } from './cloudStorage';
 import { normalizeLibrary } from './persistence';
 
@@ -92,6 +92,20 @@ export async function loadBase(): Promise<Library | null> {
   } catch {
     return null;
   }
+}
+
+export const clearBase = () => deleteMedia(BASE_KEY).catch(() => undefined);
+
+const BASE_OWNER_KEY = 'freecast.cloud.baseOwner';
+/**
+ * Signing in: does the remembered base belong to another account? Then it must be forgotten, or the merge
+ * takes everything that account had and this one lacks for "deleted in the cloud" and drops it from this
+ * computer. A base from before the owner was recorded is taken to be this account's.
+ */
+export function baseOwnerChanges(username: string, storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage): boolean {
+  let owner: string | null = null;
+  try { owner = storage.getItem(BASE_OWNER_KEY); storage.setItem(BASE_OWNER_KEY, username); } catch { /* private mode: keep the base */ }
+  return owner !== null && owner !== username;
 }
 
 export const saveBase = (lib: Library) => putMedia(BASE_KEY, new Blob([JSON.stringify(lib)], { type: 'application/json' }));

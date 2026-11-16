@@ -5,7 +5,7 @@
 import { vi } from 'vitest';
 import { createSeedLibrary } from '../../src/domain/defaults';
 import { createInitialState, reducer, type Action, type AppState } from '../../src/domain/reducer';
-import type { CloudSession, MediaStore } from '../../src/domain/cloud';
+import { baseOwnerChanges, type CloudSession, type MediaStore } from '../../src/domain/cloud';
 import { syncOnce, runSyncRound, type SyncControl, type SyncEnv } from '../../src/domain/cloudSyncRound';
 import type { SyncState } from '../../src/domain/syncStatus';
 import { addConflicts, type ConflictRecord } from '../../src/domain/syncStatus';
@@ -170,6 +170,8 @@ export class SimClient {
   ctl: SyncControl = { busy: false, requested: false, failures: 0, paused: false, lastPushed: '' };
   /** Rounds started by `settle`, a guard against endless follow-up pushes. */
   rounds = 0;
+  private owner = new Map<string, string>();
+  ownerStorage = { getItem: (k: string) => this.owner.get(k) ?? null, setItem: (k: string, v: string) => { this.owner.set(k, v); } };
   failMedia: ((id: string, dir: 'put' | 'get') => boolean) | null = null;
 
   constructor(public name: string, public worker: FakeWorker, opts: ClientOptions = {}) {
@@ -259,6 +261,8 @@ export class SimClient {
     const res = await this.worker.fetch('/api/cloud/login', { method: 'POST', body: JSON.stringify({ username, password }), headers: { 'content-type': 'application/json' } });
     const data = await res.json();
     if (!res.ok) throw new Error(data.error);
+    // As useCloudSync's login: a base of another account is forgotten.
+    if (baseOwnerChanges(data.username, this.ownerStorage)) this.base = null;
     this.session = { token: data.token, username: data.username, version: 0 };
     this.signedOut = false;
   }
