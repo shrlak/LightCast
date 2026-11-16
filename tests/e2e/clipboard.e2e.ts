@@ -35,7 +35,8 @@ describe('paste slides in the browser', () => {
     await see(page.locator('.ppt-canvas').getByText('두 번째 슬라이드'));
     await page.locator('.ppt-thumb').first().focus();
     await page.keyboard.press('Control+z');
-    await page.waitForTimeout(800);
+    // One Ctrl+Z takes all 20 out again (one undo step).
+    for (let i = 0; i < 50 && (await thumbs(page).count()) !== before; i++) await page.waitForTimeout(200);
     expect(await thumbs(page).count()).toBe(before);
     expect(app.errors).toEqual([]);
     await app.close();
