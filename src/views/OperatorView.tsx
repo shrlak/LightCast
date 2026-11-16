@@ -15,6 +15,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { createInitialState, reducer, type Action, type AppState } from '../domain/reducer';
 import { loadLibrary, normalizeLibrary, saveLibrary } from '../domain/persistence';
 import { activePlaylist } from '../domain/live';
+import { playlistsToAutoDelete } from '../domain/playlistCleanup';
 import { sequence } from '../domain/arrangement';
 import { getDevice } from '../domain/device';
 import { loadSession } from '../domain/cloud';
@@ -115,6 +116,28 @@ export function OperatorView() {
   const knownRequests = useRef(new Set<string>());
   const [remoteControl, setRemoteControl] = useState<RemoteControlState | null>(null);
   useEffect(() => { const expire = () => dispatchRaw({ type: 'trash/expire', now: Date.now() }); expire(); const t = setInterval(expire, 60000); return () => clearInterval(t); }, []);
+  // 비어 있는 재생목록 자동 삭제: empty lists go at start-up at once; while the app runs, after they stayed empty for
+  // a while and were not the active one (so a list that is being created or filled in steps is left alone).
+  const emptySince = useRef(new Map<string, number>());
+  const cleanupStarted = useRef(false);
+  const latestForCleanup = useRef(state); latestForCleanup.current = state;
+  useEffect(() => {
+    const pass = () => {
+      const st = latestForCleanup.current;
+      const startup = !cleanupStarted.current;
+      cleanupStarted.current = true;
+      const gone = playlistsToAutoDelete(st.library, st.activePlaylistId, emptySince.current, Date.now(), startup);
+      if (!gone.length) return;
+      // A list that still has section headers took some work to set up: keep a restore point before removing it.
+      const label = `빈 재생목록 ${gone.length}개 자동 삭제: ${gone.map((p) => p.name).slice(0, 3).join(', ')}`;
+      const done = () => { for (const pl of gone) dispatchRaw({ type: 'playlist/autoDelete', id: pl.id }); };
+      if (gone.some((p) => p.items.length)) void saveRestorePoint(st.library, 'safety', Date.now(), label).catch(() => undefined).then(done);
+      else done();
+    };
+    pass();
+    const t = setInterval(pass, 30_000);
+    return () => clearInterval(t);
+  }, []);
   const [toast, setToast] = useState<string | null>(null);
   const [mixer, setMixerState] = useState(loadX32Settings);
   const setMixer = (next: X32Settings) => { setMixerState(next); saveX32Settings(next); };

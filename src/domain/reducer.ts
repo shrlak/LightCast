@@ -22,6 +22,7 @@ import { CHURCH_BACKGROUNDS, createEmptyLive } from './defaults';
 import { advanceBuild, rewindBuild } from './animations';
 import { activePlaylist, findPres, goLive, nextCursor, playlistIndexFor, prevCursor, themeFor, type Cursor, type NavState } from './live';
 import { dedupeSongs } from './sunday/dedupe';
+import { isEmptyPlaylist } from './playlistCleanup';
 import { resetTimer, startTimer, stopTimer } from './timers';
 
 export type { Cursor } from './live';
@@ -62,6 +63,8 @@ type DomainAction =
   | { type: 'theme/delete'; id: string }
   | { type: 'playlist/create'; playlist: Playlist }
   | { type: 'playlist/delete'; id: string }
+  /** 비어 있는 재생목록 자동 삭제: like delete, but only if it is still empty and not the active one, and not an undo step. */
+  | { type: 'playlist/autoDelete'; id: string }
   | { type: 'playlist/retention'; id: string; until?: number }
   | { type: 'playlist/rename'; id: string; name: string }
   | { type: 'playlist/activate'; id: string }
@@ -429,6 +432,11 @@ function core(s: AppState, a: Action): AppState {
       if (!playlists.length) playlists.push({ id: uid('pl'), name: '재생목록', items: [] });
       return { ...setLib(s, { playlists }), activePlaylistId: s.activePlaylistId === a.id ? playlists[0].id : s.activePlaylistId, playlistIndex: null };
     }
+    case 'playlist/autoDelete': {
+      const target = lib.playlists.find((p) => p.id === a.id);
+      if (!target || target.id === s.activePlaylistId || lib.playlists.length <= 1 || !isEmptyPlaylist(lib, target)) return s;
+      return core(s, { type: 'playlist/delete', id: a.id });
+    }
     case 'playlist/retention':
       return setLib(s, { playlists: lib.playlists.map((p) => p.id === a.id ? { ...p, autoDeleteAfter: a.until } : p) });
     case 'playlist/rename':
@@ -623,7 +631,7 @@ function core(s: AppState, a: Action): AppState {
 /** Undo steps kept (PowerPoint allows up to 150; DeckCraft keeps 500 with a byte budget, which a whole-library snapshot cannot do). */
 export const HISTORY_DEPTH = 150;
 
-const NO_HISTORY = new Set<Action['type']>(['trash/expire', 'trash/purge', 'device/register', 'activity/record', 'timer/op', 'macro/run', 'usage/clear', 'library/replace', 'schedule/ran', 'slide/runActions', 'online/songs', 'songs/dedupe', 'live/videoClock', 'library/merge']);
+const NO_HISTORY = new Set<Action['type']>(['playlist/autoDelete', 'trash/expire', 'trash/purge', 'device/register', 'activity/record', 'timer/op', 'macro/run', 'usage/clear', 'library/replace', 'schedule/ran', 'slide/runActions', 'online/songs', 'songs/dedupe', 'live/videoClock', 'library/merge']);
 
 function historyKey(a: Action): string {
   const id = (a as { id?: string }).id ?? (a as { theme?: Theme }).theme?.id ?? (a as { slideId?: string }).slideId ?? '';

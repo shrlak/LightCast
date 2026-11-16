@@ -22,7 +22,7 @@ import { qrElements } from '../../domain/qrElements';
 import { applyConfessionSong, pickConfessionSong } from '../../domain/templates/confession';
 import { loadTranslations } from '../BibleModal';
 import { saveRestorePoint } from '../../domain/restorePoints';
-import { replaceDeckSlides } from '../../domain/serviceReadiness';
+import { appendDeckSlides } from '../../domain/serviceReadiness';
 import { SLIDE_DECK_FILE, filesToSlides } from '../importFiles';
 
 /** The theme with a fingerprint of its own settings, so a later edit to it can be recognised. */
@@ -328,9 +328,12 @@ export function useServiceUploads(library: Library, dispatch: Dispatch<Action>, 
       for (const s of await filesToSlides([file], (m) => dispatch({ type: 'media/add', media: m }), setBusy)) push(s);
       if (added.length === beforeCount) throw new Error(`${file.name}: 슬라이드를 읽지 못했습니다. 기존 PPT는 유지됩니다.`);
     }
-    const replacement = replaceDeckSlides(original, added);
-    dispatch({ type: 'presentation/update', id: sermonId, patch: { slides: replacement.slides } });
-    return `설교 슬라이드 ${added.length}장으로 교체했습니다 (예배 순서·설정 유지)`;
+    // The slides already in the 설교 list stay; the uploaded file's slides go after them.
+    const appended = appendDeckSlides(original, added);
+    dispatch({ type: 'presentation/update', id: sermonId, patch: { slides: appended.slides } });
+    return original.slides.length
+      ? `설교 슬라이드 ${added.length}장을 기존 ${original.slides.length}장 뒤에 붙였습니다 (예배 순서·설정 유지)`
+      : `설교 슬라이드 ${added.length}장을 넣었습니다 (예배 순서·설정 유지)`;
   });
 
   const drop = (files: File[]) => {
