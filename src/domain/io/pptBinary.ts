@@ -19,10 +19,12 @@ import { inflateZlib } from './inflate';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
 import { customPathOf, recognisedPreset, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
 import type { Ext9 } from './pptText';
+import { readAnimations, type PptAnimation } from './pptAnimations';
 import { buildParas, notesText, readEnvironmentStyles, readFonts, readMasterStyle, readRuler, readStyleExt9, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
 export { PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES };
 export type { PptPara, PptRun } from './pptText';
+export type { PptAnimation } from './pptAnimations';
 
 const MAX_PICTURE_BYTES = 64 * 1024 * 1024;
 const MAX_TEXT_CHARS = 5_000_000;
@@ -66,6 +68,8 @@ export interface PptShape {
   wrap?: boolean;
   /** Members of one group share its number. */
   group?: number;
+  /** Escher shape id (what animations target). */
+  spid?: number;
   /** Placed by the master (the master's own object, not a placeholder). */
   master?: boolean;
   /** The position came from the master's placeholder. */
@@ -93,6 +97,8 @@ export interface PptSlide {
   background?: PptBackground;
   hidden?: boolean;
   transition?: PptTransition;
+  /** PowerPoint 2002+ object animations (main sequence), in play order. */
+  animations?: PptAnimation[];
 }
 export interface PptDocument {
   width: number;
@@ -256,6 +262,7 @@ function groupMapper(g: Placed, s: Rect | undefined): Mapper {
 }
 
 interface RawShape {
+  spid?: number;
   props: Props;
   flags: number;
   spType: number;
@@ -279,6 +286,7 @@ interface Parsed {
   background?: RawShape;
   styles: TextStyles;
   info?: PptTransition & { hidden: boolean };
+  animations?: PptAnimation[];
 }
 
 interface DrawState { shapes: RawShape[]; background?: RawShape; defaults: Props; groups: number }
@@ -291,7 +299,7 @@ function readRawShape(c: Ctx, sp: Rec, map: Mapper, st: DrawState, group: number
   let abs: Rect | undefined, child: Rect | undefined, ext9: Ext9[] | undefined;
   each(c, sp.pos, sp.end, (r) => {
     const len = r.end - r.pos;
-    if (r.type === T.SpAtom && len >= 8) { raw.spType = r.inst; raw.flags = c.v.getUint32(r.pos + 4, true); }
+    if (r.type === T.SpAtom && len >= 8) { raw.spType = r.inst; raw.spid = c.v.getUint32(r.pos, true); raw.flags = c.v.getUint32(r.pos + 4, true); }
     else if (r.type === T.SpgrAtom && len >= 16) raw.spgr = rectOf(c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true));
     else if (r.type === T.ClientAnchor) {
       if (len >= 16) abs = rectOf(c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true)); // left, top, right, bottom
@@ -392,6 +400,7 @@ function readContainer(c: Ctx, at: number, defaults: Props): Parsed | null {
         const ms = readMasterStyle(c, k);
         if (ms && !parsed.styles.has(ms.type)) parsed.styles.set(ms.type, ms.levels);
       }
+      else if (k.type === T.ProgTags && isContainer(k)) { const a = readAnimations(c, k); if (a.length) parsed.animations = a; }
       else if (k.type === T.SlideShowSlideInfo && k.end - k.pos >= 12) {
         const flags = c.v.getUint16(k.pos + 10, true);
         parsed.info = { effect: c.b[k.pos + 9], direction: c.b[k.pos + 8], speed: k.end - k.pos >= 13 ? c.b[k.pos + 12] : 1, onClick: (flags & 0x1) !== 0, afterMs: (flags & 0x400) !== 0 ? Math.max(0, c.v.getInt32(k.pos, true)) : 0, hidden: (flags & 0x4) !== 0 };
@@ -491,7 +500,7 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   if (raw.placed?.flipH) geom.flipH = true;
   if (raw.placed?.flipV) geom.flipV = true;
   if (!raw.placed && placed) geom.inherited = true;
-  const base: Partial<PptShape> = { ...geom, ...(raw.placeholder !== undefined ? { placeholder: raw.placeholder } : {}), ...(raw.group ? { group: raw.group } : {}) };
+  const base: Partial<PptShape> = { ...geom, ...(raw.spid ? { spid: raw.spid } : {}), ...(raw.placeholder !== undefined ? { placeholder: raw.placeholder } : {}), ...(raw.group ? { group: raw.group } : {}) };
 
   const textEnv = { styles: env.styles, fallback: env.fallback, fonts: env.fonts, scheme: env.scheme };
   const paras: PptPara[] = [];
@@ -663,6 +672,7 @@ function parse(bytes: Uint8Array): PptDocument {
       const background = backgroundOf(parsed, master, scheme, pictures.length);
       if (background) slide.background = background;
       if (parsed.info?.hidden) slide.hidden = true;
+      if (parsed.animations) slide.animations = parsed.animations;
       if (parsed.info && (parsed.info.effect > 0 || parsed.info.afterMs > 0 || !parsed.info.onClick)) {
         const { effect, direction, speed, onClick, afterMs } = parsed.info;
         slide.transition = { effect, direction, speed, onClick, afterMs };

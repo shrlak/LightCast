@@ -4,13 +4,14 @@
 // `store` callback that keeps a picture's bytes in the media library (and the metafile → SVG / PNG
 // conversion of WMF / EMF pictures).
 import type { TableCell, TableData } from '../../engine';
-import type { ElementParagraph, HAlign, ListStyle, Slide, SlideElement, TextRun, Transition } from '../types';
+import type { ElementParagraph, HAlign, ListStyle, Slide, SlideAnimation, SlideElement, TextRun, Transition } from '../types';
 import { CANVAS_H, CANVAS_W } from '../canvas';
 import { INDENT_PX } from '../textFormat';
 import { gradientCss } from '../backgroundFormat';
 import { metafileToBlob } from '../metafile/image';
 import { detectTables, type TablePlan } from './pptTable';
 import { numberStyleOf } from './pptText';
+import { effectOf } from './pptAnimations';
 import { parsePpt, type PptDocument, type PptPara, type PptPicture, type PptShape, type PptSlide } from './pptBinary';
 
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/bmp': 'bmp', 'image/tiff': 'tiff', 'image/svg+xml': 'svg' } as const;
@@ -193,15 +194,17 @@ function tableElement(plan: TablePlan, sc: Scale, newId: (p: string) => string):
 }
 
 /** The elements of one slide, for a canvas scale `k` and offset. */
-export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'width' | 'height'>, newId: (p: string) => string, mediaOf: (picture: number) => string | null): SlideElement[] {
+export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'width' | 'height'>, newId: (p: string) => string, mediaOf: (picture: number) => string | null, idOfSpid?: Map<number, string>): SlideElement[] {
   const sc = scaleOf(doc);
   const groups = new Map<number, string>();
   const out: SlideElement[] = [];
   const tables = detectTables(shapes);
+  const starts: number[] = [];
   const tableAt = new Map<number, TablePlan>();
   const inTable = new Set<number>();
   for (const plan of tables.values()) { tableAt.set(Math.min(...plan.members), plan); for (const m of plan.members) inTable.add(m); }
   for (const [at, s] of shapes.entries()) {
+    starts[at] = out.length;
     const plan = tableAt.get(at);
     if (plan) { out.push(tableElement(plan, sc, newId)); continue; }
     if (inTable.has(at)) continue;
@@ -267,7 +270,21 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       out.push({ id: newId('e'), kind: 'shape', shape: 'rect', ...rounded, fill: 'transparent', ...fillFields(), ...lineFields, ...common });
     }
   }
+  if (idOfSpid) shapes.forEach((s, at) => { if (s.spid !== undefined && starts[at] !== undefined && starts[at] < (starts[at + 1] ?? out.length) && out[starts[at]]) idOfSpid.set(s.spid, out[starts[at]].id); });
   return out;
+}
+
+/** A slide's animations as LightCast's: entrance effects on objects that were imported; the rest are counted as skipped. */
+export function animationsOf(list: NonNullable<PptSlide['animations']>, idOfSpid: Map<number, string>, newId: (p: string) => string): { animations: SlideAnimation[]; skipped: number } {
+  const animations: SlideAnimation[] = [];
+  let skipped = 0;
+  for (const a of list) {
+    const fx = effectOf(a);
+    const elementId = idOfSpid.get(a.spid);
+    if (!fx || !elementId) { skipped++; continue; }
+    animations.push({ id: newId('a'), elementId, effect: fx.effect, class: 'entrance', ...(fx.option ? { option: fx.option } : {}), start: a.start, durationMs: a.durationMs, delayMs: a.delayMs });
+  }
+  return { animations, skipped };
 }
 
 /**
@@ -344,13 +361,15 @@ export async function importPpt(bytes: Uint8Array, name: string, opts: PptImport
   }
   if (metafileFailed) warnings.push('일부 WMF/EMF 그림은 가져오지 못했습니다.');
   const mediaOf = (n: number) => mediaIds.get(n) ?? null;
+  let skippedAnims = 0;
   const slides = doc.slides.map((s, i): Slide => {
+    const idOfSpid = new Map<number, string>();
     const slide: Slide = {
       id: opts.newId('s'),
       group: opts.group,
       text: '',
       background: { kind: 'color', value: '#ffffff' },
-      elements: shapesToElements(s.shapes, doc, opts.newId, mediaOf),
+      elements: shapesToElements(s.shapes, doc, opts.newId, mediaOf, idOfSpid),
       notes: s.notes,
       importSource: { format: 'ppt', name, page: i + 1 },
     };
@@ -360,7 +379,13 @@ export async function importPpt(bytes: Uint8Array, name: string, opts: PptImport
     else if (bg?.kind === 'picture') { const id = mediaOf(bg.picture); if (id) slide.background = { kind: 'media', mediaId: id, mediaType: 'image', fit: 'cover' }; }
     if (s.hidden) slide.disabled = true;
     if (s.transition) Object.assign(slide, transitionOf(s.transition));
+    if (s.animations?.length) {
+      const { animations, skipped } = animationsOf(s.animations, idOfSpid, opts.newId);
+      if (animations.length) slide.animations = animations;
+      skippedAnims += skipped;
+    }
     return slide;
   });
+  if (skippedAnims) warnings.push('일부 애니메이션(나타내기 외 효과 등)은 가져오지 못했습니다.');
   return { slides, warnings };
 }
