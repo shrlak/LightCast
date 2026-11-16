@@ -257,7 +257,8 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
   const first = all[0] ?? paras[0]?.empty ?? { text: '' };
   // The box's own formatting is its first text's (as PowerPoint shows it when the box is selected).
   const own: Partial<Record<(typeof RUN_KEYS)[number], unknown>> = {};
-  for (const k of RUN_KEYS) own[k] = first[k];
+  // A link stays on its own characters (the box has no link of its own).
+  for (const k of RUN_KEYS) if (k !== 'link') own[k] = first[k];
   const strip = (r: Run): TextRun => {
     const out: TextRun = { text: r.text };
     for (const k of RUN_KEYS) if (r[k] !== own[k] && r[k] !== undefined) (out as unknown as Record<string, unknown>)[k] = r[k];

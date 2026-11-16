@@ -165,7 +165,8 @@ export function readChartEx(xml: MNode, theme: DmlTheme): ChartResult | null {
   if (!kind || !series.length) return null;
   const n = Math.max(...series.map((s) => s.values.length));
   while (cats.length < n) cats.push(String(cats.length + 1));
-  const title = find(find(xml, 'title')[0] ?? NULL, 't').map(textOf).join('') || undefined;
+  const titleNode = find(xml, 'title')[0] ?? NULL;
+  const title = [...find(titleNode, 'v'), ...find(titleNode, 't')].map(textOf).join('') || undefined;
   const subtotals = find(xml, 'subtotals').flatMap((st) => kids(st, 'idx').map((i) => Number(i.attrs.val))).filter((v) => Number.isInteger(v));
   return {
     chart: { kind, categories: cats.slice(0, n), series, ...(title ? { title } : {}), legend: find(xml, 'legend').length > 0, gridlines: false, textColor: theme.colors.tx1 ?? theme.colors.dk1, ...(subtotals.length ? { subtotals } : {}), ...(levels ? { categoryLevels: levels } : {}) },
