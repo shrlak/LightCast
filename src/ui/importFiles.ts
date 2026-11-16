@@ -71,17 +71,22 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       const fontReport = await importEmbeddedFontsReport(data, file.name);
       const fontNote = skippedFontsNotice(fontReport.skipped);
       if (fontNote) onFontNotice?.(fontNote);
+      const imported = await importPptx(new Blob([data])).catch(() => []);
       // The whole deck as PowerPoint shows it, with a report of what could only be approximated or left out.
       const deck = await readPptxDeck(data, {
         file: file.name, group: base,
         store: async (blob, name, type) => { const id = uid('m'); await putMedia(id, blob); addPptMedia({ id, name, type }); return id; },
       }).catch(() => null);
-      if (deck?.slides.length) {
+      // A deck whose slides came out empty while the plain reader finds their text (a damaged or hand-made package)
+      // goes on to the simpler readers below.
+      const empty = deck && deck.slides.every((s) => !s.elements?.length) && imported.some((s) => s.text || s.title);
+      if (deck?.slides.length && !empty) {
         onReport?.(deck.report);
-        for (const s of deck.slides) slides.push({ ...s, importSource: { ...s.importSource!, format } });
+        // Notes that are not in a notes placeholder come from the plain reader.
+        const notes = imported.length === deck.slides.length ? imported : [];
+        for (const [i, s] of deck.slides.entries()) slides.push({ ...s, importSource: { ...s.importSource!, format }, ...(!s.notes && notes[i]?.notes ? { notes: notes[i].notes } : {}) });
         continue;
       }
-      const imported = await importPptx(new Blob([data])).catch(() => []);
       // Keep source objects editable on every platform; never flatten PowerPoint into PDF pages.
       let n = 0;
       // Every picture, box and text of the slide becomes its own object at the same place, size and

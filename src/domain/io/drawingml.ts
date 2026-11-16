@@ -206,7 +206,7 @@ function bulletOf(pPr: MNode | null, bulletPicture?: (rId: string) => string | u
   if (child(pPr, 'buBlip')) { const picture = blipRid ? bulletPicture?.(blipRid) : undefined; return picture ? { list: 'picture', picture } : { list: 'bullet' }; }
   const ch = child(pPr, 'buChar')?.attrs.char;
   if (ch === undefined) return {};
-  return { list: /[○◦o]/.test(ch) ? 'circle' : /[■▪§]/.test(ch) ? 'square' : /[✓ü]/.test(ch) ? 'check' : /[➢Ø→➔]/.test(ch) ? 'arrow' : 'bullet' };
+  return { list: /[–—−-]/.test(ch) ? 'dash' : /[□q]/.test(ch) ? 'box' : /[◆♦v]/.test(ch) ? 'diamond' : /[★☆«]/.test(ch) ? 'star' : /[○◦o]/.test(ch) ? 'circle' : /[■▪§n]/.test(ch) ? 'square' : /[✓ü]/.test(ch) ? 'check' : /[➢Ø→➔]/.test(ch) ? 'arrow' : 'bullet' };
 }
 
 function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme, ctx?: DmlContext, lst?: MNode | null): Para[] {
@@ -628,7 +628,8 @@ function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string)
     x: Math.round(b.x * 10) / 10, y: Math.round(b.y * 10) / 10, w: Math.round(b.w * 10) / 10, h: Math.round(b.h * 10) / 10,
     ...(b.rot ? { rotation: Math.round(b.rot * 100) / 100 } : {}),
     ...(b.flipH ? { flipH: true } : {}), ...(b.flipV ? { flipV: true } : {}),
-    ...fill, ...line, ...effectFields(spPr, style, ctx), ...textBits,
+    // A line's theme effect (a soft shadow) is not drawn; its own effects are.
+    ...fill, ...line, ...effectFields(spPr, isLine ? null : style, ctx), ...textBits,
     ...(name ? { name } : {}),
     ...(groupId ? { groupId } : {}),
     ...clickOf(nv, ctx),
@@ -640,7 +641,7 @@ function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string)
   return el;
 }
 
-function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: string): SlideElement | null {
+function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: string): SlideElement[] | SlideElement | null {
   const spPr = child(pic, 'spPr');
   const raw = xfrmOf(child(spPr, 'xfrm'));
   const blipFill = child(pic, 'blipFill');
@@ -669,7 +670,14 @@ function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: stri
     ...(nv?.attrs.descr ? { alt: nv.attrs.descr } : {}),
     ...(groupId ? { groupId } : {}),
   };
-  if (file) return { id: uid('el'), kind: file.type, mediaId: file.id, ...geometry, ...common, fit: 'contain' };
+  if (file) {
+    const clipEl: SlideElement = { id: uid('el'), kind: file.type, mediaId: file.id, ...geometry, ...common, fit: 'contain' };
+    // The poster frame PowerPoint shows before the clip plays stays as a picture under it, grouped with it.
+    if (!poster || file.type === 'audio') return [clipEl];
+    const gid = groupId ?? uid('g');
+    ctx.note?.('approximated', '동영상 포스터 프레임');
+    return [{ id: uid('el'), kind: 'image', mediaId: poster, fit: 'fill', ...geometry, name: '포스터 프레임', groupId: gid }, { ...clipEl, groupId: gid }];
+  }
   // Colour changes of the picture (a:duotone, a:grayscl, a:biLevel, brightness / contrast) are not drawn.
   const tone = (blip?.children ?? []).find((c) => ['duotone', 'biLevel', 'grayscl', 'clrChange', 'lum', 'hsl', 'tint'].includes(local(c)));
   if (tone) ctx.note?.('approximated', '그림 색 변경');
@@ -689,7 +697,7 @@ function walk(container: MNode, place: Map2, ctx: DmlContext, out: SlideElement[
     const k = local(n);
     const start = out.length;
     if (k === 'sp' || k === 'cxnSp') { const el = shapeElement(n, place, ctx, groupId); if (el) out.push(el); }
-    else if (k === 'pic') { const el = pictureElement(n, place, ctx, groupId); if (el) out.push(el); }
+    else if (k === 'pic') { const el = pictureElement(n, place, ctx, groupId); if (Array.isArray(el)) out.push(...el); else if (el) out.push(el); }
     else if (k === 'grpSp') walk(n, groupMap(child(child(n, 'grpSpPr'), 'xfrm'), place), ctx, out, groupId ?? uid('g'));
     else if (k === 'graphicFrame') {
       const raw = xfrmOf(child(n, 'xfrm'));

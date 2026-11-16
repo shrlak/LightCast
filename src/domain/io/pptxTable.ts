@@ -114,7 +114,8 @@ export function readTable(tbl: MNode, w: number, h: number, theme: DmlTheme, sty
       ...((runColor ?? look.color) ? { color: runColor ?? look.color } : {}),
       ...(rPr?.attrs.b === '1' || (rPr?.attrs.b === undefined && look.bold) ? { bold: true } : {}),
       ...(algn === 'ctr' ? { align: 'center' } : algn === 'r' ? { align: 'right' } : algn === 'l' ? { align: 'left' } : {}),
-      ...(anchor === 'ctr' ? { anchor: 'middle' as const } : anchor === 'b' ? { anchor: 'bottom' as const } : anchor === 't' ? { anchor: 'top' as const } : {}),
+      // PowerPoint anchors cell text at the top unless the cell says otherwise.
+      anchor: anchor === 'ctr' ? 'middle' as const : anchor === 'b' ? 'bottom' as const : 'top' as const,
       ...(vert === 'vert' || vert === 'eaVert' ? { dir: 'vert' as const } : vert === 'vert270' ? { dir: 'vert270' as const } : vert === 'wordArtVert' ? { dir: 'stacked' as const } : {}),
       ...(Object.keys(borders).length ? { borders } : {}),
     };
