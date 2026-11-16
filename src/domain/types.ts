@@ -355,7 +355,9 @@ export interface SlideElement {
   /** 줄 간격 고정 / 최소 (points × 2 = canvas px): replaces the `lineHeight` multiple while set. */
   lineExact?: { mode: 'exact' | 'min'; px: number };
   /** Text-box purpose, retained when editing or filling a template. */
-  role?: 'prayer' | 'lyrics';
+  role?: 'prayer' | 'lyrics' | 'announcementTitle';
+  /** A 광고 title box laid out by announcementTitle.ts: its one-line font size and height, and where the text box under it starts then. */
+  announceBase?: { fontSize: number; h: number; bodyY: number };
   /**
    * PowerPoint preset shape by its Office Open XML name (rect, roundRect, ellipse, star5, rightArrow,
    * heart, wedgeRoundRectCallout… 183 of them); the outline comes from the engine. Without it a shape

@@ -26,6 +26,8 @@ export function elementTextStyle(el: SlideElement): CSSProperties {
     ...(el.wrap === false ? { whiteSpace: 'pre' } : {}),
     ...(el.firstIndent ? { textIndent: el.firstIndent } : {}),
     ...(el.rtl ? { direction: 'rtl' } : {}),
+    // A 광고 title (announcementTitle.ts) wraps at spaces, Korean words kept whole, its lines balanced.
+    ...(el.role === 'announcementTitle' ? { wordBreak: 'keep-all', textWrap: 'balance' } : {}),
   };
 }
 const px = new Set(['fontSize', 'letterSpacing', 'paddingLeft', 'textIndent', 'marginTop', 'marginBottom']);
@@ -66,6 +68,9 @@ function measureText(el: SlideElement, width: number | null): { w: number; h: nu
     return { w: node.offsetWidth, h: Math.max(node.offsetHeight, node.scrollHeight) };
   } finally { node.remove(); }
 }
+
+/** The size the box's text takes laid out at the box's width, as the canvas draws it. */
+export const measureTextBox = (el: SlideElement) => measureText(el, el.w);
 
 /** PowerPoint's autofit modes (domain/textFit): the box after Resize shape to fit text, or the fontScale of Shrink text on overflow. */
 function fitPowerPoint(el: SlideElement): SlideElement {
