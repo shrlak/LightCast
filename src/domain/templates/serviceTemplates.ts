@@ -14,6 +14,7 @@ import { contentServer } from '../online';
 import { bakeBackground, croppedPicture } from './bake';
 import { pictureKey, slideFromRendered } from './convert';
 import type { RenderedPictureShape } from '../io/pptxRender';
+import { OLE_MAX_TOTAL_BYTES } from '../io/oleObjects';
 
 export interface ServiceTemplates {
   front: Slide[];
@@ -92,6 +93,7 @@ export async function pptxSlides(
   const rendered = await renderPptxSlides(data);
   const save = (id: string, blob: Blob) => (opts.store ? opts.store(id, blob) : putMedia(id, blob));
   const pictures = new Map<string, string>();
+  let oleTotal = 0;
   try {
     const wanted = (opts.pick ?? rendered.map((_, i) => i)).filter((i) => rendered[i]);
     const out: Slide[] = [];
@@ -109,7 +111,16 @@ export async function pptxSlides(
         }
         pictures.set(pictureKey(shape), pid);
       }
-      const slide = slideFromRendered(rs, id, opts.group(i), pictures);
+      // Embedded OLE files are kept (capped) so the export can hand them back; they live in the media store beside the pictures.
+      const oleParts = new Map<RenderedPictureShape, string>();
+      for (const shape of rs.shapes) {
+        if (shape.kind !== 'picture' || !shape.ole?.part || oleTotal + shape.ole.bytes > OLE_MAX_TOTAL_BYTES) continue;
+        const oid = `${id}-ole${oleParts.size}`;
+        if (!(await getMedia(oid).catch(() => undefined))) await putMedia(oid, shape.ole.part);
+        oleTotal += shape.ole.bytes;
+        oleParts.set(shape, oid);
+      }
+      const slide = slideFromRendered(rs, id, opts.group(i), pictures, oleParts);
       out.push(slide);
       opts.onSlide?.(slide, n, wanted.length);
     }

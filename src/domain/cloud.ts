@@ -1,6 +1,6 @@
 // Client for the church cloud library (Worker /freecast/* via this app's /api/cloud proxy).
 import type { Library } from './types';
-import { getMedia, putMedia } from './media';
+import { deleteMedia, getMedia, putMedia } from './media';
 import { summarizeCloudStorage, parseServerStorage } from './cloudStorage';
 import { normalizeLibrary } from './persistence';
 
@@ -73,8 +73,12 @@ export const cloudApi = {
   putLibrary: (token: string, baseVersion: number, data: Library) =>
     call<{ version: number; conflict?: boolean; data?: unknown }>('library', { method: 'PUT', token, body: JSON.stringify({ baseVersion, data }) }),
   listMedia: (token: string) => call<{ items: { id: string; size: number; type?: string }[] }>('media', { token }).then((r) => r.data.items),
-  uploadMedia: (token: string, id: string, blob: Blob, resetId?: string) =>
-    call(`media/${encodeURIComponent(id)}`, { method: 'PUT', token, body: blob, headers: { 'content-type': blob.type || 'application/octet-stream', ...(resetId ? { 'X-Freecast-Reset-Id': resetId } : {}) } }),
+  uploadMedia: async (token: string, id: string, blob: Blob, resetId?: string) => {
+    const r = await call<{ error?: string } | null>(`media/${encodeURIComponent(id)}`, { method: 'PUT', token, body: blob, headers: { 'content-type': blob.type || 'application/octet-stream', ...(resetId ? { 'X-Freecast-Reset-Id': resetId } : {}) } });
+    // `call` lets 409 through for the library; for a file it means "not stored" (e.g. sent from before a server reset).
+    if (r.status === 409) throw Object.assign(new Error(r.data?.error ?? '서버가 이 파일을 받지 않았습니다'), { status: 409 });
+    return r;
+  },
   deleteMedia: (token: string, id: string) => call(`media/${encodeURIComponent(id)}`, { method: 'DELETE', token }),
   downloadMedia: (token: string, id: string) => call<Blob>(`media/${encodeURIComponent(id)}`, { token }).then((r) => r.data),
 };
@@ -90,6 +94,20 @@ export async function loadBase(): Promise<Library | null> {
   }
 }
 
+export const clearBase = () => deleteMedia(BASE_KEY).catch(() => undefined);
+
+const BASE_OWNER_KEY = 'freecast.cloud.baseOwner';
+/**
+ * Signing in: does the remembered base belong to another account? Then it must be forgotten, or the merge
+ * takes everything that account had and this one lacks for "deleted in the cloud" and drops it from this
+ * computer. A base from before the owner was recorded is taken to be this account's.
+ */
+export function baseOwnerChanges(username: string, storage: Pick<Storage, 'getItem' | 'setItem'> = localStorage): boolean {
+  let owner: string | null = null;
+  try { owner = storage.getItem(BASE_OWNER_KEY); storage.setItem(BASE_OWNER_KEY, username); } catch { /* private mode: keep the base */ }
+  return owner !== null && owner !== username;
+}
+
 export const saveBase = (lib: Library) => putMedia(BASE_KEY, new Blob([JSON.stringify(lib)], { type: 'application/json' }));
 
 /**
@@ -97,12 +115,15 @@ export const saveBase = (lib: Library) => putMedia(BASE_KEY, new Blob([JSON.stri
  * cannot be sent or received is skipped (and tried again next time); it no longer stops the rest,
  * nor marks the whole sync as failed. `failed` lists the names of the files skipped this time.
  */
-export async function syncMedia(token: string, lib: Library, onProgress: (msg: string) => void) {
+export interface MediaStore { get(id: string): Promise<Blob | undefined>; put(id: string, blob: Blob): Promise<unknown> }
+const deviceMedia: MediaStore = { get: (id) => getMedia(id), put: (id, blob) => putMedia(id, blob) };
+
+export async function syncMedia(token: string, lib: Library, onProgress: (msg: string) => void, store: MediaStore = deviceMedia) {
   const items = await cloudApi.listMedia(token);
   const remote = new Set(items.map((m) => m.id));
   const failed: string[] = [];
   for (const m of lib.media) {
-    const local = await getMedia(m.id).catch(() => undefined);
+    const local = await store.get(m.id).catch(() => undefined);
     try {
       if (local && !remote.has(m.id)) {
         if (local.size > 50 * 1024 * 1024) continue;
@@ -111,7 +132,7 @@ export async function syncMedia(token: string, lib: Library, onProgress: (msg: s
         remote.add(m.id); items.push({ id: m.id, size: local.size });
       } else if (!local && remote.has(m.id)) {
         onProgress(`미디어 받는 중: ${m.name}`);
-        await putMedia(m.id, await cloudApi.downloadMedia(token, m.id));
+        await store.put(m.id, await cloudApi.downloadMedia(token, m.id));
       }
     } catch (e) {
       // A signed-out session or a lost connection ends this round; anything else skips just this file.

@@ -26,6 +26,7 @@ import { aspectLocked, fromCm, sizeUnit, toCm, type SizeSpec } from '../../domai
 import { InsertDialogs } from './dialogsInsert';
 import { SlideSizeDialog, ThemeColorsDialog, ThemeFontsDialog } from './designTab';
 import { SUMMARY_TITLE, defaultSummaryStarts, sectionTargets, slideTargets, summaryInsertIndex, summaryTargets, zoomElements, type ZoomKind } from '../../domain/zoom';
+import { LazyThumb } from './LazyThumb';
 
 const thumb = (ed: Ed, s: Slide, p: Presentation = ed.p!) => {
   const theme = ed.state.library.themes.find((t) => t.id === p.themeId) ?? ed.theme!;
@@ -314,7 +315,7 @@ function ReuseDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
     <Dialog title="슬라이드 다시 사용" onClose={onClose} wide>
       <Field label="프레젠테이션"><select value={from} onChange={(e) => setFrom(e.target.value)}>{others.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select></Field>
       <Check label="원본 서식 유지" checked={keep} onChange={setKeep} />
-      <div className="reuse-grid">{src && sequence(src).map(({ slide: s }, i) => <button key={`${s.id}-${i}`} type="button" className="reuse-cell" title="클릭하면 현재 슬라이드 다음에 넣습니다" disabled={!ed.canEdit} onClick={() => reuse([s])}>{thumb(ed, s, src)}<span>{i + 1}</span></button>)}</div>
+      <div className="reuse-grid">{src && sequence(src).map(({ slide: s }, i) => <button key={`${s.id}-${i}`} type="button" className="reuse-cell" title="클릭하면 현재 슬라이드 다음에 넣습니다" disabled={!ed.canEdit} onClick={() => reuse([s])}><LazyThumb>{thumb(ed, s, src)}</LazyThumb><span>{i + 1}</span></button>)}</div>
       <div className="dlg-row"><button type="button" disabled={!src || !ed.canEdit} onClick={() => src && reuse(src.slides)}>모든 슬라이드 삽입</button></div>
     </Dialog>
   );

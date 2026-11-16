@@ -7,7 +7,8 @@ import {
 } from '../../domain/importedFonts';
 import { loadFontSyncSettings, saveFontSyncSettings, type FontSyncSettings } from '../../domain/fontSync';
 import { embeddingForbidden } from '../../domain/fontFile';
-import { listEmbeddedFonts, removeEmbeddedFont } from '../../domain/embeddedFonts';
+import { listEmbeddedFonts, removeEmbeddedFont, updateEmbeddedFont, embeddedAsFont } from '../../domain/embeddedFonts';
+import { FontConflictsPanel } from '../FontConflicts';
 import { weightLabel } from '../../domain/fontWeight';
 import { FONT_OPTIONS } from '../../domain/fonts';
 import { usedFamilies } from '../../domain/io/pptxFonts';
@@ -59,14 +60,14 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
   const change = (patch: Partial<FontSyncSettings>) => { const next = { ...sync, ...patch }; setSync(next); saveFontSyncSettings(next); };
   const setFontSync = (f: ImportedFont, v: string) => {
     if (v === 'on' && embeddingForbidden(f.fsType) && !f.allowRestricted && !confirm(`“${f.family}”은(는) 저작권상 문서에 포함하거나 공유할 수 없는 글꼴입니다. 그래도 교회 서버에 올려 다른 컴퓨터와 공유할까요? (라이선스를 확인하세요)`)) return;
-    void updateImportedFont(f.id, v === 'auto' ? { sync: undefined } : v === 'on' ? { sync: true, ...(embeddingForbidden(f.fsType) ? { allowRestricted: true } : {}) } : { sync: false });
+    const at = Date.now(); // the later change wins on every computer (the switch follows the account)
+    const patch = v === 'auto' ? { sync: undefined, syncAt: at } : v === 'on' ? { sync: true, syncAt: at, ...(embeddingForbidden(f.fsType) ? { allowRestricted: true } : {}) } : { sync: false, syncAt: at };
+    void (f.id.startsWith('embfont:') ? updateEmbeddedFont(f.id, patch) : updateImportedFont(f.id, patch)).then(() => setTick((t) => t + 1));
     window.dispatchEvent(new Event('lightcast-fontsync'));
   };
   useEffect(() => {
     let live = true;
-    void listEmbeddedFonts().then((list) => live && setFromDecks(list.map((s) => ({
-      id: s.id, family: s.family, subfamily: s.style, weight: s.style.startsWith('bold') ? 700 : 400, italic: /italic/i.test(s.style), format: 'truetype', bytes: s.bytes, fsType: 0, source: s.source, at: s.at,
-    }))));
+    void listEmbeddedFonts().then((list) => live && setFromDecks(list.map(embeddedAsFont)));
     return () => { live = false; };
   }, [tick]);
   const all = [...mine, ...fromDecks];
@@ -75,7 +76,7 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
   const remove = async (f: ImportedFont) => {
     if (f.id.startsWith('embfont:')) await removeEmbeddedFont(f.id); else await removeImportedFonts({ id: f.id });
     setTick((t) => t + 1);
-    onNotice?.(`“${f.family}” 글꼴을 지웠습니다.${f.id.startsWith('impfont:') && f.sync !== false ? ' 동기화 중이면 서버와 다른 기기에서도 지워집니다.' : ''}`);
+    onNotice?.(`“${f.family}” 글꼴을 지웠습니다.${f.sync !== false ? ' 동기화 중이면 다른 기기에서도 지워지고, 서버에는 30일간 휴지통(서버 글꼴)에 보관됩니다.' : ''}`);
   };
   const mb = (n: number) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB` : `${Math.max(1, Math.round(n / 1024))}KB`);
   return (
@@ -91,6 +92,7 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
         <label style={{ display: 'block', opacity: sync.enabled ? 1 : 0.5 }}><input type="checkbox" disabled={!sync.enabled} checked={sync.includeDeckFonts} onChange={(e) => change({ includeDeckFonts: e.target.checked })} /> PPTX · LightCast 파일에서 온 글꼴도 동기화 (끄면 동기화되는 프레젠테이션이 쓰는 글꼴만)</label>
         <span className="muted">내가 직접 가져온 글꼴은 기본으로 동기화됩니다. 저작권상 공유할 수 없는 글꼴은 확인 없이는 올리지 않습니다.</span>
       </div>
+      <FontConflictsPanel />
       {!groups.length && <p className="muted small">가져온 글꼴이 없습니다. 글꼴 파일(.ttf .otf .ttc .woff .woff2)을 여기에 끌어다 놓아도 됩니다.</p>}
       {groups.map((g) => (
         <div key={g.family} className="font-family-row" style={{ borderTop: '1px solid #e1dfdd', padding: '6px 0' }}>
@@ -101,7 +103,7 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
           {g.fonts.map((f) => (
             <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}>
               <span>{weightLabel(f.weight)}{f.weightRange ? ` (${f.weightRange[0]}–${f.weightRange[1]})` : ''}{f.italic ? ' · 기울임' : ''} · <span className="muted">{f.source === 'user' ? '파일' : f.source.startsWith('lcast:') ? `LightCast: ${f.source.slice(6)}` : `PPTX: ${f.source}`}</span></span>
-              {f.id.startsWith('impfont:') && <select aria-label={`${f.family} 동기화`} value={f.sync === true ? 'on' : f.sync === false ? 'off' : 'auto'} onChange={(e) => setFontSync(f, e.target.value)} style={{ fontSize: 11 }}>
+              {<select aria-label={`${f.family} 동기화`} value={f.sync === true ? 'on' : f.sync === false ? 'off' : 'auto'} onChange={(e) => setFontSync(f, e.target.value)} style={{ fontSize: 11 }}>
                 <option value="auto">동기화: 자동</option><option value="on">동기화: 켬</option><option value="off">동기화: 끔</option></select>}
               <button type="button" className="btn small" aria-label={`${f.family} 지우기`} onClick={() => void remove(f)}>지우기</button>
             </div>

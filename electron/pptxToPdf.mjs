@@ -16,11 +16,12 @@ async function viaPowerPoint(input, output, format = 'pdf') {
   if (process.platform === 'win32') {
     const q = (s) => `'${s.replace(/'/g, "''")}'`;
     const script = `$ErrorActionPreference='Stop';$p=New-Object -ComObject PowerPoint.Application;`
-      + `try{$d=$p.Presentations.Open(${q(input)},-1,0,0);$d.SaveAs(${q(output)},${format === 'pptx' ? 24 : 32})}finally{if($d){$d.Close()}}`;
+      + `try{$d=$p.Presentations.Open(${q(input)},-1,0,0);$d.SaveAs(${q(output)},${format === 'pptx' ? 24 : format === 'ppt' ? 1 : 32})}finally{if($d){$d.Close()}}`;
     return run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script]);
   }
   if (process.platform === 'darwin') {
-    if (!exists('/Applications/Microsoft PowerPoint.app/Contents/Info.plist')) return false;
+    // PowerPoint for Mac's scripting dictionary has no reliable constant for the 97–2003 format: LibreOffice makes .ppt there.
+    if (format === 'ppt' || !exists('/Applications/Microsoft PowerPoint.app/Contents/Info.plist')) return false;
     const script = [
       'on run argv',
       'tell application "Microsoft PowerPoint"',
@@ -69,6 +70,27 @@ export async function pptToPptx(bytes) {
     }
     const result = fs.readFileSync(output);
     return result.length > 4 && result[0] === 0x50 && result[1] === 0x4b ? result : null;
+  } catch {
+    return null;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** The opposite of pptToPptx: a .pptx as legacy binary .ppt (97–2003), by PowerPoint (Windows) or LibreOffice. null when none is installed or it fails. */
+export async function pptxToPpt(bytes) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'freecast-topt-'));
+  try {
+    const input = path.join(dir, 'deck.pptx');
+    const output = path.join(dir, 'out', 'deck.ppt');
+    fs.mkdirSync(path.dirname(output));
+    fs.writeFileSync(input, bytes);
+    if (!(await viaPowerPoint(input, output, 'ppt')) || !exists(output)) {
+      if (!(await viaLibreOffice(input, path.dirname(output), 'ppt')) || !exists(output)) return null;
+    }
+    const result = fs.readFileSync(output);
+    // A real .ppt is an OLE compound file.
+    return result.length > 8 && result[0] === 0xd0 && result[1] === 0xcf && result[2] === 0x11 && result[3] === 0xe0 ? result : null;
   } catch {
     return null;
   } finally {

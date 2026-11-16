@@ -17,6 +17,13 @@ export async function makePptx(text = 'PPTX 안녕하세요'): Promise<Buffer> {
   return Buffer.from((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
 }
 
+/** A deck of `n` slides, each titled `슬라이드 NN 제목` (what PowerPoint puts on the clipboard for copied slides). */
+export async function makePptxSlides(n: number): Promise<Buffer> {
+  const pptx = new PptxGenJS();
+  for (let i = 1; i <= n; i++) pptx.addSlide().addText(`슬라이드 ${String(i).padStart(2, '0')} 제목`, { x: 1, y: 1, w: 8, h: 1.5, fontSize: 32 });
+  return Buffer.from((await pptx.write({ outputType: 'nodebuffer' })) as Buffer);
+}
+
 export function makePpt(): Buffer {
   return Buffer.from(buildPpt({
     slides: [

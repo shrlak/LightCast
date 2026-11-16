@@ -12,7 +12,9 @@ import { resolveBackground } from '../../domain/autoBackground';
 import { findText } from '../../engine';
 import { findItems, parseFindKey, replaceMatches } from '../../domain/findReplace';
 import { SlideCanvas } from '../SlideCanvas';
-import { clickTrigger, triggerObjects, type LiveBuild } from '../../domain/animations';
+import { clickTrigger, type LiveBuild } from '../../domain/animations';
+import { clickTriggerObjects } from '../../domain/mediaBookmarkTriggers';
+import { useBookmarkTriggers } from './useBookmarkTriggers';
 import type { Ed } from './editor';
 import { ACCEPT } from './commands';
 import { RI } from './ribbonParts';
@@ -22,6 +24,7 @@ import { PrintPanel } from './printPanel';
 import { InfoStats } from './infoPanel';
 import { EmbedFontsOption } from './EmbedFontsOption';
 import { NativeOpenCard, NativeSaveCards, OdpSaveCard, PasswordProtectCard } from './fileFormats';
+import { DeckDownloadCards } from './downloadCards';
 import { ExportPanel } from './exportPanel';
 import { ExportMorePanel } from './exportMorePanel';
 import { ReadingLaser, ReadingLaserToggle } from './showTools';
@@ -171,6 +174,7 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
   const shownAt = useRef(Date.now());
   const [now, setNow] = useState(Date.now());
   const slide = pages[i]?.slide ?? null;
+  useBookmarkTriggers(slide ?? undefined, ed.p?.showSetup?.noAnimation ? false : true, setBuild);
   const ref = useRef<HTMLDivElement>(null);
   const stage = useRef<HTMLDivElement>(null);
   useEffect(() => { ref.current?.focus(); }, []);
@@ -246,7 +250,7 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
       const [x, y] = [(e.clientX - r.left) * k, (e.clientY - r.top) * k];
       // Animations › Trigger: a click on a trigger object plays its sequence (a link on it still goes).
       if (slide && !ed.p?.showSetup?.noAnimation) {
-        const ids = triggerObjects(slide);
+        const ids = clickTriggerObjects(slide);
         const on = [...(slide.elements ?? [])].reverse().find((el) => ids.includes(el.id) && !el.hidden && x >= el.x && x <= el.x + el.w && y >= el.y && y <= el.y + Math.max(el.h, 1));
         const b = on && clickTrigger(slide, build, on.id, Date.now());
         if (b) { setBuild(b); const hit = actionAt(slide, x, y); if (hit?.id === on!.id) act(hit); return; }
@@ -376,7 +380,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
           <>
             <h1>열기</h1>
             <div className="bs-cards">
-              <Card icon="📊" title="PowerPoint · OpenDocument · PDF · 그림" text=".pptx .ppt .ppsx .pptm .potx .odp .pdf 이미지 · .wmf .emf" onClick={() => run(() => cmd.pickFiles('slides', ACCEPT.slides))} />
+              <Card icon="📊" title="PowerPoint · OpenDocument · PDF · 그림" text=".pptx .ppt .ppsx .pptm .potx .odp .fodp .otp .odg .pdf 이미지 · .wmf .emf" onClick={() => run(() => cmd.pickFiles('slides', ACCEPT.slides))} />
               <NativeOpenCard ed={ed} onOpened={onClose} />
               <Card icon="🎵" title="찬양 파일" text="텍스트 · ChordPro · OpenLyrics · OpenSong" onClick={() => run(() => cmd.pickFiles('lyrics', ACCEPT.lyrics))} />
               <Card icon="🗂" title="백업 복원" text=".zip 백업에서" onClick={() => run(() => cmd.pickFiles('backup', ACCEPT.backup))} />
@@ -411,6 +415,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             <EmbedFontsOption />
             <div className="bs-cards">
               <Card icon={RI.paste} title="PowerPoint 파일로 저장 (.pptx)" text="지금 재생목록을 MMDD.pptx로" onClick={() => run(cmd.exportPlaylistPptx)} />
+              <DeckDownloadCards ed={ed} />
               <OdpSaveCard ed={ed} />
               <NativeSaveCards ed={ed} />
               <Card icon="🗜" title="전체 백업 저장 (.zip)" text="라이브러리와 미디어 전부" onClick={() => run(cmd.exportBackup)} />

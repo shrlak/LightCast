@@ -1,4 +1,5 @@
 import { isFrontSlide } from '../domain/frontLayout';
+import { OLE_NOTE } from '../domain/io/oleObjects';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextDirection, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
@@ -358,6 +359,8 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
       const end = atEnd(v.currentTime, pb, d);
       if (end === 'loop') v.currentTime = playStart(pb);
       else if (end !== 'play') { v.pause(); if (end === 'rewind') v.currentTime = pb.poster ?? playStart(pb); }
+      // Animations › Trigger › On Bookmark: tell the show how far the clip has played.
+      if (live && pb.bookmarks?.length) window.dispatchEvent(new CustomEvent('lightcast-mediatime', { detail: { id: el.id, t: v.currentTime, marks: pb.bookmarks } }));
       if (!v.paused) raf = requestAnimationFrame(tick);
     };
     const onPlay = () => { setPlaying(true); raf = requestAnimationFrame(tick); };
@@ -418,6 +421,11 @@ export function ElementView({ el }: { el: SlideElement }) {
     const mask = el.maskShape ? shapeGeometry(el.maskShape, el.w, el.h)?.paths.map((q) => q.d).join(' ') : undefined;
     const style = { ...box, ...pictureStyleCss(el.pictureStyle, el.w, el.h), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px ${OUTLINE_DASH[el.dash ?? ''] ?? 'solid'} ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}), ...(mask ? { clipPath: `path('${mask}')` } : {}) };
     const c = el.crop;
+    // An embedded OLE object (Excel, Word…): drawn as its preview picture, with a note that only PowerPoint opens it.
+    if (el.ole) return <>
+      <img src={url} alt={el.alt ?? ''} decoding="sync" title={OLE_NOTE} style={{ ...style, objectFit: el.fit ?? 'fill' }} />
+      {!show && <div className="ole-badge" title={OLE_NOTE} style={{ position: 'absolute', left: el.x, top: el.y, transform: elementTransform(el), pointerEvents: 'none', background: '#fff8e1', color: '#33691e', border: '2px solid #f9a825', fontSize: 22, lineHeight: 1.2, padding: '2px 8px', borderRadius: 4 }}>OLE · PowerPoint에서만 열림</div>}
+    </>;
     if (!c || c.every((v) => !v)) return <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ ...style, objectFit: el.fit ?? 'contain' }} />;
     // Cropped: the picture stretched so its kept part fills the box.
     const fw = Math.max(0.01, 1 - c[0] - c[2]), fh = Math.max(0.01, 1 - c[1] - c[3]);

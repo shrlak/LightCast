@@ -26,6 +26,7 @@ import JSZip from 'jszip';
 import { bulletMedia, bulletPictureOf, bulletPlaceholder, patchBulletXml } from '../pictureBullet';
 import { fillXml, lnXml, needsShapePatch, patchPptx, type ShapePatch } from './shapeXml';
 import { scene3dXml } from '../shape3d';
+import { patchOleObjects, type OlePatch } from './oleObjects';
 
 const W = 10;
 const H = 7.5;
@@ -37,6 +38,8 @@ type Box = { x: number; y: number; w: number; h: number; rotate?: number };
 /** What each export still has to put into the shapes' XML (outline cap / join / compound, gradients, 3-D…; see shapeXml). */
 const shapePatches = new WeakMap<PptxGenJS, ShapePatch[]>();
 let markerSeq = 0;
+/** OLE objects of an export: their preview pictures are turned back into the original objects when the file is written (oleObjects.ts). */
+const olePatches = new WeakMap<PptxGenJS, OlePatch[]>();
 /** The picture bullets of an export (data URLs), by the index their placeholder character carries. */
 const bulletPictures = new WeakMap<PptxGenJS, string[]>();
 function registerBulletPicture(pptx: PptxGenJS, dataUrl: string): number {
@@ -300,6 +303,21 @@ const langOf = (text: string) => (HANGUL.test(text) ? 'ko-KR' : undefined);
 const linePts = (sizePx: number, lineHeight: number) => Math.round(sizePx * 0.5 * lineHeight * 10) / 10;
 const stripBold = (s: string) => stripChords(s.replace(/\*\*/g, ''));
 
+/** An image that stands for an OLE object: the preview picture goes in marked, so the file writer can swap in the original object. */
+async function oleExport(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideElement, box: Box): Promise<boolean> {
+  try {
+    const part = await getMedia(el.ole!.partId);
+    const data = await dataUrl(el.mediaId!);
+    if (!part || !data) return false;
+    const marker = `lcole-${++markerSeq}`;
+    s.addImage({ ...box, data, objectName: marker });
+    const list = olePatches.get(pptx) ?? [];
+    list.push({ marker, ole: el.ole!, data: new Uint8Array(await part.arrayBuffer()) });
+    olePatches.set(pptx, list);
+    return true;
+  } catch { return false; }
+}
+
 async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
   p = prepareAnnouncementSizing(p);
   const baseTheme = lib.themes.find((t) => t.id === p.themeId) ?? lib.themes[0];
@@ -371,6 +389,8 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
         });
         const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: exactPts(p.fontSize ?? el.fontSize ?? 64), ...paragraphFace(p, el, elFamily, boxFace), italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: pptxAlign(p.align ?? el.align), breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
         s.addText(content, { ...box, fontFace: boxFace.face, lineSpacing: el.paragraphs?.length ? undefined : exactPts(el.fontSize ?? 64), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: boxFace.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el, pptx), align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
+      } else if (el.kind === 'image' && el.mediaId && el.ole && (await oleExport(pptx, s, el, box))) {
+        // kept as the original OLE object (oleObjects.ts)
       } else if (el.kind === 'image' && el.mediaId) {
         const svg = await svgSource(el.mediaId);
         if (svg) {
@@ -453,7 +473,8 @@ export async function buildPptx(lib: Library, source: { playlist: Playlist } | {
 function patchOnWrite(pptx: PptxGenJS) {
   const patches = shapePatches.get(pptx) ?? [];
   const bullets = bulletPictures.get(pptx) ?? [];
-  if (!patches.length && !bullets.length) return;
+  const oles = olePatches.get(pptx) ?? [];
+  if (!patches.length && !bullets.length && !oles.length) return;
   const write = pptx.write.bind(pptx);
   const patched = async (props?: PptxGenJS.WriteProps) => {
     const type = typeof props === 'string' ? props : props?.outputType ?? 'blob';
@@ -461,6 +482,7 @@ function patchOnWrite(pptx: PptxGenJS) {
     const zip = await JSZip.loadAsync(out as ArrayBuffer);
     await patchPptx(zip, patches);
     await patchBulletPictures(zip, bullets);
+    await patchOleObjects(zip, oles);
     const asType = ({ nodebuffer: 'nodebuffer', arraybuffer: 'arraybuffer', uint8array: 'uint8array', base64: 'base64', binarystring: 'binarystring', blob: 'blob' } as const)[type as 'blob'] ?? 'blob';
     return zip.generateAsync({ type: asType as 'blob', compression: 'DEFLATE' });
   };

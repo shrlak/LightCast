@@ -28,6 +28,10 @@ export interface ImportedFont {
   sync?: boolean;
   /** The person confirmed sharing it although its licence (fsType) forbids embedding. */
   allowRestricted?: boolean;
+  /** When this font's own sync switch was last changed (the later change wins across computers). */
+  syncAt?: number;
+  /** Not a stored imported font: it came inside a .pptx (the "embfont:" store); only used by font sync. */
+  embedded?: true;
 }
 
 const INDEX_KEY = 'impfont:index';
@@ -327,13 +331,13 @@ export async function updateImportedFont(id: string, patch: Partial<ImportedFont
 }
 
 /** Keep a font that came from the church cloud (already checked against its hash): stored and registered like an imported one. */
-export async function addCloudFont(entry: CloudFont, data: ArrayBuffer): Promise<boolean> {
+export async function addCloudFont(entry: CloudFont, data: ArrayBuffer, familySuffix = ''): Promise<boolean> {
   return serial(async () => {
     const list = await readIndex();
     const hash = entry.id.slice('font-'.length);
     if (list.some((x) => x.hash === hash)) return true;
     const id = `impfont:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const font: ImportedFont = { id, family: entry.family, subfamily: entry.subfamily, weight: entry.weight, weightRange: entry.weightRange, italic: entry.italic, format: entry.format, bytes: data.byteLength, fsType: entry.fsType, source: entry.source, at: Date.now(), hash, ...(entry.restrictedOk ? { allowRestricted: true } : {}) };
+    const font: ImportedFont = { id, family: entry.family + familySuffix, subfamily: entry.subfamily, weight: entry.weight, weightRange: entry.weightRange, italic: entry.italic, format: entry.format, bytes: data.byteLength, fsType: entry.fsType, source: entry.source, at: Date.now(), hash, ...(entry.restrictedOk ? { allowRestricted: true } : {}) };
     try {
       if (!(await register(font, data))) return false;
       await putMedia(id, new Blob([data], { type: mime(entry.format) }));
@@ -346,6 +350,9 @@ export async function addCloudFont(entry: CloudFont, data: ArrayBuffer): Promise
     } catch { unregister(id); await deleteMedia(id).catch(() => undefined); return false; }
   });
 }
+
+/** Tell the listeners (and the cloud sync) that a font list changed — used by the deck-font store, which has its own index. */
+export const notifyImportedFontsChanged = (): void => { notify(); tell(); };
 
 /** Re-read the stored list (after a change made by sync). */
 export async function refreshImportedFonts(): Promise<ImportedFont[]> {

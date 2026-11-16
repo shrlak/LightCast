@@ -2,8 +2,8 @@
 // Pure logic — pictures go in and out through callbacks so tests need no browser storage.
 import { splitWeightedFace, weightPatch } from '../fontWeight';
 import JSZip from 'jszip';
-import type { ArrowKind, Background, DashStyle, DocProperties, ListStyle, SlideAnimation, ElementParagraph, HAlign, Presentation, Slide, SlideElement, TextRun } from '../types';
-import type { TableData } from '../../engine';
+import type { MasterLayout, ArrowKind, Background, DashStyle, DocProperties, ListStyle, SlideAnimation, ElementParagraph, HAlign, Presentation, Slide, SlideElement, TextRun } from '../types';
+import type { CellBorder, CellBorders, TableData } from '../../engine';
 import { CANVAS_H, CANVAS_W } from '../canvas';
 import { uid } from '../lyrics';
 import { childNamed, childrenNamed, elementsOf, escapeXml, parseXml, textOf, type XNode } from './miniXml';
@@ -12,8 +12,10 @@ import {
   IDENTITY, applyPoint, gradientToLc, hexColor, isIdentity, lcToGradient, lengthToCm, mul, parseAngle, parseTransform, readTransition,
   parseStopsCss, rotationTransform, stopsCss, transformBox, transitionAttrs, withOpacity, opacityGradient, type Mat, type OdfGradient,
 } from './odpGeometry';
+import { animationsXml, readAnimations } from './odpAnim';
+import { makePlaceholder, withMaster } from '../master';
 
-export { hexColor, lengthToCm };
+export { hexColor, lengthToCm, animationsXml };
 
 export const ODP_MIME = 'application/vnd.oasis.opendocument.presentation';
 
@@ -50,14 +52,28 @@ const listOf = (lvl: XNode | undefined): ListStyle | undefined => {
   const c = lvl.attrs['text:bullet-char'] ?? '';
   return /[○◦o]/.test(c) ? 'circle' : /[■▪□◼]/.test(c) ? 'square' : /[✔✓☑]/.test(c) ? 'check' : /[➢➔➤→►▶➜]/.test(c) ? 'arrow' : 'bullet';
 };
+/** LibreOffice's dash definitions (percent of the line width) for PowerPoint's ten presets: [dash %, dot-or-second %, second count, gap %]. */
+const DASH_TABLE: [DashStyle, number, number, number, number][] = [
+  ['dash', 400, 0, 0, 300], ['sysDash', 300, 0, 0, 100], ['sysDot', 100, 0, 0, 100], ['dot', 100, 0, 0, 300], ['dashDot', 400, 100, 1, 300],
+  ['lgDash', 800, 0, 0, 300], ['lgDashDot', 800, 100, 1, 300], ['lgDashDotDot', 800, 100, 2, 300], ['sysDashDot', 300, 100, 1, 100], ['sysDashDotDot', 300, 100, 2, 100],
+];
 function dashOf(d: XNode): DashStyle {
+  const pct = (v: string | undefined) => { const m = /^([\d.]+)%$/.exec((v ?? '').trim()); return m ? Number(m[1]) : undefined; };
+  const l1 = pct(d.attrs['draw:dots1-length']), dist = pct(d.attrs['draw:distance']);
+  const n2 = d.attrs['draw:dots2'] ? Number(d.attrs['draw:dots2']) || 1 : 0;
+  const l2 = n2 ? pct(d.attrs['draw:dots2-length']) ?? 100 : 0;
+  // A pattern that is one of the ten presets is that preset (the names LibreOffice gives them differ: Long Dash is "dash").
+  if (l1 !== undefined && dist !== undefined && Number(d.attrs['draw:dots1'] ?? 1) === 1) {
+    const hit = DASH_TABLE.find(([, a, b, c, g]) => a === Math.round(l1) && c === n2 && (!c || b === Math.round(l2)) && g === Math.round(dist));
+    if (hit) return hit[0];
+  }
+  // Anything else (absolute lengths, other ratios): the nearest of the plain ones.
   const len = Number(/\d+/.exec(d.attrs['draw:dots1-length'] ?? '')?.[0] ?? 100);
-  const dist = Number(/\d+/.exec(d.attrs['draw:distance'] ?? '')?.[0] ?? 100);
-  if (d.attrs['draw:dots2']) return 'dashDot';
+  const gap = Number(/\d+/.exec(d.attrs['draw:distance'] ?? '')?.[0] ?? 100);
+  if (n2) return n2 > 1 ? 'sysDashDotDot' : 'dashDot';
   if (len >= 700) return 'lgDash';
   if (len >= 300) return 'dash';
-  if (len <= 100 && Number(d.attrs['draw:dots1'] ?? 1) === 1) return dist >= 200 ? 'dot' : 'sysDot';
-  return 'dash';
+  return gap >= 200 ? 'dot' : 'sysDot';
 }
 const grey = (v: number) => `#${Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0').repeat(3)}`;
 const pctOf = (v: string | undefined) => { const m = /^([\d.]+)(%?)$/.exec(v ?? ''); return m ? Number(m[1]) / (m[2] ? 100 : 1) : 1; };
@@ -131,6 +147,13 @@ function textProps(p: Props): Omit<TextRun, 'text'> {
     out.fontFamily = split.family;
     if (split.weight !== undefined && out.weight === undefined) Object.assign(out, weightPatch(split.weight));
   }
+  const ls = p['fo:letter-spacing'];
+  if (ls && ls !== 'normal') {
+    const m = /^(-?[\d.]+)(pt|cm|mm|in)$/.exec(ls);
+    const cm = m ? (m[2] === 'cm' ? Number(m[1]) : m[2] === 'mm' ? Number(m[1]) / 10 : m[2] === 'in' ? Number(m[1]) * 2.54 : (Number(m[1]) / 72) * 2.54) : 0;
+    const px = Math.round((cm / 2.54) * 72 * PX_PER_PT * 10) / 10;
+    if (px) (out as Record<string, unknown>).letterSpacing = px;
+  }
   const pos = /^(super|sub|-?\d+%)/.exec(p['style:text-position'] ?? '')?.[1];
   if (pos === 'super' || (pos && parseInt(pos, 10) > 0)) out.baseline = 'super';
   else if (pos === 'sub' || (pos && parseInt(pos, 10) < 0)) out.baseline = 'sub';
@@ -146,8 +169,21 @@ export interface OdpReadOptions {
   name?: string;
   /** Keep a picture; returns the media id the slide refers to it by. */
   storeImage: (bytes: Uint8Array, mime: string, name: string) => string | Promise<string>;
+  /**
+   * What becomes of the master pages. 'model' (default): the objects every used master page has go to the deck's master, each master
+   * page is a layout (its placeholders and own objects) and slides keep their `layoutId`. 'flatten': each slide gets its master page's
+   * objects as shapes of its own (for adding the slides to a deck that has a master already).
+   */
+  masterMode?: 'model' | 'flatten';
 }
-export interface OdpDocument { title: string; properties: DocProperties; slides: Slide[] }
+export interface OdpDocument {
+  title: string; properties: DocProperties; slides: Slide[];
+  /** The master page(s) as LightCast's master and layouts (masterMode 'model'; absent when the file has none). */
+  master?: NonNullable<Presentation['master']>;
+  /** The file's own page size (cm) and the notes about it (Korean): content was scaled onto LightCast's 4:3 canvas. */
+  pageCm: { w: number; h: number };
+  warnings: string[];
+}
 
 const MIME_BY_EXT: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp' };
 const EXT_BY_MIME: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/bmp': 'bmp' };
@@ -162,6 +198,12 @@ interface Ctx {
   lib: StyleLib;
   /** xml:id / draw:id → the element made from that object (for animations), per slide. */
   ids: Map<string, string>;
+  /** Things the file has that LightCast cannot keep (Korean wording), each once. */
+  warnings: Set<string>;
+  /** xml:id → whether the object's geometry lists glue points of its own (their ids start after the four default ones). */
+  customGlue: Set<string>;
+  /** Glued connectors of the slide being read, to be tied to their objects once all of them are known. */
+  glued: { el: SlideElement; node: XNode }[];
 }
 
 type Line = { runs: TextRun[]; align?: HAlign; list?: ListStyle };
@@ -186,7 +228,7 @@ function paragraphLines(ctx: Ctx, p: XNode, inList: ListStyle | undefined, inher
       else if (c.name === 'text:tab') push('\t', style);
       else if (c.name === 'text:line-break') lines.push({ runs: [], align, list: inList });
       else if (c.name === 'text:span') walk(c, { ...style, ...textProps(resolveStyle(ctx.styles, 'text', c.attrs['text:style-name'])) });
-      else if (c.name === 'text:a') walk(c, style);
+      else if (c.name === 'text:a') walk(c, c.attrs['xlink:href'] ? { ...style, link: c.attrs['xlink:href'] } : style);
     }
   };
   walk(p, base);
@@ -229,8 +271,16 @@ function toParagraphs(lines: Line[]): ElementParagraph[] {
   });
 }
 
+/** Set when a text had character spacing on only some of its runs (the parse reports it once). */
+let spacingWarning = false;
+
 function applyText(el: SlideElement, lines: Line[]) {
   if (!lines.some((l) => l.runs.length)) return;
+  // Character spacing is the object's in LightCast (not a run's): kept when every run has the same, else left out.
+  const spacings = lines.flatMap((l) => l.runs).filter((r) => r.text.trim()).map((r) => (r as { letterSpacing?: number }).letterSpacing ?? 0);
+  if (spacings.length && spacings[0] && spacings.every((v) => v === spacings[0])) el.letterSpacing = spacings[0];
+  else if (spacings.some((v) => v)) spacingWarning = true;
+  for (const l of lines) for (const r of l.runs) delete (r as { letterSpacing?: number }).letterSpacing;
   const paragraphs = toParagraphs(lines);
   el.text = paragraphs.map((p) => p.text).join('\n');
   el.paragraphs = paragraphs;
@@ -275,6 +325,35 @@ function boxOf(ctx: Ctx, n: XNode, m: Mat): Placed | undefined {
   if (t.rotation) out.rotation = t.rotation;
   return out;
 }
+
+/** draw:connector draw:type → LightCast connector (an elbow is draw:type standard, also when it is not written). */
+const CONNECTOR_SHAPE: Record<string, string> = { line: 'straightConnector1', standard: 'bentConnector3', curve: 'curvedConnector3' };
+/** Does a connector's path (svg:d) leave its start vertically? (an elbow's first segment, a curve's first control point). */
+function startsVertical(d: string | undefined): boolean {
+  const m = /^\s*M\s*[-\d.]+[\s,]+[-\d.]+\s*([vVhHcC])\s*([-\d.]+)?[\s,]*([-\d.]+)?/.exec(d ?? '');
+  if (!m) return false;
+  if (m[1] === 'v' || m[1] === 'V') return true;
+  if (m[1] === 'c' || m[1] === 'C') return Number(m[2]) === 0 && Number(m[3]) !== 0;
+  return false;
+}
+/** LibreOffice's default glue points of an object are its four sides (top, right, bottom, left); PowerPoint's sites run top, left, bottom, right. */
+const GLUE_TO_SITE = [0, 3, 2, 1];
+const siteToGlue = (site: number) => GLUE_TO_SITE.indexOf(site);
+
+
+/** LibreOffice's Fontwork shapes (what it writes for PowerPoint's text transforms, 24.2) → the transform's name. */
+const WARP_BY_TYPE: Record<string, string> = {
+  'fontwork-plain-text': 'textPlain', 'fontwork-stop': 'textStop', 'fontwork-triangle-up': 'textTriangle', 'fontwork-triangle-down': 'textTriangleInverted',
+  'fontwork-chevron-up': 'textChevron', 'fontwork-chevron-down': 'textChevronInverted', 'mso-spt142': 'textRingInside', 'mso-spt143': 'textRingOutside',
+  'fontwork-arch-up-curve': 'textArchUp', 'fontwork-arch-down-curve': 'textArchDown', 'fontwork-circle-curve': 'textCircle', 'fontwork-open-circle-curve': 'textButton',
+  'fontwork-arch-up-pour': 'textArchUpPour', 'fontwork-arch-down-pour': 'textArchDownPour', 'fontwork-circle-pour': 'textCirclePour', 'fontwork-open-circle-pour': 'textButtonPour',
+  'fontwork-curve-up': 'textCurveUp', 'fontwork-curve-down': 'textCurveDown', 'mso-spt174': 'textCanUp', 'mso-spt175': 'textCanDown', 'fontwork-wave': 'textWave1',
+  'mso-spt157': 'textWave2', 'mso-spt159': 'textWave4', 'mso-spt158': 'textDoubleWave1', 'fontwork-inflate': 'textInflate', 'mso-spt161': 'textDeflate',
+  'mso-spt162': 'textInflateBottom', 'mso-spt163': 'textDeflateBottom', 'mso-spt164': 'textInflateTop', 'mso-spt165': 'textDeflateTop', 'mso-spt166': 'textDeflateInflate',
+  'mso-spt167': 'textDeflateInflateDeflate', 'fontwork-fade-right': 'textFadeRight', 'fontwork-fade-left': 'textFadeLeft', 'fontwork-fade-up': 'textFadeUp',
+  'fontwork-fade-down': 'textFadeDown', 'fontwork-slant-up': 'textSlantUp', 'fontwork-slant-down': 'textSlantDown', 'fontwork-fade-up-and-right': 'textCascadeUp', 'fontwork-fade-up-and-left': 'textCascadeDown',
+};
+const PH_KIND: Record<string, NonNullable<SlideElement['placeholder']>> = { title: 'title', outline: 'body', subtitle: 'text', footer: 'footer', 'date-time': 'date', 'page-number': 'slideNumber' };
 
 const SHAPES: Record<string, string> = {
   rectangle: 'rect', ellipse: 'ellipse', 'round-rectangular': 'roundRect', diamond: 'diamond', 'isosceles-triangle': 'triangle', 'right-triangle': 'rtTriangle', 'mso-spt20': 'line',
@@ -340,6 +419,26 @@ function shadowOf(ctx: Ctx, g: Props): Partial<SlideElement> | undefined {
   return { dropShadow: true, shadowKind: 'outer', shadowOpts: { color, transparency: Math.round((1 - alpha) * 100) / 100, blur: Math.round((blur ?? 0) * ctx.kx), dist: Math.round(dist * ctx.kx), dir } };
 }
 
+/** `fo:border-left="1.11pt solid #ff0000"` and friends (LibreOffice writes them in the cell's paragraph properties) as the cell's borders. */
+function cellBorders(p: Props, _ctx: Ctx): CellBorders | undefined {
+  const out: CellBorders = {};
+  const one = (v: string | undefined): CellBorder | undefined => {
+    const m = /^\s*([\d.]+)(pt|cm|mm|in|px)?\s+(solid|dashed|dotted|double|dash-dot|dot-dash|groove|ridge|inset|outset)\s+(#[0-9a-f]{6})\s*$/i.exec(v ?? '');
+    if (!m) return undefined;
+    const n = Number(m[1]);
+    const pt = m[2] === 'cm' ? (n / 2.54) * 72 : m[2] === 'mm' ? (n / 25.4) * 72 : m[2] === 'in' ? n * 72 : m[2] === 'px' ? n * 0.75 : n;
+    const width = Math.max(1, Math.round(pt * PX_PER_PT));
+    const dash = m[3] === 'dashed' ? 'dash' : m[3] === 'dotted' ? 'dot' : m[3] === 'dash-dot' ? 'dashDot' : undefined;
+    return { color: m[4].toLowerCase(), width, ...(dash ? { dash } : {}) };
+  };
+  const all = one(p['fo:border']);
+  for (const [k, side] of [['t', 'top'], ['r', 'right'], ['b', 'bottom'], ['l', 'left']] as const) {
+    const b = one(p[`fo:border-${side}`]) ?? all;
+    if (b) out[k] = b;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** A table's cells and sizes (canvas px, scaled to `box`) plus each cell's font size (px). */
 async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data: TableData; sizes: (number | undefined)[][] }> {
   const cols: number[] = [];
@@ -375,6 +474,8 @@ async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data:
               if (first?.align) t.align = first.align;
               const fill = colorOf(cs['fo:background-color']) ?? (cs['draw:fill'] === 'solid' ? colorOf(cs['draw:fill-color']) : undefined);
               if (fill) t.fill = fill;
+              const borders = cellBorders(cs, ctx);
+              if (borders) t.borders = borders;
               row.push(t);
               srow.push(first?.fontSize);
             }
@@ -489,14 +590,33 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
       }
     } else if (/^draw:(rect|ellipse|circle|custom-shape|line|connector|polygon)$/.test(n.name)) {
       const type = childNamed(n, 'draw:enhanced-geometry')?.attrs['draw:type'];
-      const shape = n.name === 'draw:ellipse' || n.name === 'draw:circle' ? 'ellipse' : n.name === 'draw:line' || n.name === 'draw:connector' ? 'line' : n.name === 'draw:rect' ? ((n.attrs['draw:corner-radius'] ?? n.attrs['svg:rx']) ? 'roundRect' : 'rect') : presetOf(type);
+      const connectorType = n.name === 'draw:connector' ? n.attrs['draw:type'] ?? 'standard' : undefined;
+      const shape = n.name === 'draw:ellipse' || n.name === 'draw:circle' ? 'ellipse' : n.name === 'draw:connector' ? CONNECTOR_SHAPE[connectorType ?? ''] ?? 'bentConnector3' : n.name === 'draw:line' ? 'line' : n.name === 'draw:rect' ? ((n.attrs['draw:corner-radius'] ?? n.attrs['svg:rx']) ? 'roundRect' : 'rect') : presetOf(type);
       const el: SlideElement = { id: uid('el'), kind: 'shape', shape, ...box };
       if (name) el.name = name;
+      const geo = childNamed(n, 'draw:enhanced-geometry');
+      if (geo?.attrs['draw:text-path'] === 'true') {
+        const prst = WARP_BY_TYPE[type ?? ''];
+        if (prst) el.warp = prst;
+        else ctx.warnings.add(`글자를 경로나 곡선에 맞추는 효과(${type ?? '워드아트'})는 지원하지 않아 일반 글자로 읽었습니다.`);
+      }
       shapeStyle(ctx, el, graphicStyle(ctx, n));
-      if (shape === 'line') {
+      if (shape === 'line' || connectorType) {
         if (flipH) el.flipH = true;
         if (flipV) el.flipV = true;
         el.stroke ??= '#000000';
+      }
+      if (connectorType) {
+        // An elbow or curve that leaves its start going up or down is the PowerPoint connector turned a quarter.
+        if (CONNECTOR_SHAPE[connectorType] !== 'straightConnector1' && startsVertical(n.attrs['svg:d'])) {
+          const cx = el.x + el.w / 2, cy = el.y + el.h / 2, w = el.h, h = el.w;
+          Object.assign(el, { x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), w, h, rotation: 90 });
+          el.flipV = !flipH || undefined;
+          el.flipH = !!flipV || undefined;
+          if (!el.flipV) delete el.flipV;
+          if (!el.flipH) delete el.flipH;
+        }
+        if (n.attrs['draw:start-shape'] || n.attrs['draw:end-shape']) ctx.glued.push({ el, node: n });
       }
       applyText(el, textLines(ctx, n));
       // LibreOffice writes a PowerPoint text box as a plain custom shape: no fill, no line, a rectangle.
@@ -504,7 +624,10 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
       out.push(el);
     }
     const xid = n.attrs['xml:id'] ?? n.attrs['draw:id'];
-    if (xid && out.length > first) ctx.ids.set(xid, out[first].id);
+    if (xid && out.length > first) {
+      ctx.ids.set(xid, out[first].id);
+      if (childNamed(n, 'draw:enhanced-geometry')?.attrs['draw:glue-points']) ctx.customGlue.add(xid);
+    }
     for (const el of out.slice(first)) {
       if (rotation && el.kind !== 'table') el.rotation = rotation;
       if (walk.group) { el.groupId = walk.group.id; if (walk.group.name) el.groupName = walk.group.name; }
@@ -512,49 +635,69 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
   }
 }
 
-const PRESET_EFFECT: Record<string, string> = {
-  'ooo-entrance-appear': 'appear', 'ooo-entrance-fade-in': 'fade', 'ooo-entrance-fly-in': 'fly', 'ooo-entrance-wipe': 'wipe',
-  'ooo-exit-disappear': 'disappear', 'ooo-exit-fade-out': 'fadeOut', 'ooo-exit-wipe': 'wipeOut',
-};
-const beginMs = (v: string | undefined): number => { const m = /^([\d.]+)(ms|s)$/.exec((v ?? '').trim()); return m ? Math.round(Number(m[1]) * (m[2] === 's' ? 1000 : 1)) : 0; };
 
-/** The slide's animation timing tree (LibreOffice's anim:par): the effects it names a preset for, on objects that were read. */
-function readAnimations(ctx: Ctx, pg: XNode): SlideAnimation[] {
-  const find = (n: XNode, type: string): XNode | undefined => { for (const c of elementsOf(n)) { if (c.attrs['presentation:node-type'] === type) return c; const f = find(c, type); if (f) return f; } return undefined; };
-  const seq = find(pg, 'main-sequence');
-  if (!seq) return [];
-  const targetOf = (n: XNode): string | undefined => { for (const c of elementsOf(n)) { const t = c.attrs['smil:targetElement']; if (t) return t; const d = targetOf(c); if (d) return d; } return undefined; };
-  const durOf = (n: XNode): number => { let best = 0; const walk = (x: XNode) => { for (const c of elementsOf(x)) { if (c.name === 'anim:transitionFilter' || c.name === 'anim:animate') best = Math.max(best, beginMs(c.attrs['smil:dur'])); walk(c); } }; walk(n); return best || 500; };
-  const out: SlideAnimation[] = [];
-  for (const step of elementsOf(seq).filter((c) => c.name === 'anim:par')) {
-    for (const group of elementsOf(step).filter((c) => c.name === 'anim:par')) {
-      for (const eff of elementsOf(group).filter((c) => c.name === 'anim:par')) {
-        const effect = PRESET_EFFECT[eff.attrs['presentation:preset-id'] ?? ''];
-        const target = ctx.ids.get(targetOf(eff) ?? '');
-        if (!effect || !target) continue;
-        const node = eff.attrs['presentation:node-type'];
-        out.push({
-          id: uid('an'), elementId: target, effect, class: eff.attrs['presentation:preset-class'] === 'exit' ? 'exit' : 'entrance',
-          start: node === 'with-previous' ? 'with' : node === 'after-previous' ? 'after' : 'click', durationMs: durOf(eff), delayMs: beginMs(eff.attrs['smil:begin']),
-        });
-      }
+/** The text of a flat OpenDocument file (.fodp / .fodg), or null when the bytes are not XML (a zip package). */
+function flatOdfText(b: Uint8Array): string | null {
+  if (b.length < 20 || (b[0] === 0x50 && b[1] === 0x4b)) return null;
+  if (b.length > 256 * 1024 * 1024) throw new Error('파일이 너무 큽니다 (256 MB 초과).');
+  const text = new TextDecoder('utf-8').decode(b.subarray(b[0] === 0xef && b[1] === 0xbb ? 3 : 0));
+  return /^\s*(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*<office:document[\s>]/.test(text.slice(0, 4096)) ? text : null;
+}
+
+/** Pictures a flat file carries as base64 (office:binary-data) become files of a small zip the reader's picture lookup uses. */
+function extractFlatPictures(root: XNode, zip: JSZip) {
+  let n = 0;
+  const walk = (node: XNode) => {
+    for (const c of elementsOf(node)) {
+      if (c.name === 'draw:image' && !c.attrs['xlink:href']) {
+        const data = childNamed(c, 'office:binary-data');
+        const raw = data ? textOf(data).replace(/\s+/g, '') : '';
+        if (raw && raw.length < 200 * 1024 * 1024) {
+          let bin: Uint8Array | null = null;
+          try { bin = Uint8Array.from(atob(raw), (ch) => ch.charCodeAt(0)); } catch { bin = null; }
+          if (bin && bin.length > 4) {
+            const ext = bin[0] === 0x89 && bin[1] === 0x50 ? 'png' : bin[0] === 0xff && bin[1] === 0xd8 ? 'jpg' : bin[0] === 0x47 && bin[1] === 0x49 ? 'gif' : bin[0] === 0x42 && bin[1] === 0x4d ? 'bmp' : bin[0] === 0x52 && bin[1] === 0x49 ? 'webp' : /<svg[\s>]/i.test(new TextDecoder().decode(bin.subarray(0, 1024))) ? 'svg' : 'png';
+            const path = `Pictures/flat${++n}.${ext}`;
+            zip.file(path, bin, { createFolders: false });
+            c.attrs['xlink:href'] = path;
+          }
+        }
+      } else walk(c);
     }
-  }
-  return out;
+  };
+  walk(root);
 }
 
 /** Read a .odp: slides with text boxes (paragraphs, bold / italic / size / colour), pictures, simple shapes, tables and notes. */
 export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpReadOptions): Promise<OdpDocument> {
   const data = file instanceof Uint8Array || file instanceof ArrayBuffer ? file : await file.arrayBuffer();
   const sourceName = opts.name ?? (typeof (file as File).name === 'string' ? (file as File).name : '');
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   let zip: JSZip;
-  try { zip = await JSZip.loadAsync(data); } catch { throw new Error('OpenDocument 파일(.odp)이 아닙니다.'); }
-  const mime = (await zip.file('mimetype')?.async('string'))?.trim();
-  const contentFile = zip.file('content.xml');
-  if (!contentFile || (mime && mime !== ODP_MIME && !/presentation/.test(mime))) throw new Error('OpenDocument 프레젠테이션(.odp)이 아닙니다.');
-  const content = parseXml(await contentFile.async('string'));
-  const stylesXml = await zip.file('styles.xml')?.async('string');
-  const stylesRoot = stylesXml ? parseXml(stylesXml) : undefined;
+  let content: XNode;
+  let stylesRoot: XNode | undefined;
+  let metaRoot: XNode | undefined;
+  const flat = flatOdfText(bytes);
+  if (flat !== null) {
+    // Flat XML (.fodp / .fodg): one document holding content, styles and meta; pictures are base64 inside the XML.
+    try { content = parseXml(flat); } catch { throw new Error('OpenDocument 파일(.fodp)을 읽지 못했습니다.'); }
+    const kind = content.attrs['office:mimetype'] ?? '';
+    if (content.name !== 'office:document' || (kind && !/presentation|graphics/.test(kind))) throw new Error('OpenDocument 프레젠테이션(.fodp)이 아닙니다.');
+    zip = new JSZip();
+    extractFlatPictures(content, zip);
+    stylesRoot = content;
+    metaRoot = childNamed(content, 'office:meta');
+  } else {
+    try { zip = await JSZip.loadAsync(data); } catch { throw new Error('OpenDocument 파일(.odp)이 아닙니다.'); }
+    const mime = (await zip.file('mimetype')?.async('string'))?.trim();
+    const contentFile = zip.file('content.xml');
+    if (!contentFile || (mime && mime !== ODP_MIME && !/presentation|graphics/.test(mime))) throw new Error('OpenDocument 프레젠테이션(.odp)이 아닙니다.');
+    content = parseXml(await contentFile.async('string'));
+    const stylesXml = await zip.file('styles.xml')?.async('string');
+    stylesRoot = stylesXml ? parseXml(stylesXml) : undefined;
+    const metaXml = await zip.file('meta.xml')?.async('string');
+    try { metaRoot = metaXml ? childNamed(parseXml(metaXml), 'office:meta') : undefined; } catch { metaRoot = undefined; }
+  }
 
   const styles = new Map<string, StyleDef>();
   const lib: StyleLib = { gradients: new Map(), opacities: new Map(), lists: new Map(), markers: new Map(), dashes: new Map() };
@@ -571,9 +714,12 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   const lp = layout ? childNamed(layout, 'style:page-layout-properties') : undefined;
   const pw = lengthToCm(lp?.attrs['fo:page-width']), ph = lengthToCm(lp?.attrs['fo:page-height']);
   if (pw && ph) page = { w: pw, h: ph };
-  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map() };
+  spacingWarning = false;
+  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map(), warnings: new Set(), customGlue: new Set(), glued: [] };
 
-  const body = childNamed(childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] }, 'office:presentation');
+  // A presentation's pages, or a drawing's (.odg: one slide per page).
+  const officeBody = childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] };
+  const body = childNamed(officeBody, 'office:presentation') ?? childNamed(officeBody, 'office:drawing');
   if (!body) throw new Error('OpenDocument 파일에 슬라이드가 없습니다.');
   const slides: Slide[] = [];
   // Objects on a master page (logos, lines, plain text) become background shapes at the bottom of each slide that shows it.
@@ -589,15 +735,30 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     }
     return list.map((el) => ({ ...structuredClone(el), id: uid('el') }));
   };
+  const slideMaster: { name: string; flat: SlideElement[]; hide: boolean }[] = [];
   for (const pg of childrenNamed(body, 'draw:page')) {
     const elements: SlideElement[] = [];
     const own = resolveStyle(styles, 'drawing-page', pg.attrs['draw:style-name']);
     const pageStyle = { ...resolveStyle(styles, 'drawing-page', masterPages.get(pg.attrs['draw:master-page-name'] ?? '')?.attrs['draw:style-name']), ...own };
-    if (own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name']) elements.push(...await masterElements(pg.attrs['draw:master-page-name']));
+    const flat = own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name'] ? await masterElements(pg.attrs['draw:master-page-name']) : [];
+    elements.push(...flat);
+    slideMaster.push({ name: pg.attrs['draw:master-page-name'] ?? '', flat, hide: own['presentation:background-objects-visible'] === 'false' });
     ctx.ids.clear();
+    ctx.glued = [];
     await readShapes(ctx, pg, elements);
-    const slide: Slide = { id: uid('s'), group: '', text: '', elements, importSource: { format: 'odp', name: sourceName, page: slides.length + 1 } };
-    const animations = readAnimations(ctx, pg);
+    for (const { el, node } of ctx.glued) {
+      const end = (side: 'start' | 'end') => {
+        const ref = node.attrs[`draw:${side}-shape`];
+        const target = ref ? ctx.ids.get(ref) : undefined;
+        const gp = Number(node.attrs[`draw:${side}-glue-point`] ?? NaN);
+        if (!target || !Number.isFinite(gp)) return undefined;
+        return { id: target, site: gp >= 4 && ctx.customGlue.has(ref) ? gp - 4 : GLUE_TO_SITE[gp] ?? 0 };
+      };
+      const from = end('start'), to = end('end');
+      if (from || to) el.connect = { ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    }
+    const slide: Slide = { id: uid('s'), group: '', text: '', elements, importSource: { format: 'odp', name: sourceName, page: slides.length + 1, pageCm: page } };
+    const animations = readAnimations(pg, ctx.ids);
     if (animations.length) slide.animations = animations;
     const fill = fillOf(ctx, pageStyle);
     if (pageStyle['draw:fill'] === 'solid' && fill?.fill) slide.background = { kind: 'color', value: fill.fill };
@@ -607,7 +768,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     const flags = { ...own, ...pg.attrs };
     if (flags['presentation:visibility'] === 'hidden' || flags['draw:display'] === 'none' || flags['draw:display'] === 'false' || flags['presentation:display'] === 'false') slide.disabled = true;
     const filter = (function find(n: XNode): XNode | undefined { for (const c of elementsOf(n)) { if (c.name === 'anim:transitionFilter') return c; const f = find(c); if (f) return f; } return undefined; })(pg);
-    const timing = readTransition({ ...own, ...pg.attrs, ...(filter ? { 'smil:type': filter.attrs['smil:type'], 'smil:dur': filter.attrs['smil:dur'] } : {}) });
+    const timing = readTransition({ ...own, ...pg.attrs, ...(filter ? { 'smil:type': filter.attrs['smil:type'], 'smil:dur': filter.attrs['smil:dur'], 'smil:subtype': filter.attrs['smil:subtype'], 'smil:direction': filter.attrs['smil:direction'] } : {}) });
     if (timing.transition) slide.transition = timing.transition;
     if (timing.autoAdvance) slide.autoAdvance = timing.autoAdvance;
     const notes = childNamed(pg, 'presentation:notes');
@@ -619,11 +780,60 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     slides.push(slide);
   }
 
-  const metaXml = await zip.file('meta.xml')?.async('string');
+  // The master pages as the deck's master and layouts.
+  let master: OdpDocument['master'];
+  if (opts.masterMode !== 'flatten' && masterPages.size) {
+    const sig = (e: SlideElement) => JSON.stringify([e.kind, e.shape, e.x, e.y, e.w, e.h, e.fill, e.stroke, e.text, e.mediaId, e.rotation]);
+    const used = [...new Set(slideMaster.map((s) => s.name).filter((n) => masterPages.has(n)))];
+    const objects = (name: string) => masterObjects.get(name) ?? [];
+    for (const n of used) await masterElements(n);
+    // What every used master page shows is the deck's master; the rest stays with the layout / slides of that page.
+    const sets = used.map((n) => new Set(objects(n).map(sig)));
+    const common = used.length ? objects(used[0]).filter((e) => sets.every((s) => s.has(sig(e)))) : [];
+    const commonSigs = new Set(common.map(sig));
+    const layouts: MasterLayout[] = [];
+    const layoutOf = new Map<string, string>();
+    for (const [name, mp] of masterPages) {
+      // The "Default" page LightCast itself writes beside its layouts is no layout unless a slide uses it.
+      if (name === 'Default' && masterPages.size > 1 && !used.includes(name)) continue;
+      const id = uid('lay');
+      layoutOf.set(name, id);
+      if (!objects(name).length && !used.includes(name)) await masterElements(name);
+      const holders: SlideElement[] = [];
+      for (const f of elementsOf(mp)) {
+        const kind = PH_KIND[f.attrs['presentation:class'] ?? ''];
+        const placed = kind ? boxOf(ctx, f, IDENTITY) : undefined;
+        if (!kind || !placed) continue;
+        holders.push({ ...makePlaceholder(kind), id: uid('el'), x: placed.x, y: placed.y, w: placed.w, h: placed.h });
+      }
+      const own = objects(name).filter((e) => !commonSigs.has(sig(e))).map((e) => ({ ...structuredClone(e), id: uid('el') }));
+      layouts.push({ id, name: (mp.attrs['style:display-name'] ?? mp.attrs['style:name']).replace(/_20_/g, ' '), elements: [...own, ...holders] });
+    }
+    const first = used[0] ? masterPages.get(used[0]) : undefined;
+    const mfill = first ? fillOf(ctx, resolveStyle(styles, 'drawing-page', first.attrs['draw:style-name'])) : undefined;
+    const mstyle = first ? resolveStyle(styles, 'drawing-page', first.attrs['draw:style-name']) : {};
+    master = {
+      elements: common.map((e) => ({ ...structuredClone(e), id: uid('el'), name: e.name?.replace(/^마스터: /, '') })), layouts,
+      ...(mstyle['draw:fill'] === 'solid' && mfill?.fill ? { background: { kind: 'color' as const, value: mfill.fill } } : {}),
+    };
+    slides.forEach((s, i) => {
+      const m = slideMaster[i];
+      if (!m.name || !layoutOf.has(m.name)) return;
+      s.layoutId = layoutOf.get(m.name);
+      // The master page's own objects that are not the deck's master stay on the slide; the deck's master comes as master copies.
+      const keep = new Set(m.flat.filter((e) => commonSigs.has(sig(e))).map((e) => e.id));
+      const kept = (s.elements ?? []).filter((e) => !keep.has(e.id));
+      s.elements = kept;
+      if (m.hide) s.hideMaster = true;
+      Object.assign(s, withMaster(s, master!.elements));
+      s.elements ??= [];
+    });
+  }
+
   const properties: DocProperties = {};
-  if (metaXml) {
-    const meta = childNamed(parseXml(metaXml), 'office:meta');
-    const pick = (n: string) => (meta && childNamed(meta, n) ? textOf(childNamed(meta, n)!).trim() : '') || undefined;
+  if (metaRoot) {
+    const meta = metaRoot;
+    const pick = (n: string) => (childNamed(meta, n) ? textOf(childNamed(meta, n)!).trim() : '') || undefined;
     properties.title = pick('dc:title');
     properties.subject = pick('dc:subject');
     properties.author = pick('meta:initial-creator') ?? pick('dc:creator');
@@ -631,11 +841,21 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     properties.comments = pick('dc:description');
     for (const k of Object.keys(properties) as (keyof DocProperties)[]) if (!properties[k]) delete properties[k];
   }
-  return { title: properties.title ?? '', properties, slides };
+  if (spacingWarning) ctx.warnings.add('글자 일부에만 준 문자 간격은 LightCast가 개체 전체에만 줄 수 있어 빼고 읽었습니다.');
+  if (Math.abs(page.w / page.h - 4 / 3) > 0.02) ctx.warnings.add(`원본 슬라이드 크기는 ${Math.round(page.w * 100) / 100} × ${Math.round(page.h * 100) / 100}cm 입니다. LightCast는 4:3 슬라이드만 지원하므로 내용을 4:3 크기에 맞춰 늘이거나 줄였습니다.`);
+  return { title: properties.title ?? '', properties, slides, ...(master ? { master } : {}), pageCm: page, warnings: [...ctx.warnings] };
+}
+
+/** A slide's title (its first text), body (the other texts, one per line) and notes: what Review › Compare looks at. */
+export function odpSlideText(s: Slide): { title: string; text: string; notes: string } {
+  const texts = (s.elements ?? []).filter((e) => !e.name?.startsWith('마스터:') && (e.kind === 'text' || e.kind === 'shape') && e.text?.trim()).map((e) => e.text!.trim());
+  return { title: texts[0] ?? '', text: texts.slice(1).join('\n'), notes: s.notes ?? '' };
 }
 
 // ── Writing ───────────────────────────────────────────────────────────────────────────────────
 export interface OdpWriteOptions {
+  /** The page size (cm) the deck came in with: the file is written at the largest 4:3 page inside it. */
+  pageCm?: { w: number; h: number };
   /** The bytes and type of a stored picture (null when it is missing; the picture is then left out). */
   loadMedia: (id: string) => Promise<{ bytes: Uint8Array; mime: string } | null> | { bytes: Uint8Array; mime: string } | null;
 }
@@ -700,6 +920,8 @@ function runProps(r: Omit<TextRun, 'text'>): string {
   if (r.underline) a.push('style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"');
   if (r.strike) a.push('style:text-line-through-style="solid"');
   if (r.fontFamily) a.push(`fo:font-family="${escapeXml(r.fontFamily)}"`);
+  const ls = (r as { letterSpacing?: number }).letterSpacing;
+  if (ls) a.push(`fo:letter-spacing="${Math.round((ls / PX_PER_PT / 72) * 2.54 * 1000) / 1000}cm"`);
   if (r.baseline) a.push(`style:text-position="${r.baseline === 'super' ? 'super 58%' : 'sub 58%'}"`);
   return a.length ? `<style:text-properties ${a.join(' ')}/>` : '';
 }
@@ -708,7 +930,7 @@ const ALIGN_ODF: Record<string, string> = { left: 'start', center: 'center', rig
 
 /** A text object's lines, each with its runs and formatting. */
 function elementLines(el: SlideElement): { align?: HAlign; runs: TextRun[]; list?: ListStyle }[] {
-  const base: Omit<TextRun, 'text'> = { fontSize: el.fontSize, bold: el.bold, italic: el.italic, color: el.color, underline: el.underline, strike: el.strike, fontFamily: el.fontFamily };
+  const base: Omit<TextRun, 'text'> = { fontSize: el.fontSize, bold: el.bold, italic: el.italic, color: el.color, underline: el.underline, strike: el.strike, fontFamily: el.fontFamily, ...(el.letterSpacing ? { letterSpacing: el.letterSpacing } : {}) } as Omit<TextRun, 'text'>;
   const lines = (el.text ?? '').split('\n');
   return lines.map((text, i) => {
     const p = el.paragraphs?.[i];
@@ -726,7 +948,8 @@ function paragraphsXml(st: Styles, lines: { align?: HAlign; runs: TextRun[]; lis
     const spans = l.runs.filter((r) => r.text).map((r) => {
       const { text, ...props } = r;
       const body = runProps(props);
-      return body ? `<text:span text:style-name="${st.name('text', 'T', body)}">${odfText(text)}</text:span>` : odfText(text);
+      const inner = r.link && /^[a-z][a-z0-9+.-]*:|^#/i.test(r.link) ? `<text:a xlink:href="${escapeXml(r.link)}" xlink:type="simple">${odfText(text)}</text:a>` : odfText(text);
+      return body ? `<text:span text:style-name="${st.name('text', 'T', body)}">${inner}</text:span>` : inner;
     }).join('');
     return `<text:p${pAttr}>${spans}</text:p>`;
   };
@@ -739,44 +962,6 @@ function paragraphsXml(st: Styles, lines: { align?: HAlign; runs: TextRun[]; lis
     i = j;
   }
   return out.join('');
-}
-
-/** The animation effects ODF can carry here, by LightCast effect id: [LibreOffice preset id, class]. */
-const ANIM_PRESETS: Record<string, [string, 'entrance' | 'exit']> = {
-  appear: ['ooo-entrance-appear', 'entrance'], fade: ['ooo-entrance-fade-in', 'entrance'], fly: ['ooo-entrance-fly-in', 'entrance'], wipe: ['ooo-entrance-wipe', 'entrance'],
-  disappear: ['ooo-exit-disappear', 'exit'], fadeOut: ['ooo-exit-fade-out', 'exit'], wipeOut: ['ooo-exit-wipe', 'exit'],
-};
-const secs = (ms: number) => `${Math.round(ms) / 1000}s`;
-
-/** A slide's animations as LibreOffice's anim:par timing tree (clicks are steps; with / after effects share the step). */
-export function animationsXml(list: SlideAnimation[] | undefined, ids: Map<string, string>): string {
-  const usable = (list ?? []).filter((a) => ANIM_PRESETS[a.effect] && ids.has(a.elementId));
-  if (!usable.length) return '';
-  const steps: SlideAnimation[][] = [];
-  for (const a of usable) { if (a.start === 'click' || !steps.length) steps.push([a]); else steps[steps.length - 1].push(a); }
-  const body = (a: SlideAnimation, id: string, exit: boolean): string => {
-    const dur = secs(Math.max(1, a.durationMs));
-    const set = `<anim:set smil:begin="0s" smil:dur="0.001s" smil:fill="hold" smil:targetElement="${id}" smil:attributeName="visibility" smil:to="${exit ? 'hidden' : 'visible'}"/>`;
-    if (a.effect === 'fade' || a.effect === 'fadeOut') return `${set}<anim:transitionFilter smil:dur="${dur}" smil:targetElement="${id}" smil:type="fade" smil:subtype="crossfade"${exit ? ' smil:mode="out"' : ''}/>`;
-    if (a.effect === 'wipe' || a.effect === 'wipeOut') return `${set}<anim:transitionFilter smil:dur="${dur}" smil:targetElement="${id}" smil:type="barWipe" smil:subtype="leftToRight"${exit ? ' smil:mode="out"' : ''}/>`;
-    if (a.effect === 'fly') return `${set}<anim:animate smil:dur="${dur}" smil:fill="hold" smil:targetElement="${id}" smil:attributeName="y" smil:values="1+height/2;y" smil:keyTimes="0;1"/>`;
-    return set;
-  };
-  const stepXml = steps.map((step) => {
-    // Groups of effects that start together: an "after previous" effect begins when the group before it ends.
-    const groups: { begin: number; effects: SlideAnimation[] }[] = [];
-    let clock = 0;
-    for (const a of step) {
-      if (a.start === 'after' && groups.length) { clock = Math.max(...groups[groups.length - 1].effects.map((e) => e.delayMs + e.durationMs)) + groups[groups.length - 1].begin; groups.push({ begin: clock, effects: [a] }); } else if (groups.length) groups[groups.length - 1].effects.push(a); else groups.push({ begin: 0, effects: [a] });
-    }
-    const inner = groups.map((g) => `<anim:par smil:begin="${secs(g.begin * 1000)}" smil:fill="hold">${g.effects.map((a) => {
-      const [preset, cls] = ANIM_PRESETS[a.effect];
-      const node = a === step[0] ? 'on-click' : a.start === 'after' ? 'after-previous' : 'with-previous';
-      return `<anim:par smil:begin="${secs(a.delayMs)}" smil:fill="hold" presentation:node-type="${node}" presentation:preset-class="${cls}" presentation:preset-id="${preset}">${body(a, ids.get(a.elementId)!, cls === 'exit')}</anim:par>`;
-    }).join('')}</anim:par>`).join('');
-    return `<anim:par smil:begin="next" smil:fill="hold">${inner}</anim:par>`;
-  }).join('');
-  return `<anim:par smil:dur="indefinite" smil:restart="never" presentation:node-type="timing-root"><anim:seq smil:dur="indefinite" presentation:node-type="main-sequence">${stepXml}</anim:seq></anim:par>`;
 }
 
 type PresetTable = typeof import('./odpPresets').ODP_PRESETS;
@@ -796,9 +981,9 @@ export function geometryXml(table: PresetTable, shape: string, adj?: number[]): 
 }
 
 /** Dash patterns as [dash %, second dash %, gap %] of the line width (PowerPoint's presets, as LibreOffice reads them). */
-const DASHES: Record<DashStyle, [number, number, number] | undefined> = {
+const DASHES: Record<DashStyle, [number, number, number, number?] | undefined> = {
   solid: undefined, dash: [400, 0, 300], dot: [100, 0, 300], dashDot: [400, 100, 300], lgDash: [800, 0, 300], sysDash: [300, 0, 100], sysDot: [100, 0, 100],
-  lgDashDot: [800, 100, 300], lgDashDotDot: [800, 100, 300], sysDashDot: [300, 100, 100], sysDashDotDot: [300, 100, 100],
+  lgDashDot: [800, 100, 300], lgDashDotDot: [800, 100, 300, 2], sysDashDot: [300, 100, 100], sysDashDotDot: [300, 100, 100, 2],
 };
 /** Arrowhead outlines: [viewBox, path]. */
 const MARKERS: Record<ArrowKind, [string, string]> = {
@@ -822,7 +1007,9 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     pictures.set(id, { path, bytes: m.bytes, mime: m.mime });
     return path;
   };
-  const K = 28 / CANVAS_W; // canvas px → cm
+  // The page the file is written at: 4:3 like the canvas, as large as the original page allows (28 x 21 cm when it is not known).
+  const K = opts.pageCm ? Math.max(0.001, Math.min(opts.pageCm.w / CANVAS_W, opts.pageCm.h / CANVAS_H)) : 28 / CANVAS_W; // canvas px → cm
+  const pageW = Math.round(CANVAS_W * K * 1000) / 1000, pageH = Math.round(CANVAS_H * K * 1000) / 1000;
   const geo = (b: Box) => `svg:x="${fmtCm(b.x, K)}" svg:y="${fmtCm(b.y, K)}" svg:width="${fmtCm(b.w, K)}" svg:height="${fmtCm(b.h, K)}"`;
   /** Position attributes: svg:x / y / width / height, or a draw:transform when the object is turned. */
   const place = (b: Box, rot?: number) => {
@@ -874,7 +1061,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     let dashName = '';
     if (dash) {
       dashName = `Dash_${el.dash}`;
-      if (!dashes.has(dashName)) dashes.set(dashName, `<draw:stroke-dash draw:name="${dashName}" draw:style="rect" draw:dots1="1" draw:dots1-length="${dash[0]}%"${dash[1] ? ` draw:dots2="1" draw:dots2-length="${dash[1]}%"` : ''} draw:distance="${dash[2]}%"/>`);
+      if (!dashes.has(dashName)) dashes.set(dashName, `<draw:stroke-dash draw:name="${dashName}" draw:style="rect" draw:dots1="1" draw:dots1-length="${dash[0]}%"${dash[1] ? ` draw:dots2="${dash[3] ?? 1}" draw:dots2-length="${dash[1]}%"` : ''} draw:distance="${dash[2]}%"/>`);
     }
     const arrow = (kind: ArrowKind | undefined, side: 'start' | 'end') => {
       const k = kind ?? 'triangle';
@@ -904,6 +1091,8 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
   let shapeNo = 0;
   let xmlIdNo = 0;
   const xmlIds = new Map<string, string>();
+  /** A glued connector names its objects by placeholder while the page is written; here the ids they got. */
+  const fixGlue = (xml: string) => xml.replace(/ draw:(start|end)-shape="@@G:([^@]*)@@" draw:\1-glue-point="(\d+)"/g, (_m, side: string, id: string, gp: string) => (xmlIds.has(id) ? ` draw:${side}-shape="${xmlIds.get(id)}" draw:${side}-glue-point="${gp}"` : ''));
   let presets: PresetTable | undefined;
   const presetTable = async () => (presets ??= (await import('./odpPresets')).ODP_PRESETS);
 
@@ -927,7 +1116,15 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
         const rows = t.rows.map((row, r) => `<table:table-row table:style-name="${rowStyle(t.heights[r] ?? 60)}">${row.map((cell) => {
           if (cell.hMerge || cell.vMerge) return '<table:covered-table-cell/>';
           const fill = hexColor(cell.fill);
-          const cs = st.name('table-cell', 'ce', `<style:table-cell-properties fo:background-color="${fill ?? 'transparent'}" fo:border="0.05pt solid #999999"/>`);
+          const side = (b: CellBorder | null | undefined) => {
+            if (b === null) return 'none';
+            if (!b) return '0.05pt solid #999999';
+            const c = hexColor(b.color) ?? '#999999';
+            return `${Math.round((b.width / PX_PER_PT) * 100) / 100}pt ${b.dash === 'dash' || b.dash === 'longDash' ? 'dashed' : b.dash === 'dot' || b.dash === 'dashDot' ? 'dotted' : 'solid'} ${c}`;
+          };
+          const bd = cell.borders;
+          const border = bd ? `fo:border-left="${side(bd.l)}" fo:border-right="${side(bd.r)}" fo:border-top="${side(bd.t)}" fo:border-bottom="${side(bd.b)}"` : 'fo:border="0.05pt solid #999999"';
+          const cs = st.name('table-cell', 'ce', `<style:table-cell-properties fo:background-color="${fill ?? 'transparent'}" ${border}/>`);
           const lines = (cell.text || '').split('\n').map((text) => ({ align: cell.align as HAlign | undefined, runs: [{ text, bold: cell.bold, color: cell.color, fontSize: el.fontSize }] as TextRun[] }));
           const span = `${cell.span && cell.span > 1 ? ` table:number-columns-spanned="${cell.span}"` : ''}${cell.rowSpan && cell.rowSpan > 1 ? ` table:number-rows-spanned="${cell.rowSpan}"` : ''}`;
           return `<table:table-cell table:style-name="${cs}"${span} office:value-type="string">${paragraphsXml(st, lines)}</table:table-cell>`;
@@ -935,10 +1132,30 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
         parts.push(`<draw:frame draw:style-name="${plainFrame}" draw:name="${escapeXml(name)}" ${geo(b)}><table:table table:name="${escapeXml(name)}">${t.cols.map((w) => `<table:table-column table:style-name="${colStyle(w)}"/>`).join('')}${rows}</table:table></draw:frame>`);
       } else if (el.kind === 'shape') {
         const shape = el.shape ?? (el.ellipse ? 'ellipse' : el.radius ? 'roundRect' : 'rect');
-        const g = `<style:graphic-properties ${fillAttrs(el)} ${strokeAttrs(el, shape === 'line')}${shadowAttrs(el)} ${fitAttrs(el)}${el.vAlign ? ` draw:textarea-vertical-align="${el.vAlign}"` : ''}/>`;
+        const g = `<style:graphic-properties ${fillAttrs(el)} ${strokeAttrs(el, shape === 'line' || /^(straightConnector\d|bentConnector\d|curvedConnector\d)$/.test(shape))}${shadowAttrs(el)} ${fitAttrs(el)}${el.vAlign ? ` draw:textarea-vertical-align="${el.vAlign}"` : ''}/>`;
         const style = st.name('graphic', 'gr', g);
         const body = el.text ? paragraphsXml(st, elementLines(el)) : '';
-        if (shape === 'line') {
+        if (/^(straightConnector\d|bentConnector\d|curvedConnector\d)$/.test(shape)) {
+          // A connector: its end points (the box's corners, turned about its centre), its type and the objects it is glued to.
+          const th = ((el.rotation ?? 0) * Math.PI) / 180, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+          const turn = (x: number, y: number): [number, number] => [cx + (x - cx) * Math.cos(th) - (y - cy) * Math.sin(th), cy + (x - cx) * Math.sin(th) + (y - cy) * Math.cos(th)];
+          const [x1, y1] = turn(el.flipH ? b.x + b.w : b.x, el.flipV ? b.y + b.h : b.y);
+          const [x2, y2] = turn(el.flipH ? b.x : b.x + b.w, el.flipV ? b.y : b.y + b.h);
+          const u = (n: number) => Math.round(n * K * 1000); // 1/100 mm
+          const dx = u(x2) - u(x1), dy = u(y2) - u(y1);
+          const vertical = Math.round(Math.abs(el.rotation ?? 0) % 180) === 90;
+          const type = shape.startsWith('straight') ? 'line' : shape.startsWith('curved') ? 'curve' : 'standard';
+          const d = type === 'line' ? `l${dx} ${dy}` : type === 'standard' ? (vertical ? `v${Math.round(dy / 2)}h${dx}v${dy - Math.round(dy / 2)}` : `h${Math.round(dx / 2)}v${dy}h${dx - Math.round(dx / 2)}`) : vertical ? `c0 ${Math.round(dy / 2)} ${dx} ${Math.round(dy / 2)} ${dx} ${dy}` : `c${Math.round(dx / 2)} 0 ${Math.round(dx / 2)} ${dy} ${dx} ${dy}`;
+          const tbl = await presetTable();
+          const glue = (side: 'start' | 'end', c?: { id: string; site: number }) => {
+            const target = c && elements.find((e) => e.id === c.id);
+            if (!c || !target) return '';
+            const custom = !!(target.kind === 'shape' && target.shape && tbl[target.shape]?.a['draw:glue-points']);
+            const id = custom ? 4 + c.site : siteToGlue(c.site);
+            return id >= 0 ? ` draw:${side}-shape="@@G:${c.id}@@" draw:${side}-glue-point="${id}"` : '';
+          };
+          parts.push(`<draw:connector draw:style-name="${style}" draw:name="${escapeXml(name)}"${type === 'standard' ? '' : ` draw:type="${type}"`} svg:x1="${fmtCm(x1, K)}" svg:y1="${fmtCm(y1, K)}" svg:x2="${fmtCm(x2, K)}" svg:y2="${fmtCm(y2, K)}"${glue('start', el.connect?.from)}${glue('end', el.connect?.to)} svg:d="M${u(x1)} ${u(y1)}${d}" svg:viewBox="0 0 ${Math.abs(dx) + 1} ${Math.abs(dy) + 1}">${body}</draw:connector>`);
+        } else if (shape === 'line') {
           let [x1, x2] = el.flipH ? [b.x + b.w, b.x] : [b.x, b.x + b.w];
           let [y1, y2] = el.flipV ? [b.y + b.h, b.y] : [b.y, b.y + b.h];
           if (el.rotation) {
@@ -996,7 +1213,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
       const path = await pic(mbg.mediaId);
       if (path) masterBody += imageXml(path, { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H }, 'Background', plainOf(mst));
     }
-    masterBody += (await renderElements(masterObjects, mst)).join('');
+    masterBody += fixGlue((await renderElements(masterObjects, mst)).join(''));
     const fill = backgroundFill(mbg);
     masterFilled = fill !== 'draw:fill="none"';
     if (masterFilled) masterStyle = ` draw:style-name="${mst.name('drawing-page', 'dp', `<style:drawing-page-properties ${fill}/>`)}"`;
@@ -1012,9 +1229,12 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
       const prompt = cls === 'page-number' ? '<text:p><text:page-number>&lt;number&gt;</text:page-number></text:p>' : `<text:p>${odfText(e.text || e.name || cls)}</text:p>`;
       return `<draw:frame presentation:style-name="${holderStyle}" presentation:class="${cls}" presentation:placeholder="true" draw:layer="layout" ${geo({ x: e.x, y: e.y, w: Math.max(1, e.w), h: Math.max(1, e.h) })}><draw:text-box>${prompt}</draw:text-box></draw:frame>`;
     }).join('');
-    layoutPages.push({ id: lay.id, name: lay.name, xml: `<style:master-page style:name="Layout${li + 1}" style:display-name="${escapeXml(lay.name)}" style:page-layout-name="PM1"${masterStyle}>${masterBody}${(await renderElements(own, mst)).join('')}${holders}</style:master-page>` });
+    layoutPages.push({ id: lay.id, name: lay.name, xml: fixGlue(`<style:master-page style:name="Layout${li + 1}" style:display-name="${escapeXml(lay.name)}" style:page-layout-name="PM1"${masterStyle}>${masterBody}${(await renderElements(own, mst)).join('')}${holders}</style:master-page>`) });
   }
 
+  // A preset motion path (Lines, Arcs…) is traced by the engine (when it is loaded) and written as the points it passes.
+  let tracePath: ((a: SlideAnimation, el: SlideElement) => [number, number][]) | undefined;
+  try { const mp = await import('../motionPath'); tracePath = mp.presetMotionPoints; } catch { /* no engine: such paths are left out */ }
   const pages: string[] = [];
   for (const [i, slide] of p.slides.entries()) {
     const parts: string[] = [];
@@ -1032,15 +1252,26 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     // A slide with no background of its own shows the master's (the fill property is left out so it is inherited).
     const bgFill = !bg && masterFilled ? '' : backgroundFill(bg);
     const dp = st.name('drawing-page', 'dp', `<style:drawing-page-properties ${bgFill}${slide.disabled ? ' presentation:visibility="hidden"' : ''}${slide.hideMaster ? ' presentation:background-objects-visible="false"' : ''}${transitionAttrs(slide.transition, slide.autoAdvance)}/>`);
-    const anims = animationsXml(slide.animations, xmlIds);
+    const pathOf = (a: SlideAnimation): string | undefined => {
+      const el = all.find((e) => e.id === a.elementId);
+      if (!el || !tracePath) return undefined;
+      try {
+        const pts = tracePath(a, el);
+        if (pts.length < 2) return undefined;
+        const cx = el.x + el.w / 2, cy = el.y + el.h / 2;
+        const f = (n: number) => Math.round(n * 10000) / 10000;
+        return `M 0 0 ${pts.slice(1).map(([x, y]) => `L ${f((x - cx) / CANVAS_W)} ${f((y - cy) / CANVAS_H)}`).join(' ')}`;
+      } catch { return undefined; }
+    };
+    const anims = animationsXml(slide.animations, xmlIds, pathOf);
     const notes = slide.notes
       ? `<presentation:notes><draw:page-thumbnail draw:layer="layout" svg:width="12.7cm" svg:height="9.525cm" svg:x="3.175cm" svg:y="1.905cm" draw:page-number="${i + 1}" presentation:class="page"/><draw:frame presentation:style-name="${st.name('presentation', 'pr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>')}" presentation:class="notes" draw:layer="layout" svg:width="16.8cm" svg:height="11.2cm" svg:x="2.1cm" svg:y="14.8cm"><draw:text-box>${slide.notes.split('\n').map((l) => `<text:p>${odfText(l)}</text:p>`).join('')}</draw:text-box></draw:frame></presentation:notes>`
       : '';
-    pages.push(`<draw:page draw:name="page${i + 1}" draw:style-name="${dp}" draw:master-page-name="${(() => { const k = layoutPages.findIndex((l) => l.id === slide.layoutId); return k >= 0 ? `Layout${k + 1}` : 'Default'; })()}">${parts.join('')}${anims}${notes}</draw:page>`);
+    pages.push(`<draw:page draw:name="page${i + 1}" draw:style-name="${dp}" draw:master-page-name="${(() => { const k = layoutPages.findIndex((l) => l.id === slide.layoutId); return k >= 0 ? `Layout${k + 1}` : 'Default'; })()}">${fixGlue(parts.join(''))}${anims}${notes}</draw:page>`);
   }
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content ${NS} office:version="1.3"><office:automatic-styles>${st}</office:automatic-styles><office:body><office:presentation>${pages.join('')}</office:presentation></office:body></office:document-content>`;
-  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}${[...opacities].map(([body, name]) => `<draw:opacity draw:name="${name}" ${body}`).join('')}${[...dashes.values()].join('')}${[...markers.values()].join('')}</office:styles><office:automatic-styles>${mst}<style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="28cm" fo:page-height="21cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"${masterStyle}>${masterBody}</style:master-page>${layoutPages.map((l) => l.xml).join('')}</office:master-styles></office:document-styles>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}${[...opacities].map(([body, name]) => `<draw:opacity draw:name="${name}" ${body}`).join('')}${[...dashes.values()].join('')}${[...markers.values()].join('')}</office:styles><office:automatic-styles>${mst}<style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="${pageW}cm" fo:page-height="${pageH}cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"${masterStyle}>${masterBody}</style:master-page>${layoutPages.map((l) => l.xml).join('')}</office:master-styles></office:document-styles>`;
   const pr = p.properties ?? {};
   const meta = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-meta ${NS} office:version="1.3"><office:meta><dc:title>${escapeXml(pr.title ?? p.title)}</dc:title>${pr.subject ? `<dc:subject>${escapeXml(pr.subject)}</dc:subject>` : ''}${pr.author ? `<meta:initial-creator>${escapeXml(pr.author)}</meta:initial-creator><dc:creator>${escapeXml(pr.author)}</dc:creator>` : ''}${pr.comments ? `<dc:description>${escapeXml(pr.comments)}</dc:description>` : ''}<meta:generator>LightCast</meta:generator></office:meta></office:document-meta>`;
   const entries = [

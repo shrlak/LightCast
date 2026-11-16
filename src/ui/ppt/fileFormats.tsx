@@ -47,6 +47,7 @@ export function OdpSaveCard({ ed }: { ed: Ed }) {
     try {
       ed.cmd.notify('OpenDocument 파일 만드는 중…');
       const bytes = await writeOdp(p, {
+        pageCm: p.slides.find((s) => s.importSource?.format === 'odp')?.importSource?.pageCm,
         loadMedia: async (id) => {
           const blob = await getMedia(id).catch(() => undefined);
           return blob && blob.type.startsWith('image/') ? { bytes: new Uint8Array(await blob.arrayBuffer()), mime: blob.type } : null;

@@ -29,6 +29,8 @@ import { drawTableLine, eraseTableLine } from '../../domain/drawTable';
 import { RichTextEditor, type EditStart, type EditorControl } from '../RichTextEditor';
 import { Ruler } from './Ruler';
 import { clipboardToElements, copyObjectsToClipboard, lastCopiedObjects, sourceOf } from './pasteObjects';
+import { decodePayload, payloadFromHtml } from '../../domain/clipboard';
+import { deckFilesOf, snapshotDataTransfer } from '../clipboardSlides';
 import { desktop } from '../../domain/desktop';
 import { centreOf, drawnMotionPath, motionPathOverlays, pathArrow, startAtCentre, withCustomPath } from '../../domain/motionPath';
 
@@ -110,6 +112,8 @@ interface Props {
   onLockedDelete?: () => void;
   /** A picture a paste brought in (to list in the presentation's media). */
   onAddMedia?: (m: import('../../domain/types').MediaMeta) => void;
+  /** Slides copied in PowerPoint / LibreOffice (or slide files): put them after this slide; false when the clipboard has none. */
+  onPasteSlides?: (snap: import('../clipboardSlides').ClipSnapshot) => Promise<boolean>;
   readOnly?: boolean;
   tool?: CanvasTool | null;
   onToolDone?: () => void;
@@ -165,7 +169,7 @@ function toSlide(el: SlideElement, lx: number, ly: number): [number, number] {
  * italic, underline or colour. Every geometric answer — hits, sizes, angles, snapping — comes from
  * the Rust engine. Changes apply as you go, so a slide that is live updates on screen.
  */
-export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, onAddMedia, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, onGuidesChange, pickPicture, motionPaths }: Props) {
+export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, selected, onSelect, onChange, onLockedDelete, onAddMedia, onPasteSlides, readOnly, tool, onToolDone, view, badges, defaultShape, customGuides, onGuidesChange, pickPicture, motionPaths }: Props) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const k = width / CANVAS_W || 1;
   /** The box being typed in, and how typing started there (caret at a click, a word, or waiting for an input method). */
@@ -1013,15 +1017,21 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
   const onPaste = (e: RClipboardEvent) => {
     if (editing || readOnly) return;
     const src = sourceOf(e.clipboardData);
-    if (!src.custom && !src.html && !src.text && !src.images.length && !desktop?.readOfficeClipboard) return;
+    const snap = onPasteSlides ? snapshotDataTransfer(e.clipboardData) : null;
+    const slideFiles = snap ? deckFilesOf(snap).length : 0;
+    if (!src.custom && !src.html && !src.text && !src.images.length && !desktop?.readOfficeClipboard && !slideFiles) return;
     e.preventDefault();
     e.stopPropagation();
-    void clipboardToElements(src, elements).then((r) => {
+    const shapes = () => clipboardToElements(src, elements).then((r) => {
       if (!r) return;
       r.media.forEach((m) => onAddMedia?.(m));
       setElements([...elsRef.current, ...r.elements]);
       onSelect(r.elements.map((c) => c.id));
     }).catch(() => undefined);
+    // Objects copied in LightCast itself never carry slides; anything else may (PowerPoint's thumbnail pane copy).
+    const own = !!(decodePayload(src.custom) ?? payloadFromHtml(src.html));
+    if (!onPasteSlides || !snap || own) { void shapes(); return; }
+    void onPasteSlides(snap).then((done) => (done ? undefined : shapes())).catch(() => shapes());
   };
 
   // ── Drawing the editor chrome ───────────────────────────────────────────────────────────────
