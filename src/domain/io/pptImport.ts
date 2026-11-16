@@ -10,6 +10,7 @@ import { INDENT_PX } from '../textFormat';
 import { gradientCss } from '../backgroundFormat';
 import { metafileToBlob } from '../metafile/image';
 import { detectTables, type TablePlan } from './pptTable';
+import { numberStyleOf } from './pptText';
 import { parsePpt, type PptDocument, type PptPara, type PptPicture, type PptShape, type PptSlide } from './pptBinary';
 
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/bmp': 'bmp', 'image/tiff': 'tiff', 'image/svg+xml': 'svg' } as const;
@@ -45,8 +46,6 @@ const scaleOf = (doc: Pick<PptDocument, 'width' | 'height'>): Scale => {
 };
 
 const BULLET_BY_CODE: Record<number, ListStyle> = { 0xfc: 'check', 0xfe: 'check', 0xa7: 'square', 0x6e: 'square', 0x71: 'square', 0xd8: 'arrow', 0xe0: 'arrow', 0x76: 'diamond', 0x2022: 'bullet', 0x25cf: 'bullet', 0x25a0: 'square', 0x25aa: 'square', 0x2013: 'dash', 0x2014: 'dash', 0x2d: 'dash', 0x2605: 'star', 0x25cb: 'circle', 0x2192: 'arrow', 0x2713: 'check' };
-/** PowerPoint's TextAutoNumberScheme ids (MS-PPT 2.13.? ANM_*) → LightCast's numbering styles. */
-const NUMBER_SCHEME: Record<number, ListStyle> = { 0: 'alpha-lower', 1: 'alpha', 2: 'number-paren', 3: 'number', 4: 'roman-lower', 5: 'roman-lower', 6: 'roman-lower', 7: 'roman', 8: 'alpha-lower-paren', 9: 'alpha-lower-paren', 10: 'alpha', 11: 'alpha', 12: 'number-paren', 13: 'number' };
 function bulletStyle(b: { char?: number; font?: string }): ListStyle {
   const code = b.char ?? 0x2022;
   if (/wingdings|symbol/i.test(b.font ?? '')) return BULLET_BY_CODE[code] ?? 'bullet';
@@ -107,7 +106,7 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
   const sizePx = (p: PptPara) => Math.round((p.runs.find((r) => r.text)?.size ?? 0) * sc.pt) || own.fontSize;
   // Space before / after: positive = percent of a line, negative = master units; |v| of 1 is rounding noise.
   const gap = (v: number | undefined, p: PptPara) => (!v ? 0 : v < 0 ? (-v > 2 ? Math.round(-v * sc.k) : 0) : Math.round((v / 100) * sizePx(p) * 1.2));
-  const listOf = (p: PptPara): ListStyle | undefined => (p.bullet ? (p.numbering ? NUMBER_SCHEME[p.numbering.scheme] ?? 'number' : bulletStyle(p.bullet)) : undefined);
+  const listOf = (p: PptPara): ListStyle | undefined => (p.bullet ? (p.numbering ? numberStyleOf(p.numbering.scheme) : bulletStyle(p.bullet)) : undefined);
   // Left margin and first-line indent in canvas px (the file's indent is the absolute first-line position; hanging = negative).
   const marginOf = (p: PptPara): { left: number; first: number } | undefined => (p.leftMargin === undefined && p.indent === undefined ? undefined : (() => {
     const lm = p.leftMargin ?? 0;

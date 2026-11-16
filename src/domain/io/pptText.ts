@@ -2,6 +2,37 @@
 // character runs), the TextMasterStyleAtoms of a master (per text type and indent level), the font
 // collection, and the merge of the three into styled paragraphs. Never throws.
 import { colorIndex, each, T, type Ctx, type Rec, type Scheme } from './pptRecords';
+import type { ListStyle } from '../types';
+import { listMarker } from '../textFormat';
+
+/** PowerPoint's TextAutoNumberScheme ids (MS-PPT ANM_*: 0 a. 1 A. 2 1) 3 1. 4 (i) 5 i) 6 i. 7 I. 8 (a) 9 a) 10 (A) 11 A) 12 (1) 13 1) → LightCast's numbering styles. */
+const NUMBER_SCHEME: Record<number, ListStyle> = { 0: 'alpha-lower', 1: 'alpha', 2: 'number-paren', 3: 'number', 4: 'roman-lower', 5: 'roman-lower', 6: 'roman-lower', 7: 'roman', 8: 'alpha-lower-paren', 9: 'alpha-lower-paren', 10: 'alpha', 11: 'alpha', 12: 'number-paren', 13: 'number' };
+export const numberStyleOf = (scheme: number): ListStyle => NUMBER_SCHEME[scheme] ?? 'number';
+
+/**
+ * Speaker notes as plain text that keeps their structure: one line per paragraph (line breaks inside a paragraph too), a tab per
+ * indent level, and the bullet or number in front ("• ", "1. "); numbering continues per level as PowerPoint draws it.
+ */
+export function notesText(paras: PptPara[]): string {
+  const counters: number[] = [];
+  const lines: string[] = [];
+  for (const p of paras) {
+    const lv = Math.max(0, Math.min(8, p.level));
+    counters.length = Math.min(counters.length, lv + 1);
+    let marker = '';
+    if (!p.cont && p.text.trim()) {
+      if (p.numbering) {
+        counters[lv] = counters[lv] ? counters[lv] + 1 : p.numbering.startAt;
+        marker = `${listMarker(numberStyleOf(p.numbering.scheme), counters[lv])} `;
+      } else {
+        counters[lv] = 0;
+        if (p.bullet) marker = '• ';
+      }
+    }
+    lines.push(`${'\t'.repeat(lv)}${marker}${p.text}`);
+  }
+  return lines.join('\n').replace(/\s+$/, '');
+}
 
 /** TextPFException: only the fields that were present (masks) are set. */
 export interface PF { bullet?: boolean; bulletChar?: number; bulletFont?: number; align?: number; lineSpacing?: number; spaceBefore?: number; spaceAfter?: number; leftMargin?: number; indent?: number; tabStops?: { pos: number; type: number }[] }

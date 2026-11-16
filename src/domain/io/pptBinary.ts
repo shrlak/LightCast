@@ -19,7 +19,7 @@ import { inflateZlib } from './inflate';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
 import { customPathOf, recognisedPreset, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
 import type { Ext9 } from './pptText';
-import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readRuler, readStyleExt9, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
+import { buildParas, notesText, readEnvironmentStyles, readFonts, readMasterStyle, readRuler, readStyleExt9, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
 export { PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES };
 export type { PptPara, PptRun } from './pptText';
@@ -624,9 +624,11 @@ function parse(bytes: Uint8Array): PptDocument {
     if (!entry) return undefined;
     const at = dir?.map.get(entry.persistId);
     const parsed = at !== undefined ? readContainer(c, at, defaults) : null;
-    const fromShapes = parsed?.shapes.flatMap((s) => s.items.filter((i) => i.type === 2).map(itemText)).filter(Boolean).join('\n');
-    const text = fromShapes || entry.items.filter((i) => i.type === 2).map(itemText).join('\n');
-    return text.trim() || undefined;
+    // The notes page's body text (text type 2), with its paragraphs, levels, bullets and numbering.
+    const env = { styles: parsed?.styles.size ? parsed.styles : undefined, fallback, fonts };
+    const fromItems = (items: TextItem[]) => items.filter((i) => i.type === 2 && itemText(i).trim()).map((i) => notesText(buildParas(i.raw, i.style, 2, env))).filter(Boolean).join('\n');
+    const text = fromItems(parsed?.shapes.flatMap((s) => s.items) ?? []) || fromItems(entry.items);
+    return text.trim() ? text : undefined;
   };
 
   const toSlide = (parsed: Parsed | null, entryItems: TextItem[]): PptSlide => {

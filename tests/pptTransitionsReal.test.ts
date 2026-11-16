@@ -26,3 +26,11 @@ describe('.ppt transition directions (LibreOffice-written)', () => {
     expect(t(23, 0)).toMatchObject({ kind: 'fade', option: 'smoothly' });
   });
 });
+
+describe('.ppt speaker notes (LibreOffice-written)', () => {
+  it('keeps paragraphs, line breaks, levels, bullets and numbering', async () => {
+    let n = 0;
+    const r = await importPpt(load('libreoffice-notes.ppt'), 'n', { group: 'g', newId: (p) => `${p}${++n}`, store: async () => 'm' });
+    expect(r.slides[0].notes).toBe('First note paragraph\nSecond with a break\nafter the break\n1. Step one\n2. Step two\n• Point\n\t• Deeper point');
+  });
+});
