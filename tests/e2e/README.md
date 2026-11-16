@@ -30,6 +30,7 @@ profile, so checks do not depend on each other.
 | editor | ink to shape | rectangle stroke becomes a shape; with the switch off it stays ink |
 | editor | version history | save a version, edit, restore the slide |
 | selection | click a text box, then the empty slide | typing ends, that box stays selected with 8 handles and the rotation handle; arrow nudge and Ctrl+Z work on it; a second click deselects |
+| announcement | 광고 slides from a .pptx | a long "1. <제목>" draws on two lines (28 pt) and the text box starts under it; a short one stays on one line; both text boxes end at the same place; typing the title longer wraps it and pushes the text down |
 | selection | Esc, then marquee | Esc leaves the box selected, Esc again deselects; a drag on the empty slide selects by marquee |
 | media | audio recording | fake mic: record, stop, preview, insert (audio object on the slide) |
 | media | screenshot dialog | fake display capture, crop by dragging, insert |
