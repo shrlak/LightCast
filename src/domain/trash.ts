@@ -86,3 +86,9 @@ export function purgeTrash(lib: Library, ids: string[]): Library {
   const exclusive = new Set(exclusivePresentationMedia({ ...lib, trash, presentations: [...lib.presentations, ...virtual] }, virtual.map((p) => p.id)));
   return { ...lib, trash, media: lib.media.filter((m) => !exclusive.has(m.id)) };
 }
+
+/** The media files that leave the library when these 휴지통 entries are deleted for good (the ones nothing else uses). */
+export function mediaFreedByPurge(lib: Library, ids: string[]): string[] {
+  const after = new Set(purgeTrash(lib, ids).media.map((m) => m.id));
+  return lib.media.filter((m) => !after.has(m.id)).map((m) => m.id);
+}
