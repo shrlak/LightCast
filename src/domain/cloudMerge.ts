@@ -20,6 +20,15 @@ const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 const withoutInnerIds = (v: unknown) => JSON.stringify(v, function (this: unknown, k, x) { return k === 'id' && this !== v ? undefined : x; });
 const sameContent = (a: unknown, b: unknown) => a !== undefined && b !== undefined && withoutInnerIds(a) === withoutInnerIds(b);
 
+/** The items `after` shares with `before` are still in `before`'s order. */
+function keptOrder(before: { id: string }[], after: { id: string }[]): boolean {
+  const inAfter = new Set(after.map((x) => x.id));
+  const inBefore = new Set(before.map((x) => x.id));
+  const a = before.filter((x) => inAfter.has(x.id)).map((x) => x.id);
+  const b = after.filter((x) => inBefore.has(x.id)).map((x) => x.id);
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
+
 /**
  * Three-way merge of id-keyed lists: base (last synced), local and remote.
  * A side that did not change since base yields to the other; deletions on one side win
@@ -35,7 +44,12 @@ export function mergeById<T extends { id: string }>(
   const b = new Map((base ?? []).map((x) => [x.id, x]));
   const l = new Map(local.map((x) => [x.id, x]));
   const r = new Map(remote.map((x) => [x.id, x]));
-  const order = [...local.map((x) => x.id), ...remote.map((x) => x.id).filter((id) => !l.has(id))];
+  // The order of the side that reordered wins; when this computer kept the base order, the cloud's order is taken,
+  // so two computers never keep writing their own (equally valid) orders over each other.
+  const primary = base && keptOrder(base, local) ? remote : local;
+  const secondary = primary === local ? remote : local;
+  const inPrimary = new Set(primary.map((x) => x.id));
+  const order = [...primary.map((x) => x.id), ...secondary.map((x) => x.id).filter((id) => !inPrimary.has(id))];
   const out: T[] = [];
   for (const id of order) {
     const bv = b.get(id);

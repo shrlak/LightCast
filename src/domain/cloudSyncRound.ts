@@ -34,6 +34,16 @@ export interface RoundResult {
   message: string | null;
 }
 
+/**
+ * The library in the form every read gives it (normalizeLibrary: lyrics centred, templates, defaults). A library
+ * this window made and never reloaded (a fresh install, a song made this session) is otherwise read differently
+ * on every other computer, and the two forms overwrite each other forever.
+ */
+export function syncForm(lib: Library): Library {
+  const plain = syncable(lib);
+  return normalizeLibrary(JSON.parse(JSON.stringify(plain))) ?? plain;
+}
+
 /** How often one round may retry a write that another computer got in ahead of. */
 export const MAX_CONFLICT_RETRIES = 3;
 
@@ -49,7 +59,7 @@ export async function absorb(env: SyncEnv, remoteData: unknown, remoteVersion: n
   if (!remote) throw new Error('서버의 라이브러리를 읽지 못했습니다. 다른 기기의 LightCast를 업데이트했는지 확인하세요. 이 컴퓨터의 자료는 그대로입니다.');
   const base = await env.loadBase();
   if (!same()) return null;
-  const local = syncable(env.local());
+  const local = syncForm(env.local());
   const { library: merged, conflicts, conflictPairs } = mergeLibrary(base, local, remote);
   if (remote.cloudResetId && remote.cloudResetId !== local.cloudResetId) env.cloudReset(remote);
   else {
@@ -69,7 +79,9 @@ export async function runSyncRound(env: SyncEnv, reason: 'pull' | 'push'): Promi
   if (!session) return null;
   const same = () => env.session()?.token === session.token;
   let version = session.version;
-  let current = syncable(env.local());
+  let current = syncForm(env.local());
+  // This window's library in the form the other computers will read it, so both sides compare like with like.
+  if (libraryKey(current) !== libraryKey(syncable(env.local()))) env.merge(current);
   // Keep the exact local state before any network request or incoming merge.
   try { await env.restorePoint(current); }
   catch { throw new Error('동기화 전 복원 지점을 저장하지 못했습니다. 저장 공간을 확인한 뒤 다시 동기화하세요.'); }
@@ -99,7 +111,7 @@ export async function runSyncRound(env: SyncEnv, reason: 'pull' | 'push'): Promi
     if (res.data.data) {
       const canonical = normalizeLibrary(res.data.data);
       if (!canonical) throw new Error('서버의 미디어 정리 결과가 올바르지 않습니다.');
-      const { library: merged } = mergeLibrary(current, syncable(env.local()), canonical);
+      const { library: merged } = mergeLibrary(current, syncForm(env.local()), canonical);
       env.merge(merged);
       current = canonical;
     }
