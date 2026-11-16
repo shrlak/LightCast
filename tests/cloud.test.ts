@@ -11,7 +11,8 @@ describe('mergeById', () => {
   it('takes whichever side changed and honours deletions of untouched items', () => {
     const local = [{ id: 'a', v: 2 }, { id: 'b', v: 1 }, { id: 'n', v: 1 }]; // a edited, c deleted, n added
     const remote = [{ id: 'a', v: 1 }, { id: 'b', v: 3 }, { id: 'c', v: 1 }, { id: 'm', v: 1 }]; // b edited, m added
-    expect(mergeById(b, local, remote)).toEqual([{ id: 'a', v: 2 }, { id: 'b', v: 3 }, { id: 'n', v: 1 }, { id: 'm', v: 1 }]);
+    // This side kept the base order, so the cloud's order is used and this side's new item follows it.
+    expect(mergeById(b, local, remote)).toEqual([{ id: 'a', v: 2 }, { id: 'b', v: 3 }, { id: 'm', v: 1 }, { id: 'n', v: 1 }]);
   });
   it('keeps an item edited on one side even if the other side deleted it', () => {
     expect(mergeById(b, [{ id: 'a', v: 9 }], [])).toEqual([{ id: 'a', v: 9 }]);

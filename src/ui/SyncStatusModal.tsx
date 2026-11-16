@@ -4,6 +4,7 @@ import type { Library, MediaMeta, Presentation } from '../domain/types';
 import { describePending, conflictActions, type ConflictChoice, type ConflictRecord } from '../domain/syncStatus';
 import { missingLocalMedia } from '../domain/offlineMedia';
 import { stripChords } from '../domain/lyrics';
+import { describeFontReport, SKIP_LABEL } from '../domain/fontSync';
 import type { CloudSync } from './useCloudSync';
 
 const STATE_LABEL = { off: '로그인 안 됨', syncing: '동기화 중…', synced: '동기화됨', error: '동기화 오류', offline: '오프라인' } as const;
@@ -95,6 +96,17 @@ export function SyncStatusModal({ cloud, library, dispatch, onClose, onAccount, 
                     <ul className="small">{missing.slice(0, 8).map((m) => <li key={m.id}>{m.name}</li>)}{missing.length > 8 && <li>… 외 {missing.length - 8}개</li>}</ul>
                     <button disabled={state === 'offline' || state === 'syncing'} onClick={cloud.syncNow}>{state === 'offline' ? '인터넷 연결 후 내려받기' : '지금 내려받기'}</button>
                   </>}
+            </section>
+          )}
+
+          {status.session && (
+            <section className="card">
+              <h3>글꼴 동기화</h3>
+              {!status.fonts ? <p className="muted">{state === 'offline' ? '오프라인 — 연결되면 가져온 글꼴을 자동으로 주고받습니다.' : '아직 확인 전입니다.'}</p> : <>
+                <p>{status.fonts.waiting ? '⚠' : '✓'} {describeFontReport(status.fonts)}{status.fonts.waiting ? ` · 대기 ${status.fonts.waiting}개(다음 동기화에서 다시 시도)` : ''}</p>
+                {status.fonts.skipped.length > 0 && <ul className="small">{status.fonts.skipped.slice(0, 6).map((k, i) => <li key={i}>{k.family}: {SKIP_LABEL[k.reason]}</li>)}{status.fonts.skipped.length > 6 && <li>… 외 {status.fonts.skipped.length - 6}개</li>}</ul>}
+              </>}
+              <p className="hint">글꼴 동기화는 설정 › 글꼴에서 켜고 끕니다. 연결이 없으면 대기했다가 연결되면 다시 시도합니다.</p>
             </section>
           )}
 

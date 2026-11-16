@@ -7,6 +7,7 @@ import { openLiveChannel } from '../domain/sync';
 import { loadLive, saveLive } from '../domain/persistence';
 import { laserDue, parseLaserMessage } from '../domain/laserPointer';
 import { parseCaptionMessage } from '../domain/captions';
+import { parseTimerMessage } from '../domain/pacing';
 
 /**
  * Object URL for a stored picture/video. When the id changes (the next slide has another background)
@@ -210,6 +211,8 @@ export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => voi
       }
       // Live captions go to audience devices on the relay too.
       if (m.type === 'caption') { const msg = parseCaptionMessage(m); if (msg) relayRef.current(msg); }
+      // The sermon timer goes to phones on the relay (the presenter already limits how often it sends).
+      if (m.type === 'timer') { const msg = parseTimerMessage(m); if (msg) relayRef.current(msg); }
       if (m.type === 'hello') channel.current?.post({ type: 'state', state: latest.current });
       // A slide show covering this very screen still answers to the arrow keys, Space and Esc.
       if (m.type === 'key') window.dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: m.shiftKey, cancelable: true }));
@@ -227,7 +230,7 @@ export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => voi
 }
 
 /** Output side: receive live state locally (BroadcastChannel) or over the network (relay). */
-export function useLiveFeed(): LiveState | null {
+export function useLiveFeed(opts?: { stage?: boolean }): LiveState | null {
   const [live, setLive] = useState<LiveState | null>(() => loadLive());
   // The computer sends every change twice (same-computer channel and network relay): the repeat is ignored.
   const lastJson = useRef('');
@@ -242,7 +245,8 @@ export function useLiveFeed(): LiveState | null {
     ch.post({ type: 'hello' });
     return () => ch.close();
   }, []);
-  useRelay({ type: 'hello', role: 'viewer' }, (m) => {
+  useRelay({ type: 'hello', role: 'viewer', ...(opts?.stage ? { stage: true } : {}) }, (m) => {
+    if (m.type === 'timer') window.dispatchEvent(new CustomEvent('lightcast:timer', { detail: m }));
     if (m.type === 'state' && m.state) apply(m.state as LiveState);
     // The presenter's laser dot, for the audience view to draw (see useLaserDot).
     if (m.type === 'laser') window.dispatchEvent(new CustomEvent('lightcast:laser', { detail: m }));

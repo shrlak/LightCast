@@ -8,14 +8,18 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   pptxToPdf: (bytes) => ipcRenderer.invoke('desktop:pptxToPdf', bytes),
   printToPdf: () => ipcRenderer.invoke('desktop:printToPdf'),
   pptToPptx: (bytes) => ipcRenderer.invoke('desktop:pptToPptx', bytes),
+  pptxToPpt: (bytes) => ipcRenderer.invoke('desktop:pptxToPpt', bytes),
   // Review › Spelling: the system / Chromium spell checker the text boxes already use.
   isMisspelled: (word) => webFrame.isWordMisspelled(String(word)),
   spellSuggestions: (word) => webFrame.getWordSuggestions(String(word)),
   // Paste: PowerPoint's own copy of shapes (exact places, fonts and colours), read by the main process.
   readOfficeClipboard: () => ipcRenderer.invoke('desktop:readOfficeClipboard'),
+  scanClipboard: () => ipcRenderer.invoke('desktop:scanClipboard'),
   // Insert › Screenshot: screens and windows to choose from, and the choice for the next getDisplayMedia.
   captureSources: () => ipcRenderer.invoke('desktop:captureSources'),
   selectCaptureSource: (id) => ipcRenderer.invoke('desktop:selectCaptureSource', id),
+  newWindow: (hash) => ipcRenderer.invoke('desktop:newWindow', hash),
+  arrangeAll: () => ipcRenderer.invoke('desktop:arrangeAll'),
   openView: (url, displayId) => ipcRenderer.invoke('desktop:openView', url, displayId),
   present: (url) => ipcRenderer.invoke('desktop:present', url),
   setShowDisplays: (audienceId, presenterId) => ipcRenderer.invoke('desktop:setShowDisplays', audienceId, presenterId),

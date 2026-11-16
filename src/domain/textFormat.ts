@@ -70,6 +70,32 @@ export function listMarkers(lines: string[], list: ListStyle | undefined): (stri
   return lines.map((l) => (list && l.trim() ? listMarker(list, ++n) : null));
 }
 
+/**
+ * Markers for the lines of a box: the box's `list` for every line, or - where paragraphs carry their own `list` / `level` -
+ * each paragraph's. Numbering counts the paragraphs of one kind in a row at one level, and starts again after a level change.
+ */
+export function elementMarkers(el: Pick<SlideElement, 'text' | 'paragraphs' | 'list'>): { markers: (string | null)[]; levels: number[] } {
+  const paras = el.paragraphs;
+  if (!paras?.some((p) => p.list !== undefined || p.level)) {
+    const lines = paras ? paras.map((p) => p.text) : (el.text ?? '').split('\n');
+    return { markers: listMarkers(lines, el.list), levels: lines.map(() => 0) };
+  }
+  const counters: number[] = [];
+  const kinds: (string | undefined)[] = [];
+  const levels = paras.map((p) => Math.max(0, Math.min(8, Math.round(p.level ?? 0))));
+  const markers = paras.map((p, i) => {
+    const style = p.list === 'none' ? undefined : p.list ?? el.list;
+    const lv = levels[i];
+    counters.length = Math.min(counters.length, lv + 1);
+    kinds.length = Math.min(kinds.length, lv + 1);
+    if (!style || !p.text.trim()) return null;
+    if (kinds[lv] !== style) { counters[lv] = 0; kinds[lv] = style; }
+    counters[lv] = (counters[lv] ?? 0) + 1;
+    return listMarker(style, counters[lv]);
+  });
+  return { markers, levels };
+}
+
 export type CaseKind = 'sentence' | 'lower' | 'upper' | 'title' | 'toggle';
 
 /** 대/소문자 바꾸기: 문장의 첫 글자를 대문자로 · 모두 소문자로 · 모두 대문자로 · 각 단어를 대문자로 · 대/소문자 전환. */

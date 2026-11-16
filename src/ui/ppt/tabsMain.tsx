@@ -311,6 +311,8 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
   const sel = ed.selEls.map((e) => e.id);
   const paste = (mode: PasteMode = 'source') => void (async () => {
     if (blocked(ed)) return;
+    // Slides copied in PowerPoint / LibreOffice (or slide files) come in as slides, after the current one.
+    if (mode === 'source' && await ed.pasteSlides?.({ preferShapes: true, browserRead: true })) return;
     // The system clipboard (LightCast, PowerPoint, other programs); this window's last copy if it cannot be read.
     const src = await readSystemClipboard();
     const last = objectClipboard();
@@ -436,6 +438,8 @@ function PasteButton({ ed, paste }: { ed: Ed; paste: (mode?: PasteMode) => void 
         <MenuItem label="대상 테마 사용" onClick={() => { paste('dest'); close(); }} />
         <MenuItem label="그림" onClick={() => { void pastePicture(); close(); }} />
         <MenuItem label="텍스트만 유지" hint="Ctrl+Shift+V" onClick={() => { paste('text'); close(); }} />
+        <MenuSep />
+        <MenuItem label="클립보드 형식 보기…" onClick={() => { ed.setDialog('clipboardFormats'); close(); }} />
       </>
     )} />
   );

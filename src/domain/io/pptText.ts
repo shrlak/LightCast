@@ -4,7 +4,7 @@
 import { colorIndex, each, T, type Ctx, type Rec, type Scheme } from './pptRecords';
 
 /** TextPFException: only the fields that were present (masks) are set. */
-export interface PF { bullet?: boolean; bulletChar?: number; bulletFont?: number; align?: number; lineSpacing?: number; leftMargin?: number; indent?: number }
+export interface PF { bullet?: boolean; bulletChar?: number; bulletFont?: number; align?: number; lineSpacing?: number; spaceBefore?: number; spaceAfter?: number; leftMargin?: number; indent?: number; tabStops?: { pos: number; type: number }[] }
 /** TextCFException. `size` is in points, `color` is the raw ColorIndexStruct (red, green, blue, index). */
 export interface CF { bold?: boolean; italic?: boolean; underline?: boolean; font?: number; size?: number; color?: [number, number, number, number]; position?: number }
 export interface Level { pf: PF; cf: CF }
@@ -29,6 +29,14 @@ export interface PptPara {
   bullet?: { char?: number; font?: string };
   /** PowerPoint's line spacing: a percentage of the line (100 = single). */
   lineSpacing?: number;
+  /** Space before / after: positive = percent of a line, negative = master units (1/576 inch). */
+  spaceBefore?: number;
+  spaceAfter?: number;
+  /** Left margin and first-line indent of the paragraph, master units. */
+  leftMargin?: number;
+  indent?: number;
+  /** Tab stops: position in master units and type (0 left, 1 center, 2 right, 3 decimal). */
+  tabStops?: { pos: number; type: number }[];
   /** The line after a line break inside a paragraph: no bullet of its own. */
   cont?: boolean;
   runs: PptRun[];
@@ -51,12 +59,20 @@ function readPF(c: Ctx, o: number, end: number): { pf: PF; next: number } | null
   if (masks & 0x20) { if (!need(4)) return null; o += 4; }
   if (masks & 0x800) { if (!need(2)) return null; pf.align = c.v.getUint16(o, true); o += 2; }
   if (masks & 0x1000) { if (!need(2)) return null; pf.lineSpacing = c.v.getInt16(o, true); o += 2; }
-  if (masks & 0x2000) { if (!need(2)) return null; o += 2; }
-  if (masks & 0x4000) { if (!need(2)) return null; o += 2; }
+  if (masks & 0x2000) { if (!need(2)) return null; pf.spaceBefore = c.v.getInt16(o, true); o += 2; }
+  if (masks & 0x4000) { if (!need(2)) return null; pf.spaceAfter = c.v.getInt16(o, true); o += 2; }
   if (masks & 0x100) { if (!need(2)) return null; pf.leftMargin = c.v.getUint16(o, true); o += 2; }
   if (masks & 0x400) { if (!need(2)) return null; pf.indent = c.v.getUint16(o, true); o += 2; }
   if (masks & 0x8000) { if (!need(2)) return null; o += 2; }
-  if (masks & 0x100000) { if (!need(2)) return null; const n = c.v.getUint16(o, true); o += 2 + n * 4; if (o > end) return null; }
+  if (masks & 0x100000) {
+    if (!need(2)) return null;
+    const n = c.v.getUint16(o, true);
+    if (o + 2 + n * 4 > end) return null;
+    const stops: { pos: number; type: number }[] = [];
+    for (let i = 0; i < Math.min(n, 64); i++) stops.push({ pos: c.v.getUint16(o + 2 + i * 4, true), type: c.v.getUint16(o + 4 + i * 4, true) });
+    if (stops.length) pf.tabStops = stops;
+    o += 2 + n * 4;
+  }
   if (masks & 0x10000) { if (!need(2)) return null; o += 2; }
   if (masks & 0xe0000) { if (!need(2)) return null; o += 2; }
   if (masks & 0x200000) { if (!need(2)) return null; o += 2; }
@@ -256,6 +272,11 @@ export function buildParas(raw: string, sty: StyleRuns | null, textType: number,
       const para: PptPara = { text, level: own.level, runs: lineRuns };
       if (pf.align !== undefined && ALIGN[pf.align]) para.align = ALIGN[pf.align];
       if (pf.lineSpacing && pf.lineSpacing > 0) para.lineSpacing = pf.lineSpacing;
+      if (pf.spaceBefore) para.spaceBefore = pf.spaceBefore;
+      if (pf.spaceAfter) para.spaceAfter = pf.spaceAfter;
+      if (pf.leftMargin) para.leftMargin = pf.leftMargin;
+      if (pf.indent) para.indent = pf.indent;
+      if (pf.tabStops) para.tabStops = pf.tabStops;
       if (first) {
         if (pf.bullet) para.bullet = { char: pf.bulletChar, font: pf.bulletFont !== undefined ? env.fonts[pf.bulletFont] : undefined };
       } else para.cont = true;

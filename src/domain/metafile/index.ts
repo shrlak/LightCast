@@ -19,25 +19,39 @@
 //     EMF+ records those are drawn and the GDI fallback is ignored, except where GetDC asks for it.
 // Also drawn, approximately
 //   Regions: EMF ExtCreateRegion / FillRgn / FrameRgn / PaintRgn / InvertRgn, WMF CreateRegion /
-//     FillRegion / FrameRegion / PaintRegion / InvertRegion / SelectClipRegion, EMF+ region objects
-//     (rect, infinite, empty, and / or / xor / exclude / complement; a path node as its bounding box)
-//     with FillRegion and SetClipRegion. Clip combine modes AND, DIFF (exclude), COPY are exact; OR and
-//     XOR rebuild the innermost clip, exact for one clip level. ExcludeClipRect is exact.
+//     FillRegion / FrameRegion / PaintRegion / InvertRegion / SelectClipRegion, as rectangle lists.
 //   Raster operations that read the destination: DSTINVERT, PATINVERT, SRCINVERT, NOTSRCCOPY, SRCAND,
 //     SRCPAINT, NOTSRCAND, MERGEPAINT, PATPAINT and the binary ROP2 modes (XOR, NOT, MASK, MERGE,
 //     NOTCOPYPEN, BLACK, WHITE) become CSS `mix-blend-mode` (difference / multiply / screen) and an
 //     invert filter. XOR is exact on black and white; elsewhere it is `difference`, a look-alike.
 //     Blend modes show in browsers and when the SVG is drawn to a canvas for the PNG; other renderers
 //     may ignore them.
-//   Bitmaps: AlphaBlend constant alpha and per-pixel alpha, TransparentBlt colour key.
-//   EMF+: texture brushes (tiled image, brush transform), relative-coordinate paths, BeginContainer
-//     source -> destination rectangle mapping. Text widths come from canvas measureText with a DOM,
-//     else built-in Helvetica / Times / fixed-pitch tables (metrics.ts).
+//   Bitmaps: AlphaBlend constant alpha and per-pixel alpha (also in 32-bit BI_BITFIELDS DIBs),
+//     TransparentBlt colour key, MaskBlt (the 1-bit mask makes the source's holes transparent; the
+//     foreground operation is SRCCOPY / SRCPAINT / SRCAND / SRCINVERT / NOTSRCCOPY, the background
+//     operation is taken as "leave the destination"), PlgBlt (a parallelogram from three corners).
+//   Text widths come from canvas measureText with a DOM, else built-in Helvetica / Times / fixed-pitch
+//     tables (metrics.ts). In double-byte code pages (Korean, Japanese, Chinese) the advance array has
+//     one entry per byte and is folded to one per character.
 //   Glyph-index text (ETO_GLYPH_INDEX, DrawDriverString without character codes): the indices cannot be
 //     mapped to characters without the font, so a pale box is drawn per glyph as a placeholder.
-// Not drawn: MaskBlt / PlgBlt, flood fills, EMF+ image attributes and effects (the attributes object
-//   holds only a wrap mode and clamp colour), path nodes of EMF+ regions beyond their bounding box,
-//   EMF+ complement clipping under an already open clip.
+// Exact clips: the clip is kept as an expression over paths (AND, OR, XOR, DIFF, COPY; EMF+ also
+//   complement) and drawn as nested `clip-path` groups for intersections and as a `mask` for the
+//   rest, so a union, XOR or complement is exact however many clips are already open, and RestoreDC /
+//   Restore bring a saved clip back. EMF+ region trees (rectangles, infinite, empty and path nodes
+//   with and / or / xor / exclude / complement) are drawn and clipped exactly, path nodes included.
+//   EMF+ image attributes: a source rectangle that reaches past the image shows the wrap mode (tile,
+//   mirrored in x / y / both) or the clamp colour. EMF+ texture brushes, relative-coordinate paths
+//   and BeginContainer source -> destination mapping are read as the specifications lay them out.
+// WMF output stays in logical units: a hairline pen (and the dash and sliver rules) is one pixel,
+//   which is the frame width over the size in pixels, not one logical unit.
+// Not drawn
+//   Flood fills (EMF EXTFLOODFILL, WMF FLOODFILL / EXTFLOODFILL): they read the pixels already drawn,
+//     and the reader draws vectors, not a pixel surface, so there is nothing to fill; they are skipped.
+//   EMF+ image effects (blur, sharpen, ...) and colour matrices / remap tables of the attributes object
+//     (only wrap mode and clamp colour are read); EMF+ path gradients beyond their centre colour.
+//   EMF+ region and clip changes beyond 128 nested combines, or a region tree of over 400 nodes, are
+//     ignored rather than approximated.
 import { Bytes } from './bytes';
 import { isEmf, playEmf } from './emf';
 import { setNestedRenderer } from './emfplus';

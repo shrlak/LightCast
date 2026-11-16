@@ -2,18 +2,20 @@
 // Pure logic — pictures go in and out through callbacks so tests need no browser storage.
 import { splitWeightedFace, weightPatch } from '../fontWeight';
 import JSZip from 'jszip';
-import type { Background, DocProperties, ElementParagraph, HAlign, Presentation, Slide, SlideElement, TextRun } from '../types';
-import type { TableData } from '../../engine';
+import type { MasterLayout, ArrowKind, Background, DashStyle, DocProperties, ListStyle, SlideAnimation, ElementParagraph, HAlign, Presentation, Slide, SlideElement, TextRun } from '../types';
+import type { CellBorder, CellBorders, TableData } from '../../engine';
 import { CANVAS_H, CANVAS_W } from '../canvas';
 import { uid } from '../lyrics';
 import { childNamed, childrenNamed, elementsOf, escapeXml, parseXml, textOf, type XNode } from './miniXml';
 import { gradientCss } from '../backgroundFormat';
 import {
   IDENTITY, applyPoint, gradientToLc, hexColor, isIdentity, lcToGradient, lengthToCm, mul, parseAngle, parseTransform, readTransition,
-  parseStopsCss, rotationTransform, stopsCss, transformBox, transitionAttrs, type Mat, type OdfGradient,
+  parseStopsCss, rotationTransform, stopsCss, transformBox, transitionAttrs, withOpacity, opacityGradient, type Mat, type OdfGradient,
 } from './odpGeometry';
+import { animationsXml, readAnimations } from './odpAnim';
+import { makePlaceholder, withMaster } from '../master';
 
-export { hexColor, lengthToCm };
+export { hexColor, lengthToCm, animationsXml };
 
 export const ODP_MIME = 'application/vnd.oasis.opendocument.presentation';
 
@@ -26,23 +28,83 @@ const fmtCm = (px: number, perPx: number) => `${Math.round(px * perPx * 1000) / 
 type Props = Record<string, string>;
 interface StyleDef { family: string; parent?: string; props: Props }
 
-function readStyles(root: XNode | undefined, into: Map<string, StyleDef>, gradients: Map<string, OdfGradient>) {
+/** Everything the reader pulls out of the style sections besides the styles themselves. */
+interface StyleLib {
+  gradients: Map<string, OdfGradient>;
+  /** draw:opacity transparency gradients (colour = grey of the opacity), by name. */
+  opacities: Map<string, OdfGradient>;
+  /** text:list-style name → the first level's list style. */
+  lists: Map<string, ListStyle>;
+  /** draw:marker name → arrowhead kind. */
+  markers: Map<string, ArrowKind>;
+  /** draw:stroke-dash name → dash. */
+  dashes: Map<string, DashStyle>;
+}
+
+const markerKind = (name: string): ArrowKind => (/oval|circle/i.test(name) ? 'oval' : /diamond/i.test(name) ? 'diamond' : /stealth/i.test(name) ? 'stealth' : /open|line/i.test(name) ? 'arrow' : 'triangle');
+const listOf = (lvl: XNode | undefined): ListStyle | undefined => {
+  if (!lvl) return undefined;
+  if (lvl.name === 'text:list-level-style-number') {
+    const f = lvl.attrs['style:num-format'] ?? '1';
+    return f === 'i' || f === 'I' ? 'roman' : f === 'a' || f === 'A' ? 'alpha' : /[가나]|ㄱ/.test(f) ? 'hangul' : (lvl.attrs['style:num-suffix'] ?? '').includes(')') && !(lvl.attrs['style:num-prefix'] ?? '').includes('(') ? 'number-paren' : 'number';
+  }
+  if (lvl.name !== 'text:list-level-style-bullet') return undefined;
+  const c = lvl.attrs['text:bullet-char'] ?? '';
+  return /[○◦o]/.test(c) ? 'circle' : /[■▪□◼]/.test(c) ? 'square' : /[✔✓☑]/.test(c) ? 'check' : /[➢➔➤→►▶➜]/.test(c) ? 'arrow' : 'bullet';
+};
+/** LibreOffice's dash definitions (percent of the line width) for PowerPoint's ten presets: [dash %, dot-or-second %, second count, gap %]. */
+const DASH_TABLE: [DashStyle, number, number, number, number][] = [
+  ['dash', 400, 0, 0, 300], ['sysDash', 300, 0, 0, 100], ['sysDot', 100, 0, 0, 100], ['dot', 100, 0, 0, 300], ['dashDot', 400, 100, 1, 300],
+  ['lgDash', 800, 0, 0, 300], ['lgDashDot', 800, 100, 1, 300], ['lgDashDotDot', 800, 100, 2, 300], ['sysDashDot', 300, 100, 1, 100], ['sysDashDotDot', 300, 100, 2, 100],
+];
+function dashOf(d: XNode): DashStyle {
+  const pct = (v: string | undefined) => { const m = /^([\d.]+)%$/.exec((v ?? '').trim()); return m ? Number(m[1]) : undefined; };
+  const l1 = pct(d.attrs['draw:dots1-length']), dist = pct(d.attrs['draw:distance']);
+  const n2 = d.attrs['draw:dots2'] ? Number(d.attrs['draw:dots2']) || 1 : 0;
+  const l2 = n2 ? pct(d.attrs['draw:dots2-length']) ?? 100 : 0;
+  // A pattern that is one of the ten presets is that preset (the names LibreOffice gives them differ: Long Dash is "dash").
+  if (l1 !== undefined && dist !== undefined && Number(d.attrs['draw:dots1'] ?? 1) === 1) {
+    const hit = DASH_TABLE.find(([, a, b, c, g]) => a === Math.round(l1) && c === n2 && (!c || b === Math.round(l2)) && g === Math.round(dist));
+    if (hit) return hit[0];
+  }
+  // Anything else (absolute lengths, other ratios): the nearest of the plain ones.
+  const len = Number(/\d+/.exec(d.attrs['draw:dots1-length'] ?? '')?.[0] ?? 100);
+  const gap = Number(/\d+/.exec(d.attrs['draw:distance'] ?? '')?.[0] ?? 100);
+  if (n2) return n2 > 1 ? 'sysDashDotDot' : 'dashDot';
+  if (len >= 700) return 'lgDash';
+  if (len >= 300) return 'dash';
+  return gap >= 200 ? 'dot' : 'sysDot';
+}
+const grey = (v: number) => `#${Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0').repeat(3)}`;
+const pctOf = (v: string | undefined) => { const m = /^([\d.]+)(%?)$/.exec(v ?? ''); return m ? Number(m[1]) / (m[2] ? 100 : 1) : 1; };
+
+function readStyles(root: XNode | undefined, into: Map<string, StyleDef>, lib: StyleLib) {
   if (!root) return;
   const scan = (n: XNode) => {
     for (const s of elementsOf(n)) {
       if (s.name === 'style:style' || s.name === 'style:default-style') {
         const props: Props = {};
-        for (const p of elementsOf(s)) if (/^style:.*-properties$/.test(p.name)) Object.assign(props, p.attrs);
+        for (const p of elementsOf(s)) if (/^(style|loext):.*-properties$/.test(p.name)) Object.assign(props, p.attrs);
         const name = s.attrs['style:name'] ?? `#default:${s.attrs['style:family']}`;
+        if (s.attrs['style:list-style-name']) props['style:list-style-name'] = s.attrs['style:list-style-name'];
         into.set(`${s.attrs['style:family'] ?? ''}:${name}`, { family: s.attrs['style:family'] ?? '', parent: s.attrs['style:parent-style-name'], props });
+      } else if (s.name === 'text:list-style' && s.attrs['style:name']) {
+        const l = listOf(elementsOf(s).find((c) => c.name.startsWith('text:list-level-style-')));
+        if (l) lib.lists.set(s.attrs['style:name'], l);
+      } else if (s.name === 'draw:marker' && s.attrs['draw:name']) lib.markers.set(s.attrs['draw:name'], markerKind(`${s.attrs['draw:name']} ${s.attrs['draw:display-name'] ?? ''}`));
+      else if (s.name === 'draw:stroke-dash' && s.attrs['draw:name']) lib.dashes.set(s.attrs['draw:name'], dashOf(s));
+      else if (s.name === 'draw:opacity' && s.attrs['draw:name']) {
+        const stops = elementsOf(s).filter((c) => c.name === 'loext:opacity-stop').map((c) => ({ pos: Math.round(pctOf(c.attrs['svg:offset']) * 1000) / 10, color: grey(pctOf(c.attrs['svg:stop-opacity'])) }));
+        lib.opacities.set(s.attrs['draw:name'], { style: s.attrs['draw:style'] ?? 'linear', start: grey(pctOf(s.attrs['draw:start'])), end: grey(pctOf(s.attrs['draw:end'])), angle: parseAngle(s.attrs['draw:angle']), ...(stops.length >= 2 ? { stops } : {}) });
       } else if (s.name === 'draw:gradient' && s.attrs['draw:name']) {
         const start = colorOf(s.attrs['draw:start-color']), end = colorOf(s.attrs['draw:end-color']);
         const stops = elementsOf(s).filter((c) => c.name === 'loext:gradient-stop').flatMap((c) => {
-          const color = colorOf(c.attrs['svg:stop-color']);
+          // LibreOffice writes loext:color-value; a draft of the spec used svg:stop-color.
+          const color = colorOf(c.attrs['loext:color-value'] ?? c.attrs['svg:stop-color']);
           const off = /^([\d.]+)(%?)$/.exec(c.attrs['svg:offset'] ?? '');
           return color && off ? [{ pos: Math.round(Number(off[1]) * (off[2] ? 1 : 100) * 10) / 10, color }] : [];
         });
-        if ((start && end) || stops.length >= 2) gradients.set(s.attrs['draw:name'], { style: s.attrs['draw:style'] ?? 'linear', start: start ?? stops[0].color, end: end ?? stops[stops.length - 1].color, angle: parseAngle(s.attrs['draw:angle']), ...(stops.length >= 2 ? { stops } : {}) });
+        if ((start && end) || stops.length >= 2) lib.gradients.set(s.attrs['draw:name'], { style: s.attrs['draw:style'] ?? 'linear', start: start ?? stops[0].color, end: end ?? stops[stops.length - 1].color, angle: parseAngle(s.attrs['draw:angle']), ...(stops.length >= 2 ? { stops } : {}) });
       } else if (s.name === 'office:styles' || s.name === 'office:automatic-styles' || s.name === 'office:master-styles') scan(s);
     }
   };
@@ -85,6 +147,13 @@ function textProps(p: Props): Omit<TextRun, 'text'> {
     out.fontFamily = split.family;
     if (split.weight !== undefined && out.weight === undefined) Object.assign(out, weightPatch(split.weight));
   }
+  const ls = p['fo:letter-spacing'];
+  if (ls && ls !== 'normal') {
+    const m = /^(-?[\d.]+)(pt|cm|mm|in)$/.exec(ls);
+    const cm = m ? (m[2] === 'cm' ? Number(m[1]) : m[2] === 'mm' ? Number(m[1]) / 10 : m[2] === 'in' ? Number(m[1]) * 2.54 : (Number(m[1]) / 72) * 2.54) : 0;
+    const px = Math.round((cm / 2.54) * 72 * PX_PER_PT * 10) / 10;
+    if (px) (out as Record<string, unknown>).letterSpacing = px;
+  }
   const pos = /^(super|sub|-?\d+%)/.exec(p['style:text-position'] ?? '')?.[1];
   if (pos === 'super' || (pos && parseInt(pos, 10) > 0)) out.baseline = 'super';
   else if (pos === 'sub' || (pos && parseInt(pos, 10) < 0)) out.baseline = 'sub';
@@ -100,8 +169,21 @@ export interface OdpReadOptions {
   name?: string;
   /** Keep a picture; returns the media id the slide refers to it by. */
   storeImage: (bytes: Uint8Array, mime: string, name: string) => string | Promise<string>;
+  /**
+   * What becomes of the master pages. 'model' (default): the objects every used master page has go to the deck's master, each master
+   * page is a layout (its placeholders and own objects) and slides keep their `layoutId`. 'flatten': each slide gets its master page's
+   * objects as shapes of its own (for adding the slides to a deck that has a master already).
+   */
+  masterMode?: 'model' | 'flatten';
 }
-export interface OdpDocument { title: string; properties: DocProperties; slides: Slide[] }
+export interface OdpDocument {
+  title: string; properties: DocProperties; slides: Slide[];
+  /** The master page(s) as LightCast's master and layouts (masterMode 'model'; absent when the file has none). */
+  master?: NonNullable<Presentation['master']>;
+  /** The file's own page size (cm) and the notes about it (Korean): content was scaled onto LightCast's 4:3 canvas. */
+  pageCm: { w: number; h: number };
+  warnings: string[];
+}
 
 const MIME_BY_EXT: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp' };
 const EXT_BY_MIME: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/gif': 'gif', 'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/bmp': 'bmp' };
@@ -113,13 +195,21 @@ interface Ctx {
   /** cm → canvas px, per axis. */
   kx: number; ky: number;
   images: Map<string, string>;
-  gradients: Map<string, OdfGradient>;
+  lib: StyleLib;
+  /** xml:id / draw:id → the element made from that object (for animations), per slide. */
+  ids: Map<string, string>;
+  /** Things the file has that LightCast cannot keep (Korean wording), each once. */
+  warnings: Set<string>;
+  /** xml:id → whether the object's geometry lists glue points of its own (their ids start after the four default ones). */
+  customGlue: Set<string>;
+  /** Glued connectors of the slide being read, to be tied to their objects once all of them are known. */
+  glued: { el: SlideElement; node: XNode }[];
 }
 
-type Line = { runs: TextRun[]; align?: HAlign; list: boolean };
+type Line = { runs: TextRun[]; align?: HAlign; list?: ListStyle };
 
 /** One text:p / text:h as lines (a text:line-break starts a new line). */
-function paragraphLines(ctx: Ctx, p: XNode, inList: boolean, inherited: Props): Line[] {
+function paragraphLines(ctx: Ctx, p: XNode, inList: ListStyle | undefined, inherited: Props): Line[] {
   const paraProps = { ...inherited, ...resolveStyle(ctx.styles, 'paragraph', p.attrs['text:style-name']) };
   const base = textProps(paraProps);
   const align = alignOf(paraProps['fo:text-align']);
@@ -138,7 +228,7 @@ function paragraphLines(ctx: Ctx, p: XNode, inList: boolean, inherited: Props): 
       else if (c.name === 'text:tab') push('\t', style);
       else if (c.name === 'text:line-break') lines.push({ runs: [], align, list: inList });
       else if (c.name === 'text:span') walk(c, { ...style, ...textProps(resolveStyle(ctx.styles, 'text', c.attrs['text:style-name'])) });
-      else if (c.name === 'text:a') walk(c, style);
+      else if (c.name === 'text:a') walk(c, c.attrs['xlink:href'] ? { ...style, link: c.attrs['xlink:href'] } : style);
     }
   };
   walk(p, base);
@@ -147,13 +237,14 @@ function paragraphLines(ctx: Ctx, p: XNode, inList: boolean, inherited: Props): 
 
 function textLines(ctx: Ctx, box: XNode): Line[] {
   const out: Line[] = [];
-  const visit = (n: XNode, inList: boolean) => {
+  const visit = (n: XNode, inList: ListStyle | undefined) => {
     for (const c of elementsOf(n)) {
       if (c.name === 'text:p' || c.name === 'text:h') out.push(...paragraphLines(ctx, c, inList, {}));
-      else if (c.name === 'text:list' || c.name === 'text:list-item' || c.name === 'text:list-header') visit(c, true);
+      else if (c.name === 'text:list') visit(c, ctx.lib.lists.get(c.attrs['text:style-name'] ?? '') ?? inList ?? 'bullet');
+      else if (c.name === 'text:list-item' || c.name === 'text:list-header') visit(c, inList ?? 'bullet');
     }
   };
-  visit(box, false);
+  visit(box, undefined);
   return out;
 }
 
@@ -180,8 +271,16 @@ function toParagraphs(lines: Line[]): ElementParagraph[] {
   });
 }
 
+/** Set when a text had character spacing on only some of its runs (the parse reports it once). */
+let spacingWarning = false;
+
 function applyText(el: SlideElement, lines: Line[]) {
   if (!lines.some((l) => l.runs.length)) return;
+  // Character spacing is the object's in LightCast (not a run's): kept when every run has the same, else left out.
+  const spacings = lines.flatMap((l) => l.runs).filter((r) => r.text.trim()).map((r) => (r as { letterSpacing?: number }).letterSpacing ?? 0);
+  if (spacings.length && spacings[0] && spacings.every((v) => v === spacings[0])) el.letterSpacing = spacings[0];
+  else if (spacings.some((v) => v)) spacingWarning = true;
+  for (const l of lines) for (const r of l.runs) delete (r as { letterSpacing?: number }).letterSpacing;
   const paragraphs = toParagraphs(lines);
   el.text = paragraphs.map((p) => p.text).join('\n');
   el.paragraphs = paragraphs;
@@ -189,11 +288,17 @@ function applyText(el: SlideElement, lines: Line[]) {
   if (first.fontSize) el.fontSize = first.fontSize;
   if (first.bold) el.bold = true;
   if (first.italic) el.italic = true;
+  // The box's bold / italic come from its first line: the other lines say outright that they have none.
+  for (const p of paragraphs) {
+    if (el.bold && p.bold === undefined) p.bold = false;
+    if (el.italic && p.italic === undefined) p.italic = false;
+  }
   if (first.color) el.color = first.color;
   if (first.align) el.align = first.align;
   const family = first.runs?.find((r) => r.fontFamily)?.fontFamily;
   if (family) el.fontFamily = family;
-  if (lines.some((l) => l.list)) el.list = 'bullet';
+  const list = lines.find((l) => l.list)?.list;
+  if (list) el.list = list;
 }
 
 interface Box { x: number; y: number; w: number; h: number }
@@ -221,7 +326,45 @@ function boxOf(ctx: Ctx, n: XNode, m: Mat): Placed | undefined {
   return out;
 }
 
-const SHAPES: Record<string, string> = { rectangle: 'rect', ellipse: 'ellipse', 'round-rectangular': 'roundRect', diamond: 'diamond', 'isosceles-triangle': 'triangle', 'right-triangle': 'rtTriangle', 'mso-spt20': 'line', pentagon: 'homePlate', 'star5': 'star5', 'heart': 'heart', 'right-arrow': 'rightArrow' };
+/** draw:connector draw:type → LightCast connector (an elbow is draw:type standard, also when it is not written). */
+const CONNECTOR_SHAPE: Record<string, string> = { line: 'straightConnector1', standard: 'bentConnector3', curve: 'curvedConnector3' };
+/** Does a connector's path (svg:d) leave its start vertically? (an elbow's first segment, a curve's first control point). */
+function startsVertical(d: string | undefined): boolean {
+  const m = /^\s*M\s*[-\d.]+[\s,]+[-\d.]+\s*([vVhHcC])\s*([-\d.]+)?[\s,]*([-\d.]+)?/.exec(d ?? '');
+  if (!m) return false;
+  if (m[1] === 'v' || m[1] === 'V') return true;
+  if (m[1] === 'c' || m[1] === 'C') return Number(m[2]) === 0 && Number(m[3]) !== 0;
+  return false;
+}
+/** LibreOffice's default glue points of an object are its four sides (top, right, bottom, left); PowerPoint's sites run top, left, bottom, right. */
+const GLUE_TO_SITE = [0, 3, 2, 1];
+const siteToGlue = (site: number) => GLUE_TO_SITE.indexOf(site);
+
+
+/** LibreOffice's Fontwork shapes (what it writes for PowerPoint's text transforms, 24.2) → the transform's name. */
+const WARP_BY_TYPE: Record<string, string> = {
+  'fontwork-plain-text': 'textPlain', 'fontwork-stop': 'textStop', 'fontwork-triangle-up': 'textTriangle', 'fontwork-triangle-down': 'textTriangleInverted',
+  'fontwork-chevron-up': 'textChevron', 'fontwork-chevron-down': 'textChevronInverted', 'mso-spt142': 'textRingInside', 'mso-spt143': 'textRingOutside',
+  'fontwork-arch-up-curve': 'textArchUp', 'fontwork-arch-down-curve': 'textArchDown', 'fontwork-circle-curve': 'textCircle', 'fontwork-open-circle-curve': 'textButton',
+  'fontwork-arch-up-pour': 'textArchUpPour', 'fontwork-arch-down-pour': 'textArchDownPour', 'fontwork-circle-pour': 'textCirclePour', 'fontwork-open-circle-pour': 'textButtonPour',
+  'fontwork-curve-up': 'textCurveUp', 'fontwork-curve-down': 'textCurveDown', 'mso-spt174': 'textCanUp', 'mso-spt175': 'textCanDown', 'fontwork-wave': 'textWave1',
+  'mso-spt157': 'textWave2', 'mso-spt159': 'textWave4', 'mso-spt158': 'textDoubleWave1', 'fontwork-inflate': 'textInflate', 'mso-spt161': 'textDeflate',
+  'mso-spt162': 'textInflateBottom', 'mso-spt163': 'textDeflateBottom', 'mso-spt164': 'textInflateTop', 'mso-spt165': 'textDeflateTop', 'mso-spt166': 'textDeflateInflate',
+  'mso-spt167': 'textDeflateInflateDeflate', 'fontwork-fade-right': 'textFadeRight', 'fontwork-fade-left': 'textFadeLeft', 'fontwork-fade-up': 'textFadeUp',
+  'fontwork-fade-down': 'textFadeDown', 'fontwork-slant-up': 'textSlantUp', 'fontwork-slant-down': 'textSlantDown', 'fontwork-fade-up-and-right': 'textCascadeUp', 'fontwork-fade-up-and-left': 'textCascadeDown',
+};
+const PH_KIND: Record<string, NonNullable<SlideElement['placeholder']>> = { title: 'title', outline: 'body', subtitle: 'text', footer: 'footer', 'date-time': 'date', 'page-number': 'slideNumber' };
+
+const SHAPES: Record<string, string> = {
+  rectangle: 'rect', ellipse: 'ellipse', 'round-rectangular': 'roundRect', diamond: 'diamond', 'isosceles-triangle': 'triangle', 'right-triangle': 'rtTriangle', 'mso-spt20': 'line',
+  pentagon: 'homePlate', 'pentagon-right': 'homePlate', star5: 'star5', star4: 'star4', star6: 'star6', star8: 'star8', star12: 'star12', star24: 'star24', heart: 'heart', 'right-arrow': 'rightArrow', 'left-arrow': 'leftArrow',
+  'up-arrow': 'upArrow', 'down-arrow': 'downArrow', 'left-right-arrow': 'leftRightArrow', 'up-down-arrow': 'upDownArrow', hexagon: 'hexagon', octagon: 'octagon', parallelogram: 'parallelogram',
+  trapezoid: 'trapezoid', cross: 'plus', cloud: 'cloud', sun: 'sun', moon: 'moon', smiley: 'smileyFace', 'lightning-bolt': 'lightningBolt', forbidden: 'noSmoking', 'bracket-pair': 'bracketPair', 'brace-pair': 'bracePair',
+  'left-bracket': 'leftBracket', 'right-bracket': 'rightBracket', 'left-brace': 'leftBrace', 'right-brace': 'rightBrace', 'quad-bevel': 'bevel', 'circular-arrow': 'circularArrow', 'u-turn-arrow': 'uturnArrow',
+  'flowchart-process': 'flowChartProcess', 'flowchart-decision': 'flowChartDecision', 'flowchart-terminator': 'flowChartTerminator', 'flowchart-document': 'flowChartDocument', 'flowchart-connector': 'flowChartConnector',
+};
+/** A draw:enhanced-geometry's preset: LibreOffice writes OOXML presets as "ooxml-<name>", its own as a hyphenated name. */
+const presetOf = (type: string | undefined): string => (type?.startsWith('ooxml-') ? type.slice(6) : SHAPES[type ?? ''] ?? 'rect');
 
 function graphicStyle(ctx: Ctx, n: XNode): Props {
   return { ...resolveStyle(ctx.styles, 'graphic', n.attrs['draw:style-name']), ...resolveStyle(ctx.styles, 'presentation', n.attrs['presentation:style-name']) };
@@ -229,25 +372,77 @@ function graphicStyle(ctx: Ctx, n: XNode): Props {
 
 /** A solid or gradient fill from graphic properties (undefined when the object has none). */
 function fillOf(ctx: Ctx, g: Props): Partial<SlideElement> | undefined {
-  if (g['draw:fill'] === 'solid' && colorOf(g['draw:fill-color'])) return { fill: colorOf(g['draw:fill-color']) };
-  const def = g['draw:fill'] === 'gradient' ? ctx.gradients.get(g['draw:fill-gradient-name'] ?? '') : undefined;
-  return def ? gradientToLc(def) : undefined;
+  if (g['draw:fill'] === 'solid' && colorOf(g['draw:fill-color'])) {
+    const t = g['draw:opacity'] !== undefined ? 1 - pctOf(g['draw:opacity']) : 0;
+    return { fill: colorOf(g['draw:fill-color']), ...(t > 0.005 && t < 1 ? { fillTransparency: Math.round(t * 100) / 100 } : {}) };
+  }
+  const def = g['draw:fill'] === 'gradient' ? ctx.lib.gradients.get(g['draw:fill-gradient-name'] ?? '') : undefined;
+  if (!def) return undefined;
+  const lc = gradientToLc(def);
+  const op = g['draw:opacity-name'] ? ctx.lib.opacities.get(g['draw:opacity-name']) : undefined;
+  return op ? withOpacity(lc, gradientToLc(op)) : lc;
 }
 
+/** Colours, outline and effects of a shape from its graphic properties. */
 function shapeStyle(ctx: Ctx, el: SlideElement, g: Props) {
   Object.assign(el, fillOf(ctx, g) ?? { fill: 'transparent' });
   if (g['draw:stroke'] !== 'none' && colorOf(g['svg:stroke-color'])) {
     el.stroke = colorOf(g['svg:stroke-color']);
     const w = lengthToCm(g['svg:stroke-width']);
     if (w) el.strokeWidth = Math.max(1, Math.round((w / 2.54) * 72 * PX_PER_PT));
+    const dash = g['draw:stroke'] === 'dash' ? ctx.lib.dashes.get(g['draw:stroke-dash'] ?? '') : undefined;
+    if (dash) el.dash = dash;
+    if (g['svg:stroke-linecap'] === 'round') el.cap = 'round';
+    else if (g['svg:stroke-linecap'] === 'square') el.cap = 'square';
   }
+  const ms = g['draw:marker-start'], me = g['draw:marker-end'];
+  if (ms) { el.arrowStart = true; el.arrowStartKind = ctx.lib.markers.get(ms) ?? 'triangle'; }
+  if (me) { el.arrowEnd = true; el.arrowEndKind = ctx.lib.markers.get(me) ?? 'triangle'; }
   const va = g['draw:textarea-vertical-align'];
   if (va === 'top' || va === 'bottom' || va === 'middle') el.vAlign = va;
+  const sh = shadowOf(ctx, g);
+  if (sh) Object.assign(el, sh);
+  if (g['style:shrink-to-fit'] === 'true') el.autoFit = 'shrink';
+  else if (g['draw:auto-grow-height'] === 'true' && el.kind === 'text') el.autoFit = 'resize';
+}
+
+/** draw:shadow="visible" with an offset (LibreOffice writes the property on every shape, with a zero offset when there is no shadow). */
+function shadowOf(ctx: Ctx, g: Props): Partial<SlideElement> | undefined {
+  if (g['draw:shadow'] !== 'visible') return undefined;
+  const ox = lengthToCm(g['draw:shadow-offset-x']) ?? 0, oy = lengthToCm(g['draw:shadow-offset-y']) ?? 0;
+  const dist = Math.hypot(ox, oy);
+  if (dist < 0.005) return undefined;
+  const color = colorOf(g['draw:shadow-color']) ?? '#000000';
+  const blur = lengthToCm(g['loext:shadow-blur']);
+  const alpha = g['draw:shadow-opacity'] !== undefined ? pctOf(g['draw:shadow-opacity']) : 1;
+  const dir = ((Math.round((Math.atan2(oy, ox) * 180) / Math.PI * 10) / 10) % 360 + 360) % 360;
+  return { dropShadow: true, shadowKind: 'outer', shadowOpts: { color, transparency: Math.round((1 - alpha) * 100) / 100, blur: Math.round((blur ?? 0) * ctx.kx), dist: Math.round(dist * ctx.kx), dir } };
+}
+
+/** `fo:border-left="1.11pt solid #ff0000"` and friends (LibreOffice writes them in the cell's paragraph properties) as the cell's borders. */
+function cellBorders(p: Props, _ctx: Ctx): CellBorders | undefined {
+  const out: CellBorders = {};
+  const one = (v: string | undefined): CellBorder | undefined => {
+    const m = /^\s*([\d.]+)(pt|cm|mm|in|px)?\s+(solid|dashed|dotted|double|dash-dot|dot-dash|groove|ridge|inset|outset)\s+(#[0-9a-f]{6})\s*$/i.exec(v ?? '');
+    if (!m) return undefined;
+    const n = Number(m[1]);
+    const pt = m[2] === 'cm' ? (n / 2.54) * 72 : m[2] === 'mm' ? (n / 25.4) * 72 : m[2] === 'in' ? n * 72 : m[2] === 'px' ? n * 0.75 : n;
+    const width = Math.max(1, Math.round(pt * PX_PER_PT));
+    const dash = m[3] === 'dashed' ? 'dash' : m[3] === 'dotted' ? 'dot' : m[3] === 'dash-dot' ? 'dashDot' : undefined;
+    return { color: m[4].toLowerCase(), width, ...(dash ? { dash } : {}) };
+  };
+  const all = one(p['fo:border']);
+  for (const [k, side] of [['t', 'top'], ['r', 'right'], ['b', 'bottom'], ['l', 'left']] as const) {
+    const b = one(p[`fo:border-${side}`]) ?? all;
+    if (b) out[k] = b;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** A table's cells and sizes (canvas px, scaled to `box`) plus each cell's font size (px). */
 async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data: TableData; sizes: (number | undefined)[][] }> {
   const cols: number[] = [];
+  const colStyle: (string | undefined)[] = [];
   const sizes: (number | undefined)[][] = [];
   const heights: number[] = [];
   const rows: TableData['rows'] = [];
@@ -255,7 +450,7 @@ async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data:
   const rowHeight = (n: XNode) => lengthToCm(resolveStyle(ctx.styles, 'table-row', n.attrs['table:style-name'])['style:row-height'] ?? resolveStyle(ctx.styles, 'table-row', n.attrs['table:style-name'])['style:min-row-height']) ?? 1;
   const walk = (n: XNode) => {
     for (const c of elementsOf(n)) {
-      if (c.name === 'table:table-column') for (let i = 0; i < Math.min(50, Number(c.attrs['table:number-columns-repeated'] ?? 1)); i++) cols.push(colWidth(c));
+      if (c.name === 'table:table-column') for (let i = 0; i < Math.min(50, Number(c.attrs['table:number-columns-repeated'] ?? 1)); i++) { cols.push(colWidth(c)); colStyle.push(c.attrs['table:default-cell-style-name']); }
       else if (c.name === 'table:table-columns' || c.name === 'table:table-header-columns' || c.name === 'table:table-header-rows' || c.name === 'table:table-rows') walk(c);
       else if (c.name === 'table:table-row') {
         for (let rep = 0; rep < Math.min(200, Number(c.attrs['table:number-rows-repeated'] ?? 1)); rep++) {
@@ -268,7 +463,7 @@ async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data:
               const lines = textLines(ctx, cell);
               const paras = toParagraphs(lines);
               const first = paras.find((p) => p.text) ?? paras[0];
-              const cs = resolveStyle(ctx.styles, 'table-cell', cell.attrs['table:style-name']);
+              const cs = resolveStyle(ctx.styles, 'table-cell', cell.attrs['table:style-name'] ?? c.attrs['table:default-cell-style-name'] ?? colStyle[row.length]);
               const t: TableData['rows'][number][number] = { text: paras.map((p) => p.text).join('\n') };
               const span = Number(cell.attrs['table:number-columns-spanned'] ?? 1);
               const rowSpan = Number(cell.attrs['table:number-rows-spanned'] ?? 1);
@@ -277,8 +472,10 @@ async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data:
               if (first?.bold) t.bold = true;
               if (first?.color) t.color = first.color;
               if (first?.align) t.align = first.align;
-              const fill = colorOf(cs['fo:background-color']);
+              const fill = colorOf(cs['fo:background-color']) ?? (cs['draw:fill'] === 'solid' ? colorOf(cs['draw:fill-color']) : undefined);
               if (fill) t.fill = fill;
+              const borders = cellBorders(cs, ctx);
+              if (borders) t.borders = borders;
               row.push(t);
               srow.push(first?.fontSize);
             }
@@ -387,24 +584,49 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
         if (name) el.name = name;
         applyText(el, textLines(ctx, textBox));
         const g = graphicStyle(ctx, n);
-        const va = g['draw:textarea-vertical-align'];
-        if (va === 'top' || va === 'bottom' || va === 'middle') el.vAlign = va;
-        Object.assign(el, fillOf(ctx, g));
-        if (el.text || el.fill) out.push(el);
+        shapeStyle(ctx, el, g);
+        if (el.fill === 'transparent') delete el.fill;
+        if (el.text || el.fill || el.stroke) out.push(el);
       }
     } else if (/^draw:(rect|ellipse|circle|custom-shape|line|connector|polygon)$/.test(n.name)) {
       const type = childNamed(n, 'draw:enhanced-geometry')?.attrs['draw:type'];
-      const shape = n.name === 'draw:ellipse' || n.name === 'draw:circle' ? 'ellipse' : n.name === 'draw:line' || n.name === 'draw:connector' ? 'line' : n.name === 'draw:rect' ? ((n.attrs['draw:corner-radius'] ?? n.attrs['svg:rx']) ? 'roundRect' : 'rect') : SHAPES[type ?? ''] ?? 'rect';
+      const connectorType = n.name === 'draw:connector' ? n.attrs['draw:type'] ?? 'standard' : undefined;
+      const shape = n.name === 'draw:ellipse' || n.name === 'draw:circle' ? 'ellipse' : n.name === 'draw:connector' ? CONNECTOR_SHAPE[connectorType ?? ''] ?? 'bentConnector3' : n.name === 'draw:line' ? 'line' : n.name === 'draw:rect' ? ((n.attrs['draw:corner-radius'] ?? n.attrs['svg:rx']) ? 'roundRect' : 'rect') : presetOf(type);
       const el: SlideElement = { id: uid('el'), kind: 'shape', shape, ...box };
       if (name) el.name = name;
+      const geo = childNamed(n, 'draw:enhanced-geometry');
+      if (geo?.attrs['draw:text-path'] === 'true') {
+        const prst = WARP_BY_TYPE[type ?? ''];
+        if (prst) el.warp = prst;
+        else ctx.warnings.add(`글자를 경로나 곡선에 맞추는 효과(${type ?? '워드아트'})는 지원하지 않아 일반 글자로 읽었습니다.`);
+      }
       shapeStyle(ctx, el, graphicStyle(ctx, n));
-      if (shape === 'line') {
+      if (shape === 'line' || connectorType) {
         if (flipH) el.flipH = true;
         if (flipV) el.flipV = true;
         el.stroke ??= '#000000';
       }
+      if (connectorType) {
+        // An elbow or curve that leaves its start going up or down is the PowerPoint connector turned a quarter.
+        if (CONNECTOR_SHAPE[connectorType] !== 'straightConnector1' && startsVertical(n.attrs['svg:d'])) {
+          const cx = el.x + el.w / 2, cy = el.y + el.h / 2, w = el.h, h = el.w;
+          Object.assign(el, { x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), w, h, rotation: 90 });
+          el.flipV = !flipH || undefined;
+          el.flipH = !!flipV || undefined;
+          if (!el.flipV) delete el.flipV;
+          if (!el.flipH) delete el.flipH;
+        }
+        if (n.attrs['draw:start-shape'] || n.attrs['draw:end-shape']) ctx.glued.push({ el, node: n });
+      }
       applyText(el, textLines(ctx, n));
+      // LibreOffice writes a PowerPoint text box as a plain custom shape: no fill, no line, a rectangle.
+      if (n.name === 'draw:custom-shape' && shape === 'rect' && el.text && el.fill === 'transparent' && !el.stroke) { el.kind = 'text'; delete el.shape; delete el.fill; el.autoFit ??= false; }
       out.push(el);
+    }
+    const xid = n.attrs['xml:id'] ?? n.attrs['draw:id'];
+    if (xid && out.length > first) {
+      ctx.ids.set(xid, out[first].id);
+      if (childNamed(n, 'draw:enhanced-geometry')?.attrs['draw:glue-points']) ctx.customGlue.add(xid);
     }
     for (const el of out.slice(first)) {
       if (rotation && el.kind !== 'table') el.rotation = rotation;
@@ -413,23 +635,74 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
   }
 }
 
+
+/** The text of a flat OpenDocument file (.fodp / .fodg), or null when the bytes are not XML (a zip package). */
+function flatOdfText(b: Uint8Array): string | null {
+  if (b.length < 20 || (b[0] === 0x50 && b[1] === 0x4b)) return null;
+  if (b.length > 256 * 1024 * 1024) throw new Error('파일이 너무 큽니다 (256 MB 초과).');
+  const text = new TextDecoder('utf-8').decode(b.subarray(b[0] === 0xef && b[1] === 0xbb ? 3 : 0));
+  return /^\s*(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*<office:document[\s>]/.test(text.slice(0, 4096)) ? text : null;
+}
+
+/** Pictures a flat file carries as base64 (office:binary-data) become files of a small zip the reader's picture lookup uses. */
+function extractFlatPictures(root: XNode, zip: JSZip) {
+  let n = 0;
+  const walk = (node: XNode) => {
+    for (const c of elementsOf(node)) {
+      if (c.name === 'draw:image' && !c.attrs['xlink:href']) {
+        const data = childNamed(c, 'office:binary-data');
+        const raw = data ? textOf(data).replace(/\s+/g, '') : '';
+        if (raw && raw.length < 200 * 1024 * 1024) {
+          let bin: Uint8Array | null = null;
+          try { bin = Uint8Array.from(atob(raw), (ch) => ch.charCodeAt(0)); } catch { bin = null; }
+          if (bin && bin.length > 4) {
+            const ext = bin[0] === 0x89 && bin[1] === 0x50 ? 'png' : bin[0] === 0xff && bin[1] === 0xd8 ? 'jpg' : bin[0] === 0x47 && bin[1] === 0x49 ? 'gif' : bin[0] === 0x42 && bin[1] === 0x4d ? 'bmp' : bin[0] === 0x52 && bin[1] === 0x49 ? 'webp' : /<svg[\s>]/i.test(new TextDecoder().decode(bin.subarray(0, 1024))) ? 'svg' : 'png';
+            const path = `Pictures/flat${++n}.${ext}`;
+            zip.file(path, bin, { createFolders: false });
+            c.attrs['xlink:href'] = path;
+          }
+        }
+      } else walk(c);
+    }
+  };
+  walk(root);
+}
+
 /** Read a .odp: slides with text boxes (paragraphs, bold / italic / size / colour), pictures, simple shapes, tables and notes. */
 export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpReadOptions): Promise<OdpDocument> {
   const data = file instanceof Uint8Array || file instanceof ArrayBuffer ? file : await file.arrayBuffer();
   const sourceName = opts.name ?? (typeof (file as File).name === 'string' ? (file as File).name : '');
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   let zip: JSZip;
-  try { zip = await JSZip.loadAsync(data); } catch { throw new Error('OpenDocument 파일(.odp)이 아닙니다.'); }
-  const mime = (await zip.file('mimetype')?.async('string'))?.trim();
-  const contentFile = zip.file('content.xml');
-  if (!contentFile || (mime && mime !== ODP_MIME && !/presentation/.test(mime))) throw new Error('OpenDocument 프레젠테이션(.odp)이 아닙니다.');
-  const content = parseXml(await contentFile.async('string'));
-  const stylesXml = await zip.file('styles.xml')?.async('string');
-  const stylesRoot = stylesXml ? parseXml(stylesXml) : undefined;
+  let content: XNode;
+  let stylesRoot: XNode | undefined;
+  let metaRoot: XNode | undefined;
+  const flat = flatOdfText(bytes);
+  if (flat !== null) {
+    // Flat XML (.fodp / .fodg): one document holding content, styles and meta; pictures are base64 inside the XML.
+    try { content = parseXml(flat); } catch { throw new Error('OpenDocument 파일(.fodp)을 읽지 못했습니다.'); }
+    const kind = content.attrs['office:mimetype'] ?? '';
+    if (content.name !== 'office:document' || (kind && !/presentation|graphics/.test(kind))) throw new Error('OpenDocument 프레젠테이션(.fodp)이 아닙니다.');
+    zip = new JSZip();
+    extractFlatPictures(content, zip);
+    stylesRoot = content;
+    metaRoot = childNamed(content, 'office:meta');
+  } else {
+    try { zip = await JSZip.loadAsync(data); } catch { throw new Error('OpenDocument 파일(.odp)이 아닙니다.'); }
+    const mime = (await zip.file('mimetype')?.async('string'))?.trim();
+    const contentFile = zip.file('content.xml');
+    if (!contentFile || (mime && mime !== ODP_MIME && !/presentation|graphics/.test(mime))) throw new Error('OpenDocument 프레젠테이션(.odp)이 아닙니다.');
+    content = parseXml(await contentFile.async('string'));
+    const stylesXml = await zip.file('styles.xml')?.async('string');
+    stylesRoot = stylesXml ? parseXml(stylesXml) : undefined;
+    const metaXml = await zip.file('meta.xml')?.async('string');
+    try { metaRoot = metaXml ? childNamed(parseXml(metaXml), 'office:meta') : undefined; } catch { metaRoot = undefined; }
+  }
 
   const styles = new Map<string, StyleDef>();
-  const gradients = new Map<string, OdfGradient>();
-  readStyles(stylesRoot, styles, gradients);
-  readStyles(childNamed(content, 'office:automatic-styles'), styles, gradients);
+  const lib: StyleLib = { gradients: new Map(), opacities: new Map(), lists: new Map(), markers: new Map(), dashes: new Map() };
+  readStyles(stylesRoot, styles, lib);
+  readStyles(childNamed(content, 'office:automatic-styles'), styles, lib);
   const masterPages = new Map<string, XNode>();
   for (const mp of stylesRoot ? childrenNamed(childNamed(stylesRoot, 'office:master-styles') ?? { name: '', attrs: {}, children: [] }, 'style:master-page') : []) masterPages.set(mp.attrs['style:name'], mp);
 
@@ -441,9 +714,12 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   const lp = layout ? childNamed(layout, 'style:page-layout-properties') : undefined;
   const pw = lengthToCm(lp?.attrs['fo:page-width']), ph = lengthToCm(lp?.attrs['fo:page-height']);
   if (pw && ph) page = { w: pw, h: ph };
-  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), gradients };
+  spacingWarning = false;
+  const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map(), warnings: new Set(), customGlue: new Set(), glued: [] };
 
-  const body = childNamed(childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] }, 'office:presentation');
+  // A presentation's pages, or a drawing's (.odg: one slide per page).
+  const officeBody = childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] };
+  const body = childNamed(officeBody, 'office:presentation') ?? childNamed(officeBody, 'office:drawing');
   if (!body) throw new Error('OpenDocument 파일에 슬라이드가 없습니다.');
   const slides: Slide[] = [];
   // Objects on a master page (logos, lines, plain text) become background shapes at the bottom of each slide that shows it.
@@ -459,13 +735,31 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     }
     return list.map((el) => ({ ...structuredClone(el), id: uid('el') }));
   };
+  const slideMaster: { name: string; flat: SlideElement[]; hide: boolean }[] = [];
   for (const pg of childrenNamed(body, 'draw:page')) {
     const elements: SlideElement[] = [];
     const own = resolveStyle(styles, 'drawing-page', pg.attrs['draw:style-name']);
     const pageStyle = { ...resolveStyle(styles, 'drawing-page', masterPages.get(pg.attrs['draw:master-page-name'] ?? '')?.attrs['draw:style-name']), ...own };
-    if (own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name']) elements.push(...await masterElements(pg.attrs['draw:master-page-name']));
+    const flat = own['presentation:background-objects-visible'] !== 'false' && pg.attrs['draw:master-page-name'] ? await masterElements(pg.attrs['draw:master-page-name']) : [];
+    elements.push(...flat);
+    slideMaster.push({ name: pg.attrs['draw:master-page-name'] ?? '', flat, hide: own['presentation:background-objects-visible'] === 'false' });
+    ctx.ids.clear();
+    ctx.glued = [];
     await readShapes(ctx, pg, elements);
-    const slide: Slide = { id: uid('s'), group: '', text: '', elements, importSource: { format: 'odp', name: sourceName, page: slides.length + 1 } };
+    for (const { el, node } of ctx.glued) {
+      const end = (side: 'start' | 'end') => {
+        const ref = node.attrs[`draw:${side}-shape`];
+        const target = ref ? ctx.ids.get(ref) : undefined;
+        const gp = Number(node.attrs[`draw:${side}-glue-point`] ?? NaN);
+        if (!target || !Number.isFinite(gp)) return undefined;
+        return { id: target, site: gp >= 4 && ctx.customGlue.has(ref) ? gp - 4 : GLUE_TO_SITE[gp] ?? 0 };
+      };
+      const from = end('start'), to = end('end');
+      if (from || to) el.connect = { ...(from ? { from } : {}), ...(to ? { to } : {}) };
+    }
+    const slide: Slide = { id: uid('s'), group: '', text: '', elements, importSource: { format: 'odp', name: sourceName, page: slides.length + 1, pageCm: page } };
+    const animations = readAnimations(pg, ctx.ids);
+    if (animations.length) slide.animations = animations;
     const fill = fillOf(ctx, pageStyle);
     if (pageStyle['draw:fill'] === 'solid' && fill?.fill) slide.background = { kind: 'color', value: fill.fill };
     else if (fill?.gradientStops && fill.gradientStops.length > 2) slide.background = { kind: 'gradient', value: stopsCss({ type: fill.gradientType === 'radial' ? 'radial' : 'linear', angle: fill.gradientAngle ?? 90, stops: fill.gradientStops }) };
@@ -474,7 +768,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     const flags = { ...own, ...pg.attrs };
     if (flags['presentation:visibility'] === 'hidden' || flags['draw:display'] === 'none' || flags['draw:display'] === 'false' || flags['presentation:display'] === 'false') slide.disabled = true;
     const filter = (function find(n: XNode): XNode | undefined { for (const c of elementsOf(n)) { if (c.name === 'anim:transitionFilter') return c; const f = find(c); if (f) return f; } return undefined; })(pg);
-    const timing = readTransition({ ...own, ...pg.attrs, ...(filter ? { 'smil:type': filter.attrs['smil:type'], 'smil:dur': filter.attrs['smil:dur'] } : {}) });
+    const timing = readTransition({ ...own, ...pg.attrs, ...(filter ? { 'smil:type': filter.attrs['smil:type'], 'smil:dur': filter.attrs['smil:dur'], 'smil:subtype': filter.attrs['smil:subtype'], 'smil:direction': filter.attrs['smil:direction'] } : {}) });
     if (timing.transition) slide.transition = timing.transition;
     if (timing.autoAdvance) slide.autoAdvance = timing.autoAdvance;
     const notes = childNamed(pg, 'presentation:notes');
@@ -486,11 +780,60 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     slides.push(slide);
   }
 
-  const metaXml = await zip.file('meta.xml')?.async('string');
+  // The master pages as the deck's master and layouts.
+  let master: OdpDocument['master'];
+  if (opts.masterMode !== 'flatten' && masterPages.size) {
+    const sig = (e: SlideElement) => JSON.stringify([e.kind, e.shape, e.x, e.y, e.w, e.h, e.fill, e.stroke, e.text, e.mediaId, e.rotation]);
+    const used = [...new Set(slideMaster.map((s) => s.name).filter((n) => masterPages.has(n)))];
+    const objects = (name: string) => masterObjects.get(name) ?? [];
+    for (const n of used) await masterElements(n);
+    // What every used master page shows is the deck's master; the rest stays with the layout / slides of that page.
+    const sets = used.map((n) => new Set(objects(n).map(sig)));
+    const common = used.length ? objects(used[0]).filter((e) => sets.every((s) => s.has(sig(e)))) : [];
+    const commonSigs = new Set(common.map(sig));
+    const layouts: MasterLayout[] = [];
+    const layoutOf = new Map<string, string>();
+    for (const [name, mp] of masterPages) {
+      // The "Default" page LightCast itself writes beside its layouts is no layout unless a slide uses it.
+      if (name === 'Default' && masterPages.size > 1 && !used.includes(name)) continue;
+      const id = uid('lay');
+      layoutOf.set(name, id);
+      if (!objects(name).length && !used.includes(name)) await masterElements(name);
+      const holders: SlideElement[] = [];
+      for (const f of elementsOf(mp)) {
+        const kind = PH_KIND[f.attrs['presentation:class'] ?? ''];
+        const placed = kind ? boxOf(ctx, f, IDENTITY) : undefined;
+        if (!kind || !placed) continue;
+        holders.push({ ...makePlaceholder(kind), id: uid('el'), x: placed.x, y: placed.y, w: placed.w, h: placed.h });
+      }
+      const own = objects(name).filter((e) => !commonSigs.has(sig(e))).map((e) => ({ ...structuredClone(e), id: uid('el') }));
+      layouts.push({ id, name: (mp.attrs['style:display-name'] ?? mp.attrs['style:name']).replace(/_20_/g, ' '), elements: [...own, ...holders] });
+    }
+    const first = used[0] ? masterPages.get(used[0]) : undefined;
+    const mfill = first ? fillOf(ctx, resolveStyle(styles, 'drawing-page', first.attrs['draw:style-name'])) : undefined;
+    const mstyle = first ? resolveStyle(styles, 'drawing-page', first.attrs['draw:style-name']) : {};
+    master = {
+      elements: common.map((e) => ({ ...structuredClone(e), id: uid('el'), name: e.name?.replace(/^마스터: /, '') })), layouts,
+      ...(mstyle['draw:fill'] === 'solid' && mfill?.fill ? { background: { kind: 'color' as const, value: mfill.fill } } : {}),
+    };
+    slides.forEach((s, i) => {
+      const m = slideMaster[i];
+      if (!m.name || !layoutOf.has(m.name)) return;
+      s.layoutId = layoutOf.get(m.name);
+      // The master page's own objects that are not the deck's master stay on the slide; the deck's master comes as master copies.
+      const keep = new Set(m.flat.filter((e) => commonSigs.has(sig(e))).map((e) => e.id));
+      const kept = (s.elements ?? []).filter((e) => !keep.has(e.id));
+      s.elements = kept;
+      if (m.hide) s.hideMaster = true;
+      Object.assign(s, withMaster(s, master!.elements));
+      s.elements ??= [];
+    });
+  }
+
   const properties: DocProperties = {};
-  if (metaXml) {
-    const meta = childNamed(parseXml(metaXml), 'office:meta');
-    const pick = (n: string) => (meta && childNamed(meta, n) ? textOf(childNamed(meta, n)!).trim() : '') || undefined;
+  if (metaRoot) {
+    const meta = metaRoot;
+    const pick = (n: string) => (childNamed(meta, n) ? textOf(childNamed(meta, n)!).trim() : '') || undefined;
     properties.title = pick('dc:title');
     properties.subject = pick('dc:subject');
     properties.author = pick('meta:initial-creator') ?? pick('dc:creator');
@@ -498,16 +841,26 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     properties.comments = pick('dc:description');
     for (const k of Object.keys(properties) as (keyof DocProperties)[]) if (!properties[k]) delete properties[k];
   }
-  return { title: properties.title ?? '', properties, slides };
+  if (spacingWarning) ctx.warnings.add('글자 일부에만 준 문자 간격은 LightCast가 개체 전체에만 줄 수 있어 빼고 읽었습니다.');
+  if (Math.abs(page.w / page.h - 4 / 3) > 0.02) ctx.warnings.add(`원본 슬라이드 크기는 ${Math.round(page.w * 100) / 100} × ${Math.round(page.h * 100) / 100}cm 입니다. LightCast는 4:3 슬라이드만 지원하므로 내용을 4:3 크기에 맞춰 늘이거나 줄였습니다.`);
+  return { title: properties.title ?? '', properties, slides, ...(master ? { master } : {}), pageCm: page, warnings: [...ctx.warnings] };
+}
+
+/** A slide's title (its first text), body (the other texts, one per line) and notes: what Review › Compare looks at. */
+export function odpSlideText(s: Slide): { title: string; text: string; notes: string } {
+  const texts = (s.elements ?? []).filter((e) => !e.name?.startsWith('마스터:') && (e.kind === 'text' || e.kind === 'shape') && e.text?.trim()).map((e) => e.text!.trim());
+  return { title: texts[0] ?? '', text: texts.slice(1).join('\n'), notes: s.notes ?? '' };
 }
 
 // ── Writing ───────────────────────────────────────────────────────────────────────────────────
 export interface OdpWriteOptions {
+  /** The page size (cm) the deck came in with: the file is written at the largest 4:3 page inside it. */
+  pageCm?: { w: number; h: number };
   /** The bytes and type of a stored picture (null when it is missing; the picture is then left out). */
   loadMedia: (id: string) => Promise<{ bytes: Uint8Array; mime: string } | null> | { bytes: Uint8Array; mime: string } | null;
 }
 
-const NS = 'xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:smil="urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0" xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0"';
+const NS = 'xmlns:anim="urn:oasis:names:tc:opendocument:xmlns:animation:1.0" xmlns:lc="urn:lightcast:odp" xmlns:drawooo="http://openoffice.org/2010/draw" xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0" xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0" xmlns:smil="urn:oasis:names:tc:opendocument:xmlns:smil-compatible:1.0" xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0"';
 
 /** Text with spaces / tabs the way ODF needs them (text:s, text:tab). */
 function odfText(s: string): string {
@@ -533,6 +886,25 @@ class Styles {
     }
     return name;
   }
+  /** A text:list-style of one kind of bullet or numbering (all levels use it); returns its name. */
+  list(kind: ListStyle): string {
+    const key = `list|${kind}`;
+    let name = this.seen.get(key);
+    if (!name) {
+      name = `${this.namePrefix}L${++this.n}`;
+      this.seen.set(key, name);
+      const num: Record<string, [string, string]> = { number: ['1', '.'], 'number-paren': ['1', ')'], roman: ['i', '.'], alpha: ['a', '.'], hangul: ['가', '.'] };
+      const bullet: Record<string, string> = { bullet: '•', circle: '○', square: '■', check: '✔', arrow: '➢' };
+      const levels = Array.from({ length: 9 }, (_, i) => {
+        const props = `<style:list-level-properties text:space-before="${Math.round(i * 0.9 * 100) / 100}cm" text:min-label-width="0.9cm"/>`;
+        return num[kind]
+          ? `<text:list-level-style-number text:level="${i + 1}" style:num-suffix="${num[kind][1]}" style:num-format="${num[kind][0]}">${props}<style:text-properties style:use-window-font-color="true" fo:font-size="100%"/></text:list-level-style-number>`
+          : `<text:list-level-style-bullet text:level="${i + 1}" text:bullet-char="${bullet[kind] ?? '•'}">${props}<style:text-properties fo:font-family="OpenSymbol" style:use-window-font-color="true" fo:font-size="100%"/></text:list-level-style-bullet>`;
+      }).join('');
+      this.xml.push(`<text:list-style style:name="${name}">${levels}</text:list-style>`);
+    }
+    return name;
+  }
   toString() { return this.xml.join(''); }
 }
 
@@ -548,6 +920,8 @@ function runProps(r: Omit<TextRun, 'text'>): string {
   if (r.underline) a.push('style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"');
   if (r.strike) a.push('style:text-line-through-style="solid"');
   if (r.fontFamily) a.push(`fo:font-family="${escapeXml(r.fontFamily)}"`);
+  const ls = (r as { letterSpacing?: number }).letterSpacing;
+  if (ls) a.push(`fo:letter-spacing="${Math.round((ls / PX_PER_PT / 72) * 2.54 * 1000) / 1000}cm"`);
   if (r.baseline) a.push(`style:text-position="${r.baseline === 'super' ? 'super 58%' : 'sub 58%'}"`);
   return a.length ? `<style:text-properties ${a.join(' ')}/>` : '';
 }
@@ -555,29 +929,67 @@ function runProps(r: Omit<TextRun, 'text'>): string {
 const ALIGN_ODF: Record<string, string> = { left: 'start', center: 'center', right: 'end', justify: 'justify', distributed: 'justify', justLow: 'justify' };
 
 /** A text object's lines, each with its runs and formatting. */
-function elementLines(el: SlideElement): { align?: HAlign; runs: TextRun[] }[] {
-  const base: Omit<TextRun, 'text'> = { fontSize: el.fontSize, bold: el.bold, italic: el.italic, color: el.color, underline: el.underline, strike: el.strike, fontFamily: el.fontFamily };
+function elementLines(el: SlideElement): { align?: HAlign; runs: TextRun[]; list?: ListStyle }[] {
+  const base: Omit<TextRun, 'text'> = { fontSize: el.fontSize, bold: el.bold, italic: el.italic, color: el.color, underline: el.underline, strike: el.strike, fontFamily: el.fontFamily, ...(el.letterSpacing ? { letterSpacing: el.letterSpacing } : {}) } as Omit<TextRun, 'text'>;
   const lines = (el.text ?? '').split('\n');
   return lines.map((text, i) => {
     const p = el.paragraphs?.[i];
     const lineBase = { ...base, ...(p ? { fontSize: p.fontSize ?? base.fontSize, bold: p.bold ?? base.bold, italic: p.italic ?? base.italic, color: p.color ?? base.color } : {}) };
     const src = p?.runs && p.runs.map((r) => r.text).join('') === (p.text ?? text) ? p.runs : el.paragraphs ? undefined : el.runs?.[i];
     const runs = src && src.map((r) => r.text).join('') === (p?.text ?? text) ? src : [{ text: p?.text ?? text }];
-    return { align: p?.align ?? el.align, runs: runs.map((r) => ({ ...lineBase, ...r })) };
+    return { align: p?.align ?? el.align, runs: runs.map((r) => ({ ...lineBase, ...r })), ...(el.list ? { list: el.list } : {}) };
   });
 }
 
-function paragraphsXml(st: Styles, lines: { align?: HAlign; runs: TextRun[] }[]): string {
-  return lines.map((l) => {
+function paragraphsXml(st: Styles, lines: { align?: HAlign; runs: TextRun[]; list?: ListStyle }[]): string {
+  const out: string[] = [];
+  const para = (l: { align?: HAlign; runs: TextRun[] }) => {
     const pAttr = l.align ? ` text:style-name="${st.name('paragraph', 'P', `<style:paragraph-properties fo:text-align="${ALIGN_ODF[l.align] ?? 'start'}"/>`)}"` : '';
     const spans = l.runs.filter((r) => r.text).map((r) => {
       const { text, ...props } = r;
       const body = runProps(props);
-      return body ? `<text:span text:style-name="${st.name('text', 'T', body)}">${odfText(text)}</text:span>` : odfText(text);
+      const inner = r.link && /^[a-z][a-z0-9+.-]*:|^#/i.test(r.link) ? `<text:a xlink:href="${escapeXml(r.link)}" xlink:type="simple">${odfText(text)}</text:a>` : odfText(text);
+      return body ? `<text:span text:style-name="${st.name('text', 'T', body)}">${inner}</text:span>` : inner;
     }).join('');
     return `<text:p${pAttr}>${spans}</text:p>`;
-  }).join('');
+  };
+  // Lines with the same list style share one text:list.
+  for (let i = 0; i < lines.length; ) {
+    const kind = lines[i].list;
+    let j = i + 1;
+    while (kind && j < lines.length && lines[j].list === kind) j++;
+    out.push(kind ? `<text:list text:style-name="${st.list(kind)}">${lines.slice(i, j).map((l) => `<text:list-item>${para(l)}</text:list-item>`).join('')}</text:list>` : para(lines[i]));
+    i = j;
+  }
+  return out.join('');
 }
+
+type PresetTable = typeof import('./odpPresets').ODP_PRESETS;
+const RANGE = ' draw:handle-range-x-maximum="2147483647" draw:handle-range-x-minimum="-2147483647" draw:handle-range-y-maximum="2147483647" draw:handle-range-y-minimum="-2147483647"';
+/**
+ * The draw:enhanced-geometry of a PowerPoint preset shape, as LibreOffice itself writes it (its equations, paths and
+ * handles), with the preset's adjust values (the yellow handles) put in when the object has its own. A preset that
+ * is not in the table is a plain rectangle.
+ */
+export function geometryXml(table: PresetTable, shape: string, adj?: number[]): string {
+  const g = table[shape];
+  if (!g) return '<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="rectangle"/>';
+  const attrs = Object.entries(g.a).map(([k, v]) => `${k}="${escapeXml(k === 'draw:modifiers' && adj?.length && v.split(' ').length === adj.length ? adj.map((n) => Math.round(n)).join(' ') : v)}"`).join(' ');
+  const eq = g.e.map((f, i) => `<draw:equation draw:name="f${i}" draw:formula="${escapeXml(f)}"/>`).join('');
+  const handles = (g.h ?? '').replace(/~R/g, RANGE).replace(/~H/g, '<draw:handle draw:handle-position=');
+  return `<draw:enhanced-geometry ${attrs} draw:type="ooxml-${escapeXml(shape)}">${eq}${handles}</draw:enhanced-geometry>`;
+}
+
+/** Dash patterns as [dash %, second dash %, gap %] of the line width (PowerPoint's presets, as LibreOffice reads them). */
+const DASHES: Record<DashStyle, [number, number, number, number?] | undefined> = {
+  solid: undefined, dash: [400, 0, 300], dot: [100, 0, 300], dashDot: [400, 100, 300], lgDash: [800, 0, 300], sysDash: [300, 0, 100], sysDot: [100, 0, 100],
+  lgDashDot: [800, 100, 300], lgDashDotDot: [800, 100, 300, 2], sysDashDot: [300, 100, 100], sysDashDotDot: [300, 100, 100, 2],
+};
+/** Arrowhead outlines: [viewBox, path]. */
+const MARKERS: Record<ArrowKind, [string, string]> = {
+  triangle: ['0 0 20 30', 'M10 0l-10 30h20z'], stealth: ['0 0 20 30', 'M10 0l10 30-10-8-10 8z'], diamond: ['0 0 30 30', 'M15 0l15 15-15 15-15-15z'],
+  oval: ['0 0 30 30', 'M0 15a15 15 0 1 0 30 0 15 15 0 1 0-30 0z'], arrow: ['0 0 30 30', 'M15 0l15 28-4 2-11-20-11 20-4-2z'],
+};
 
 const MEDIA_TYPES: Record<string, string> = { png: 'image/png', jpg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml', bmp: 'image/bmp' };
 
@@ -595,7 +1007,9 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     pictures.set(id, { path, bytes: m.bytes, mime: m.mime });
     return path;
   };
-  const K = 28 / CANVAS_W; // canvas px → cm
+  // The page the file is written at: 4:3 like the canvas, as large as the original page allows (28 x 21 cm when it is not known).
+  const K = opts.pageCm ? Math.max(0.001, Math.min(opts.pageCm.w / CANVAS_W, opts.pageCm.h / CANVAS_H)) : 28 / CANVAS_W; // canvas px → cm
+  const pageW = Math.round(CANVAS_W * K * 1000) / 1000, pageH = Math.round(CANVAS_H * K * 1000) / 1000;
   const geo = (b: Box) => `svg:x="${fmtCm(b.x, K)}" svg:y="${fmtCm(b.y, K)}" svg:width="${fmtCm(b.w, K)}" svg:height="${fmtCm(b.h, K)}"`;
   /** Position attributes: svg:x / y / width / height, or a draw:transform when the object is turned. */
   const place = (b: Box, rot?: number) => {
@@ -610,21 +1024,77 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     if (!name) {
       name = `Gradient${gradientNames.size + 1}`;
       gradientNames.set(key, name);
-      gradients.push(`<draw:gradient draw:name="${name}" draw:display-name="${name}" draw:style="${g.style}" draw:start-color="${g.start}" draw:end-color="${g.end}" draw:start-intensity="100%" draw:end-intensity="100%" draw:angle="${g.angle}deg" draw:border="0%"${g.style === 'radial' ? ' draw:cx="50%" draw:cy="50%"' : ''}>${(g.stops ?? []).map((x) => `<loext:gradient-stop svg:offset="${Math.round(x.pos * 100) / 10000}" svg:stop-color="${x.color}"/>`).join('')}</draw:gradient>`);
+      gradients.push(`<draw:gradient draw:name="${name}" draw:display-name="${name}" draw:style="${g.style}" draw:start-color="${g.start}" draw:end-color="${g.end}" draw:start-intensity="100%" draw:end-intensity="100%" draw:angle="${g.angle}deg" draw:border="0%"${g.style === 'radial' ? ' draw:cx="50%" draw:cy="50%"' : ''}>${(g.stops ?? []).map((x) => `<loext:gradient-stop svg:offset="${Math.round(x.pos * 100) / 10000}" svg:stop-color="${x.color}" loext:color-type="rgb" loext:color-value="${x.color}"/>`).join('')}</draw:gradient>`);
     }
+    return name;
+  };
+  const opacities = new Map<string, string>();
+  /** A draw:opacity (transparency gradient) for a gradient whose stops are transparent; returns its name. */
+  const opacityName = (el: SlideElement, base: OdfGradient): string | undefined => {
+    const o = opacityGradient(el, base);
+    if (!o) return undefined;
+    const op = (c: string) => Math.round((parseInt(c.slice(1, 3), 16) / 255) * 100) / 100;
+    const body = `draw:style="${o.style}" draw:start="${Math.round(op(o.start) * 100)}%" draw:end="${Math.round(op(o.end) * 100)}%" draw:angle="${o.angle}deg" draw:border="0%"${o.style === 'radial' ? ' draw:cx="50%" draw:cy="50%"' : ''}>${(o.stops ?? []).map((x) => `<loext:opacity-stop svg:offset="${Math.round(x.pos * 100) / 10000}" svg:stop-opacity="${op(x.color)}"/>`).join('')}</draw:opacity>`;
+    let name = opacities.get(body);
+    if (!name) { name = `Transparency${opacities.size + 1}`; opacities.set(body, name); }
     return name;
   };
   /** draw:fill attributes of a solid, gradient or empty fill. */
   const fillAttrs = (el: SlideElement): string => {
     const gr = lcToGradient(el);
-    if (gr) return `draw:fill="gradient" draw:fill-gradient-name="${gradientName(gr)}"`;
+    if (gr) {
+      const on = opacityName(el, gr);
+      return `draw:fill="gradient" draw:fill-gradient-name="${gradientName(gr)}"${on ? ` draw:opacity-name="${on}"` : ''}`;
+    }
     const fill = hexColor(el.fill);
-    return `draw:fill="${fill ? 'solid' : 'none'}"${fill ? ` draw:fill-color="${fill}"` : ''}`;
+    const t = el.fillTransparency;
+    return `draw:fill="${fill ? 'solid' : 'none'}"${fill ? ` draw:fill-color="${fill}"` : ''}${fill && t && t > 0 && t < 1 ? ` draw:opacity="${Math.round((1 - t) * 100)}%"` : ''}`;
   };
+  const markers = new Map<string, string>();
+  const dashes = new Map<string, string>();
+  /** Outline attributes: colour, width, dash, arrowheads, cap and join. */
+  const strokeAttrs = (el: SlideElement, line: boolean): string => {
+    const stroke = hexColor(el.stroke);
+    if (!stroke) return 'draw:stroke="none"';
+    const wCm = Math.round(((el.strokeWidth ?? 4) / PX_PER_PT / 72 * 2.54) * 1000) / 1000;
+    const dash = el.dash && el.dash !== 'solid' ? DASHES[el.dash] : undefined;
+    let dashName = '';
+    if (dash) {
+      dashName = `Dash_${el.dash}`;
+      if (!dashes.has(dashName)) dashes.set(dashName, `<draw:stroke-dash draw:name="${dashName}" draw:style="rect" draw:dots1="1" draw:dots1-length="${dash[0]}%"${dash[1] ? ` draw:dots2="${dash[3] ?? 1}" draw:dots2-length="${dash[1]}%"` : ''} draw:distance="${dash[2]}%"/>`);
+    }
+    const arrow = (kind: ArrowKind | undefined, side: 'start' | 'end') => {
+      const k = kind ?? 'triangle';
+      const name = `Arrow_${k}`;
+      if (!markers.has(name)) markers.set(name, `<draw:marker draw:name="${name}" svg:viewBox="${MARKERS[k][0]}" svg:d="${MARKERS[k][1]}"/>`);
+      const size = Math.max(0.25, wCm * (el.arrowSize === 'lg' ? 5 : el.arrowSize === 'sm' ? 2 : 3.5));
+      return ` draw:marker-${side}="${name}" draw:marker-${side}-width="${Math.round(size * 1000) / 1000}cm" draw:marker-${side}-center="${k === 'oval' || k === 'diamond' ? 'true' : 'false'}"`;
+    };
+    return `draw:stroke="${dash ? 'dash' : 'solid'}"${dash ? ` draw:stroke-dash="${dashName}"` : ''} svg:stroke-color="${stroke}" svg:stroke-width="${wCm}cm"`
+      + (el.cap ? ` svg:stroke-linecap="${el.cap === 'flat' ? 'butt' : el.cap}"` : '')
+      + (el.join ? ` draw:stroke-linejoin="${el.join === 'miter' ? 'miter' : el.join === 'bevel' ? 'bevel' : 'round'}"` : '')
+      + (line && el.arrowStart ? arrow(el.arrowStartKind, 'start') : '') + (line && el.arrowEnd ? arrow(el.arrowEndKind, 'end') : '');
+  };
+  /** Drop shadow attributes (an outer shadow: offset by distance and angle, blurred, with its transparency). */
+  const shadowAttrs = (el: SlideElement): string => {
+    if (!el.dropShadow) return '';
+    const o = el.shadowOpts ?? {};
+    const dist = (o.dist ?? 8) * K, th = ((o.dir ?? 45) * Math.PI) / 180;
+    const r = (n: number) => Math.round(n * 1000) / 1000;
+    return ` draw:shadow="visible" draw:shadow-offset-x="${r(Math.cos(th) * dist)}cm" draw:shadow-offset-y="${r(Math.sin(th) * dist)}cm" draw:shadow-color="${hexColor(o.color) ?? '#000000'}" draw:shadow-opacity="${Math.round((1 - (o.transparency ?? 0.6)) * 100)}%" loext:shadow-blur="${r((o.blur ?? 8) * K)}cm"`;
+  };
+  /** How the text sits in its object: no automatic growth (the editor already sized it), shrink on overflow when asked. */
+  const fitAttrs = (el: SlideElement): string => `draw:auto-grow-height="${el.autoFit === 'resize' ? 'true' : 'false'}" draw:auto-grow-width="false" fo:wrap-option="wrap"${el.autoFit === 'shrink' ? ' style:shrink-to-fit="true"' : ''}`;
   const imageXml = (path: string, b: Box, name: string, style: string, rot?: number) => `<draw:frame draw:style-name="${style}" draw:name="${escapeXml(name)}" ${place(b, rot)}><draw:image xlink:href="${path}" xlink:type="simple" xlink:show="embed" xlink:actuate="onLoad"/></draw:frame>`;
   const plainOf = (s: Styles) => s.name('graphic', 'gr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>');
   const plainFrame = plainOf(st);
   let shapeNo = 0;
+  let xmlIdNo = 0;
+  const xmlIds = new Map<string, string>();
+  /** A glued connector names its objects by placeholder while the page is written; here the ids they got. */
+  const fixGlue = (xml: string) => xml.replace(/ draw:(start|end)-shape="@@G:([^@]*)@@" draw:\1-glue-point="(\d+)"/g, (_m, side: string, id: string, gp: string) => (xmlIds.has(id) ? ` draw:${side}-shape="${xmlIds.get(id)}" draw:${side}-glue-point="${gp}"` : ''));
+  let presets: PresetTable | undefined;
+  const presetTable = async () => (presets ??= (await import('./odpPresets')).ODP_PRESETS);
 
   /** The ODF of a list of objects: one string per object, or per run of grouped objects. Their styles go into `st`. */
   const renderElements = async (elements: SlideElement[], st: Styles): Promise<string[]> => {
@@ -646,20 +1116,46 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
         const rows = t.rows.map((row, r) => `<table:table-row table:style-name="${rowStyle(t.heights[r] ?? 60)}">${row.map((cell) => {
           if (cell.hMerge || cell.vMerge) return '<table:covered-table-cell/>';
           const fill = hexColor(cell.fill);
-          const cs = st.name('table-cell', 'ce', `<style:table-cell-properties ${fill ? `fo:background-color="${fill}" ` : ''}fo:border="0.05pt solid #999999"/>`);
+          const side = (b: CellBorder | null | undefined) => {
+            if (b === null) return 'none';
+            if (!b) return '0.05pt solid #999999';
+            const c = hexColor(b.color) ?? '#999999';
+            return `${Math.round((b.width / PX_PER_PT) * 100) / 100}pt ${b.dash === 'dash' || b.dash === 'longDash' ? 'dashed' : b.dash === 'dot' || b.dash === 'dashDot' ? 'dotted' : 'solid'} ${c}`;
+          };
+          const bd = cell.borders;
+          const border = bd ? `fo:border-left="${side(bd.l)}" fo:border-right="${side(bd.r)}" fo:border-top="${side(bd.t)}" fo:border-bottom="${side(bd.b)}"` : 'fo:border="0.05pt solid #999999"';
+          const cs = st.name('table-cell', 'ce', `<style:table-cell-properties fo:background-color="${fill ?? 'transparent'}" ${border}/>`);
           const lines = (cell.text || '').split('\n').map((text) => ({ align: cell.align as HAlign | undefined, runs: [{ text, bold: cell.bold, color: cell.color, fontSize: el.fontSize }] as TextRun[] }));
           const span = `${cell.span && cell.span > 1 ? ` table:number-columns-spanned="${cell.span}"` : ''}${cell.rowSpan && cell.rowSpan > 1 ? ` table:number-rows-spanned="${cell.rowSpan}"` : ''}`;
           return `<table:table-cell table:style-name="${cs}"${span} office:value-type="string">${paragraphsXml(st, lines)}</table:table-cell>`;
         }).join('')}</table:table-row>`).join('');
         parts.push(`<draw:frame draw:style-name="${plainFrame}" draw:name="${escapeXml(name)}" ${geo(b)}><table:table table:name="${escapeXml(name)}">${t.cols.map((w) => `<table:table-column table:style-name="${colStyle(w)}"/>`).join('')}${rows}</table:table></draw:frame>`);
       } else if (el.kind === 'shape') {
-        const stroke = hexColor(el.stroke);
-        const sw = el.stroke ? ` svg:stroke-width="${Math.round(((el.strokeWidth ?? 4) / PX_PER_PT / 72 * 2.54) * 1000) / 1000}cm"` : '';
-        const g = `<style:graphic-properties ${fillAttrs(el)} draw:stroke="${stroke ? 'solid' : 'none'}"${stroke ? ` svg:stroke-color="${stroke}"${sw}` : ''}${el.vAlign ? ` draw:textarea-vertical-align="${el.vAlign}"` : ''}/>`;
-        const style = st.name('graphic', 'gr', g);
         const shape = el.shape ?? (el.ellipse ? 'ellipse' : el.radius ? 'roundRect' : 'rect');
+        const g = `<style:graphic-properties ${fillAttrs(el)} ${strokeAttrs(el, shape === 'line' || /^(straightConnector\d|bentConnector\d|curvedConnector\d)$/.test(shape))}${shadowAttrs(el)} ${fitAttrs(el)}${el.vAlign ? ` draw:textarea-vertical-align="${el.vAlign}"` : ''}/>`;
+        const style = st.name('graphic', 'gr', g);
         const body = el.text ? paragraphsXml(st, elementLines(el)) : '';
-        if (shape === 'line') {
+        if (/^(straightConnector\d|bentConnector\d|curvedConnector\d)$/.test(shape)) {
+          // A connector: its end points (the box's corners, turned about its centre), its type and the objects it is glued to.
+          const th = ((el.rotation ?? 0) * Math.PI) / 180, cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+          const turn = (x: number, y: number): [number, number] => [cx + (x - cx) * Math.cos(th) - (y - cy) * Math.sin(th), cy + (x - cx) * Math.sin(th) + (y - cy) * Math.cos(th)];
+          const [x1, y1] = turn(el.flipH ? b.x + b.w : b.x, el.flipV ? b.y + b.h : b.y);
+          const [x2, y2] = turn(el.flipH ? b.x : b.x + b.w, el.flipV ? b.y : b.y + b.h);
+          const u = (n: number) => Math.round(n * K * 1000); // 1/100 mm
+          const dx = u(x2) - u(x1), dy = u(y2) - u(y1);
+          const vertical = Math.round(Math.abs(el.rotation ?? 0) % 180) === 90;
+          const type = shape.startsWith('straight') ? 'line' : shape.startsWith('curved') ? 'curve' : 'standard';
+          const d = type === 'line' ? `l${dx} ${dy}` : type === 'standard' ? (vertical ? `v${Math.round(dy / 2)}h${dx}v${dy - Math.round(dy / 2)}` : `h${Math.round(dx / 2)}v${dy}h${dx - Math.round(dx / 2)}`) : vertical ? `c0 ${Math.round(dy / 2)} ${dx} ${Math.round(dy / 2)} ${dx} ${dy}` : `c${Math.round(dx / 2)} 0 ${Math.round(dx / 2)} ${dy} ${dx} ${dy}`;
+          const tbl = await presetTable();
+          const glue = (side: 'start' | 'end', c?: { id: string; site: number }) => {
+            const target = c && elements.find((e) => e.id === c.id);
+            if (!c || !target) return '';
+            const custom = !!(target.kind === 'shape' && target.shape && tbl[target.shape]?.a['draw:glue-points']);
+            const id = custom ? 4 + c.site : siteToGlue(c.site);
+            return id >= 0 ? ` draw:${side}-shape="@@G:${c.id}@@" draw:${side}-glue-point="${id}"` : '';
+          };
+          parts.push(`<draw:connector draw:style-name="${style}" draw:name="${escapeXml(name)}"${type === 'standard' ? '' : ` draw:type="${type}"`} svg:x1="${fmtCm(x1, K)}" svg:y1="${fmtCm(y1, K)}" svg:x2="${fmtCm(x2, K)}" svg:y2="${fmtCm(y2, K)}"${glue('start', el.connect?.from)}${glue('end', el.connect?.to)} svg:d="M${u(x1)} ${u(y1)}${d}" svg:viewBox="0 0 ${Math.abs(dx) + 1} ${Math.abs(dy) + 1}">${body}</draw:connector>`);
+        } else if (shape === 'line') {
           let [x1, x2] = el.flipH ? [b.x + b.w, b.x] : [b.x, b.x + b.w];
           let [y1, y2] = el.flipV ? [b.y + b.h, b.y] : [b.y, b.y + b.h];
           if (el.rotation) {
@@ -671,14 +1167,19 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
           }
           parts.push(`<draw:line draw:style-name="${style}" draw:name="${escapeXml(name)}" svg:x1="${fmtCm(x1, K)}" svg:y1="${fmtCm(y1, K)}" svg:x2="${fmtCm(x2, K)}" svg:y2="${fmtCm(y2, K)}">${body}</draw:line>`);
         } else {
-          const type = Object.entries(SHAPES).find(([, v]) => v === shape)?.[0] ?? 'rectangle';
-          parts.push(`<draw:custom-shape draw:style-name="${style}" draw:name="${escapeXml(name)}" ${place(b, el.rotation)}>${body}<draw:enhanced-geometry svg:viewBox="0 0 21600 21600" draw:type="${type}"/></draw:custom-shape>`);
+          parts.push(`<draw:custom-shape draw:style-name="${style}" draw:name="${escapeXml(name)}" ${place(b, el.rotation)}>${body}${geometryXml(await presetTable(), shape, el.adj)}</draw:custom-shape>`);
         }
       } else if (el.kind === 'text' && el.text) {
-        const style = st.name('graphic', 'gr', `<style:graphic-properties draw:stroke="none" ${fillAttrs(el)} draw:textarea-vertical-align="${el.vAlign ?? 'top'}"/>`);
+        const style = st.name('graphic', 'gr', `<style:graphic-properties ${strokeAttrs(el, false)} ${fillAttrs(el)}${shadowAttrs(el)} ${fitAttrs(el)} draw:textarea-vertical-align="${el.vAlign ?? 'top'}"/>`);
         parts.push(`<draw:frame draw:style-name="${style}" draw:name="${escapeXml(name)}" ${place(b, el.rotation)}><draw:text-box>${paragraphsXml(st, elementLines(el))}</draw:text-box></draw:frame>`);
       }
-      if (parts.length) rendered.push({ el, xml: parts.join('') });
+      if (parts.length) {
+        // Animations name their object by id.
+        const id = `id${++xmlIdNo}`;
+        xmlIds.set(el.id, id);
+        parts[0] = parts[0].replace(/^<(draw:[\w-]+) /, `<$1 xml:id="${id}" draw:id="${id}" `);
+        rendered.push({ el, xml: parts.join('') });
+      }
     }
     // Objects that were grouped stay grouped: a run of neighbours with the same group id becomes one draw:g.
     for (let k = 0; k < rendered.length; ) {
@@ -712,12 +1213,28 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
       const path = await pic(mbg.mediaId);
       if (path) masterBody += imageXml(path, { x: 0, y: 0, w: CANVAS_W, h: CANVAS_H }, 'Background', plainOf(mst));
     }
-    masterBody += (await renderElements(masterObjects, mst)).join('');
+    masterBody += fixGlue((await renderElements(masterObjects, mst)).join(''));
     const fill = backgroundFill(mbg);
     masterFilled = fill !== 'draw:fill="none"';
     if (masterFilled) masterStyle = ` draw:style-name="${mst.name('drawing-page', 'dp', `<style:drawing-page-properties ${fill}/>`)}"`;
   }
+  // Each layout of the master is a master page of its own: the master's objects, the layout's own objects and its placeholders.
+  const PLACEHOLDER_CLASS: Record<string, string> = { title: 'title', body: 'outline', text: 'subtitle', content: 'outline', footer: 'footer', date: 'date-time', slideNumber: 'page-number' };
+  const layoutPages: { id: string; name: string; xml: string }[] = [];
+  const holderStyle = mst.name('presentation', 'pr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>');
+  for (const [li, lay] of (p.master?.layouts ?? []).entries()) {
+    const own = lay.elements.filter((e) => !e.placeholder && !e.hidden);
+    const holders = lay.elements.filter((e) => e.placeholder && !e.hidden && PLACEHOLDER_CLASS[e.placeholder]).map((e) => {
+      const cls = PLACEHOLDER_CLASS[e.placeholder!];
+      const prompt = cls === 'page-number' ? '<text:p><text:page-number>&lt;number&gt;</text:page-number></text:p>' : `<text:p>${odfText(e.text || e.name || cls)}</text:p>`;
+      return `<draw:frame presentation:style-name="${holderStyle}" presentation:class="${cls}" presentation:placeholder="true" draw:layer="layout" ${geo({ x: e.x, y: e.y, w: Math.max(1, e.w), h: Math.max(1, e.h) })}><draw:text-box>${prompt}</draw:text-box></draw:frame>`;
+    }).join('');
+    layoutPages.push({ id: lay.id, name: lay.name, xml: fixGlue(`<style:master-page style:name="Layout${li + 1}" style:display-name="${escapeXml(lay.name)}" style:page-layout-name="PM1"${masterStyle}>${masterBody}${(await renderElements(own, mst)).join('')}${holders}</style:master-page>`) });
+  }
 
+  // A preset motion path (Lines, Arcs…) is traced by the engine (when it is loaded) and written as the points it passes.
+  let tracePath: ((a: SlideAnimation, el: SlideElement) => [number, number][]) | undefined;
+  try { const mp = await import('../motionPath'); tracePath = mp.presetMotionPoints; } catch { /* no engine: such paths are left out */ }
   const pages: string[] = [];
   for (const [i, slide] of p.slides.entries()) {
     const parts: string[] = [];
@@ -735,14 +1252,26 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     // A slide with no background of its own shows the master's (the fill property is left out so it is inherited).
     const bgFill = !bg && masterFilled ? '' : backgroundFill(bg);
     const dp = st.name('drawing-page', 'dp', `<style:drawing-page-properties ${bgFill}${slide.disabled ? ' presentation:visibility="hidden"' : ''}${slide.hideMaster ? ' presentation:background-objects-visible="false"' : ''}${transitionAttrs(slide.transition, slide.autoAdvance)}/>`);
+    const pathOf = (a: SlideAnimation): string | undefined => {
+      const el = all.find((e) => e.id === a.elementId);
+      if (!el || !tracePath) return undefined;
+      try {
+        const pts = tracePath(a, el);
+        if (pts.length < 2) return undefined;
+        const cx = el.x + el.w / 2, cy = el.y + el.h / 2;
+        const f = (n: number) => Math.round(n * 10000) / 10000;
+        return `M 0 0 ${pts.slice(1).map(([x, y]) => `L ${f((x - cx) / CANVAS_W)} ${f((y - cy) / CANVAS_H)}`).join(' ')}`;
+      } catch { return undefined; }
+    };
+    const anims = animationsXml(slide.animations, xmlIds, pathOf);
     const notes = slide.notes
-      ? `<presentation:notes><draw:frame presentation:class="notes" draw:style-name="${plainFrame}" ${geo({ x: 90, y: 700, w: 1260, h: 300 })}><draw:text-box>${slide.notes.split('\n').map((l) => `<text:p>${odfText(l)}</text:p>`).join('')}</draw:text-box></draw:frame></presentation:notes>`
+      ? `<presentation:notes><draw:page-thumbnail draw:layer="layout" svg:width="12.7cm" svg:height="9.525cm" svg:x="3.175cm" svg:y="1.905cm" draw:page-number="${i + 1}" presentation:class="page"/><draw:frame presentation:style-name="${st.name('presentation', 'pr', '<style:graphic-properties draw:stroke="none" draw:fill="none"/>')}" presentation:class="notes" draw:layer="layout" svg:width="16.8cm" svg:height="11.2cm" svg:x="2.1cm" svg:y="14.8cm"><draw:text-box>${slide.notes.split('\n').map((l) => `<text:p>${odfText(l)}</text:p>`).join('')}</draw:text-box></draw:frame></presentation:notes>`
       : '';
-    pages.push(`<draw:page draw:name="page${i + 1}" draw:style-name="${dp}" draw:master-page-name="Default">${parts.join('')}${notes}</draw:page>`);
+    pages.push(`<draw:page draw:name="page${i + 1}" draw:style-name="${dp}" draw:master-page-name="${(() => { const k = layoutPages.findIndex((l) => l.id === slide.layoutId); return k >= 0 ? `Layout${k + 1}` : 'Default'; })()}">${fixGlue(parts.join(''))}${anims}${notes}</draw:page>`);
   }
 
   const content = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-content ${NS} office:version="1.3"><office:automatic-styles>${st}</office:automatic-styles><office:body><office:presentation>${pages.join('')}</office:presentation></office:body></office:document-content>`;
-  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}</office:styles><office:automatic-styles>${mst}<style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="28cm" fo:page-height="21cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"${masterStyle}>${masterBody}</style:master-page></office:master-styles></office:document-styles>`;
+  const styles = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-styles ${NS} office:version="1.3"><office:styles><style:default-style style:family="graphic"><style:text-properties fo:font-size="18pt"/></style:default-style>${gradients.join('')}${[...opacities].map(([body, name]) => `<draw:opacity draw:name="${name}" ${body}`).join('')}${[...dashes.values()].join('')}${[...markers.values()].join('')}</office:styles><office:automatic-styles>${mst}<style:page-layout style:name="PM1"><style:page-layout-properties fo:page-width="${pageW}cm" fo:page-height="${pageH}cm" fo:margin-top="0cm" fo:margin-bottom="0cm" fo:margin-left="0cm" fo:margin-right="0cm" style:print-orientation="landscape"/></style:page-layout></office:automatic-styles><office:master-styles><style:master-page style:name="Default" style:page-layout-name="PM1"${masterStyle}>${masterBody}</style:master-page>${layoutPages.map((l) => l.xml).join('')}</office:master-styles></office:document-styles>`;
   const pr = p.properties ?? {};
   const meta = `<?xml version="1.0" encoding="UTF-8"?>\n<office:document-meta ${NS} office:version="1.3"><office:meta><dc:title>${escapeXml(pr.title ?? p.title)}</dc:title>${pr.subject ? `<dc:subject>${escapeXml(pr.subject)}</dc:subject>` : ''}${pr.author ? `<meta:initial-creator>${escapeXml(pr.author)}</meta:initial-creator><dc:creator>${escapeXml(pr.author)}</dc:creator>` : ''}${pr.comments ? `<dc:description>${escapeXml(pr.comments)}</dc:description>` : ''}<meta:generator>LightCast</meta:generator></office:meta></office:document-meta>`;
   const entries = [

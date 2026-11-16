@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=ef9ac9ac7a1f610656144981b53688efdb9ef518
+DECKCRAFT_SYNCED=69379cf689f908d23cab9313d59fb9e1fd4b7a4f
 ```
 
-(`Merge pull request #2062 from cloutier/fix/2060-large-adjustment-guides`.)
+(`Naming: use Diagram and Decorative Text for own features (#1981)`.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -55,6 +55,10 @@ DECKCRAFT_SYNCED=ef9ac9ac7a1f610656144981b53688efdb9ef518
     slide-list limits and unresolved relationships), automation roots, About window, CI.
   - WMF / EMF / EMF+ reading (`craft-metafile`, a new external crate replacing `crates/metafile`) was ported later, in
     TypeScript: see "Windows metafiles" below. No Rust changed, so the wasm was not rebuilt.
+- `ef9ac9a..69379cf` (2 commits, 2026-11-14): nothing to port. `7a24b20c` only documents DeckCraft's PPTX
+  slide-list import limit; `69379cf6` renames DeckCraft's own feature labels in English ("Diagram", "Decorative
+  Text"), while LightCast uses PowerPoint's Korean names (SmartArt, WordArt). The Rust renames are display strings
+  only; the wasm was not rebuilt.
 
 ## Windows metafiles (WMF, EMF, EMF+): handled in TypeScript, not by the engine
 
@@ -69,9 +73,9 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
   `.wmf` / `.emf` files (`ui/importFiles.ts`, `ui/ppt/pasteObjects.ts`), and `putMedia` (`domain/media.ts`), which
   draws any metafile it is handed into an ordinary image before it is stored.
 - When `craft-metafile` changes (check `git log -- Cargo.toml Cargo.lock` and commits mentioning "metafile"): port the
-  change into `src/domain/metafile/` and add a test to `tests/metafile.test.ts`. Not drawn yet (DeckCraft's reader does
-  draw some of these): pen end caps and joins on cosmetic pens, region combinations other than AND/COPY, clipping to
-  anything but rectangles and paths, texture and path-gradient brushes (a path gradient is its centre colour),
-  glyph-index text, raster operations that read the destination, EMF+ relative paths and container mappings.
+  change into `src/domain/metafile/` and add a test to `tests/metafile.test.ts` or `tests/metafileReal.test.ts` (real files
+  in `tests/fixtures/real/metafile/`, see its README). Not drawn (see the header of `src/domain/metafile/index.ts`):
+  flood fills (the reader draws vectors, there is no pixel surface), EMF+ image effects and colour matrices,
+  path gradients beyond their centre colour, glyph-index text (pale boxes instead of letters).
 - DeckCraft plays the GDI records of an EMF+ "dual" file; LightCast prefers the EMF+ records and uses the GDI
   fallback only when EMF+ draws nothing, or between an EMF+ `GetDC` and the next EMF+ record.

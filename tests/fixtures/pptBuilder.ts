@@ -217,7 +217,7 @@ export function buildPpt(o: FixtureOptions): Uint8Array {
     const mi = masters.length ? s.master ?? 0 : -1;
     const tr = s.transition;
     const info = s.hidden || tr
-      ? [rec(1, 0, 0x03f9, [...u32(tr?.timeMs ?? 0), ...u32(0), 0, tr?.effect ?? 0, ...u16(((tr?.onClick ?? true) ? 1 : 0) | (s.hidden ? 4 : 0)), tr?.speed ?? 1, 0, 0, 0])]
+      ? [rec(1, 0, 0x03f9, [...u32(tr?.timeMs ?? 0), ...u32(0), 0, tr?.effect ?? 0, ...u16(((tr?.onClick ?? true) ? 1 : 0) | (s.hidden ? 4 : 0) | ((tr?.timeMs ?? 0) > 0 ? 0x400 : 0)), tr?.speed ?? 1, 0, 0, 0])]
       : [];
     return container(0x03ee, 0,
       rec(2, 0, 0x03ef, [...u32(0), ...new Array(8).fill(0), ...u32(mi >= 0 ? masterId(mi) : 0x80000000), ...u32(notesId), ...u16(s.flags ?? 0x7), ...u16(0)]),

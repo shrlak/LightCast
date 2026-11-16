@@ -165,7 +165,49 @@ export function parseStopsCss(css: string): { type: 'linear' | 'radial'; angle: 
 }
 
 // ── Transitions & timing ────────────────────────────────────────────────────────────────────────
-const SPEED_MS = { fast: 500, medium: 1000, slow: 1500 } as const;
+// LibreOffice's own lengths for its three speeds (PowerPoint fast / medium / slow become 0.5 / 0.75 / 1 s there).
+const SPEED_MS = { fast: 500, medium: 750, slow: 1000 } as const;
+
+// The engine's options are PowerPoint's: the letters are the way things move (l r u d, and lu ru ld rd).
+const FROM_EDGE: Record<string, string> = { u: 'fromBottom', d: 'fromTop', l: 'fromRight', r: 'fromLeft', ld: 'fromTopRight', lu: 'fromBottomRight', ru: 'fromBottomLeft', rd: 'fromTopLeft' };
+const EDGE_FROM = Object.fromEntries(Object.entries(FROM_EDGE).map(([k, v]) => [v, k]));
+/** An uncover moves with its own side: LibreOffice writes it as the cover from that side, reversed. */
+const SAME_EDGE: Record<string, string> = { u: 'fromTop', d: 'fromBottom', l: 'fromLeft', r: 'fromRight', lu: 'fromTopLeft', ru: 'fromTopRight', ld: 'fromBottomLeft', rd: 'fromBottomRight' };
+const EDGE_SAME = Object.fromEntries(Object.entries(SAME_EDGE).map(([k, v]) => [v, k]));
+
+/** An engine transition's option as LibreOffice's smil subtype / direction (undefined parts keep the kind's default). */
+export function optionToSmil(kind: string, option: string | undefined): { subtype?: string; reverse?: boolean } {
+  const o = option ?? '';
+  switch (kind) {
+    case 'fx:push': return FROM_EDGE[o] && o.length === 1 ? { subtype: FROM_EDGE[o] } : {};
+    case 'fx:cover': return FROM_EDGE[o] ? { subtype: FROM_EDGE[o] } : {};
+    case 'fx:uncover': return SAME_EDGE[o] ? { subtype: SAME_EDGE[o], reverse: true } : { reverse: true };
+    case 'fx:wipe': return o === 'l' ? { subtype: 'leftToRight', reverse: true } : o === 'd' ? { subtype: 'topToBottom' } : o === 'u' ? { subtype: 'topToBottom', reverse: true } : {};
+    case 'fx:split': return { subtype: o.startsWith('horz') ? 'horizontal' : 'vertical', ...(o.endsWith('In') ? { reverse: true } : {}) };
+    case 'fx:blinds': return { subtype: o === 'horz' ? 'horizontal' : 'vertical' };
+    case 'fx:checker': return { subtype: o === 'vert' ? 'down' : 'across' };
+    case 'fx:randomBar': return { subtype: o === 'vert' ? 'vertical' : 'horizontal' };
+    case 'fx:clock': return o === 'counterClockwise' ? { subtype: 'counterClockwiseTwelve' } : {};
+    default: return {};
+  }
+}
+
+/** LibreOffice's smil type / subtype / direction as the engine transition's option (undefined: the default). */
+export function smilToOption(type: string | undefined, subtype: string | undefined, direction: string | undefined): string | undefined {
+  const rev = direction === 'reverse';
+  switch (type) {
+    case 'pushWipe': return subtype && EDGE_FROM[subtype] && EDGE_FROM[subtype].length === 1 ? EDGE_FROM[subtype] : undefined;
+    case 'slideWipe': return subtype ? (rev ? EDGE_SAME[subtype] : EDGE_FROM[subtype]) : undefined;
+    case 'barWipe': return subtype === 'leftToRight' ? (rev ? 'l' : 'r') : subtype === 'topToBottom' ? (rev ? 'u' : 'd') : undefined;
+    case 'barnDoorWipe': return `${subtype === 'horizontal' ? 'horz' : 'vert'}${rev ? 'In' : 'Out'}`;
+    case 'blindsWipe': return subtype === 'horizontal' ? 'horz' : 'vert';
+    case 'checkerBoardWipe': return subtype === 'down' ? 'vert' : 'horz';
+    case 'randomBarWipe': return subtype === 'vertical' ? 'vert' : 'horz';
+    case 'clockWipe': return subtype?.startsWith('counter') ? 'counterClockwise' : undefined;
+    case 'fade': return subtype === 'fadeOverColor' ? 'throughBlack' : undefined;
+    default: return undefined;
+  }
+}
 
 /** "PT00H00M05S" / "PT5S" → seconds (undefined when it is not a duration). */
 export function parseDuration(v: string | undefined): number | undefined {
@@ -192,7 +234,7 @@ const STYLE_TO_KIND: [RegExp, string][] = [
 /** kind → [ODF transition-style, smil:type, smil:subtype]. */
 const KIND_TO_ODF: Record<string, [string, string?, string?]> = {
   fade: ['fade-through-black', 'fade', 'crossfade'], 'fx:wipe': ['fade-from-left', 'barWipe', 'leftToRight'], 'fx:cover': ['move-from-left', 'slideWipe', 'fromLeft'],
-  'fx:push': ['roll-from-left', 'pushWipe', 'fromLeft'], 'fx:uncover': ['uncover-to-left'], 'fx:split': ['open-vertical', 'barnDoorWipe', 'vertical'],
+  'fx:push': ['roll-from-left', 'pushWipe', 'fromLeft'], 'fx:uncover': ['uncover-to-left', 'slideWipe', 'fromLeft'], 'fx:split': ['open-vertical', 'barnDoorWipe', 'vertical'],
   'fx:blinds': ['vertical-stripes', 'blindsWipe', 'vertical'], 'fx:checker': ['horizontal-checkerboard', 'checkerBoardWipe', 'across'],
   'fx:clock': ['clockwise', 'clockWipe', 'clockwiseTwelve'], 'fx:dissolve': ['dissolve', 'dissolve'], 'fx:random': ['random'],
   'fx:randomBar': ['horizontal-lines', 'randomBarWipe', 'horizontal'], 'fx:shape': ['fade-from-center', 'irisWipe', 'rectangle'], 'fx:vortex': ['spiral-in-left', 'spiralWipe', 'topLeftClockwise'],
@@ -205,15 +247,20 @@ export function readTransition(p: Record<string, string>): PageTiming {
   const smil = p['smil:type'];
   const style = p['presentation:transition-style'];
   let kind = smil && SMIL_TO_KIND[smil] ? SMIL_TO_KIND[smil] : undefined;
+  if (smil === 'slideWipe' && p['smil:direction'] === 'reverse') kind = 'fx:uncover';
   if (!kind && style) kind = STYLE_TO_KIND.find(([re]) => re.test(style))?.[1] ?? 'fade';
   const speed = p['presentation:transition-speed'] as keyof typeof SPEED_MS | undefined;
-  const dur = lengthDuration(p['smil:dur']) ?? (speed && SPEED_MS[speed]) ?? 1000;
+  const dur = Number(p['lc:transition-ms']) || lengthDuration(p['smil:dur']) || (speed && SPEED_MS[speed]) || 1000;
   const out: PageTiming = {};
-  if (kind && kind !== 'cut') out.transition = { kind: kind as Transition['kind'], duration: dur };
+  if (kind && kind !== 'cut') {
+    out.transition = { kind: kind as Transition['kind'], duration: dur };
+    const opt = smilToOption(smil, p['smil:subtype'], p['smil:direction']);
+    if (opt) out.transition.option = opt;
+  }
   const seconds = parseDuration(p['presentation:duration']);
   if (seconds && (type === 'automatic' || type === 'semi-automatic')) {
     out.autoAdvance = seconds;
-    if (type === 'automatic') out.transition = { ...(out.transition ?? { kind: 'cut', duration: 1 }), advanceOnClick: false };
+    if (type === 'automatic' && p['lc:advance-on-click'] !== 'true') out.transition = { ...(out.transition ?? { kind: 'cut', duration: 1 }), advanceOnClick: false };
   }
   return out;
 }
@@ -231,11 +278,65 @@ export function transitionAttrs(t: Transition | undefined, autoAdvance: number |
   if (odf) {
     a.push(`presentation:transition-style="${odf[0]}"`);
     if (odf[1]) a.push(`smil:type="${odf[1]}"`);
-    if (odf[2]) a.push(`smil:subtype="${odf[2]}"`);
-    a.push(`presentation:transition-speed="${t!.duration <= 600 ? 'fast' : t!.duration <= 1200 ? 'medium' : 'slow'}"`);
+    const dir = optionToSmil(t!.kind, t!.option);
+    const sub = t!.kind === 'fade' && t!.option === 'throughBlack' ? 'fadeOverColor' : dir.subtype ?? odf[2];
+    if (sub) a.push(`smil:subtype="${sub}"`);
+    if (dir.reverse) a.push('smil:direction="reverse"');
+    a.push(`presentation:transition-speed="${t!.duration <= 625 ? 'fast' : t!.duration <= 875 ? 'medium' : 'slow'}"`, `lc:transition-ms="${Math.round(t!.duration)}"`);
   }
   if (autoAdvance && autoAdvance > 0) {
-    a.push(`presentation:transition-type="${t?.advanceOnClick === false ? 'automatic' : 'semi-automatic'}"`, `presentation:duration="${formatDuration(autoAdvance)}"`);
+    a.push('presentation:transition-type="automatic"', ...(t?.advanceOnClick === false ? [] : ['lc:advance-on-click="true"']), `presentation:duration="${formatDuration(autoAdvance)}"`);
   } else a.push('presentation:transition-type="manual"');
   return a.length ? ` ${a.join(' ')}` : '';
+}
+
+// ── Gradient transparency ───────────────────────────────────────────────────────────────────────
+const lcStops = (g: LcGradient): GradientStop[] => g.gradientStops && g.gradientStops.length >= 2 ? g.gradientStops : [{ pos: 0, color: g.gradient[0] }, { pos: 100, color: g.gradient[1] }];
+const stopOpacity = (list: GradientStop[], pos: number): number => {
+  const v = (c: string) => parseInt(c.slice(1, 3), 16) / 255;
+  if (pos <= list[0].pos) return v(list[0].color);
+  for (let i = 1; i < list.length; i++) {
+    if (pos <= list[i].pos) {
+      const a = list[i - 1], b = list[i], t = b.pos === a.pos ? 1 : (pos - a.pos) / (b.pos - a.pos);
+      return v(a.color) + (v(b.color) - v(a.color)) * t;
+    }
+  }
+  return v(list[list.length - 1].color);
+};
+
+/**
+ * A gradient with the per-stop transparency of an ODF opacity gradient (`opacity` is {@link gradientToLc} of a
+ * draw:opacity whose colours are greys of the opacity). Stops are placed at the union of both gradients' stops.
+ */
+export function withOpacity(lc: LcGradient, opacity: LcGradient): LcGradient {
+  const colors = lcStops(lc), ops = lcStops(opacity).slice().sort((a, b) => a.pos - b.pos);
+  const colorAt = (pos: number): string => {
+    const list = colors.slice().sort((a, b) => a.pos - b.pos);
+    const ch = (c: string, k: number) => parseInt(c.slice(1 + 2 * k, 3 + 2 * k), 16);
+    let a = list[0], b = list[list.length - 1];
+    for (let i = 1; i < list.length; i++) if (pos <= list[i].pos) { a = list[i - 1]; b = list[i]; break; }
+    const t = pos <= a.pos || b.pos === a.pos ? 0 : pos >= b.pos ? 1 : (pos - a.pos) / (b.pos - a.pos);
+    return `#${[0, 1, 2].map((k) => Math.round(ch(a.color, k) + (ch(b.color, k) - ch(a.color, k)) * t).toString(16).padStart(2, '0')).join('')}`;
+  };
+  const positions = [...new Set([...colors.map((s) => s.pos), ...ops.map((s) => s.pos)])].sort((a, b) => a - b);
+  const stops = positions.map((pos) => {
+    const t = Math.round((1 - stopOpacity(ops, pos)) * 100) / 100;
+    return { pos, color: colors.find((s) => s.pos === pos)?.color ?? colorAt(pos), ...(t > 0 ? { transparency: t } : {}) };
+  });
+  if (!stops.some((s) => s.transparency)) return lc;
+  return { ...lc, gradient: [stops[0].color, stops[stops.length - 1].color], gradientStops: stops };
+}
+
+/** The per-stop transparency of a gradient as an ODF opacity gradient (null when no stop is transparent). */
+export function opacityGradient(el: { gradient?: [string, string]; gradientStops?: GradientStop[]; gradientAngle?: number; gradientType?: 'linear' | 'radial' }, base: OdfGradient): OdfGradient | null {
+  const stops = el.gradientStops;
+  if (!stops || !stops.some((s) => s.transparency)) return null;
+  const grey = (t: number | undefined) => `#${Math.round((1 - (t ?? 0)) * 255).toString(16).padStart(2, '0').repeat(3)}`;
+  const list = [...stops].sort((a, b) => a.pos - b.pos).map((s) => ({ pos: s.pos, color: grey(s.transparency) }));
+  const first = list[0].color, last = list[list.length - 1].color;
+  if (base.style === 'radial') {
+    const rs = list.map((s) => ({ ...s, pos: Math.round((100 - s.pos) * 10) / 10 })).reverse();
+    return { style: 'radial', start: last, end: first, angle: 0, stops: rs };
+  }
+  return { style: 'linear', start: first, end: last, angle: base.angle, stops: list };
 }

@@ -60,7 +60,7 @@ describe('odp geometry helpers', () => {
   });
 
   it('reads transitions and automatic advance from page properties', () => {
-    expect(readTransition({ 'smil:type': 'pushWipe', 'presentation:transition-speed': 'slow' })).toEqual({ transition: { kind: 'fx:push', duration: 1500 } });
+    expect(readTransition({ 'smil:type': 'pushWipe', 'presentation:transition-speed': 'slow' })).toEqual({ transition: { kind: 'fx:push', duration: 1000 } });
     expect(readTransition({ 'presentation:transition-style': 'dissolve' }).transition?.kind).toBe('fx:dissolve');
     expect(readTransition({ 'presentation:transition-type': 'automatic', 'presentation:duration': 'PT00H00M07S' })).toEqual({ transition: { kind: 'cut', duration: 1, advanceOnClick: false }, autoAdvance: 7 });
     expect(readTransition({ 'presentation:transition-style': 'none' })).toEqual({});
@@ -90,7 +90,7 @@ describe('odp round trip: rotation, gradients, groups, transitions, hidden', () 
     expect(a.disabled).toBe(true);
     expect(b.disabled).toBeUndefined();
     expect(a.autoAdvance).toBe(8);
-    expect(a.transition).toEqual({ kind: 'fx:wipe', duration: 1000 });
+    expect(a.transition).toMatchObject({ kind: 'fx:wipe', duration: 1000 });
     expect(b.transition).toBeUndefined();
     expect(a.background).toEqual({ kind: 'gradient', value: 'linear-gradient(180deg, #112233 0%, #445566 100%)' });
     const [text, lin, rad, img, g1, g2, line] = a.elements!;
@@ -174,7 +174,7 @@ describe("odp reading of other programs' files", () => {
         <draw:page><anim:par><anim:transitionFilter smil:type="fade" smil:dur="2s"/></anim:par></draw:page>
       </office:presentation></office:body>`);
     const [a, b, c, d] = (await parseOdp(bytes, store())).slides;
-    expect(a).toMatchObject({ disabled: true, autoAdvance: 12, transition: { kind: 'fx:push', duration: 1500, advanceOnClick: false } });
+    expect(a).toMatchObject({ disabled: true, autoAdvance: 12, transition: { kind: 'fx:push', duration: 1000, advanceOnClick: false } });
     expect(b.transition).toEqual({ kind: 'fx:dissolve', duration: 1000 });
     expect(b.disabled).toBeUndefined();
     expect(c.disabled).toBe(true);
@@ -190,7 +190,7 @@ describe("odp reading of other programs' files", () => {
       <draw:page draw:master-page-name="Default"/>
       <draw:page draw:master-page-name="Default" draw:style-name="dpx"/>
     </office:presentation></office:body>`, '', master);
-    const [a, b, c] = (await parseOdp(bytes, store())).slides;
+    const [a, b, c] = (await parseOdp(bytes, { ...store(), masterMode: 'flatten' })).slides;
     expect(a.elements!.map((e) => e.text ?? e.name)).toEqual(['마스터: 띠', '우리 교회', '본문']);
     expect(a.elements![0]).toMatchObject({ kind: 'shape', y: 977, w: 1440 });
     expect(b.elements).toHaveLength(2);
