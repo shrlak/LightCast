@@ -29,6 +29,8 @@ profile, so checks do not depend on each other.
 | editor | background removal | 그림 서식 › 배경 제거 › 영역 표시 dialog, mark, 변경 내용 유지 |
 | editor | ink to shape | rectangle stroke becomes a shape; with the switch off it stays ink |
 | editor | version history | save a version, edit, restore the slide |
+| selection | click a text box, then the empty slide | typing ends, that box stays selected with 8 handles and the rotation handle; arrow nudge and Ctrl+Z work on it; a second click deselects |
+| selection | Esc, then marquee | Esc leaves the box selected, Esc again deselects; a drag on the empty slide selects by marquee |
 | media | audio recording | fake mic: record, stop, preview, insert (audio object on the slide) |
 | media | screenshot dialog | fake display capture, crop by dragging, insert |
 | media | metafile .wmf / .emf | inserted as a picture that decodes |
