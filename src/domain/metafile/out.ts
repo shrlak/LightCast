@@ -272,12 +272,22 @@ export class Out {
     this.addDef(`<pattern id="${id}" width="${num(w)}" height="${num(h)}" patternUnits="userSpaceOnUse"${xf ? ` patternTransform="matrix(${xf.map(num).join(' ')})"` : ''}><image href="${href}" width="${num(w)}" height="${num(h)}" preserveAspectRatio="none"/></pattern>`);
     return id;
   }
-  linearGradient(x1: number, y1: number, x2: number, y2: number, stops: [number, Color][], xf: Xf, pad: boolean): string {
+  linearGradient(x1: number, y1: number, x2: number, y2: number, stops: [number, Color][], xf: Xf, pad: boolean | 'pad' | 'repeat' | 'reflect'): string {
+    const spread = pad === true ? 'pad' : pad === false ? 'repeat' : pad;
     const id = this.id('g');
     const inv = invertXf(xf);
-    if (this.recorder && inv) this.recorder.paints.set(id, { k: 'linear', x1, y1, x2, y2, stops: stops.map(([o, c]) => [o, rgbaOf(c)]), inv, pad });
+    if (this.recorder && inv) this.recorder.paints.set(id, { k: 'linear', x1, y1, x2, y2, stops: stops.map(([o, c]) => [o, rgbaOf(c)]), inv, pad: spread === 'pad' });
     const st = stops.map(([o, c]) => `<stop offset="${num(Math.max(0, Math.min(1, o)))}" stop-color="${c.rgb}"${c.a < 1 ? ` stop-opacity="${num(c.a)}"` : ''}/>`).join('');
-    this.addDef(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(x1)}" y1="${num(y1)}" x2="${num(x2)}" y2="${num(y2)}" gradientTransform="matrix(${xf.map(num).join(' ')})" spreadMethod="${pad ? 'pad' : 'repeat'}">${st}</linearGradient>`);
+    this.addDef(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(x1)}" y1="${num(y1)}" x2="${num(x2)}" y2="${num(y2)}" gradientTransform="matrix(${xf.map(num).join(' ')})" spreadMethod="${spread}">${st}</linearGradient>`);
+    return id;
+  }
+
+  /** A radial gradient on the unit circle mapped by `xf` (centre 0 0, radius 1), focal point (fx, fy) in the same units. */
+  radialGradient(stops: [number, Color][], xf: Xf, fx: number, fy: number): string {
+    const id = this.id('g');
+    const st = stops.map(([o, c]) => `<stop offset="${num(Math.max(0, Math.min(1, o)))}" stop-color="${c.rgb}"${c.a < 1 ? ` stop-opacity="${num(c.a)}"` : ''}/>`).join('');
+    const f = Math.hypot(fx, fy) < 0.999 ? ` fx="${num(fx)}" fy="${num(fy)}"` : '';
+    this.addDef(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1"${f} gradientTransform="matrix(${xf.map(num).join(' ')})">${st}</radialGradient>`);
     return id;
   }
 

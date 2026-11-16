@@ -7,6 +7,7 @@ import { BIG, combineClips, hex, num, Out, xmlText, type Clip, type ClipNode, ty
 import { encodedImageUrl, pngDataUrl } from './png';
 import { textWidth } from './metrics';
 import { glyphAdvancesEm, glyphsToText } from './fonts';
+import { asEllipse, gradientStops, pathGradientImage, radialStops, type Blend, type C4, type PathGradient } from './gradient';
 
 /** Renders a nested metafile image to an SVG data URL (set by index.ts, which owns the whole reader). */
 export let nestedRenderer: ((u8: Uint8Array) => { href: string; w: number; h: number } | null) | null = null;
@@ -19,13 +20,16 @@ const MAX_OBJECT_BYTES = 64 * 1024 * 1024;
 const MAX_CHARS = 32768;
 
 const argb = (v: number): Color => ({ rgb: hex((v >>> 16) & 255, (v >>> 8) & 255, v & 255), a: (v >>> 24) / 255 });
+const c4 = (v: number): C4 => [(v >>> 16) & 255, (v >>> 8) & 255, v & 255, v >>> 24];
+const colorOf4 = (c: C4): Color => ({ rgb: hex(c[0], c[1], c[2]), a: c[3] / 255 });
 
 type Op = { t: 'M' | 'L'; x: number; y: number } | { t: 'C'; p: [number, number, number, number, number, number] } | { t: 'Z' };
 
 type BrushObj =
   | { k: 'solid'; c: Color }
   | { k: 'hatch'; style: number; fg: Color; bg: Color }
-  | { k: 'linear'; rect: [number, number, number, number]; stops: [number, Color][]; xf: Xf; repeat: boolean }
+  | { k: 'linear'; rect: [number, number, number, number]; c0: C4; c1: C4; blend: Blend | null; gamma: boolean; xf: Xf; wrap: number }
+  | { k: 'pathGradient'; g: PathGradient; ops: Op[]; xf: Xf }
   | { k: 'texture'; img: ImageObj; xf: Xf };
 interface PenObj { width: number; unit: number; brush: BrushObj; dash: number; cap: number; join: number; miter: number; dashes?: number[] }
 interface ImageObj { href: string; w: number; h: number }
@@ -285,8 +289,36 @@ export class Plus {
     if (b.k === 'solid') return { color: b.c };
     if (b.k === 'hatch') return { ref: this.out.hatch(b.style, b.fg, b.bg) };
     if (b.k === 'texture') return { ref: this.out.imagePattern(b.img.href, b.img.w, b.img.h, compose(m, b.xf)) };
+    if (b.k === 'pathGradient') return this.pathFill(b, m);
     const [x, y, w] = b.rect;
-    return { ref: this.out.linearGradient(x, y, x + w, y, b.stops, compose(m, b.xf), !b.repeat) };
+    const stops = gradientStops(b.c0, b.c1, b.blend, b.gamma).map(([o, c]) => [o, colorOf4(c)] as [number, Color]);
+    // Tile repeats, a flip in x reflects (the gradient runs along x of its rectangle), clamp pads.
+    return { ref: this.out.linearGradient(x, y, x + w, y, stops, compose(m, b.xf), b.wrap === 1 || b.wrap === 3 ? 'reflect' : b.wrap === 4 ? 'pad' : 'repeat') };
+  }
+  /**
+   * A path gradient: a radial gradient when its boundary is an ellipse with one surround colour, else a
+   * bitmap of the triangulated boundary (gradient.ts) as an image pattern over the boundary's box. With the
+   * clamp wrap mode nothing is painted outside the boundary (shape() clips to it); the tile modes repeat
+   * the box, flipped for the flip modes.
+   */
+  private pathFill(b: BrushObj & { k: 'pathGradient' }, m: Xf): Fill {
+    const g = b.g;
+    const xf = compose(m, b.xf);
+    const ell = asEllipse(g.boundary);
+    const one = g.surround.every((c) => c.join() === g.surround[0].join());
+    if (ell && one) { // the tile modes would repeat the box around the ellipse: drawn padded instead
+      const st = radialStops(g).map(([o, c]) => [o, colorOf4(c)] as [number, Color]);
+      const unit = compose(xf, [ell.rx, 0, 0, ell.ry, ell.cx, ell.cy]);
+      return { ref: this.out.radialGradient(st, unit, (g.centerPt[0] - ell.cx) / ell.rx, (g.centerPt[1] - ell.cy) / ell.ry) };
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of g.boundary) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const side = Math.max(x1 - x0, y1 - y0) * scaleOf(xf);
+    const r = pathGradientImage(g, Math.min(256, Math.max(16, side)));
+    if (!r) return { color: colorOf4(g.center) };
+    const [bx, by, bw, bh] = r.box;
+    const fxTile = g.wrap === 1 || g.wrap === 3, fyTile = g.wrap === 2 || g.wrap === 3;
+    return { ref: this.out.imagePattern(pngDataUrl(r.img), bw * (fxTile ? 2 : 1), bh * (fyTile ? 2 : 1), compose(xf, [1, 0, 0, 1, bx, by]), r.img) };
   }
   private stroke(id: number): PenObj | null { const o = this.objects[id]; return o?.k === 'pen' ? o.v : null; }
   private strokeFor(p: PenObj | null, m: Xf): Stroke | null {
@@ -312,6 +344,16 @@ export class Plus {
   private shape(ops: Op[], fill: BrushObj | null, pen: PenObj | null) {
     if (!ops.length || (!fill && !pen)) return;
     const m = this.xf();
+    if (fill?.k === 'pathGradient' && (fill.g.wrap === 4 || fill.g.wrap > 4)) {
+      // Clamp: the path gradient paints only inside its boundary.
+      const keep = this.out.clip;
+      const bp = this.toPath(fill.ops, compose(m, fill.xf));
+      this.out.clip = combineClips(keep, { k: 'path', d: bp.empty ? 'M0 0' : bp.d, eo: false, n: 1 }, 'and');
+      this.out.drawPath(this.toPath(ops, m), this.fillFor(fill, m), null, true);
+      this.out.clip = keep;
+      if (pen) this.out.drawPath(this.toPath(ops, m), null, this.strokeFor(pen, m), true);
+      return;
+    }
     this.out.drawPath(this.toPath(ops, m), this.fillFor(fill, m), this.strokeFor(pen, m), true);
   }
 
@@ -379,7 +421,7 @@ export class Plus {
     const attrs = `font-family="${xmlText(`'${font.family.replace(/['"\\<>&]/g, '')}', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Segoe UI', Arial, sans-serif`)}" font-size="${num(size)}"${font.style & 1 ? ' font-weight="bold"' : ''}${font.style & 2 ? ' font-style="italic"' : ''}${font.style & 4 ? ' text-decoration="underline"' : font.style & 8 ? ' text-decoration="line-through"' : ''}`;
     return { size, attrs };
   }
-  private colorOf(b: BrushObj | null): Color { return !b ? { rgb: '#000000', a: 1 } : b.k === 'solid' ? b.c : b.k === 'hatch' ? b.fg : b.k === 'texture' ? { rgb: '#808080', a: 1 } : b.stops[0]?.[1] ?? { rgb: '#000000', a: 1 }; }
+  private colorOf(b: BrushObj | null): Color { return !b ? { rgb: '#000000', a: 1 } : b.k === 'solid' ? b.c : b.k === 'hatch' ? b.fg : b.k === 'texture' ? { rgb: '#808080', a: 1 } : b.k === 'pathGradient' ? colorOf4(b.g.center) : colorOf4(b.c0); }
 
   /** DrawString: brush, format, length, layout rectangle, UTF-16 text; the font object is in the flags. */
   private drawString(flags: number, r: Bytes) {
@@ -556,22 +598,16 @@ function parseBrush(r: Bytes): BrushObj | null {
   const type = r.u32(4);
   if (type === 0) return { k: 'solid', c: argb(r.u32(8)) };
   if (type === 1) return { k: 'hatch', style: r.u32(8), fg: argb(r.u32(12)), bg: argb(r.u32(16)) };
-  if (type === 3) return { k: 'solid', c: argb(r.u32(16)) };
+  if (type === 3) return parsePathGradient(r);
   if (type === 4) {
     const bf = r.u32(8), wrap = r.u32(12);
     const rect: [number, number, number, number] = [r.f32(16), r.f32(20), r.f32(24), r.f32(28)];
-    const c0 = argb(r.u32(32)), c1 = argb(r.u32(36));
+    const c0 = c4(r.u32(32)), c1 = c4(r.u32(36));
     let o = 48;
     let xf: Xf = [1, 0, 0, 1, 0, 0];
     if (bf & 0x2) { xf = [r.f32(o), r.f32(o + 4), r.f32(o + 8), r.f32(o + 12), r.f32(o + 16), r.f32(o + 20)]; o += 24; }
-    let stops: [number, Color][] = [[0, c0], [1, c1]];
-    if (bf & 0x4) {
-      const n = Math.min(r.u32(o), 256);
-      const pos = Array.from({ length: n }, (_, i) => r.f32(o + 4 + i * 4));
-      const cols = Array.from({ length: n }, (_, i) => argb(r.u32(o + 4 + n * 4 + i * 4)));
-      if (n >= 2) stops = pos.map((p, i) => [p, cols[i]] as [number, Color]);
-    }
-    return { k: 'linear', rect, stops, xf, repeat: wrap === 0 };
+    const blend = readBlend(r, o, bf);
+    return { k: 'linear', rect, c0, c1, blend: blend.v, gamma: (bf & 0x80) !== 0, xf, wrap };
   }
   if (type === 2) { // texture brush: flags, wrap mode, optional transform, then the image object
     const bf = r.u32(8);
@@ -582,6 +618,79 @@ function parseBrush(r: Bytes): BrushObj | null {
     return img ? { k: 'texture', img, xf } : null;
   }
   return null;
+}
+
+/**
+ * Blend data after a gradient's transform: preset colours (flag 0x4: count, positions, ARGB colours) or
+ * horizontal blend factors (0x8: count, positions, factors); vertical factors (0x10) are read past.
+ */
+function readBlend(r: Bytes, o: number, bf: number): { v: Blend | null; end: number } {
+  let v: Blend | null = null;
+  const take = (kind: 'colors' | 'factors') => {
+    const n = Math.min(r.u32(o), 256);
+    const pos = Array.from({ length: n }, (_, i) => r.f32(o + 4 + i * 4));
+    const vals = Array.from({ length: n }, (_, i) => (kind === 'colors' ? r.u32(o + 4 + n * 4 + i * 4) : r.f32(o + 4 + n * 4 + i * 4)));
+    o += 4 + n * 8;
+    if (n < 2) return null;
+    return kind === 'colors' ? { pos, colors: vals.map(c4) } : { pos, factors: vals };
+  };
+  if (bf & 0x4) v = take('colors');
+  else {
+    if (bf & 0x8) v = take('factors');
+    if (bf & 0x10) { const h = take('factors'); v ??= h; }
+  }
+  return { v, end: o };
+}
+
+/**
+ * A path gradient brush: flags, wrap, centre colour, centre point, surround colours, the boundary (a path
+ * with flag 0x1, else points), then the optional transform (0x2), preset colours (0x4) or blend factors
+ * (0x8), focus scales (0x40); 0x80 is gamma correction.
+ */
+function parsePathGradient(r: Bytes): BrushObj | null {
+  const bf = r.u32(8), wrap = r.u32(12);
+  const center = c4(r.u32(16)), centerPt: [number, number] = [r.f32(20), r.f32(24)];
+  const ns = Math.min(r.u32(28), 4096);
+  const surround = Array.from({ length: Math.max(ns, 1) }, (_, i) => (ns ? c4(r.u32(32 + i * 4)) : center));
+  let o = 32 + ns * 4;
+  let ops: Op[] = [];
+  if (bf & 0x1) {
+    const size = r.u32(o);
+    ops = parsePath(r.slice(o + 4, size)) ?? [];
+    o += 4 + size;
+  } else {
+    const n = Math.min(r.u32(o), MAX_POINTS);
+    ops = polyOps(points(r, o + 4, n, false), true);
+    o += 4 + n * 8;
+  }
+  const boundary = flatten(ops);
+  if (boundary.length < 3) return { k: 'solid', c: colorOf4(center) };
+  let xf: Xf = [1, 0, 0, 1, 0, 0];
+  if (bf & 0x2) { xf = [r.f32(o), r.f32(o + 4), r.f32(o + 8), r.f32(o + 12), r.f32(o + 16), r.f32(o + 20)]; o += 24; }
+  const blend = readBlend(r, o, bf);
+  o = blend.end;
+  let focus: [number, number] | null = null;
+  if (bf & 0x40 && r.u32(o) === 2) focus = [r.f32(o + 4), r.f32(o + 8)];
+  // GDI+ hands one colour per boundary point; with fewer, the last one repeats.
+  const g: PathGradient = { center, centerPt, boundary, surround, blend: blend.v, focus, gamma: (bf & 0x80) !== 0, wrap };
+  return { k: 'pathGradient', g, ops, xf };
+}
+
+/** Path ops as one closed polygon (Béziers flattened; later figures appended). */
+function flatten(ops: Op[]): [number, number][] {
+  const pts: [number, number][] = [];
+  let cx = 0, cy = 0;
+  for (const o of ops) {
+    if (pts.length > 4096) break;
+    if (o.t === 'M' || o.t === 'L') { pts.push([o.x, o.y]); cx = o.x; cy = o.y; }
+    else if (o.t === 'C') {
+      const [x1, y1, x2, y2, x3, y3] = o.p;
+      for (let s = 1; s <= 12; s++) { const t = s / 12, a = 1 - t; pts.push([a * a * a * cx + 3 * a * a * t * x1 + 3 * a * t * t * x2 + t * t * t * x3, a * a * a * cy + 3 * a * a * t * y1 + 3 * a * t * t * y2 + t * t * t * y3]); }
+      cx = x3; cy = y3;
+    }
+  }
+  if (pts.length > 1 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
+  return pts;
 }
 
 /**
