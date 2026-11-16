@@ -53,7 +53,7 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
           <span className={`dot ${cmd.relayConnected ? 'ok' : ''}`} /> {cmd.relayConnected ? `휴대폰 ${cmd.remoteCount}` : '재연결 중…'}{cmd.remoteRequests > 0 && <strong className="remote-request-badge"> · 요청 {cmd.remoteRequests}</strong>}
         </button>
         <button type="button" className="pp-pill" onClick={() => cmd.open(cmd.cloud.session ? 'sync' : 'account')} title={cmd.cloud.session ? `동기화 상태 · 계정${cmd.cloud.message ? ` — ${cmd.cloud.message}` : ''}` : '로그인하면 다른 컴퓨터에서도 같은 슬라이드를 엽니다'}>
-          {cmd.cloud.session ? `☁ ${cmd.cloud.session.username}${cmd.cloud.state === 'syncing' ? ' ⟳' : cmd.cloud.state === 'error' ? ' ⚠' : cmd.cloud.state === 'offline' ? ' ⏸' : ' ✓'}` : '☁ 로그인'}{cmd.cloud.session && cmd.cloud.storageUsage?.server ? ` · ${formatStoragePercent(cmd.cloud.storageUsage.server.usedPercent)}%` : ''}
+          {cmd.cloud.session ? `☁ ${cmd.cloud.session.username}${cmd.cloud.state === 'syncing' ? ' ⟳' : cmd.cloud.state === 'error' ? ' ⚠' : cmd.cloud.state === 'offline' ? ' ⏸' : ' ✓'}` : '☁ 로그인'}{cmd.cloud.session && cmd.cloud.storageUsage?.server ? <span title="교회 서버 저장 사용률 (무료 한도 5 GB 대비) — 계정 창에서 파일·자료를 정리할 수 있습니다"> · {formatStoragePercent(cmd.cloud.storageUsage.server.usedPercent)}%</span> : null}
         </button>
         <button type="button" className="pp-pill pp-gear" onClick={() => cmd.open('settings')} title="옵션 — 업데이트 · 출력 화면 · 리모컨 · AI · 장비" aria-label="옵션">⚙</button>
       </div>
