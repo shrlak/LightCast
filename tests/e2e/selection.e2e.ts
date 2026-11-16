@@ -39,13 +39,14 @@ describe('selection on the editing canvas', () => {
     expect(await state(page)).toEqual({ selected: 1, editing: 0, handles: 8, rotate: 1, caret: false });
     // The keyboard works on that selection: an arrow moves the box, Ctrl+Z puts it back.
     const top = () => page.evaluate(() => (document.querySelector('.ppt-canvas .ce-outline.on') as HTMLElement | null)?.style.top ?? '');
+    // Wait for the state itself, not a fixed time: a busy CI runner can take longer than a desktop to re-render.
+    // If undo truly did not happen, the poll still fails, and the message says where the keyboard focus was.
+    const focusOf = () => page.evaluate(() => { const a = document.activeElement as HTMLElement | null; return a ? `${a.tagName}${a.isContentEditable ? ' (editable)' : ''}${a.closest('[data-ime-sink]') ? ' (canvas sink)' : ''}` : 'none'; });
     const before = await top();
     await page.keyboard.press('ArrowDown');
-    await sleep(200);
-    expect(await top()).not.toBe(before);
+    await expect.poll(top, { timeout: 5000 }).not.toBe(before);
     await page.keyboard.press('Control+z');
-    await sleep(300);
-    expect(await top()).toBe(before);
+    await expect.poll(top, { timeout: 5000, message: `undo did not move the box back (focus: ${await focusOf()})` }).toBe(before);
     expect((await state(page)).handles).toBe(8);
     // Again on the empty slide: nothing selected.
     await page.mouse.click(box.x + box.width * 0.5, box.y + box.height * 0.85);
