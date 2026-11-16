@@ -344,11 +344,12 @@ describe('MaskBlt, PlgBlt and flood fills', () => {
     const svg = metafileToSvg(emf([emfBrush(2, RED), create, fill]))!.svg;
     expect(svg).toContain('M10 10L60 10L60 60L10 60Z');
   });
-  it('flood fills draw nothing (the reader has no pixels to search) and do not disturb what follows', () => {
-    const flood = emfRec(53, (b) => b.u32(5, 5, 0x00ff00, 1)); // EXTFLOODFILL: x, y, colour, mode
+  it('a flood fill that finds nothing to fill draws nothing and does not disturb what follows', () => {
+    const flood = emfRec(53, (b) => b.u32(5, 5, 0x00ff00, 1)); // EXTFLOODFILL surface: the (white) page is not green
     const withFill = metafileToSvg(emf([flood, emfBrush(1, RED), emfSelect(1), emfRect(0, 0, 10, 10)]))!;
     expect(withFill.items).toBe(1);
-    const w = metafileToSvg(wmf(wmfRec(0x020c, 100, 200), wmfRec(0x020b, 0, 0), wmfRec(0x0419, 0, 0xff00, 5, 5), wmfRec(0x0548, 0, 0xff00, 5, 5, 1), wmfRec(0x0324, 3, 20, 20, 90, 20, 55, 80)))!;
+    // WMF ExtFloodFill, FLOODFILLSURFACE of green on the white page: nothing is filled
+    const w = metafileToSvg(wmf(wmfRec(0x020c, 100, 200), wmfRec(0x020b, 0, 0), wmfRec(0x0548, 1, 0xff00, 0, 5, 5), wmfRec(0x0324, 3, 20, 20, 90, 20, 55, 80)))!;
     expect(w.items).toBe(1);
   });
 });

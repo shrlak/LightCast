@@ -7,6 +7,7 @@ import { parseFontFile, cssWeightDescriptor, embeddingForbidden, woffToSfnt, typ
 import { usedFamilies, type FontStyle } from './io/pptxFonts';
 import type { NativeFont } from './io/lcastFile';
 import { sha256Hex, type CloudFont } from './fontSync';
+import { addMetafileFontFile } from './metafile/fonts';
 
 export interface ImportedFont {
   id: string;
@@ -129,6 +130,7 @@ async function readIndex(): Promise<ImportedFont[]> {
 const writeIndex = async (list: ImportedFont[]) => { await putMedia(INDEX_KEY, new Blob([JSON.stringify(list)], { type: 'application/json' })); };
 
 async function register(f: ImportedFont, data: ArrayBuffer): Promise<boolean> {
+  void addMetafileFontFile(new Uint8Array(data.slice(0)), f.family); // glyph-index text and widths in metafiles
   if (registered.has(f.id)) return true;
   if (typeof FontFace === 'undefined' || typeof document === 'undefined') return false;
   try {
