@@ -2,9 +2,9 @@
 // font, window-viewport and world transforms, paths and clip groups. Drawing goes to an `Out`
 // (SVG) in device units; the picture's frame is mapped to the SVG view box afterwards.
 import { apply, compose, scaleOf, type Xf, type Bytes } from './bytes';
-import { hex, num, Out, PathData, xmlText, BIG, type Color, type Fill, type Stroke } from './out';
+import { hex, num, Out, PathData, xmlText, BIG, type Clip, type Color, type Fill, type Stroke } from './out';
 import { textWidth } from './metrics';
-import { cropRgba, pngDataUrl, type Dib } from './png';
+import { cropRgba, pngDataUrl, type Dib, type Rgba } from './png';
 
 export interface GdiPen { style: number; width: number; color: Color; cap: 'butt' | 'round' | 'square'; join: 'miter' | 'round' | 'bevel'; cosmetic: boolean }
 export interface GdiBrush { style: number; color: Color; hatch: number; pattern?: { href: string; w: number; h: number } }
@@ -33,7 +33,7 @@ interface DC {
   vpOrg: [number, number]; vpExt: [number, number];
   world: Xf;
   pen: GdiPen; brush: GdiBrush; font: GdiFont;
-  textColor: Color; bkColor: Color; bkMode: number; textAlign: number; polyFill: number; rop2: number; arcCcw: boolean;
+  textColor: Color; bkColor: Color; bkMode: number; stretchMode: number; textAlign: number; polyFill: number; rop2: number; arcCcw: boolean;
   cur: [number, number];
   dcPen: Color; dcBrush: Color;
 }
@@ -44,7 +44,7 @@ const newDc = (): DC => ({
   pen: { style: 0, width: 1, color: BLACK, cap: 'round', join: 'round', cosmetic: true },
   brush: { style: BS_SOLID, color: WHITE, hatch: 0 },
   font: defaultFont(),
-  textColor: BLACK, bkColor: WHITE, bkMode: 2, textAlign: 0, polyFill: 1, rop2: 13, arcCcw: true, cur: [0, 0],
+  textColor: BLACK, bkColor: WHITE, bkMode: 2, stretchMode: 1, textAlign: 0, polyFill: 1, rop2: 13, arcCcw: true, cur: [0, 0],
   dcPen: BLACK, dcBrush: WHITE,
 });
 
@@ -55,6 +55,34 @@ export function decode8(u8: Uint8Array, charset: number): string {
     try { return new TextDecoder(label).decode(u8); } catch { /* label unknown here */ }
   }
   return String.fromCharCode(...u8);
+}
+
+/** Lead bytes of the double-byte code pages (Shift-JIS has single-byte katakana 0xa1..0xdf). */
+const isLead = (b: number, charset: number) => charset === 128 ? (b >= 0x81 && b <= 0x9f) || (b >= 0xe0 && b <= 0xfc) : b >= 0x81 && b <= 0xfe;
+
+/**
+ * An 8-bit string with its per-byte advance array as per-character text: in a double-byte code page
+ * (Korean, Japanese, Chinese) a character takes two bytes and the array holds one entry per byte, the
+ * trailing byte's entry usually 0, so the advances of a character's bytes are added up.
+ * `dx` comes back null when the array does not fit the bytes.
+ */
+export function decode8dx(u8: Uint8Array, charset: number, dx: number[] | null): { str: string; dx: number[] | null } {
+  if (![128, 129, 130, 134, 136].includes(charset) || !u8.some((b) => b >= 0x81)) {
+    const str = decode8(u8, charset);
+    return { str, dx: dx && dx.length === u8.length && str.length === u8.length ? dx : null };
+  }
+  let str = '';
+  const out: number[] = [];
+  const ok = !!dx && dx.length === u8.length;
+  for (let i = 0; i < u8.length;) {
+    const two = isLead(u8[i], charset) && i + 1 < u8.length;
+    const n = two ? 2 : 1;
+    const ch = decode8(u8.subarray(i, i + n), charset);
+    str += ch;
+    if (ok) { let a = 0; for (let k = 0; k < n; k++) a += dx![i + k]; out.push(a); if (ch.length > 1) for (let k = 1; k < ch.length; k++) out.push(0); }
+    i += n;
+  }
+  return { str, dx: ok && out.length === str.length ? out : null };
 }
 
 /** Appends an elliptical arc between parameters t0 and t1 (a rising parameter runs clockwise on screen) as cubic Béziers; `P` maps to device units. */
@@ -74,11 +102,14 @@ export class Gdi {
   out = new Out();
   objects: (GdiObject | undefined)[] = [];
   dc = newDc();
-  private stack: { dc: DC; clip: number }[] = [];
+  private stack: { dc: DC; clip: Clip }[] = [];
   /** Device pixels per millimetre (EMF header); a fixed map mode scales by it. */
   pxPerMm: [number, number] = [96 / 25.4, 96 / 25.4];
   /** WMF has no device: its coordinates stay logical and only the sign of the window extent counts. */
   wmf = false;
+  /** Output units per CSS pixel: 1 where the output is in pixels, larger for a WMF drawn in its own logical units (set by the WMF player). */
+  get hair() { return this.out.hair; }
+  set hair(f: () => number) { this.out.hair = f; }
   private pathOpen = false;
   private pathD = '';
   private figure = false;
@@ -162,7 +193,7 @@ export class Gdi {
   }
   setDcPen(c: Color) { this.dc.dcPen = c; if (this.dc.pen.cosmetic && this.dc.pen.width === 0) this.dc.pen = { ...this.dc.pen, color: c }; }
   setDcBrush(c: Color) { this.dc.dcBrush = c; }
-  save() { if (this.stack.length < MAX_STACK) this.stack.push({ dc: { ...this.dc }, clip: this.out.clipDepth }); }
+  save() { if (this.stack.length < MAX_STACK) this.stack.push({ dc: { ...this.dc }, clip: this.out.clip }); }
   restore(n: number) {
     const idx = n < 0 ? this.stack.length + n : n - 1;
     if (idx < 0 || idx >= this.stack.length) return;
@@ -170,9 +201,8 @@ export class Gdi {
     this.stack.length = idx;
     const cur = this.dc.cur;
     this.dc = { ...saved.dc, cur };
-    this.out.popClipsTo(saved.clip);
+    this.out.clip = saved.clip;
   }
-  private clipBase() { return this.stack.length ? this.stack[this.stack.length - 1].clip : 0; }
 
   // ---- paint selection ----
 
@@ -187,8 +217,9 @@ export class Gdi {
     const style = p.style & 0xf;
     if (style === PS_NULL) return null;
     const s = scaleOf(this.xf());
-    const width = p.cosmetic || p.width <= 0 ? 1 : Math.max(p.width * s, 0.25);
-    const u = Math.max(width, 1);
+    const hr = this.out.hair();
+    const width = p.cosmetic || p.width <= 0 ? hr : Math.max(p.width * s, 0.25 * hr);
+    const u = Math.max(width, hr);
     const dash = style === 1 ? [u * 6, u * 2] : style === 2 ? [u, u * 2] : style === 3 ? [u * 6, u * 2, u, u * 2] : style === 4 ? [u * 6, u * 2, u, u * 2, u, u * 2] : undefined;
     return { color: p.color, width, dash, cap: p.cosmetic ? 'butt' : p.cap, join: p.join };
   }
@@ -327,14 +358,12 @@ export class Gdi {
     this.out.drawPath(pd, r.fill, r.stroke, this.dc.polyFill === 1, r.blend);
     this.lastPath = '';
   }
-  /** Combines `pd` into the clip: RGN_AND 1, OR 2, XOR 3, DIFF 4 (the clip minus the shape), COPY 5. */
-  private applyClip(pd: PathData, mode: number, evenOdd: boolean) {
-    const base = this.clipBase(), open = this.out.clipDepth > base;
-    if (mode === 5) { this.out.popClipsTo(base); this.out.pushClip(pd, evenOdd); }
-    else if (mode === 1) this.out.pushClip(pd, evenOdd);
-    else if (mode === 4) this.out.pushClip(this.out.rawPath(BIG + pd.d), true);
-    else if (mode === 2) { if (open) this.out.combineTopClip(pd, false); }
-    else if (mode === 3) { if (open) this.out.combineTopClip(pd, true); else this.out.pushClip(this.out.rawPath(BIG + pd.d), true); }
+  /** Combines `pd` into the clip: RGN_AND 1, OR 2, XOR 3, DIFF 4 (the clip minus the shape), COPY 5. All exact, nested or not. */
+  private applyClip(pd: PathData, mode: number, evenOdd: boolean, disjoint = false) {
+    // Rectangles that do not overlap: "everything but them" is one even-odd path, so no mask is needed.
+    if (mode === 4 && disjoint) { this.out.combineClip(this.out.rawPath(BIG + pd.d), 'and', true); return; }
+    const m = (['', 'and', 'or', 'xor', 'diff', 'copy'] as const)[mode];
+    if (m) this.out.combineClip(pd, m, evenOdd);
   }
   /** SELECTCLIPPATH with the RGN_ mode. */
   clipPath(mode: number) {
@@ -353,9 +382,9 @@ export class Gdi {
   }
   /** Rectangles in logical units as a region combined into the clip by `mode` (1 AND, 2 OR, 3 XOR, 4 DIFF, 5 COPY; an empty list with COPY removes the clip). */
   clipRects(rects: Rect[], mode: number) {
-    if (!rects.length) { if (mode === 5) this.out.popClipsTo(this.clipBase()); return; }
+    if (!rects.length) { if (mode === 5) this.out.clip = null; return; }
     if (mode < 1 || mode > 5) return;
-    this.applyClip(this.rectsPath(rects), mode, false);
+    this.applyClip(this.rectsPath(rects), mode, false, true);
   }
 
   // ---- regions ----
@@ -370,16 +399,17 @@ export class Gdi {
     if (!rects.length || this.out.muted || this.pathOpen) return;
     const fill = this.fill(brush ?? this.dc.brush);
     const w2 = Math.max(Math.abs(w), 1), h2 = Math.max(Math.abs(h), 1);
-    this.out.pushClip(this.out.rawPath(BIG + this.rectsPath(rects).d), true);
+    const prev = this.out.clip;
+    this.out.combineClip(this.out.rawPath(BIG + this.rectsPath(rects).d), 'and', true);
     this.out.drawPath(this.rectsPath(rects.map(([l, t, r, b]): Rect => [Math.min(l, r) - w2, Math.min(t, b) - h2, Math.max(l, r) + w2, Math.max(t, b) + h2])), fill, null, false);
-    this.out.popClip();
+    this.out.clip = prev;
   }
   /** InvertRgn: the destination inverted (a white fill in `difference` blend mode). */
   invertRegion(rects: Rect[]) {
     if (!rects.length || this.out.muted || this.pathOpen) return;
     this.out.drawPath(this.rectsPath(rects), { color: WHITE }, null, false, 'difference');
   }
-  resetClip() { this.out.popClipsTo(this.clipBase()); }
+  resetClip() { this.out.clip = null; }
 
   // ---- text ----
 
@@ -480,14 +510,19 @@ export class Gdi {
         }
         base = { ...base, px };
       }
-      const img = sw > 0 && sh > 0 ? cropRgba(base, sx, sy, sw, sh) : base;
+      let img = sw > 0 && sh > 0 ? cropRgba(base, sx, sy, sw, sh) : base;
       if (!img) return;
+      if (opt.mask && !opt.mask.dib.encoded) img = maskedRgba(img, opt.mask.dib.img, opt.mask.x, opt.mask.y);
       iw = img.w; ih = img.h;
       href = pngDataUrl(img);
     }
     const [dx, dy, dw, dh] = dst;
-    if (!dw || !dh || !iw || !ih) return;
-    const m = compose(this.xf(), [dw / iw, 0, 0, dh / ih, dx, dy]);
+    if (!opt.para && (!dw || !dh)) return;
+    if (!iw || !ih) return;
+    const pr = opt.para;
+    const m = pr
+      ? compose(this.xf(), [(pr[1][0] - pr[0][0]) / iw, (pr[1][1] - pr[0][1]) / iw, (pr[2][0] - pr[0][0]) / ih, (pr[2][1] - pr[0][1]) / ih, pr[0][0], pr[0][1]])
+      : compose(this.xf(), [dw / iw, 0, 0, dh / ih, dx, dy]);
     for (const [px, py] of [[0, 0], [iw, 0], [iw, ih], [0, ih]]) this.out.grow(...apply(m, px, py));
     const mode = opt.rop === undefined ? null : sourceRop(opt.rop);
     let extra = '';
@@ -536,6 +571,22 @@ export interface BlitOptions {
   alpha?: 'opaque' | 'premultiplied';
   /** TransparentBlt colour key as a COLORREF. */
   key?: number;
+  /** MaskBlt / PlgBlt: a 1-bit mask bitmap; where its pixel is 0 the destination keeps what it had (the usual background operation), where 1 the source is drawn. */
+  mask?: { dib: Dib; x: number; y: number };
+  /** PlgBlt: the destination is the parallelogram whose top-left, top-right and bottom-left corners are these logical points (the `dst` rectangle is ignored). */
+  para?: [[number, number], [number, number], [number, number]];
+}
+
+/** `img` with its alpha taken from a 1-bit `mask` laid over it at (mx, my); pixels the mask does not reach become transparent. */
+export function maskedRgba(img: Rgba, mask: Rgba, mx: number, my: number): Rgba {
+  const px = new Uint8ClampedArray(img.px);
+  for (let y = 0; y < img.h; y++) for (let x = 0; x < img.w; x++) {
+    const X = x + mx, Y = y + my;
+    let keep = false;
+    if (X >= 0 && Y >= 0 && X < mask.w && Y < mask.h) { const o = (Y * mask.w + X) * 4; keep = mask.px[o] + mask.px[o + 1] + mask.px[o + 2] > 382; }
+    if (!keep) px[(y * img.w + x) * 4 + 3] = 0;
+  }
+  return { w: img.w, h: img.h, px };
 }
 
 /** The look-alike of a ternary raster operation that combines a source bitmap with the destination. */

@@ -1,7 +1,7 @@
 // Windows Metafile (MS-WMF): a placeable (or plain) header, then 16-bit-word records. Records are
 // played into a `Gdi`; those not understood are skipped.
 import { Bytes } from './bytes';
-import { BS_HATCHED, BS_SOLID, colorref, decode8, Gdi, MAX_POINTS, patternBrush, type GdiBrush, type Rect } from './gdi';
+import { BS_HATCHED, BS_SOLID, colorref, decode8, decode8dx, Gdi, MAX_POINTS, patternBrush, type GdiBrush, type Rect } from './gdi';
 import { decodeDib } from './png';
 
 export interface Played {
@@ -33,6 +33,8 @@ export function playWmf(b: Bytes): Played | null {
     if (r !== l && bt !== t) bbox = [Math.min(l, r), Math.min(t, bt), Math.abs(r - l), Math.abs(bt - t)];
     pos = 22;
   }
+  // A WMF draws in its own logical units, so one pixel (the width of a hairline pen) is frame width / size in px of them.
+  if (inch > 0 && bbox) g.hair = () => { const e = g.winSeen.ext; const fw = e && e[0] ? Math.abs(e[0]) : bbox![2]; return Math.max(fw / ((bbox![2] / inch) * 96), 1e-6); };
   if (b.u16(pos + 2) !== 9) return null;
   pos += b.u16(pos + 2) * 2;
   if (bbox) { g.dc.winOrg = [bbox[0], bbox[1]]; g.dc.winExt = [bbox[2], bbox[3]]; }
@@ -64,6 +66,7 @@ function record(g: Gdi, fn: number, r: Bytes): void {
     case 0x0127: g.restore(s(0)); break;
     case 0x0103: g.setMapMode(u(0)); break;
     case 0x0102: d.bkMode = u(0); break;
+    case 0x0107: d.stretchMode = u(0); break; // SETSTRETCHBLTMODE
     case 0x0104: d.rop2 = u(0); break;
     case 0x0106: d.polyFill = u(0); break;
     case 0x012e: d.textAlign = u(0); break;
@@ -78,6 +81,7 @@ function record(g: Gdi, fn: number, r: Bytes): void {
     case 0x0410: g.scaleWindowExt(s(3), s(2), s(1), s(0)); break;
     case 0x0412: g.scaleViewportExt(s(3), s(2), s(1), s(0)); break;
     case 0x012d: g.select(u(0)); break;
+    case 0x0419: case 0x0548: break; // FloodFill / ExtFloodFill: need the pixels already drawn (see index.ts); nothing is drawn
     case 0x01f0: g.deleteObject(u(0)); break;
     case 0x02fa: // CreatePenIndirect: style, width (x, y), colour
       g.addObject({ k: 'pen', pen: { style: u(0), width: s(1), color: colorref(r.u32(12)), cap: 'round', join: 'round', cosmetic: s(1) <= 1 } });
@@ -145,11 +149,11 @@ function record(g: Gdi, fn: number, r: Bytes): void {
       let rect: [number, number, number, number] | null = null;
       if (opts & 6) { rect = [r.i16(14), r.i16(16), r.i16(18), r.i16(20)]; off = 22; }
       if (n <= 0) break;
-      const str = decode8(r.slice(off, n).u8, g.dc.font.charset);
       const dxOff = off + n + (n & 1);
       const dx: number[] = [];
       for (let i = 0; i < n && r.has(dxOff + i * 2, 2); i++) dx.push(r.i16(dxOff + i * 2));
-      g.text(s(1), s(0), str, dx.length === n ? dx : null, rect, (opts & 2) !== 0);
+      const t = decode8dx(r.slice(off, n).u8, g.dc.font.charset, dx.length === n ? dx : null);
+      g.text(s(1), s(0), t.str, t.dx, rect, (opts & 2) !== 0);
       break;
     }
     case 0x0f43: { // StretchDIBits: rop, usage, src h/w/y/x, dst h/w/y/x, DIB

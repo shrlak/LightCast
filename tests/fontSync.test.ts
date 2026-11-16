@@ -60,7 +60,7 @@ describe('planFontSync', () => {
     expect(planFontSync({ ...base, local: [font()], known: new Set([id]) }).known.has(id)).toBe(false);
     const e: CloudFont = { id, family: 'A', subfamily: 'Regular', weight: 400, italic: false, format: 'truetype', bytes: 100, fsType: 0, source: 'user', at: 1 };
     const p = planFontSync({ ...base, local: [], manifest: [e], remoteIds: new Set([id]), known: new Set([id]) });
-    expect(p.manifest).toEqual([]); expect(p.removeCloud).toEqual([id]); expect(p.download).toEqual([]);
+    expect(p.manifest).toEqual([]); expect(p.toTrash.map((x) => x.id)).toEqual([id]); expect(p.trash.map((t) => t.id)).toEqual([id]); expect(p.download).toEqual([]);
   });
 });
 
@@ -108,7 +108,7 @@ describe('runFontSync (fake cloud, two computers)', () => {
     expect(r2b.report.downloaded).toBe(0);
     expect(cloud.calls.filter((c) => c.startsWith('down')).length).toBe(1);
   });
-  it('a removal on computer A reaches computer B and the cloud file goes away', async () => {
+  it('a removal on computer A reaches computer B; the cloud file waits in the trash', async () => {
     const cloud = fakeCloud();
     const a = fakeStore([{ f: font({ id: 'impfont:p', hash: undefined }), data: bytesOf('zzz') }]);
     const r = await runFontSync({ cloud: cloud.api, store: a.api }, args([]));
@@ -116,7 +116,7 @@ describe('runFontSync (fake cloud, two computers)', () => {
     await runFontSync({ cloud: cloud.api, store: b.api }, args(r.manifest!));
     await a.api.remove('impfont:p'); // the person deletes it in the manager on A
     const ra = await runFontSync({ cloud: cloud.api, store: a.api }, args(r.manifest!));
-    expect(ra.manifest).toEqual([]); expect(ra.report.removedCloud).toBe(1); expect(cloud.files.size).toBe(0);
+    expect(ra.manifest).toEqual([]); expect(ra.report.trashed).toBe(1); expect(cloud.files.size).toBe(1); expect(ra.trash).toHaveLength(1);
     const rb = await runFontSync({ cloud: cloud.api, store: b.api }, args([])); // B pulled the library without the entry
     expect(rb.report.removedHere).toBe(1); expect(b.api.list()).toEqual([]);
   });

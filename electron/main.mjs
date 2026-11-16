@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 // LightCast desktop app: runs the LightCast server inside the app and shows the console,
 // audience outputs and stage displays as native windows placed on your displays.
 import { app, BrowserWindow, desktopCapturer, clipboard, ipcMain, Menu, powerMonitor, safeStorage, screen, session, shell, dialog, systemPreferences } from 'electron';
+import { tileRects } from './windowTiles.mjs';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,7 +14,7 @@ import { setAiConfigProvider } from '../server/ai.mjs';
 import { startTunnel } from '../server/tunnel.mjs';
 import { aiConfig, DEFAULT_PROXY } from '../server/aiProviders.mjs';
 import { linkAddress, remoteWebAppAddress, remotePairingAddress, teamWebAppAddress, teamPairingAddress, newLinkCredentials, registerLink, removeLink } from '../server/remoteLink.mjs';
-import { pptxToPdf, pptToPptx } from './pptxToPdf.mjs';
+import { pptxToPdf, pptToPptx, pptxToPpt } from './pptxToPdf.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const appRoot = path.resolve(here, '..');
@@ -341,6 +342,27 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// View › New Window / Arrange All: more editor windows on the same app (they share the library through the storage event).
+const editorWindows = new Set();
+function openEditorWindow(hash = '') {
+  if (!mainWindow) return false;
+  const win = new BrowserWindow({
+    width: 1280, height: 820, minWidth: 1000, minHeight: 640, title: 'LightCast', icon: APP_ICON, backgroundColor: '#0b0d12', show: false, webPreferences,
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    try { if (['http:', 'https:'].includes(new URL(url).protocol)) shell.openExternal(url); } catch { /* ignore */ }
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(origin())) { e.preventDefault(); shell.openExternal(url); } });
+  win.once('ready-to-show', () => win.show());
+  win.on('closed', () => editorWindows.delete(win));
+  editorWindows.add(win);
+  win.loadURL(`${origin()}/${/^#presentation=[\w%.\-]{1,200}$/.test(hash) ? hash : ''}`);
+  return true;
+}
+/** The app's editor windows that are on screen (the first one and the extra ones). */
+const editorList = () => [mainWindow, ...editorWindows].filter((w) => w && !w.isDestroyed() && w.isVisible() && !w.isMinimized());
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440, height: 900, minWidth: 1000, minHeight: 640, title: 'LightCast', icon: APP_ICON,
@@ -418,6 +440,7 @@ ipcMain.handle('desktop:printToPdf', async (e) => {
   }
 });
 ipcMain.handle('desktop:pptToPptx', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptToPptx(bytes) : null));
+ipcMain.handle('desktop:pptxToPpt', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptxToPpt(bytes) : null));
 // Paste from PowerPoint: Office puts the copied shapes on the clipboard as a small Office package
 // (DrawingML), under this name on Windows and as a pasteboard type on macOS.
 // Insert › Screenshot: the screens and windows with small pictures, and the one chosen for the next capture.
@@ -445,6 +468,50 @@ ipcMain.handle('desktop:readOfficeClipboard', (e) => {
     } catch { /* not on the clipboard */ }
   }
   return null;
+});
+// Every format on the clipboard with its bytes (capped), so the app can tell by the bytes what PowerPoint / LibreOffice
+// copied (whole slides as a .pptx / .ppt / .odp package, shapes as GVML, pictures, text). Names are only a hint:
+// the app classifies by signature. Formats PowerPoint is known to write are tried even when not listed.
+const CLIP_TOTAL_CAP = 200 * 1024 * 1024;
+const CLIP_ENTRY_CAP = 128 * 1024 * 1024;
+const CLIP_KNOWN = [
+  ...OFFICE_SHAPES, 'Embed Source', 'Embedded Object', 'PowerPoint 12.0 Internal Slides', 'PowerPoint 12.0 Internal Shapes', 'Link Source', 'Object Descriptor',
+  'Rich Text Format', 'HTML Format', 'Csv', 'PNG', 'Office Drawing Shape Format', 'Drawing Format', 'GIF', 'JFIF',
+  'application/x-openoffice-embed-source-xml;windows_formatname="Star EMBS"', 'application/x-openoffice-drawing;windows_formatname="Drawing Format"',
+  'application/x-openoffice-embed-source;windows_formatname="Star Embed Source (XML)"', 'application/vnd.oasis.opendocument.presentation',
+  'org.openxmlformats.presentationml.presentation', 'com.microsoft.powerpoint.ppt', 'com.microsoft.Art--GVML-ClipFormat',
+];
+ipcMain.handle('desktop:scanClipboard', (e) => {
+  if (!fromMain(e)) return null;
+  const entries = [];
+  let total = 0;
+  let listed = [];
+  try { listed = clipboard.availableFormats(); } catch { /* none */ }
+  const seen = new Set();
+  for (const name of [...listed, ...CLIP_KNOWN]) {
+    if (typeof name !== 'string' || !name || seen.has(name) || name.length > 300) continue;
+    seen.add(name);
+    const isListed = listed.includes(name);
+    try {
+      const buf = clipboard.readBuffer(name);
+      if (!buf || !buf.length) { if (isListed) entries.push({ name, size: 0, error: 'empty' }); continue; }
+      if (buf.length > CLIP_ENTRY_CAP || total + buf.length > CLIP_TOTAL_CAP) { entries.push({ name, size: buf.length, error: 'large' }); continue; }
+      total += buf.length;
+      entries.push({ name, size: buf.length, bytes: new Uint8Array(buf) });
+    } catch (err) {
+      if (isListed) entries.push({ name, size: 0, error: String(err?.message ?? err).slice(0, 120) });
+    }
+  }
+  // Text, HTML, RTF and the picture have their own readers (they cover what readBuffer cannot see by name).
+  try {
+    const html = clipboard.readHTML();
+    if (html && !entries.some((x) => x.name === 'text/html' && x.bytes)) entries.push({ name: 'text/html', size: Buffer.byteLength(html), bytes: new Uint8Array(Buffer.from(html, 'utf8')) });
+    const text = clipboard.readText();
+    if (text && !entries.some((x) => x.name === 'text/plain' && x.bytes)) entries.push({ name: 'text/plain', size: Buffer.byteLength(text), bytes: new Uint8Array(Buffer.from(text, 'utf8')) });
+    const img = clipboard.readImage();
+    if (!img.isEmpty() && !entries.some((x) => /^(image\/png|PNG)$/.test(x.name) && x.bytes)) { const png = img.toPNG(); if (png.length < CLIP_ENTRY_CAP) entries.push({ name: 'image/png', size: png.length, bytes: new Uint8Array(png) }); }
+  } catch { /* unreadable */ }
+  return { platform: process.platform, formats: listed, entries };
 });
 ipcMain.handle('desktop:openView', (e, url, displayId) => {
   if (!fromMain(e) || typeof url !== 'string') return;
@@ -482,6 +549,16 @@ function moveConsoleToPresenterDisplay() {
   mainWindow.setBounds(display.workArea);
   mainWindow.maximize();
 }
+ipcMain.handle('desktop:newWindow', (e, hash) => (fromMain(e) ? openEditorWindow(typeof hash === 'string' ? hash : '') : false));
+// Arrange All: the editor windows are tiled on the display the asking window is on; returns how many were placed.
+ipcMain.handle('desktop:arrangeAll', (e) => {
+  if (!fromMain(e)) return 0;
+  const asker = BrowserWindow.fromWebContents(e.sender);
+  const area = screen.getDisplayMatching((asker ?? mainWindow).getBounds()).workArea;
+  const wins = editorList().filter((w) => screen.getDisplayMatching(w.getBounds()).id === screen.getDisplayMatching((asker ?? mainWindow).getBounds()).id);
+  tileRects(area, wins.length).forEach((r, i) => { if (wins[i].isMaximized() || wins[i].isFullScreen()) wins[i].unmaximize(); wins[i].setBounds(r); });
+  return wins.length;
+});
 ipcMain.handle('desktop:endShow', (e) => {
   if (fromMain(e)) closeShow();
 });

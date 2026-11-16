@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import type { MediaMeta, Presentation, Theme } from '../../domain/types';
+import type { Library, MediaMeta, Presentation, Theme } from '../../domain/types';
 import { findOpeningDeck, type SongPptCandidate } from '../../domain/sunday/openingSong';
 import { fetchOpeningSong } from '../../domain/sunday/openingSongFetch';
 import { SlideCanvas } from '../SlideCanvas';
+import { OpeningFileTools, useOpeningFiles } from './OpeningFiles';
 
 interface Props {
   title: string;
@@ -16,6 +17,8 @@ interface Props {
   /** Store a new deck in the library. */
   create: (deck: Presentation) => void;
   notify: (msg: string) => void;
+  /** The whole library, needed to download the deck as .pptx/.ppt. */
+  library?: Library;
 }
 
 const host = (url: string) => {
@@ -30,10 +33,11 @@ const host = (url: string) => {
  * 기도회 찬양: the song before the 기도회 (Front · 기도제목). Type the title and LightCast searches
  * "<제목> ppt", downloads the best-matching PowerPoint and keeps only the sheet music on white.
  */
-export function OpeningSongField({ title, setTitle, deck, setDeck, presentations, theme, addMedia, create, notify }: Props) {
+export function OpeningSongField({ title, setTitle, deck, setDeck, presentations, theme, addMedia, create, notify, library }: Props) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<SongPptCandidate[]>([]);
+  const files = useOpeningFiles({ title, setTitle, deck, setDeck, library, addMedia, create, notify });
   const saved = title.trim() ? findOpeningDeck(presentations, title) : undefined;
 
   const find = async (opts: { pick?: SongPptCandidate; fresh?: boolean } = {}) => {
@@ -63,9 +67,9 @@ export function OpeningSongField({ title, setTitle, deck, setDeck, presentations
   const others = candidates.filter((c) => c.name !== deck?.scoreSheet?.file || c.page !== deck?.scoreSheet?.page);
 
   return (
-    <div className="card stack opening-song">
+    <div className={`card stack opening-song${files.over ? ' drop-over' : ''}`} {...files.dropProps}>
       <strong>🙏 기도회 찬양 · Front 앞</strong>
-      <p className="hint">매주 기도회(기도제목 슬라이드) 전에 부르는 찬양입니다. 제목을 넣고 찾기를 누르면 인터넷에서 “제목 ppt”를 검색해 위쪽 사이트의 PPT를 내려받고, 배경 없이 흰 바탕에 악보 · 가사 그림만 넣습니다.</p>
+      <p className="hint">매주 기도회(기도제목 슬라이드) 전에 부르는 찬양입니다. 제목을 넣고 PPT 찾기를 누르면 인터넷에서 “제목 ppt”를 검색해 위쪽 사이트의 PPT를 내려받고, 배경 없이 흰 바탕에 악보 · 가사 그림만 넣습니다. 이미 가진 파일(.pptx · .ppt · .odp · .pdf · 그림)은 “파일에서 가져오기”로 원래 모양 그대로 넣을 수 있고, 지금 덱은 .pptx / .ppt로 내려받을 수 있습니다.</p>
       <div className="row gap-s">
         <input value={title} placeholder="찬양 제목 (예: 주를 찾는 모든 자들이)" disabled={!!busy}
           onChange={(e) => { setTitle(e.target.value); setCandidates([]); setError(null); }}
@@ -73,6 +77,7 @@ export function OpeningSongField({ title, setTitle, deck, setDeck, presentations
         <button className="primary" disabled={!title.trim() || !!busy} onClick={() => void find()}>🔎 PPT 찾기</button>
         {deck && <button disabled={!!busy} onClick={() => setDeck(null)}>✕ 빼기</button>}
       </div>
+      <OpeningFileTools files={files} deck={deck} canExport={!!library} disabled={!!busy} />
       {busy && <div className="muted small">⏳ {busy}</div>}
       {error && <div className="warn small">{error}</div>}
       {!deck && saved && !busy && <div className="muted small">라이브러리에 “{saved.title}” 악보 {saved.slides.length}장이 있습니다 — 찾기를 누르면 그것을 씁니다.</div>}
@@ -80,8 +85,8 @@ export function OpeningSongField({ title, setTitle, deck, setDeck, presentations
         <>
           <div className="small">
             ✓ <strong>{deck.title}</strong> · 악보 {deck.slides.length}장
-            {deck.scoreSheet && <> · “{deck.scoreSheet.file}” (<a href={deck.scoreSheet.page} target="_blank" rel="noreferrer">{host(deck.scoreSheet.page)}</a>)</>}
-            {' '}<button className="mini-btn" disabled={!!busy} onClick={() => void find({ fresh: true })}>🔄 인터넷에서 다시 찾기</button>
+            {deck.scoreSheet && <> · “{deck.scoreSheet.file}”{deck.scoreSheet.page && <> (<a href={deck.scoreSheet.page} target="_blank" rel="noreferrer">{host(deck.scoreSheet.page)}</a>)</>}</>}
+            {' '}<button className="mini-btn" disabled={!!busy || !!files.busy} onClick={() => void find({ fresh: true })}>🔄 인터넷에서 다시 찾기</button>
           </div>
           <div className="opening-thumbs">
             {deck.slides.slice(0, 8).map((s) => <div key={s.id}><SlideCanvas slide={s} theme={theme} background={s.background ?? { kind: 'color', value: '#ffffff' }} /></div>)}

@@ -32,6 +32,8 @@ import { DesignerPane } from './designTab';
 import { Dialogs } from './dialogs';
 import { RevisionsPane, SpellingPane } from './reviewPanes';
 import { uid as newId } from '../../domain/lyrics';
+import { pasteSlides } from './pasteSlides';
+import { snapshotDataTransfer, type ClipSnapshot } from '../clipboardSlides';
 
 /** A picture chosen from this computer, stored as media: its id (null when none was chosen). */
 function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
@@ -206,6 +208,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     canEdit,
     updateSlide: (patch) => { if (!canEdit && !('notes' in patch && Object.keys(patch).length === 1)) { if (p?.protected) cmd.notify(PROTECTED_MESSAGE); return; } updateSlide(patch); },
     updatePres: (patch) => { if (!p) return; if (p.protected) return cmd.notify(PROTECTED_MESSAGE); dispatch({ type: 'presentation/update', id: p.id, patch }); },
+    pasteSlides: async (opts) => { if (!canPasteSlides()) return true; return (await pasteDeck(null, opts)) !== 'none'; },
     setElements: (fn) => { if (!canEdit || !slide) return; const next = fn(slide.elements ?? []); updateSlide({ elements: next.length ? next : undefined }); },
     addElement: (el: SlideElement) => { if (!canEdit || !slide) return; updateSlide({ elements: [...(slide.elements ?? []), el] }); setSel([el.id]); },
     tool, setTool, view, setView, pane, setPane, zoom, setZoom, notesOpen, setNotesOpen,
@@ -223,6 +226,33 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     updateSlides(slides);
     cmd.setSlideId(n.id);
     setMulti([]);
+  };
+
+  // Slides pasted from the clipboard (PowerPoint / LibreOffice / files): after the current slide, in order, as one undo step.
+  const pasteDeck = async (snap: ClipSnapshot | null, opts: { preferShapes?: boolean; browserRead?: boolean } = {}): Promise<'pasted' | 'failed' | 'none'> => {
+    if (!p) return 'none';
+    const { outcome } = await pasteSlides(snap, {
+      addMedia: (m) => dispatch({ type: 'media/add', media: m }),
+      notify: cmd.notify,
+      insert: (imported) => {
+        const group = slide?.group ?? '붙여넣은 슬라이드';
+        const added = imported.map((s) => ({ ...s, group }));
+        const at = slide ? p.slides.indexOf(slide) + 1 : p.slides.length;
+        const slides = [...p.slides];
+        slides.splice(at, 0, ...added);
+        updateSlides(slides);
+        cmd.setSlideId(added[0].id);
+        setMulti([]);
+      },
+    }, opts);
+    return outcome;
+  };
+  // Refuse before reading anything when the deck cannot take slides.
+  const canPasteSlides = () => {
+    if (!p) return false;
+    if (p.protected) { cmd.notify(PROTECTED_MESSAGE); return false; }
+    if (cmd.locked && state.live.slide) { cmd.notify(LOCK_MSG); return false; }
+    return true;
   };
 
   // Keys of the slide pane and PowerPoint's window shortcuts (the slide editor handles its own first).
@@ -296,9 +326,20 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     const onPaste = (e: ClipboardEvent) => {
       const t = e.target as HTMLElement;
       if (!p || cmd.view === 'presenter' || t.matches('input,textarea,select,[contenteditable="true"]') || document.querySelector('.modal-backdrop')) return;
-      const file = Array.from(e.clipboardData?.files ?? []).find((f) => f.type.startsWith('image/') || isMetafileName(f.name) || isSvgzName(f.name));
-      if (!file) return;
-      e.preventDefault();
+      const snap = snapshotDataTransfer(e.clipboardData);
+      const file = snap.files.find((f) => f.type.startsWith('image/') || isMetafileName(f.name) || isSvgzName(f.name));
+      if (file) e.preventDefault();
+      // Slides copied in PowerPoint / LibreOffice (or slide files from the file manager) come before a picture.
+      void (async () => {
+        if (!p.protected && !(cmd.locked && state.live.slide)) {
+          const outcome = await pasteDeck(snap);
+          if (outcome !== 'none') return;
+        }
+        if (file) pastePicture(file);
+      })();
+    };
+    const pastePicture = (file: File) => {
+      if (!p) return;
       if (p.protected) return cmd.notify(PROTECTED_MESSAGE);
       const id = uid('m');
       const at = slide ? p.slides.indexOf(slide) + 1 : p.slides.length;
@@ -448,7 +489,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
                   onContextMenu={(e) => { if (!ed.selEls.length) return; e.preventDefault(); setObjMenu(new DOMRect(e.clientX, e.clientY, 0, 0)); }}>
                   <CanvasEditor key={`${p.id}:${selected?.key}`} readOnly={p.protected} slide={slide} theme={theme} background={background} bgEffect={p.bgEffect}
                     selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)} view={view} badges={badges} defaultShape={p.defaultShape} customGuides={view.guides ? p.guides : undefined} onGuidesChange={p.protected ? undefined : (g) => ed.updatePres({ guides: g.v.length || g.h.length ? g : undefined })}
-                    pickPicture={() => pickPictureFile(dispatch)} motionPaths onAddMedia={(m) => dispatch({ type: 'media/add', media: m })}
+                    pickPicture={() => pickPictureFile(dispatch)} onPasteSlides={async (snap) => { if (!canPasteSlides()) return true; return (await pasteDeck(snap, { preferShapes: true })) !== 'none'; }} motionPaths onAddMedia={(m) => dispatch({ type: 'media/add', media: m })}
                     onLockedDelete={cmd.locked && state.live.slide?.id === slide.id ? () => cmd.notify(LOCK_MSG) : undefined}
                     onChange={(patch) => dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch })} />
                   {preview && <PlayPreview ed={ed} what={preview} onDone={() => setPreview(null)} />}

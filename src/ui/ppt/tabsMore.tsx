@@ -1,4 +1,5 @@
 // 슬라이드 쇼 · 검토 · 보기 tabs, and LightCast's own 예배 · 도구 tabs (like an add-in's tabs).
+import { arrangeAllWindows, openNewWindow } from './windowCommands';
 import { useRef, useState, type MouseEvent } from 'react';
 import { openOutput } from '../outputWindows';
 import { openMixerWindow } from '../MixerPanel';
@@ -143,6 +144,10 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
           <Small icon="🎨" label="컬러" active={!ed.view.grayscale && !ed.view.gray} onClick={() => ed.setView({ ...ed.view, grayscale: undefined, gray: undefined })} />
           <Small icon="◐" label="회색조" title="슬라이드를 회색조로 봅니다 — 편집 화면 · 미리보기 · 슬라이드 정렬 · 읽기 보기 · 인쇄 (슬라이드 자체는 바뀌지 않습니다)" active={!!ed.view.grayscale || !!ed.view.gray} onClick={() => ed.setView({ ...ed.view, grayscale: true, gray: true })} />
         </Col>
+      </Group>
+      <Group label="창">
+        <Big icon="🗗" label="새 창" title="같은 프레젠테이션을 다른 창에서 엽니다 (두 창의 변경은 서로 합쳐집니다)" onClick={() => void openNewWindow(ed.p?.id, cmd.notify)} />
+        <Big icon="▦" label="모두 정렬" title="열려 있는 편집 창을 현재 화면에 나란히 배열합니다 (데스크톱 앱)" onClick={() => void arrangeAllWindows(cmd.notify)} />
       </Group>
       <Group label="작업창">
         <Col>
