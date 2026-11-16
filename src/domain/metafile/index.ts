@@ -66,6 +66,8 @@ export interface MetafileSvg {
   format: 'wmf' | 'emf' | 'emf+';
   /** Elements drawn; 0 means nothing the reader understands was in the file. */
   items: number;
+  /** Notes about parts that could not be drawn (e.g. a flood fill past the limits). */
+  warnings?: string[];
 }
 
 /** Files bigger than this are not read. */
@@ -89,7 +91,7 @@ function finish(p: Played, format: MetafileSvg['format']): MetafileSvg | null {
   let [w, h] = p.size && p.size[0] > 0 && p.size[1] > 0 ? p.size : [view[2], view[3]];
   const k = Math.min(1, 20000 / Math.max(w, h, 1));
   w = Math.max(1, w * k); h = Math.max(1, h * k);
-  return { svg: out.svg(view, w, h), width: w, height: h, format, items: out.items };
+  return { svg: out.svg(view, w, h), width: w, height: h, format, items: out.items, ...(out.warnings.length ? { warnings: [...out.warnings] } : {}) };
 }
 
 /** Reads a WMF / EMF / EMF+ and draws it as an SVG picture. Never throws: null when it is not a metafile or has no extent. */

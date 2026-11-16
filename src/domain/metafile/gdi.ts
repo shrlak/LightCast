@@ -5,10 +5,11 @@ import { apply, compose, scaleOf, type Xf, type Bytes } from './bytes';
 import { hex, num, Out, PathData, xmlText, BIG, type Clip, type Color, type Fill, type Stroke } from './out';
 import { textWidth } from './metrics';
 import { glyphAdvancesEm, glyphsToText } from './fonts';
+import { rgbaOf } from './raster';
 import { cropRgba, pngDataUrl, type Dib, type Rgba } from './png';
 
 export interface GdiPen { style: number; width: number; color: Color; cap: 'butt' | 'round' | 'square'; join: 'miter' | 'round' | 'bevel'; cosmetic: boolean }
-export interface GdiBrush { style: number; color: Color; hatch: number; pattern?: { href: string; w: number; h: number } }
+export interface GdiBrush { style: number; color: Color; hatch: number; pattern?: { href: string; w: number; h: number; img?: Rgba } }
 export interface GdiFont { family: string; height: number; weight: number; italic: boolean; underline: boolean; strike: boolean; charset: number; escapement: number }
 export type GdiObject = { k: 'pen'; pen: GdiPen } | { k: 'brush'; brush: GdiBrush } | { k: 'font'; font: GdiFont } | { k: 'region'; rects: Rect[] } | { k: 'other' };
 export type Rect = [number, number, number, number];
@@ -117,6 +118,8 @@ export class Gdi {
   private lastPath = '';
   /** Window org / ext as first set, for the WMF view box. */
   winSeen: { org?: [number, number]; ext?: [number, number] } = {};
+  /** The picture frame in device units, as far as it is known while playing (for flood fills). */
+  frameHint: () => [number, number, number, number] | null = () => null;
 
   // ---- transforms ----
 
@@ -210,7 +213,7 @@ export class Gdi {
   private fill(b: GdiBrush = this.dc.brush): Fill {
     if (b.style === BS_NULL) return null;
     if (b.style === BS_HATCHED) return { ref: this.out.hatch(b.hatch, b.color, this.dc.bkMode === 2 ? this.dc.bkColor : null) };
-    if (b.pattern && (b.style === BS_PATTERN || b.style === BS_DIBPATTERN || b.style === BS_DIBPATTERNPT)) return { ref: this.out.imagePattern(b.pattern.href, b.pattern.w, b.pattern.h) };
+    if (b.pattern && (b.style === BS_PATTERN || b.style === BS_DIBPATTERN || b.style === BS_DIBPATTERNPT)) return { ref: this.out.imagePattern(b.pattern.href, b.pattern.w, b.pattern.h, undefined, b.pattern.img) };
     return { color: b.color };
   }
   private stroke(): Stroke | null {
@@ -388,6 +391,26 @@ export class Gdi {
     this.applyClip(this.rectsPath(rects), mode, false, true);
   }
 
+  /**
+   * FloodFill / ExtFloodFill: `surface` false fills outward from (x, y) until the colour `color`
+   * (FLOODFILLBORDER), true fills the area of exactly that colour (FLOODFILLSURFACE), with the current
+   * brush. The pixels drawn so far come from the rasteriser (raster.ts), which records only in files that
+   * hold a flood fill; the filled area is drawn as pixel rectangles at this point of the drawing order.
+   */
+  floodFill(x: number, y: number, color: Color, surface: boolean) {
+    if (this.out.muted || this.pathOpen || this.out.full) return;
+    const rec = this.out.recorder;
+    if (!rec) { if (!this.out.warnings.includes('flood fill skipped')) this.out.warnings.push('flood fill skipped'); return; }
+    const fill = this.fill();
+    if (!fill) return;
+    const [dx, dy] = apply(this.xf(), x, y);
+    const o = this.out;
+    const view = this.frameHint() ?? (Number.isFinite(o.minX) && o.maxX > o.minX && o.maxY > o.minY ? [o.minX, o.minY, o.maxX - o.minX, o.maxY - o.minY] as [number, number, number, number] : null);
+    const d = rec.flood(dx, dy, rgbaOf(color), surface, view, this.out.hair(), this.out.clip);
+    for (const w of rec.warnings) if (!o.warnings.includes(w)) o.warnings.push(w);
+    if (d) this.out.drawPath(this.out.rawPath(d), fill, null, false, undefined, true);
+  }
+
   // ---- regions ----
 
   /** FillRgn / PaintRgn: the region filled with `brush` (default: the current one). */
@@ -517,6 +540,7 @@ export class Gdi {
     if (this.out.muted || this.pathOpen) return;
     let href = dib.encoded;
     let iw = dib.img.w, ih = dib.img.h;
+    let unmasked: Rgba | null = null, drawn: Rgba | null = null;
     if (!href) {
       const [sx, sy, sw, sh] = src;
       let base = dib.img;
@@ -532,8 +556,9 @@ export class Gdi {
       }
       let img = sw > 0 && sh > 0 ? cropRgba(base, sx, sy, sw, sh) : base;
       if (!img) return;
-      if (opt.mask && !opt.mask.dib.encoded) img = maskedRgba(img, opt.mask.dib.img, opt.mask.x, opt.mask.y);
+      if (opt.mask && !opt.mask.dib.encoded) { unmasked = img; img = maskedRgba(img, opt.mask.dib.img, opt.mask.x, opt.mask.y); }
       iw = img.w; ih = img.h;
+      drawn = img;
       href = pngDataUrl(img);
     }
     const [dx, dy, dw, dh] = dst;
@@ -550,6 +575,40 @@ export class Gdi {
     if (mode?.invert) extra += ` filter="url(#${this.out.invertFilter()})"`;
     if (mode?.blend) extra += ` style="mix-blend-mode:${mode.blend}"`;
     this.out.element(`<image href="${href}" width="${iw}" height="${ih}" preserveAspectRatio="none" transform="matrix(${m.map(num).join(' ')})"${extra}/>`);
+    if (drawn) this.out.recordImage(m, drawn, { opacity: opt.opacity, invert: mode?.invert, blend: mode?.blend });
+    if (unmasked && opt.mask && opt.background !== undefined) this.maskBackground(unmasked, opt.mask, opt.background, m);
+  }
+  /**
+   * MaskBlt's background operation (the high byte of the ROP4): what happens where the mask is 0. "Leave
+   * the destination" (0xAA) draws nothing; the source operations draw the source there (with their blend
+   * look-alike); BLACKNESS, WHITENESS, PATCOPY, DSTINVERT and PATINVERT draw black, white, the brush or an
+   * inverting white there.
+   */
+  private maskBackground(src: Rgba, mask: NonNullable<BlitOptions['mask']>, rop: number, m: Xf) {
+    const idx = (rop >>> 16) & 0xff;
+    if (idx === 0xaa || mask.dib.encoded) return;
+    const holes = maskedRgba(src, mask.dib.img, mask.x, mask.y, true);
+    let extra = '';
+    let img = holes;
+    const brush = this.dc.brush.style === BS_NULL ? null : this.dc.brush.color;
+    const flat: Record<number, [Color | null, string?]> = { 0x00: [BLACK], 0xff: [WHITE], 0xf0: [brush], 0x55: [WHITE, 'difference'], 0x5a: [brush, 'difference'] };
+    if (idx in flat) {
+      const [c, blend] = flat[idx];
+      if (!c) return;
+      const v = parseInt(c.rgb.slice(1), 16);
+      const px = new Uint8ClampedArray(holes.px.length);
+      for (let i = 0; i < px.length; i += 4) { px[i] = (v >> 16) & 255; px[i + 1] = (v >> 8) & 255; px[i + 2] = v & 255; px[i + 3] = holes.px[i + 3] ? 255 : 0; }
+      img = { w: holes.w, h: holes.h, px };
+      if (blend) extra = ` style="mix-blend-mode:${blend}"`;
+    } else {
+      const mode = sourceRop(rop);
+      if (!mode && idx !== 0xcc) return;
+      if (mode?.invert) extra += ` filter="url(#${this.out.invertFilter()})"`;
+      if (mode?.blend) extra += ` style="mix-blend-mode:${mode.blend}"`;
+    }
+    const href = pngDataUrl(img);
+    this.out.element(`<image href="${href}" width="${img.w}" height="${img.h}" preserveAspectRatio="none" transform="matrix(${m.map(num).join(' ')})"${extra}/>`);
+    this.out.recordImage(m, img, { invert: extra.includes('filter='), blend: /mix-blend-mode:(\w+)/.exec(extra)?.[1] });
   }
   /**
    * A raster operation with no source bitmap: PATCOPY, BLACKNESS, WHITENESS, and the ones that read
@@ -593,18 +652,20 @@ export interface BlitOptions {
   key?: number;
   /** MaskBlt / PlgBlt: a 1-bit mask bitmap; where its pixel is 0 the destination keeps what it had (the usual background operation), where 1 the source is drawn. */
   mask?: { dib: Dib; x: number; y: number };
+  /** MaskBlt: the background raster operation (as a full ROP3, from the high byte of the ROP4), applied where the mask is 0. */
+  background?: number;
   /** PlgBlt: the destination is the parallelogram whose top-left, top-right and bottom-left corners are these logical points (the `dst` rectangle is ignored). */
   para?: [[number, number], [number, number], [number, number]];
 }
 
 /** `img` with its alpha taken from a 1-bit `mask` laid over it at (mx, my); pixels the mask does not reach become transparent. */
-export function maskedRgba(img: Rgba, mask: Rgba, mx: number, my: number): Rgba {
+export function maskedRgba(img: Rgba, mask: Rgba, mx: number, my: number, invert = false): Rgba {
   const px = new Uint8ClampedArray(img.px);
   for (let y = 0; y < img.h; y++) for (let x = 0; x < img.w; x++) {
     const X = x + mx, Y = y + my;
     let keep = false;
     if (X >= 0 && Y >= 0 && X < mask.w && Y < mask.h) { const o = (Y * mask.w + X) * 4; keep = mask.px[o] + mask.px[o + 1] + mask.px[o + 2] > 382; }
-    if (!keep) px[(y * img.w + x) * 4 + 3] = 0;
+    if (keep === invert) px[(y * img.w + x) * 4 + 3] = 0;
   }
   return { w: img.w, h: img.h, px };
 }
@@ -626,7 +687,7 @@ export function sourceRop(rop: number): { invert?: boolean; blend?: string } | n
 /** A brush pattern from a decoded bitmap. */
 export function patternBrush(dib: Dib | null): GdiBrush | null {
   if (!dib || dib.encoded) return null;
-  return { style: BS_DIBPATTERN, color: BLACK, hatch: 0, pattern: { href: pngDataUrl(dib.img), w: dib.img.w, h: dib.img.h } };
+  return { style: BS_DIBPATTERN, color: BLACK, hatch: 0, pattern: { href: pngDataUrl(dib.img), w: dib.img.w, h: dib.img.h, img: dib.img } };
 }
 
 export type { Bytes };
