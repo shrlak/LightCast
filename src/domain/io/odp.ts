@@ -271,11 +271,15 @@ function toParagraphs(lines: Line[]): ElementParagraph[] {
   });
 }
 
+/** Set when a text had character spacing on only some of its runs (the parse reports it once). */
+let spacingWarning = false;
+
 function applyText(el: SlideElement, lines: Line[]) {
   if (!lines.some((l) => l.runs.length)) return;
-  // Character spacing is the object's (not a run's): the first run that has any sets it.
-  const spacing = lines.flatMap((l) => l.runs).map((r) => (r as { letterSpacing?: number }).letterSpacing).find((v) => !!v);
-  if (spacing) el.letterSpacing = spacing;
+  // Character spacing is the object's in LightCast (not a run's): kept when every run has the same, else left out.
+  const spacings = lines.flatMap((l) => l.runs).filter((r) => r.text.trim()).map((r) => (r as { letterSpacing?: number }).letterSpacing ?? 0);
+  if (spacings.length && spacings[0] && spacings.every((v) => v === spacings[0])) el.letterSpacing = spacings[0];
+  else if (spacings.some((v) => v)) spacingWarning = true;
   for (const l of lines) for (const r of l.runs) delete (r as { letterSpacing?: number }).letterSpacing;
   const paragraphs = toParagraphs(lines);
   el.text = paragraphs.map((p) => p.text).join('\n');
@@ -660,6 +664,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   const lp = layout ? childNamed(layout, 'style:page-layout-properties') : undefined;
   const pw = lengthToCm(lp?.attrs['fo:page-width']), ph = lengthToCm(lp?.attrs['fo:page-height']);
   if (pw && ph) page = { w: pw, h: ph };
+  spacingWarning = false;
   const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map(), warnings: new Set(), customGlue: new Set(), glued: [] };
 
   const body = childNamed(childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] }, 'office:presentation');
@@ -785,6 +790,7 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     properties.comments = pick('dc:description');
     for (const k of Object.keys(properties) as (keyof DocProperties)[]) if (!properties[k]) delete properties[k];
   }
+  if (spacingWarning) ctx.warnings.add('글자 일부에만 준 문자 간격은 LightCast가 개체 전체에만 줄 수 있어 빼고 읽었습니다.');
   if (Math.abs(page.w / page.h - 4 / 3) > 0.02) ctx.warnings.add(`원본 슬라이드 크기는 ${Math.round(page.w * 100) / 100} × ${Math.round(page.h * 100) / 100}cm 입니다. LightCast는 4:3 슬라이드만 지원하므로 내용을 4:3 크기에 맞춰 늘이거나 줄였습니다.`);
   return { title: properties.title ?? '', properties, slides, ...(master ? { master } : {}), pageCm: page, warnings: [...ctx.warnings] };
 }
