@@ -275,7 +275,7 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
   const lp = paras[0];
   // Outline levels, bullets and spacing that differ between paragraphs are kept per paragraph.
   const lvl = (p: Para) => p.level ?? 0;
-  const mixedPara = paras.some((p) => lvl(p) !== lvl(lp) || p.list !== lp.list || (p.before ?? 0) !== (lp.before ?? 0) || (p.after ?? 0) !== (lp.after ?? 0) || p.lineHeight !== lp.lineHeight);
+  const mixedPara = paras.some((p) => lvl(p) !== lvl(lp) || p.list !== lp.list || (p.before ?? 0) !== (lp.before ?? 0) || (p.after ?? 0) !== (lp.after ?? 0) || p.lineHeight !== lp.lineHeight || p.lineExactPx !== lp.lineExactPx);
   const fields: Partial<SlideElement> = {
     text,
     fontSize: (own.fontSize as number | undefined) ?? 36,
@@ -304,7 +304,9 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
       text: runLines[i].map((r) => r.text).join(''), runs: runLines[i], align: aligns[i],
       ...(mixedPara ? {
         list: l.p.list ?? (lp.list ? 'none' : undefined), ...(lvl(l.p) ? { level: lvl(l.p) } : {}),
-        ...(l.p.before ? { spaceBefore: l.p.before } : {}), ...(l.p.after ? { spaceAfter: l.p.after } : {}), ...(l.p.lineHeight ? { lineHeight: l.p.lineHeight } : {}),
+        ...(l.p.before ? { spaceBefore: l.p.before } : {}), ...(l.p.after ? { spaceAfter: l.p.after } : {}),
+        // Each paragraph says its own line spacing (an exact one as a multiple of its text size).
+        lineHeight: l.p.lineHeight ?? (l.p.lineExactPx ? Math.round((l.p.lineExactPx / ((l.runs.find((r) => r.text)?.fontSize ?? l.p.empty.fontSize) || 36)) * 100) / 100 : 1.2),
       } : {}),
     }));
     if (mixedPara) delete fields.indent;
@@ -617,7 +619,7 @@ function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string)
     // The sizes are already scaled (readParagraphs applied fontScale); the box fits itself from there.
     textBits.fontScale = undefined;
   }
-  const plainBox = !isLine && isTextBox && prst === 'rect' && !cust && !('fill' in fill) && !('stroke' in line);
+  const plainBox = !isLine && (isTextBox || (!!ctx.strict && hasText)) && prst === 'rect' && !cust && !('fill' in fill) && !('stroke' in line);
   const el: SlideElement = {
     id: uid('el'),
     kind: plainBox ? 'text' : 'shape',

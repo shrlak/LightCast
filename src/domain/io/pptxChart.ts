@@ -104,6 +104,9 @@ export function readChart(xml: MNode, theme: DmlTheme): ChartResult | null {
     }
   }
   if (!series.length) return null;
+  // Series without a colour of their own take the theme's accents in turn, as PowerPoint's default chart style does.
+  const pie = kinds.every((k) => k === 'pie' || k === 'doughnut');
+  if (!pie) series.forEach((s, i) => { if (!s.color) s.color = theme.colors[`accent${(i % 6) + 1}`]; });
   const first = kinds.find(Boolean)!;
   const n = Math.max(cats.length, ...series.map((s) => s.values.length));
   while (cats.length < n) cats.push(String(cats.length + 1));
@@ -119,7 +122,7 @@ export function readChart(xml: MNode, theme: DmlTheme): ChartResult | null {
     legend: !!child(chartEl, 'legend'),
     ...(dLbls ? { dataLabels: true } : {}),
     gridlines: grid,
-    ...(txColor ? { textColor: txColor } : {}),
+    textColor: txColor ?? theme.colors.tx1 ?? theme.colors.dk1,
     ...(child(plots[0], 'upDownBars') ? { upDownBars: true } : {}),
   };
   return { chart, approximated: [...new Set(approximated)] };
