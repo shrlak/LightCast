@@ -355,7 +355,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         <button type="button" className="bs-back" onClick={onClose}>← 뒤로</button>
         {nav.map(([id, label]) => <button key={id} type="button" className={page === id ? 'on' : ''} onClick={() => setPage(id)}>{label}</button>)}
         <span className="grow" />
-        <button type="button" onClick={() => run(() => cmd.open(cmd.cloud.session ? 'sync' : 'account'))}>계정</button>
+        <button type="button" onClick={() => run(() => cmd.open('account'))}>계정</button>
         <button type="button" onClick={() => run(() => cmd.open('settings'))}>옵션</button>
       </nav>
       <main className="bs-main">

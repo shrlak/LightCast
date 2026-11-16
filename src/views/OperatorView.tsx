@@ -62,6 +62,8 @@ import { deleteMedia, forgetMediaUrl } from '../domain/media';
 import { finishedServices } from '../domain/sunday/cleanup';
 import { useServiceUploads } from '../ui/ppt/useServiceUploads';
 import { AccountModal } from '../ui/AccountModal';
+import { dropMediaFiles } from '../domain/serverMediaDrop';
+import { mediaFreedByPurge } from '../domain/trash';
 import { DeviceSetupDialog } from '../ui/DeviceSetupDialog';
 import { deviceProfileSaved } from '../domain/device';
 import { ConfessionSetting } from '../ui/sunday/ConfessionSetting';
@@ -115,7 +117,14 @@ export function OperatorView() {
   const [teamRequests, setTeamRequests] = useState<TeamRequest[]>([]);
   const knownRequests = useRef(new Set<string>());
   const [remoteControl, setRemoteControl] = useState<RemoteControlState | null>(null);
-  useEffect(() => { const expire = () => dispatchRaw({ type: 'trash/expire', now: Date.now() }); expire(); const t = setInterval(expire, 60000); return () => clearInterval(t); }, []);
+  useEffect(() => { const expire = () => {
+    const now = Date.now();
+    const lib = stateRef.current.library;
+    const ids = (lib.trash ?? []).filter((e) => e.expiresAt <= now).map((e) => e.id);
+    const freed = ids.length ? mediaFreedByPurge(lib, ids) : [];
+    dispatchRaw({ type: 'trash/expire', now });
+    if (freed.length) void dropMediaFiles(freed);
+  }; expire(); const t = setInterval(expire, 60000); return () => clearInterval(t); }, []);
   // 비어 있는 재생목록 자동 삭제: empty lists go at start-up at once; while the app runs, after they stayed empty for
   // a while and were not the active one (so a list that is being created or filled in steps is left alone).
   const emptySince = useRef(new Map<string, number>());

@@ -27,3 +27,20 @@ describe('media/rename', () => {
     expect(reducer(withMedia, { type: 'media/rename', id: 'zz', name: 'x' })).toBe(withMedia);
   });
 });
+
+import { mediaFreedByPurge } from '../src/domain/trash';
+describe('files freed by emptying the 휴지통', () => {
+  it('only the media nothing else uses', () => {
+    const lib = createSeedLibrary();
+    const bg = (id: string) => ({ kind: 'media', mediaId: id, mediaType: 'image', fit: 'cover' }) as never;
+    const mk = (id: string, mediaId: string) => ({ ...lib.presentations[0], id, title: id, slides: [{ ...lib.presentations[0].slides[0], id: `${id}s`, background: bg(mediaId) }] });
+    const l = {
+      ...lib,
+      media: [{ id: 'own', name: 'a', type: 'image' as const }, { id: 'shared', name: 'b', type: 'image' as const }],
+      presentations: [mk('live', 'shared')],
+      trash: [{ id: 't1', kind: 'presentation' as const, deletedAt: 1, expiresAt: 2, presentation: { ...mk('gone', 'own'), slides: [...mk('gone', 'own').slides, ...mk('x', 'shared').slides] } }],
+    };
+    expect(mediaFreedByPurge(l, ['t1'])).toEqual(['own']);
+    expect(mediaFreedByPurge(l, [])).toEqual([]);
+  });
+});
