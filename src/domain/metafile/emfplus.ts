@@ -4,7 +4,8 @@
 import { apply, compose, scaleOf, type Xf, Bytes } from './bytes';
 import { arcSegs } from './gdi';
 import { BIG, combineClips, hex, num, Out, xmlText, type Clip, type ClipNode, type Color, type Fill, type PathData, type Stroke } from './out';
-import { encodedImageUrl, pngDataUrl } from './png';
+import { encodedImageUrl, pngDataUrl, type Rgba } from './png';
+import { effectFilter, effectPixels, parseEffect, type Effect } from './effects';
 import { textWidth } from './metrics';
 import { glyphAdvancesEm, glyphsToText } from './fonts';
 import { asEllipse, gradientStops, pathGradientImage, radialStops, type Blend, type C4, type PathGradient } from './gradient';
@@ -32,7 +33,7 @@ type BrushObj =
   | { k: 'pathGradient'; g: PathGradient; ops: Op[]; xf: Xf }
   | { k: 'texture'; img: ImageObj; xf: Xf };
 interface PenObj { width: number; unit: number; brush: BrushObj; dash: number; cap: number; join: number; miter: number; dashes?: number[] }
-interface ImageObj { href: string; w: number; h: number }
+interface ImageObj { href: string; w: number; h: number; px?: Rgba }
 interface FontObj { em: number; unit: number; style: number; family: string }
 interface FormatObj { align: number; lineAlign: number }
 type R4 = [number, number, number, number];
@@ -58,6 +59,8 @@ export class Plus {
   /** The clip a container starts from: ResetClip and a replacing clip fall back to it, since a container's clip adds to its parent's. */
   private floor: Clip = null;
   private partial: { id: number; kind: number; total: number; data: number[] } | null = null;
+  /** The image effect of the last EmfPlusSerializableObject, for the next DrawImagePoints with the E flag. */
+  private effect: Effect | null = null;
 
   constructor(private out: Out, private frame: [number, number, number, number] | null) {}
 
@@ -132,7 +135,8 @@ export class Plus {
         break;
       }
       case 0x401a: this.drawImage(id, r, compressed); break;
-      case 0x401b: this.drawImagePoints(id, r, compressed); break;
+      case 0x401b: this.drawImagePoints(id, r, compressed, flags); break;
+      case 0x4038: this.effect = parseEffect(r); break; // SerializableObject: an image effect
       case 0x401c: this.drawString(flags, r); break;
       case 0x4036: this.drawDriverString(flags, r); break;
       case 0x4025: case 0x4028: case 0x4027: // Save, BeginContainerNoParams, BeginContainer
@@ -367,13 +371,25 @@ export class Plus {
    * alternately in x and / or y), mode 4 (clamp) fills it with the clamp colour; with no attributes
    * it stays transparent.
    */
-  private place(img: ImageObj, src: [number, number, number, number], m: Xf, attrs: ImageAttrs | null = null) {
+  private place(img: ImageObj, src: [number, number, number, number], m: Xf, attrs: ImageAttrs | null = null, effect: Effect | null = null) {
     const [sx, sy, sw, sh] = src;
+    let filt = '';
+    if (effect) {
+      const fixed = img.px ? effectPixels(effect, img.px) : null;
+      if (fixed) img = { href: pngDataUrl(fixed), w: img.w, h: img.h, px: fixed };
+      const prim = effectFilter(effect);
+      if (prim) {
+        const id = this.out.id('f');
+        const box = effect.k === 'blur' && effect.expand ? 'x="-25%" y="-25%" width="150%" height="150%"' : 'x="0" y="0" width="100%" height="100%"';
+        this.out.addDef(`<filter id="${id}" color-interpolation-filters="sRGB" ${box}>${prim}</filter>`);
+        filt = ` filter="url(#${id})"`;
+      }
+    }
     const whole = sx <= 0 && sy <= 0 && sx + sw >= img.w && sy + sh >= img.h;
     const inside = sx >= 0 && sy >= 0 && sx + sw <= img.w && sy + sh <= img.h;
     for (const [px, py] of [[sx, sy], [sx + sw, sy], [sx + sw, sy + sh], [sx, sy + sh]]) this.out.grow(...apply(m, px, py));
     const one = (x: number, y: number, fx: boolean, fy: boolean) =>
-      `<image href="${img.href}" ${fx || fy ? `transform="matrix(${fx ? -1 : 1} 0 0 ${fy ? -1 : 1} ${num(fx ? x + img.w : x)} ${num(fy ? y + img.h : y)})" ` : `x="${num(x)}" y="${num(y)}" `}width="${num(img.w)}" height="${num(img.h)}" preserveAspectRatio="none"/>`;
+      `<image href="${img.href}" ${fx || fy ? `transform="matrix(${fx ? -1 : 1} 0 0 ${fy ? -1 : 1} ${num(fx ? x + img.w : x)} ${num(fy ? y + img.h : y)})" ` : `x="${num(x)}" y="${num(y)}" `}width="${num(img.w)}" height="${num(img.h)}" preserveAspectRatio="none"${filt}/>`;
     if (!(sw > 0 && sh > 0) || (whole && inside) || (!attrs && whole)) {
       this.out.element(`<g transform="matrix(${m.map(num).join(' ')})">${one(0, 0, false, false)}</g>`);
       return;
@@ -403,15 +419,17 @@ export class Plus {
     this.place(img, src, compose(this.xf(), [kx, 0, 0, ky, dst[0] - src[0] * kx, dst[1] - src[1] * ky]), this.attrs(r.u32(0)));
   }
   /** DrawImagePoints: three corner points (top-left, top-right, bottom-left) give the parallelogram. */
-  private drawImagePoints(id: number, r: Bytes, compressed: boolean) {
+  private drawImagePoints(id: number, r: Bytes, compressed: boolean, flags = 0) {
     const img = this.image(id);
     if (!img) return;
     const src: [number, number, number, number] = [r.f32(8), r.f32(12), r.f32(16), r.f32(20)];
-    const p = points(r, 28, Math.min(r.u32(24), 3), compressed);
+    const p = flags & 0x0800 ? relPoints(r, 28, Math.min(r.u32(24), 3)) : points(r, 28, Math.min(r.u32(24), 3), compressed);
+    // E flag: the image is drawn through the effect of the last SerializableObject record.
+    const effect = flags & 0x2000 ? this.effect : null;
     if (p.length < 3 || !src[2] || !src[3]) return;
     const [ul, ur, ll] = p;
     const a = (ur[0] - ul[0]) / src[2], b = (ur[1] - ul[1]) / src[2], c = (ll[0] - ul[0]) / src[3], d = (ll[1] - ul[1]) / src[3];
-    this.place(img, src, compose(this.xf(), [a, b, c, d, ul[0] - a * src[0] - c * src[1], ul[1] - b * src[0] - d * src[1]]), this.attrs(r.u32(0)));
+    this.place(img, src, compose(this.xf(), [a, b, c, d, ul[0] - a * src[0] - c * src[1], ul[1] - b * src[0] - d * src[1]]), this.attrs(r.u32(0)), effect);
   }
 
   // ---- text ----
@@ -559,6 +577,19 @@ function points(r: Bytes, o: number, n: number, compressed: boolean): P2[] {
   const out: P2[] = [];
   const step = compressed ? 4 : 8;
   for (let i = 0; i < Math.min(n, MAX_POINTS) && r.has(o + i * step, step); i++) out.push(compressed ? [r.i16(o + i * step), r.i16(o + i * step + 2)] : [r.f32(o + i * step), r.f32(o + i * step + 4)]);
+  return out;
+}
+/** `n` EmfPlusPointR points at `o`: 7-bit or 15-bit signed integers, each relative to the one before. */
+function relPoints(r: Bytes, o: number, n: number): P2[] {
+  const out: P2[] = [];
+  let x = 0, y = 0;
+  const int = (): number => {
+    const b0 = r.u8At(o++);
+    if (!(b0 & 0x80)) return b0 & 0x40 ? (b0 & 0x7f) - 0x80 : b0 & 0x7f;
+    const v = ((b0 & 0x7f) << 8) | r.u8At(o++);
+    return v & 0x4000 ? v - 0x8000 : v;
+  };
+  for (let i = 0; i < n && o < r.length; i++) { x += int(); y += int(); out.push([x, y]); }
   return out;
 }
 /** `n` rectangles (x, y, w, h) at `o`. */
@@ -833,7 +864,7 @@ function parseImage(r: Bytes): ImageObj | null {
       } else if (bpp === 24) { px[d] = r.u8At(o + 2); px[d + 1] = r.u8At(o + 1); px[d + 2] = r.u8At(o); px[d + 3] = 255; }
       else return null;
     }
-    return { href: pngDataUrl({ w, h, px }), w, h };
+    return { href: pngDataUrl({ w, h, px }), w, h, px: { w, h, px } };
   }
   if (type === 2 && nestedRenderer && nesting < 2) {
     const size = r.u32(12);
