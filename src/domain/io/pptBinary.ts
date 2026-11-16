@@ -11,11 +11,13 @@
 //   custom geometry with every guide formula operation and arc / curve escape evaluated (pptGeometry.ts), LibreOffice's presets
 //   recognised by their formulas (pptLoPresets.ts); fillShadeColors stops and shadows; cell-rectangle groups are rebuilt as tables (pptTable.ts). Checked against files
 //   LibreOffice writes (tests/fixtures/real/ppt).
-// Not read: animations, PICT pictures, TextMasterStyle9 numbering, OLE objects.
+// Also read: PICT pictures (pict.ts: bitmaps, wrapped JPEG, simple rectangles / ovals / lines) and PowerPoint 2002 entrance animations
+//   (pptAnimations.ts). Not read: TextMasterStyle9 numbering, PowerPoint 97 builds, OLE objects.
 // Written for hostile input: it never throws, records are bounds-checked, recursion and the number of
 // records, slides, shapes and pictures are capped, and what cannot be read is reported in `warnings`.
 import { isCfb, readCfb } from './cfb';
 import { inflateZlib } from './inflate';
+import { pictToImage } from './pict';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
 import { customPathOf, recognisedPreset, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
 import type { Ext9 } from './pptText';
@@ -104,7 +106,7 @@ export interface PptDocument {
   width: number;
   height: number;
   slides: PptSlide[];
-  /** 1-based: pictures[i] is picture i + 1; null for a picture that cannot be shown (damaged, PICT). */
+  /** 1-based: pictures[i] is picture i + 1; null for a picture that cannot be shown (damaged, PICT with nothing drawable). */
   pictures: (PptPicture | null)[];
   warnings: string[];
 }
@@ -173,7 +175,7 @@ function dibToBmp(d: Uint8Array): Uint8Array | null {
   return out;
 }
 
-/** The picture of a blip record (JPEG, PNG, DIB, TIFF, compressed or plain EMF / WMF); null for PICT and anything unreadable. */
+/** The picture of a blip record (JPEG, PNG, DIB, TIFF, compressed or plain EMF / WMF, PICT drawn to PNG); null for anything unreadable. */
 function readBlip(b: Uint8Array, v: DataView, at: number): PptPicture | null {
   if (at < 0 || at + 8 > b.length) return null;
   const inst = v.getUint16(at, true) >> 4;
@@ -182,18 +184,21 @@ function readBlip(b: Uint8Array, v: DataView, at: number): PptPicture | null {
   const pos = at + 8;
   const end = Math.min(pos + len, b.length);
   if (len > MAX_PICTURE_BYTES || end <= pos) return null;
-  if (type === 0xf01a || type === 0xf01b) {
+  if (type === 0xf01a || type === 0xf01b || type === 0xf01c) {
     // Metafile blip: UID(s), then 34 bytes (size, bounds, extent, compressed size, compression, filter), then the data.
-    const two = (type === 0xf01a && inst === 0x3d5) || (type === 0xf01b && inst === 0x217);
+    const two = (type === 0xf01a && inst === 0x3d5) || (type === 0xf01b && inst === 0x217) || (type === 0xf01c && inst === 0x543);
     const hdr = pos + (two ? 32 : 16);
     if (hdr + 34 >= end) return null;
     const size = v.getUint32(hdr, true), saved = v.getUint32(hdr + 28, true), compression = b[hdr + 32];
     const raw = b.subarray(hdr + 34, Math.min(hdr + 34 + saved, end));
     const mime = type === 0xf01a ? 'image/x-emf' : 'image/x-wmf';
-    if (compression === 0xfe) return raw.length ? { mime, bytes: raw } : null;
-    if (compression !== 0) return null;
-    const data = inflateZlib(raw, Math.min(Math.max(size, 1024), MAX_PICTURE_BYTES));
-    return data && data.length ? { mime, bytes: data } : null;
+    let data: Uint8Array | null = null;
+    if (compression === 0xfe) data = raw.length ? raw : null;
+    else if (compression === 0) data = inflateZlib(raw, Math.min(Math.max(size, 1024), MAX_PICTURE_BYTES));
+    if (!data || !data.length) return null;
+    // A Macintosh PICT: its bitmaps (or the JPEG it wraps) drawn to a PNG.
+    if (type === 0xf01c) return pictToImage(data);
+    return { mime, bytes: data };
   }
   // One 16-byte UID, or two when the instance is the "with secondary UID" variant.
   const two = (type === 0xf01d && inst === 0x46b) || (type === 0xf01d && inst === 0x6e3) || (type === 0xf01e && inst === 0x6e1) || (type === 0xf01f && inst === 0x7a9) || (type === 0xf029 && inst === 0x6e5) || (type === 0xf02a && inst === 0x6e3);
@@ -205,7 +210,7 @@ function readBlip(b: Uint8Array, v: DataView, at: number): PptPicture | null {
     case 0xf01e: return data[0] === 0x89 && data[1] === 0x50 ? { mime: 'image/png', bytes: data } : null;
     case 0xf01f: { const bmp = dibToBmp(data); return bmp ? { mime: 'image/bmp', bytes: bmp } : null; }
     case 0xf029: return { mime: 'image/tiff', bytes: data };
-    default: return null; // PICT
+    default: return null;
   }
 }
 
