@@ -14,7 +14,6 @@ import type { Slide } from '../src/domain/types';
 
 const fx = (n: string) => new Uint8Array(readFileSync(new URL(`./fixtures/real/clipboard/${n}`, import.meta.url)));
 const enc = (s: string) => new TextEncoder().encode(s);
-const slideTitles = (slides: Slide[]) => slides.map((s) => (s.elements ?? []).find((e) => /슬라이드 \d\d/.test(e.text ?? ''))?.text ?? s.title ?? '');
 const EXPECTED = Array.from({ length: 20 }, (_, i) => `슬라이드 ${String(i + 1).padStart(2, '0')} 제목`);
 
 /** What File › Open's readers give for these bytes, without a browser. */
