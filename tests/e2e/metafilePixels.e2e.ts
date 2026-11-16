@@ -49,10 +49,34 @@ describe('glyph outlines against Chromium', () => {
       const xs = adv.reduce<number[]>((a, _v, i) => [...a, i ? a[i - 1] + adv[i - 1] : 20], []);
       const ours = await shot(`<svg width="600" height="220"><path d="${d}" fill="#000"/></svg>`, 600, 220);
       const theirs = await shot(`${face}<svg width="600" height="220"><text x="${xs.join(' ')}" y="160" font-family="Probe" font-size="${size}">${text.join('')}</text></svg>`, 600, 220);
-      let both = 0, either = 0;
-      for (let i = 0; i < 600 * 220; i++) { const a = dark(ours, i), b = dark(theirs, i); if (a && b) both++; if (a || b) either++; }
+      // Chromium on Linux hints and anti-aliases text by the system's font settings, which moves glyph edges by
+      // up to a pixel from the exact outline (CI's runner differs from a desktop here). So a dark pixel counts as
+      // matched when the other image has a dark pixel within 1 px; a wrong outline is off by far more than that.
+      const overlap = (x: Rgba, y: Rgba) => {
+        let m = 0, n = 0;
+        for (let i = 0; i < 600 * 220; i++) { const a = dark(x, i), b = dark(y, i); if (a || b) { n++; if ((a && near(y, i)) || (b && near(x, i))) m++; } }
+        return m / n;
+      };
+      const near = (img: Rgba, i: number) => {
+        const x = i % 600, y = (i / 600) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx, yy = y + dy;
+          if (xx >= 0 && yy >= 0 && xx < 600 && yy < 220 && dark(img, yy * 600 + xx)) return true;
+        }
+        return false;
+      };
+      let both = 0, either = 0, strictBoth = 0;
+      for (let i = 0; i < 600 * 220; i++) {
+        const a = dark(ours, i), b = dark(theirs, i);
+        if (a && b) strictBoth++;
+        if (a || b) { either++; if ((a && near(theirs, i)) || (b && near(ours, i))) both++; }
+      }
       expect(either).toBeGreaterThan(5000);
+      console.info(`${label}: overlap ${(strictBoth / either).toFixed(3)} exact, ${(both / either).toFixed(3)} within 1 px`);
       expect(both / either).toBeGreaterThan(0.95);
+      // The tolerance must still catch a wrong outline: the same outline moved 8 px fails it.
+      const shifted = await shot(`<svg width="600" height="220"><path transform="translate(8 0)" d="${d}" fill="#000"/></svg>`, 600, 220);
+      expect(overlap(shifted, theirs)).toBeLessThan(0.9);
       expect(f.unitsPerEm).toBeGreaterThan(0);
       clearMetafileFonts();
     });
