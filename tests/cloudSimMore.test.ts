@@ -208,6 +208,24 @@ describe('accounts, reset, scale and clocks', () => {
     expect(a.titles()).toContain('교회 곡');
   });
 
+  it('signing into another account during a round does not leave the status at "syncing"', async () => {
+    const { worker, clients: [a] } = await setup(1);
+    await worker.fetch('/api/cloud/register', { method: 'POST', body: JSON.stringify({ username: 'youth', password: 'pw', adminPassword: 'admin' }), headers: { 'content-type': 'application/json' } });
+    let once = true;
+    worker.before = async (r) => {
+      if (!once || r.path !== 'media') return;
+      once = false;
+      await a.login('youth');
+      await a.sync(); // what the hook does for the new sign-in: it finds the old round still running
+    };
+    await a.sync();
+    expect(a.laterPending).toBe(true);
+    a.laterPending = false;
+    await a.sync('push');
+    expect(a.status.state).toBe('synced');
+    expect(worker.account('youth').library.version).toBeGreaterThan(0);
+  });
+
   it('a cloud reset empties every computer and old media are not uploaded back', async () => {
     const { worker, clients: [a, b] } = await setup(2);
     a.addMedia('m_old', 'OLD');

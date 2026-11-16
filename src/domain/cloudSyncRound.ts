@@ -190,7 +190,9 @@ export async function syncOnce(ctl: SyncControl, env: SyncEnv, ui: SyncUi, reaso
     else ui.status({ state: err.status === 401 ? 'off' : 'error', message: err.message });
   } finally {
     ctl.busy = false;
-    if (env.session()?.token === session.token && (ctl.requested || (succeeded && libraryKey(syncable(env.local())) !== ctl.lastPushed))) {
+    // A round asked for meanwhile runs next even when it is for a new sign-in (it would otherwise wait for the next poll, showing "syncing").
+    const now = env.session();
+    if (now && ((ctl.requested) || (now.token === session.token && succeeded && libraryKey(syncable(env.local())) !== ctl.lastPushed))) {
       ctl.requested = false;
       ui.later(PUSH_DELAY);
     }
