@@ -15,6 +15,15 @@ import { isMetafileName, metafileToBlob } from '../domain/metafile/image';
 
 /** PowerPoint files LightCast opens as editable slides: .pptx / .ppt, plus show, macro and template variants (macros are never run). */
 export const POWERPOINT_FILE = /\.(pptx|pptm|ppsx|ppsm|potx|potm|ppt|pps|pot)$/i;
+/**
+ * LibreOffice / OpenDocument files read as slides by the .odp reader: presentations (.odp, flat .fodp, template .otp)
+ * and drawings (.odg, .fodg, .otg: one slide per page).
+ */
+export const OPENDOCUMENT_FILE = /\.(odp|fodp|otp|odg|fodg|otg)$/i;
+/** Every file LightCast opens as editable slides (PowerPoint and OpenDocument). */
+export const SLIDE_DECK_FILE = /\.(pptx|pptm|ppsx|ppsm|potx|potm|ppt|pps|pot|odp|fodp|otp|odg|fodg|otg)$/i;
+/** The file picker's `accept` for those files. */
+export const SLIDE_DECK_ACCEPT = '.pptx,.ppt,.pptm,.ppsx,.ppsm,.pps,.potx,.potm,.pot,.odp,.fodp,.otp,.odg,.fodg,.otg';
 /** Legacy binary PowerPoint (97–2003): .ppt, .pps, .pot. */
 export const LEGACY_POWERPOINT_FILE = /\.(ppt|pps|pot)$/i;
 
@@ -93,6 +102,7 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
       // order, so it looks and plays like the PowerPoint slide and can still be edited.
       const faithful = await pptxSlides(data, {
         group: () => base,
+        onSlide: (_s, i, total) => onProgress?.(`슬라이드 읽는 중 ${i + 1}/${total}: ${file.name}…`),
         mediaId: () => uid('m'),
         store: async (id, blob) => {
           await putMedia(id, blob);
@@ -113,11 +123,12 @@ export async function filesToSlides(files: File[], addMedia: (m: MediaMeta) => v
           background: mediaId ? { kind: 'media', mediaId, mediaType: 'image', fit: 'contain' } : undefined,
         });
       }
-    } else if (/\.odp$/i.test(file.name)) {
+    } else if (OPENDOCUMENT_FILE.test(file.name)) {
       onProgress?.(`OpenDocument 슬라이드 읽는 중: ${file.name}…`);
-      const doc = await parseOdp(file, { storeImage: (bytes, mime, name) => storeImage(new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: mime }), name, (m) => addMedia({ ...m, backgroundHidden: true })) })
+      const doc = await parseOdp(file, { masterMode: 'flatten', storeImage: (bytes, mime, name) => storeImage(new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: mime }), name, (m) => addMedia({ ...m, backgroundHidden: true })) })
         .catch((e: Error) => { throw new Error(`${file.name}: ${e.message} 기존 자료는 유지됩니다.`); });
       if (!doc.slides.length) throw new Error(`${file.name}: 슬라이드를 읽지 못했습니다. 기존 자료는 유지됩니다.`);
+      doc.warnings.forEach((w) => onProgress?.(w));
       doc.slides.forEach((s) => slides.push({ ...s, group: base }));
     } else if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name)) {
       onProgress?.(`Rendering ${file.name}…`);

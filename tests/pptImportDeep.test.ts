@@ -289,7 +289,7 @@ describe('.ppt transitions and hidden slides', () => {
   it('reads the slide-show settings', async () => {
     const r = await run({ slides: [{ shapes: [], hidden: true, transition: { effect: 6, speed: 2, onClick: false, timeMs: 5000 } }, { shapes: [] }, { shapes: [], transition: { effect: 2, speed: 0 } }] });
     expect(r.slides[0].disabled).toBe(true);
-    expect(r.slides[0].transition).toEqual({ kind: 'fade', duration: 500, advanceOnClick: false });
+    expect(r.slides[0].transition).toEqual({ kind: 'fade', option: 'throughBlack', duration: 500, advanceOnClick: false });
     expect(r.slides[0].autoAdvance).toBe(5);
     expect(r.slides[1].disabled).toBeUndefined();
     expect(r.slides[1].transition).toBeUndefined();

@@ -2,6 +2,7 @@ import type { Library, Presentation, UsageEntry } from './types';
 import { uid } from './lyrics';
 import { mergeActivity, mergeDevices, newestModification } from './activity';
 import { clearTransitions } from './persistence';
+import { mergePrefs } from './fontPrefs';
 import { keepProtectedMaterials, protectionWinners, mergeProtectionChanges } from './materialProtection';
 
 /** The part of the library that is shared through the cloud (online songs come from GitHub instead). */
@@ -9,10 +10,25 @@ export function syncable(lib: Library): Library {
   return { ...lib, presentations: lib.presentations.filter((p) => !p.online) };
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** JSON with the keys of every object in sorted order: equal content gives equal text, however the object was built. */
+export function canonicalJson(v: unknown): string {
+  return JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+}
+/** The text two libraries are compared by: equal when their content is equal, whatever the order of their keys. */
+export const libraryKey = (lib: Library): string => canonicalJson(lib);
+const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 /** Equal apart from the ids of slides and objects inside (which automatic changes may give anew). */
 const withoutInnerIds = (v: unknown) => JSON.stringify(v, function (this: unknown, k, x) { return k === 'id' && this !== v ? undefined : x; });
 const sameContent = (a: unknown, b: unknown) => a !== undefined && b !== undefined && withoutInnerIds(a) === withoutInnerIds(b);
+
+/** The items `after` shares with `before` are still in `before`'s order. */
+function keptOrder(before: { id: string }[], after: { id: string }[]): boolean {
+  const inAfter = new Set(after.map((x) => x.id));
+  const inBefore = new Set(before.map((x) => x.id));
+  const a = before.filter((x) => inAfter.has(x.id)).map((x) => x.id);
+  const b = after.filter((x) => inBefore.has(x.id)).map((x) => x.id);
+  return a.length === b.length && a.every((id, i) => id === b[i]);
+}
 
 /**
  * Three-way merge of id-keyed lists: base (last synced), local and remote.
@@ -29,7 +45,12 @@ export function mergeById<T extends { id: string }>(
   const b = new Map((base ?? []).map((x) => [x.id, x]));
   const l = new Map(local.map((x) => [x.id, x]));
   const r = new Map(remote.map((x) => [x.id, x]));
-  const order = [...local.map((x) => x.id), ...remote.map((x) => x.id).filter((id) => !l.has(id))];
+  // The order of the side that reordered wins; when this computer kept the base order, the cloud's order is taken,
+  // so two computers never keep writing their own (equally valid) orders over each other.
+  const primary = base && keptOrder(base, local) ? remote : local;
+  const secondary = primary === local ? remote : local;
+  const inPrimary = new Set(primary.map((x) => x.id));
+  const order = [...primary.map((x) => x.id), ...secondary.map((x) => x.id).filter((id) => !inPrimary.has(id))];
   const out: T[] = [];
   for (const id of order) {
     const bv = b.get(id);
@@ -95,6 +116,8 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
   const m = <K extends 'themes' | 'playlists' | 'media' | 'timers' | 'props' | 'messageTemplates' | 'macros' | 'screens' | 'schedules' | 'looks' | 'stageLayouts' | 'fonts'>(k: K) =>
     mergeById<{ id: string }>(base?.[k] as { id: string }[] | undefined, (local[k] ?? []) as { id: string }[], (remote[k] ?? []) as { id: string }[], (l, r) => [base ? l : r]) as Library[K];
   const fonts = m('fonts') ?? [];
+  const fontTrash = mergeById(base?.fontTrash, local.fontTrash ?? [], remote.fontTrash ?? []);
+  const fontPrefs = mergePrefs(local.fontPrefs, remote.fontPrefs);
   return {
     conflicts,
     conflictPairs,
@@ -122,6 +145,8 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
       looks: m('looks'),
       stageLayouts: m('stageLayouts'),
       ...(fonts.length ? { fonts } : {}),
+      ...(fontTrash.length ? { fontTrash } : {}),
+      ...(fontPrefs ? { fontPrefs } : {}),
       usage: usage.slice(-5000),
       sunday: pick(base?.sunday, local.sunday, remote.sunday, !!base),
       logoMediaId: pick(base?.logoMediaId, local.logoMediaId, remote.logoMediaId, !!base),

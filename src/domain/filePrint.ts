@@ -89,6 +89,7 @@ export function mediaIdsOf(p: Presentation): string[] {
     for (const e of s.elements ?? []) {
       if (e.mediaId) ids.add(e.mediaId);
       if (e.fillImage) ids.add(e.fillImage);
+      if (e.ole?.partId) ids.add(e.ole.partId);
     }
   }
   return [...ids];

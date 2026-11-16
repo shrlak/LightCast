@@ -10,7 +10,9 @@ export type LiveMessage =
   /** Laser pointer position on the presenter's slide (0–1), or off. */
   | import('./laserPointer').LaserMessage
   /** Live caption text for the audience view. */
-  | import('./captions').CaptionMessage;
+  | import('./captions').CaptionMessage
+  /** The presenter's sermon timer, for stage displays on this computer (and, via the relay, phones). */
+  | import('./pacing').TimerMessage;
 
 const CHANNEL = 'freecast-live';
 

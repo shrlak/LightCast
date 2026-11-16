@@ -7,21 +7,26 @@
 //   autoshapes, group child coordinate spaces), master / title-master inheritance (placeholder position,
 //   size, text frame and style, plus the master's own objects), pictures (JPEG, PNG, DIB, TIFF and the
 //   compressed WMF / EMF), slide transitions, hidden slides and speaker notes.
-//   Also read: per-paragraph bullets, levels, spacing and tab stops; freeforms (pVertices / pSegmentInfo, and plain-arithmetic guide
-//   formulas); fillShadeColors stops and shadows; cell-rectangle groups are rebuilt as tables (pptTable.ts). Checked against files
+//   Also read: per-paragraph bullets, levels, spacing, tab stops, auto-numbering (StyleTextProp9), ruler margins and hanging indents;
+//   custom geometry with every guide formula operation and arc / curve escape evaluated (pptGeometry.ts), LibreOffice's presets
+//   recognised by their formulas (pptLoPresets.ts); fillShadeColors stops and shadows; cell-rectangle groups are rebuilt as tables (pptTable.ts). Checked against files
 //   LibreOffice writes (tests/fixtures/real/ppt).
-// Not read: animations, auto-numbered bullets (PowerPoint 2002 extension tags), PICT pictures, arc escapes and guide formulas with
-//   conditions or trigonometry in custom shapes, OLE objects.
+// Also read: PICT pictures (pict.ts: bitmaps, wrapped JPEG, simple rectangles / ovals / lines) and PowerPoint 2002 entrance animations
+//   (pptAnimations.ts). Not read: TextMasterStyle9 numbering, PowerPoint 97 builds, OLE objects.
 // Written for hostile input: it never throws, records are bounds-checked, recursion and the number of
 // records, slides, shapes and pictures are capped, and what cannot be read is reported in `warnings`.
 import { isCfb, readCfb } from './cfb';
 import { inflateZlib } from './inflate';
+import { pictToImage } from './pict';
 import { each, isContainer, PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES, T, type Ctx, type Rec, type Scheme, rgbHex } from './pptRecords';
-import { customPathOf, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
-import { buildParas, readEnvironmentStyles, readFonts, readMasterStyle, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
+import { customPathOf, recognisedPreset, fillOf, guessPreset, shadowOf, type ShadowSpec, isBoxType, isLineType, lineOf, P, presetOf, readOpt, rotationOf, SP, type FillSpec, type LineSpec, type Props } from './pptEscher';
+import type { Ext9 } from './pptText';
+import { readAnimations, type PptAnimation } from './pptAnimations';
+import { buildParas, notesText, readEnvironmentStyles, readFonts, readMasterStyle, readRuler, readStyleExt9, readStyleRuns, type PptPara, type StyleRuns, type TextStyles } from './pptText';
 
 export { PPT_MAX_DEPTH, PPT_MAX_PICTURES, PPT_MAX_RECORDS, PPT_MAX_SLIDES };
 export type { PptPara, PptRun } from './pptText';
+export type { PptAnimation } from './pptAnimations';
 
 const MAX_PICTURE_BYTES = 64 * 1024 * 1024;
 const MAX_TEXT_CHARS = 5_000_000;
@@ -55,6 +60,8 @@ export interface PptShape {
   fill?: FillSpec;
   line?: LineSpec;
   shadow?: ShadowSpec;
+  /** The preset's adjust values (DrawingML units), for presets recognised from their formulas. */
+  adj?: number[];
   /** Freeform / custom geometry: SVG path data in a `w`×`h` space that is stretched to the shape's box. */
   path?: { d: string; w: number; h: number };
   /** Text frame: margins left, top, right, bottom in EMU; vertical anchor; false = no word wrap. */
@@ -63,6 +70,8 @@ export interface PptShape {
   wrap?: boolean;
   /** Members of one group share its number. */
   group?: number;
+  /** Escher shape id (what animations target). */
+  spid?: number;
   /** Placed by the master (the master's own object, not a placeholder). */
   master?: boolean;
   /** The position came from the master's placeholder. */
@@ -90,12 +99,14 @@ export interface PptSlide {
   background?: PptBackground;
   hidden?: boolean;
   transition?: PptTransition;
+  /** PowerPoint 2002+ object animations (main sequence), in play order. */
+  animations?: PptAnimation[];
 }
 export interface PptDocument {
   width: number;
   height: number;
   slides: PptSlide[];
-  /** 1-based: pictures[i] is picture i + 1; null for a picture that cannot be shown (damaged, PICT). */
+  /** 1-based: pictures[i] is picture i + 1; null for a picture that cannot be shown (damaged, PICT with nothing drawable). */
   pictures: (PptPicture | null)[];
   warnings: string[];
 }
@@ -117,6 +128,16 @@ const plain = (raw: string) => raw.replace(/[\r\v\u2028]/g, '\n').replace(/[\u00
 interface TextItem { type: number; raw: string; style: StyleRuns | null }
 const itemText = (i: TextItem) => plain(i.raw);
 
+/** The StyleTextProp9Atom inside a ProgTags container (ProgBinaryTag → BinaryTagData), if any. */
+function ext9Of(c: Ctx, tags: Rec, depth = 0): Ext9[] | undefined {
+  let out: Ext9[] | undefined;
+  each(c, tags.pos, tags.end, (r) => {
+    if (r.type === T.StyleTextProp9) { out ??= readStyleExt9(c, r); return false; }
+    if (depth < 4 && (r.type === T.ProgStringTag || r.type === T.ProgBinaryTag || r.type === T.BinaryTagData)) { out ??= ext9Of(c, r, depth + 1); }
+  });
+  return out;
+}
+
 /** Text atoms from a ClientTextbox / SlideListWithText run: TextHeaderAtom starts an item, chars / bytes atoms fill it, a StyleTextPropAtom styles it. */
 function textItems(c: Ctx, from: number, to: number, stopAtPersist = false): TextItem[] {
   const out: TextItem[] = [];
@@ -128,7 +149,9 @@ function textItems(c: Ctx, from: number, to: number, stopAtPersist = false): Tex
       const raw = decodeRaw(c, r, r.type === T.TextChars);
       if (cur && !cur.raw) cur.raw = raw;
       else out.push((cur = { type: 4, raw, style: null }));
-    } else if (r.type === T.StyleTextProp && cur && !cur.style) cur.style = readStyleRuns(c, r, cur.raw.length);
+    } else if (r.type === T.StyleTextProp && cur && !cur.style?.pf.length) cur.style = { ...readStyleRuns(c, r, cur.raw.length), ruler: cur.style?.ruler };
+    else if (r.type === T.TextRuler && cur) { const ruler = readRuler(c, r); if (ruler) cur.style = { ...(cur.style ?? { pf: [], cf: [] }), ruler }; }
+    else if (r.type === T.ProgTags && isContainer(r) && cur) { const e = ext9Of(c, r); if (e) cur.style = { ...(cur.style ?? { pf: [], cf: [] }), ext9: e }; }
   });
   return out;
 }
@@ -152,7 +175,7 @@ function dibToBmp(d: Uint8Array): Uint8Array | null {
   return out;
 }
 
-/** The picture of a blip record (JPEG, PNG, DIB, TIFF, compressed or plain EMF / WMF); null for PICT and anything unreadable. */
+/** The picture of a blip record (JPEG, PNG, DIB, TIFF, compressed or plain EMF / WMF, PICT drawn to PNG); null for anything unreadable. */
 function readBlip(b: Uint8Array, v: DataView, at: number): PptPicture | null {
   if (at < 0 || at + 8 > b.length) return null;
   const inst = v.getUint16(at, true) >> 4;
@@ -161,18 +184,21 @@ function readBlip(b: Uint8Array, v: DataView, at: number): PptPicture | null {
   const pos = at + 8;
   const end = Math.min(pos + len, b.length);
   if (len > MAX_PICTURE_BYTES || end <= pos) return null;
-  if (type === 0xf01a || type === 0xf01b) {
+  if (type === 0xf01a || type === 0xf01b || type === 0xf01c) {
     // Metafile blip: UID(s), then 34 bytes (size, bounds, extent, compressed size, compression, filter), then the data.
-    const two = (type === 0xf01a && inst === 0x3d5) || (type === 0xf01b && inst === 0x217);
+    const two = (type === 0xf01a && inst === 0x3d5) || (type === 0xf01b && inst === 0x217) || (type === 0xf01c && inst === 0x543);
     const hdr = pos + (two ? 32 : 16);
     if (hdr + 34 >= end) return null;
     const size = v.getUint32(hdr, true), saved = v.getUint32(hdr + 28, true), compression = b[hdr + 32];
     const raw = b.subarray(hdr + 34, Math.min(hdr + 34 + saved, end));
     const mime = type === 0xf01a ? 'image/x-emf' : 'image/x-wmf';
-    if (compression === 0xfe) return raw.length ? { mime, bytes: raw } : null;
-    if (compression !== 0) return null;
-    const data = inflateZlib(raw, Math.min(Math.max(size, 1024), MAX_PICTURE_BYTES));
-    return data && data.length ? { mime, bytes: data } : null;
+    let data: Uint8Array | null = null;
+    if (compression === 0xfe) data = raw.length ? raw : null;
+    else if (compression === 0) data = inflateZlib(raw, Math.min(Math.max(size, 1024), MAX_PICTURE_BYTES));
+    if (!data || !data.length) return null;
+    // A Macintosh PICT: its bitmaps (or the JPEG it wraps) drawn to a PNG.
+    if (type === 0xf01c) return pictToImage(data);
+    return { mime, bytes: data };
   }
   // One 16-byte UID, or two when the instance is the "with secondary UID" variant.
   const two = (type === 0xf01d && inst === 0x46b) || (type === 0xf01d && inst === 0x6e3) || (type === 0xf01e && inst === 0x6e1) || (type === 0xf01f && inst === 0x7a9) || (type === 0xf029 && inst === 0x6e5) || (type === 0xf02a && inst === 0x6e3);
@@ -184,7 +210,7 @@ function readBlip(b: Uint8Array, v: DataView, at: number): PptPicture | null {
     case 0xf01e: return data[0] === 0x89 && data[1] === 0x50 ? { mime: 'image/png', bytes: data } : null;
     case 0xf01f: { const bmp = dibToBmp(data); return bmp ? { mime: 'image/bmp', bytes: bmp } : null; }
     case 0xf029: return { mime: 'image/tiff', bytes: data };
-    default: return null; // PICT
+    default: return null;
   }
 }
 
@@ -241,6 +267,7 @@ function groupMapper(g: Placed, s: Rect | undefined): Mapper {
 }
 
 interface RawShape {
+  spid?: number;
   props: Props;
   flags: number;
   spType: number;
@@ -264,6 +291,7 @@ interface Parsed {
   background?: RawShape;
   styles: TextStyles;
   info?: PptTransition & { hidden: boolean };
+  animations?: PptAnimation[];
 }
 
 interface DrawState { shapes: RawShape[]; background?: RawShape; defaults: Props; groups: number }
@@ -273,10 +301,10 @@ const rectOf = (l: number, t: number, r: number, b: number): Rect => ({ l: Math.
 function readRawShape(c: Ctx, sp: Rec, map: Mapper, st: DrawState, group: number | undefined): RawShape {
   const props: Props = new Map(st.defaults);
   const raw: RawShape = { props, flags: 0, spType: 0, items: [], group };
-  let abs: Rect | undefined, child: Rect | undefined;
+  let abs: Rect | undefined, child: Rect | undefined, ext9: Ext9[] | undefined;
   each(c, sp.pos, sp.end, (r) => {
     const len = r.end - r.pos;
-    if (r.type === T.SpAtom && len >= 8) { raw.spType = r.inst; raw.flags = c.v.getUint32(r.pos + 4, true); }
+    if (r.type === T.SpAtom && len >= 8) { raw.spType = r.inst; raw.spid = c.v.getUint32(r.pos, true); raw.flags = c.v.getUint32(r.pos + 4, true); }
     else if (r.type === T.SpgrAtom && len >= 16) raw.spgr = rectOf(c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true));
     else if (r.type === T.ClientAnchor) {
       if (len >= 16) abs = rectOf(c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true)); // left, top, right, bottom
@@ -284,9 +312,13 @@ function readRawShape(c: Ctx, sp: Rec, map: Mapper, st: DrawState, group: number
     } else if (r.type === T.ChildAnchor && len >= 16) child = rectOf(c.v.getInt32(r.pos, true), c.v.getInt32(r.pos + 4, true), c.v.getInt32(r.pos + 8, true), c.v.getInt32(r.pos + 12, true));
     else if (r.type === T.ClientTextbox) raw.items = textItems(c, r.pos, r.end);
     else if (r.type === T.ClientData) {
-      each(c, r.pos, r.end, (d) => { if (d.type === T.OEPlaceholder && d.end - d.pos >= 5) raw.placeholder = c.b[d.pos + 4]; });
+      each(c, r.pos, r.end, (d) => {
+        if (d.type === T.OEPlaceholder && d.end - d.pos >= 5) raw.placeholder = c.b[d.pos + 4];
+        else if (d.type === T.ProgTags && isContainer(d)) ext9 ??= ext9Of(c, d);
+      });
     } else if (r.type === T.Opt || r.type === T.SecondaryOpt || r.type === T.TertiaryOpt) readOpt(c, r, props);
   });
+  if (ext9 && raw.items[0] && !raw.items[0].style?.ext9) raw.items[0].style = { ...(raw.items[0].style ?? { pf: [], cf: [] }), ext9 };
   const rect = abs ?? child;
   if (rect && (rect.r > rect.l || rect.b > rect.t)) {
     const p: Placed = { x: rect.l, y: rect.t, w: rect.r - rect.l, h: rect.b - rect.t, rot: rotationOf(props), flipH: (raw.flags & SP.flipH) !== 0, flipV: (raw.flags & SP.flipV) !== 0 };
@@ -373,6 +405,7 @@ function readContainer(c: Ctx, at: number, defaults: Props): Parsed | null {
         const ms = readMasterStyle(c, k);
         if (ms && !parsed.styles.has(ms.type)) parsed.styles.set(ms.type, ms.levels);
       }
+      else if (k.type === T.ProgTags && isContainer(k)) { const a = readAnimations(c, k); if (a.length) parsed.animations = a; }
       else if (k.type === T.SlideShowSlideInfo && k.end - k.pos >= 12) {
         const flags = c.v.getUint16(k.pos + 10, true);
         parsed.info = { effect: c.b[k.pos + 9], direction: c.b[k.pos + 8], speed: k.end - k.pos >= 13 ? c.b[k.pos + 12] : 1, onClick: (flags & 0x1) !== 0, afterMs: (flags & 0x400) !== 0 ? Math.max(0, c.v.getInt32(k.pos, true)) : 0, hidden: (flags & 0x4) !== 0 };
@@ -463,13 +496,16 @@ function finishShape(raw: RawShape, env: Env, c: Ctx): PptShape | null {
   const props: Props = mp ? new Map([...mp.props, ...raw.props]) : raw.props;
   const placed = raw.placed ?? mp?.placed;
   const spType = raw.spType || (mp?.spType ?? 0);
-  const preset = presetOf(spType);
-  const geom: Partial<PptShape> = placed ? { x: placed.x, y: placed.y, w: placed.w, h: placed.h } : {};
+  const recognised = !presetOf(spType) && raw.placeholder === undefined ? recognisedPreset(raw.props) : undefined;
+  const preset = presetOf(spType) ?? recognised?.shape;
+  const adjList = recognised ? recognised.adjust.slice(0, recognised.adjust.findIndex((v) => v === undefined) < 0 ? 8 : recognised.adjust.findIndex((v) => v === undefined)) as number[] : [];
+  const geom: Partial<PptShape> & { adj?: number[] } = placed ? { x: placed.x, y: placed.y, w: placed.w, h: placed.h } : {};
+  if (adjList.length) geom.adj = adjList;
   if (placed?.rot) geom.rotation = placed.rot;
   if (raw.placed?.flipH) geom.flipH = true;
   if (raw.placed?.flipV) geom.flipV = true;
   if (!raw.placed && placed) geom.inherited = true;
-  const base: Partial<PptShape> = { ...geom, ...(raw.placeholder !== undefined ? { placeholder: raw.placeholder } : {}), ...(raw.group ? { group: raw.group } : {}) };
+  const base: Partial<PptShape> = { ...geom, ...(raw.spid ? { spid: raw.spid } : {}), ...(raw.placeholder !== undefined ? { placeholder: raw.placeholder } : {}), ...(raw.group ? { group: raw.group } : {}) };
 
   const textEnv = { styles: env.styles, fallback: env.fallback, fonts: env.fonts, scheme: env.scheme };
   const paras: PptPara[] = [];
@@ -602,9 +638,11 @@ function parse(bytes: Uint8Array): PptDocument {
     if (!entry) return undefined;
     const at = dir?.map.get(entry.persistId);
     const parsed = at !== undefined ? readContainer(c, at, defaults) : null;
-    const fromShapes = parsed?.shapes.flatMap((s) => s.items.filter((i) => i.type === 2).map(itemText)).filter(Boolean).join('\n');
-    const text = fromShapes || entry.items.filter((i) => i.type === 2).map(itemText).join('\n');
-    return text.trim() || undefined;
+    // The notes page's body text (text type 2), with its paragraphs, levels, bullets and numbering.
+    const env = { styles: parsed?.styles.size ? parsed.styles : undefined, fallback, fonts };
+    const fromItems = (items: TextItem[]) => items.filter((i) => i.type === 2 && itemText(i).trim()).map((i) => notesText(buildParas(i.raw, i.style, 2, env))).filter(Boolean).join('\n');
+    const text = fromItems(parsed?.shapes.flatMap((s) => s.items) ?? []) || fromItems(entry.items);
+    return text.trim() ? text : undefined;
   };
 
   const toSlide = (parsed: Parsed | null, entryItems: TextItem[]): PptSlide => {
@@ -639,6 +677,7 @@ function parse(bytes: Uint8Array): PptDocument {
       const background = backgroundOf(parsed, master, scheme, pictures.length);
       if (background) slide.background = background;
       if (parsed.info?.hidden) slide.hidden = true;
+      if (parsed.animations) slide.animations = parsed.animations;
       if (parsed.info && (parsed.info.effect > 0 || parsed.info.afterMs > 0 || !parsed.info.onClick)) {
         const { effect, direction, speed, onClick, afterMs } = parsed.info;
         slide.transition = { effect, direction, speed, onClick, afterMs };

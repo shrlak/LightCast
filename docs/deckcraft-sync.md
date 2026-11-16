@@ -76,8 +76,11 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
   draws any metafile it is handed into an ordinary image before it is stored.
 - When `craft-metafile` changes (check `git log -- Cargo.toml Cargo.lock` and commits mentioning "metafile"): port the
   change into `src/domain/metafile/` and add a test to `tests/metafile.test.ts` or `tests/metafileReal.test.ts` (real files
-  in `tests/fixtures/real/metafile/`, see its README). Not drawn (see the header of `src/domain/metafile/index.ts`):
-  flood fills (the reader draws vectors, there is no pixel surface), EMF+ image effects and colour matrices,
-  path gradients beyond their centre colour, glyph-index text (pale boxes instead of letters).
+  in `tests/fixtures/real/metafile/`, see its README; the gaps closed later are in `tests/metafileGaps.test.ts`).
+  Flood fills go through a small software rasteriser (`raster.ts`), EMF+ path gradients and blends through
+  `gradient.ts`, image effects through `effects.ts` (SVG filters), glyph-index text and text widths through the
+  font files registered in `fonts.ts` (imported fonts and fonts from decks). Still not drawn (see the header of
+  `src/domain/metafile/index.ts`): ImageAttributes colour matrices / remap tables (EMF+ cannot store them),
+  red-eye correction of PNG / JPEG images, glyph indices in WMF text.
 - DeckCraft plays the GDI records of an EMF+ "dual" file; LightCast prefers the EMF+ records and uses the GDI
   fallback only when EMF+ draws nothing, or between an EMF+ `GetDC` and the next EMF+ record.

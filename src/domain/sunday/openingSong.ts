@@ -141,11 +141,11 @@ export function applyInkFix(px: Uint8ClampedArray, fix: InkFix): void {
   }
 }
 
-/** The library's sheet-music deck for this title, from an earlier week. */
+/** The library's sheet-music deck for this title, from an earlier week (the newest one when a title was imported again). */
 export function findOpeningDeck(presentations: readonly Presentation[], title: string): Presentation | undefined {
   const key = (s: string) => s.normalize('NFC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
   const want = key(title);
-  return want ? presentations.find((p) => p.scoreSheet && key(p.scoreSheet.title) === want && p.slides.length > 0) : undefined;
+  return want ? [...presentations].reverse().find((p) => p.scoreSheet && key(p.scoreSheet.title) === want && p.slides.length > 0) : undefined;
 }
 
 /** One slide per sheet-music page: white, with the pictures (stored as media) placed by fitToCanvas. */

@@ -2,6 +2,7 @@
 import { getMedia, putMedia, deleteMedia } from './media';
 import { cloudApi } from './cloud';
 import { addCloudFont, importedFontBytes, importedFonts, removeImportedFonts, updateImportedFont } from './importedFonts';
+import { addCloudEmbedded, embeddedFontBytes, embeddedFontsForSync, removeEmbeddedFont, updateEmbeddedFont } from './embeddedFonts';
 import type { FontCloudApi, FontStoreApi } from './fontSync';
 
 const KNOWN_KEY = 'impfont:known';
@@ -17,11 +18,12 @@ export function createFontCloud(token: string, resetId?: string): FontCloudApi {
 
 export function createFontStore(scope: string): FontStoreApi {
   return {
-    list: importedFonts,
-    bytes: importedFontBytes,
-    setFields: updateImportedFont,
-    add: addCloudFont,
-    remove: async (id) => { await removeImportedFonts({ id }); },
+    // The fonts imported from files and the fonts that came inside .pptx files ("embfont:") are one list for the sync.
+    list: () => [...importedFonts(), ...embeddedFontsForSync()],
+    bytes: (f) => (f.embedded || f.id.startsWith('embfont:') ? embeddedFontBytes(f.id) : importedFontBytes(f)),
+    setFields: (id, patch) => (id.startsWith('embfont:') ? updateEmbeddedFont(id, patch) : updateImportedFont(id, patch)),
+    add: (entry, data, suffix) => (entry.embedded ? addCloudEmbedded(entry, data, suffix) : addCloudFont(entry, data, suffix)),
+    remove: async (id) => { if (id.startsWith('embfont:')) await removeEmbeddedFont(id); else await removeImportedFonts({ id }); },
     loadKnown: async () => {
       try {
         const b = await getMedia(KNOWN_KEY);

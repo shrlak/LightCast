@@ -8,7 +8,7 @@ import type { Presentation, Slide, SlideElement } from '../src/domain/types';
 const store = () => ({ storeImage: () => 'm1' });
 const noPics = { loadMedia: () => null };
 type Deck = Pick<Presentation, 'title' | 'slides' | 'properties' | 'master'>;
-const roundTrip = async (deck: Deck) => parseOdp(await writeOdp(deck, noPics), store());
+const roundTrip = async (deck: Deck, extra = {}) => parseOdp(await writeOdp(deck, noPics), { ...store(), ...extra });
 const filesOf = async (deck: Deck) => {
   const zip = await JSZip.loadAsync(await writeOdp(deck, noPics));
   return { content: await zip.file('content.xml')!.async('string'), styles: await zip.file('styles.xml')!.async('string') };
@@ -101,7 +101,7 @@ describe('odp master page objects', () => {
   });
 
   it('reads them back as the slides\' background objects once, and not on a slide that hides them', async () => {
-    const doc = await roundTrip(deck());
+    const doc = await roundTrip(deck(), { masterMode: 'flatten' });
     const [s1, s2] = doc.slides;
     expect(s1.elements!.filter((e) => e.fill === '#cc0000')).toHaveLength(1);
     expect(s1.elements!.filter((e) => e.name?.startsWith('마스터: '))).toHaveLength(2);
@@ -133,9 +133,9 @@ describe('odp import source', () => {
   it('marks opened slides as .odp with the file name and page', async () => {
     const bytes = await writeOdp(deck(), noPics);
     const named = await parseOdp(bytes, { ...store(), name: '찬양.odp' });
-    expect(named.slides.map((s) => s.importSource)).toEqual([{ format: 'odp', name: '찬양.odp', page: 1 }, { format: 'odp', name: '찬양.odp', page: 2 }]);
+    expect(named.slides.map((s) => s.importSource)).toMatchObject([{ format: 'odp', name: '찬양.odp', page: 1 }, { format: 'odp', name: '찬양.odp', page: 2 }]);
     const file = await parseOdp(new File([bytes as BlobPart], '예배.odp'), store());
-    expect(file.slides[1].importSource).toEqual({ format: 'odp', name: '예배.odp', page: 2 });
+    expect(file.slides[1].importSource).toMatchObject({ format: 'odp', name: '예배.odp', page: 2 });
     // Bytes alone have no name.
     expect((await parseOdp(bytes, store())).slides[0].importSource).toMatchObject({ format: 'odp', name: '' });
   });

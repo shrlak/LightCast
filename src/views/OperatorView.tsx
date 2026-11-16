@@ -49,13 +49,14 @@ import { fetchOnlineSongs } from '../domain/online';
 import { runExternal } from '../domain/effects';
 import type { Macro, SlideAction } from '../domain/types';
 import { AudioPlayer } from '../ui/AudioPanel';
-import { POWERPOINT_FILE, filesToSlides } from '../ui/importFiles';
+import { SLIDE_DECK_FILE, filesToSlides } from '../ui/importFiles';
 import { remoteInfoMessages, remotePositionMessage, remoteSlideInfo } from '../domain/remoteSlides';
 import { mediaIdsFor, resetSentMedia, sendMediaToRemotes } from '../domain/remoteMedia';
 import { x32 } from '../ui/x32';
 import { loadX32Settings, saveX32Settings, type X32Settings } from '../domain/x32';
 import { UpdateBanner } from '../ui/UpdateBanner';
 import { useCloudSync } from '../ui/useCloudSync';
+import { useWindowSync } from '../ui/useWindowSync';
 import { deleteMedia, forgetMediaUrl } from '../domain/media';
 import { finishedServices } from '../domain/sunday/cleanup';
 import { useServiceUploads } from '../ui/ppt/useServiceUploads';
@@ -184,6 +185,7 @@ export function OperatorView() {
     return () => { clearTimeout(first); clearInterval(t); };
   }, []);
   const cloud = useCloudSync(state.library, dispatch, (m) => notifyRef.current(m));
+  useWindowSync(state.library, dispatch);
   // The first login on this computer (or a logged-in computer never named): register its name and user right away.
   const [deviceSetup, setDeviceSetup] = useState(false);
   useEffect(() => {
@@ -503,7 +505,7 @@ export function OperatorView() {
         const approx: string[] = [];
         const reports: ImportReport[] = [];
         const toSlides = (list: File[]) => filesToSlides(list, (m) => dispatch({ type: 'media/add', media: m }), notify, (n) => approx.push(n), notify, (r) => reports.push(r));
-        const isPptx = (f: File) => POWERPOINT_FILE.test(f.name) || /\.odp$/i.test(f.name);
+        const isPptx = (f: File) => SLIDE_DECK_FILE.test(f.name);
         let total = 0;
         // Each PowerPoint or OpenDocument (.odp) file becomes its own presentation in a new 재생목록 named after the file.
         for (const f of files.filter(isPptx)) {

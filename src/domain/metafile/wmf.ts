@@ -3,6 +3,7 @@
 import { Bytes } from './bytes';
 import { BS_HATCHED, BS_SOLID, colorref, decode8, decode8dx, Gdi, MAX_POINTS, patternBrush, type GdiBrush, type Rect } from './gdi';
 import { decodeDib } from './png';
+import { Recorder } from './raster';
 
 export interface Played {
   gdi: Gdi;
@@ -38,6 +39,13 @@ export function playWmf(b: Bytes): Played | null {
   if (b.u16(pos + 2) !== 9) return null;
   pos += b.u16(pos + 2) * 2;
   if (bbox) { g.dc.winOrg = [bbox[0], bbox[1]]; g.dc.winExt = [bbox[2], bbox[3]]; }
+  g.frameHint = () => { const e = g.winSeen.ext; return e && e[0] && e[1] ? [0, 0, Math.abs(e[0]), Math.abs(e[1])] : bbox ? [0, 0, bbox[2], bbox[3]] : null; };
+  for (let p = pos, k = 0; p + 6 <= b.length && k < MAX_RECORDS; k++) {
+    const words = b.u32(p), fn = b.u16(p + 4);
+    if (words < 3 || fn === 0) break;
+    if (fn === 0x0419 || fn === 0x0548) { g.out.recorder = new Recorder(); break; }
+    p += words * 2;
+  }
   let n = 0;
   while (pos + 6 <= b.length && n++ < MAX_RECORDS && !g.out.full) {
     const words = b.u32(pos);
@@ -81,7 +89,8 @@ function record(g: Gdi, fn: number, r: Bytes): void {
     case 0x0410: g.scaleWindowExt(s(3), s(2), s(1), s(0)); break;
     case 0x0412: g.scaleViewportExt(s(3), s(2), s(1), s(0)); break;
     case 0x012d: g.select(u(0)); break;
-    case 0x0419: case 0x0548: break; // FloodFill / ExtFloodFill: need the pixels already drawn (see index.ts); nothing is drawn
+    case 0x0419: g.floodFill(s(3), s(2), colorref(r.u32(6)), false); break; // FloodFill: colour, y, x (raster.ts)
+    case 0x0548: g.floodFill(s(4), s(3), colorref(r.u32(8)), u(0) === 1); break; // ExtFloodFill: mode, colour, y, x
     case 0x01f0: g.deleteObject(u(0)); break;
     case 0x02fa: // CreatePenIndirect: style, width (x, y), colour
       g.addObject({ k: 'pen', pen: { style: u(0), width: s(1), color: colorref(r.u32(12)), cap: 'round', join: 'round', cosmetic: s(1) <= 1 } });

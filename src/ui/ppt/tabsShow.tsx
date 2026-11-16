@@ -387,10 +387,13 @@ export function AnimationsTab({ ed, onPreview }: { ed: Ed; onPreview: () => void
           <DropButton icon="⚡" label="트리거" title="다른 개체를 클릭할 때 이 애니메이션 재생" disabled={!first || !ed.canEdit} render={(close) => (
             <>
               <MenuHead>클릭할 때</MenuHead>
-              <MenuItem label="(없음 — 슬라이드 클릭 순서대로)" on={!first?.trigger} onClick={() => { patchMine({ trigger: undefined }); close(); }} />
+              <MenuItem label="(없음 — 슬라이드 클릭 순서대로)" on={!first?.trigger} onClick={() => { patchMine({ trigger: undefined, bookmark: undefined }); close(); }} />
               {ed.elements.filter((e) => !e.master && !ids.includes(e.id)).map((e) => (
-                <MenuItem key={e.id} label={elementName(e, ed.elements.indexOf(e))} on={first?.trigger === e.id} onClick={() => { patchMine({ trigger: e.id }); close(); }} />
+                <MenuItem key={e.id} label={elementName(e, ed.elements.indexOf(e))} on={first?.trigger === e.id && !first.bookmark} onClick={() => { patchMine({ trigger: e.id, bookmark: undefined }); close(); }} />
               ))}
+              {ed.elements.filter((e) => !e.master && !ids.includes(e.id) && e.playback?.bookmarks?.length).map((e) => (e.playback?.bookmarks ?? []).map((b) => (
+                <MenuItem key={`${e.id}:${b.name}`} label={`📍 ${elementName(e, ed.elements.indexOf(e))} · 책갈피 “${b.name}”에 도달할 때`} on={first?.trigger === e.id && first.bookmark === b.name} onClick={() => { patchMine({ trigger: e.id, bookmark: b.name }); close(); }} />
+              )))}
             </>
           )} />
           <span onDoubleClick={() => armPainter(true)}>

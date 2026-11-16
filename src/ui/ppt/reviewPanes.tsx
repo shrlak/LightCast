@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'reac
 import type { Presentation, Slide } from '../../domain/types';
 import { accept, acceptAll, compare, type Revision } from '../../domain/compare';
 import { importPptx } from '../../domain/io/pptxImport';
+import { parseOdp, odpSlideText as odpText } from '../../domain/io/odp';
 import { importPpt } from '../../domain/io/pptImport';
 import { LEGACY_POWERPOINT_FILE } from '../importFiles';
 import { addToDictionary, changeWord, dictionaryReady, ensureDictionary, ignoreKey, isMisspelled, misspellings, suggestionsFor, userDictionary, type SpellWord } from '../../domain/spelling';
@@ -144,7 +145,9 @@ export function CompareDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) 
   const fromFile = async (f: File | undefined) => {
     if (!f || !ed.p) return;
     // .pptx (and its variants) through the PPTX reader; legacy .ppt through the native binary reader.
-    const imported = LEGACY_POWERPOINT_FILE.test(f.name)
+    const imported = /\.odp$/i.test(f.name)
+      ? (await parseOdp(f, { storeImage: () => '' }).catch(() => ({ slides: [] as Slide[] }))).slides.map((s) => odpText(s))
+      : LEGACY_POWERPOINT_FILE.test(f.name)
       ? (await importPpt(new Uint8Array(await f.arrayBuffer()), f.name, { group: 'Slide', newId: (k) => `${k}-cmp`, store: async () => '' }).catch(() => ({ slides: [] }))).slides.map((s) => ({ title: s.title ?? '', text: s.text ?? '', notes: s.notes ?? '' }))
       : await (async () => {
         // A password-protected .pptx asks for its password first.
@@ -159,8 +162,8 @@ export function CompareDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) 
   return (
     <Dialog title="비교 — 이 프레젠테이션과 비교할 파일" onClose={onClose} onOk={() => { const o = others.find((x) => x.id === pick); if (o) start(o); }} okLabel="비교" okDisabled={!pick}>
       <Field label="라이브러리의 프레젠테이션"><select value={pick} onChange={(e) => setPick(e.target.value)}>{others.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}</select></Field>
-      <div className="dlg-row"><button type="button" onClick={() => file.current?.click()}>PowerPoint 파일(.pptx · .ppt)에서…</button><span className="dlg-note">파일은 텍스트(제목 · 본문 · 노트)를 비교합니다.</span></div>
-      <input ref={file} type="file" accept=".pptx,.pptm,.ppsx,.potx,.ppt,.pps" hidden onChange={(e) => { void fromFile(e.target.files?.[0]); e.target.value = ''; }} />
+      <div className="dlg-row"><button type="button" onClick={() => file.current?.click()}>PowerPoint · OpenDocument 파일(.pptx · .ppt · .odp)에서…</button><span className="dlg-note">파일은 텍스트(제목 · 본문 · 노트)를 비교합니다.</span></div>
+      <input ref={file} type="file" accept=".pptx,.pptm,.ppsx,.potx,.ppt,.pps,.odp" hidden onChange={(e) => { void fromFile(e.target.files?.[0]); e.target.value = ''; }} />
     </Dialog>
   );
 }

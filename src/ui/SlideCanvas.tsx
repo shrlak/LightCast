@@ -1,4 +1,5 @@
 import { isFrontSlide } from '../domain/frontLayout';
+import { OLE_NOTE } from '../domain/io/oleObjects';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextDirection, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
@@ -8,7 +9,7 @@ import { FRAME_PLACEHOLDERS, PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
 import { bulletPictureOf } from '../domain/pictureBullet';
-import { INDENT_PX, alignCss, elementMarkers, lineHeightCss, listMarkers, writingCss } from '../domain/textFormat';
+import { INDENT_PX, alignCss, elementMarkers, lineHeightCss, listMarkers, paragraphIndent, writingCss } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
 import { qrDataUrl } from '../domain/io/qr';
@@ -247,10 +248,10 @@ const columnsAndDirection = (f: { columns?: number; vertical?: boolean; directio
 });
 
 /** A line with its bullet / number and its highlight. */
-function ListLine({ marker, highlight, picture, children }: { marker: string | null; highlight?: string; picture?: string; children: ReactNode }) {
+function ListLine({ marker, highlight, picture, hang, children }: { marker: string | null; highlight?: string; picture?: string; /** Hanging indent (px): the marker takes this much room, so the text lines up with the wrapped lines. */ hang?: number; children: ReactNode }) {
   if (marker && picture) return <><span className="list-marker list-picture" style={{ backgroundImage: `url("${picture}")` }} />{highlight ? <span style={{ background: highlight, boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }}>{children}</span> : children}</>;
   const body = highlight ? <span style={{ background: highlight, boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }}>{children}</span> : children;
-  return marker ? <><span className="list-marker">{marker}</span>{body}</> : <>{body}</>;
+  return marker ? <><span className="list-marker" style={hang ? { minWidth: hang, marginRight: 0, boxSizing: 'border-box', paddingRight: '.2em' } : undefined}>{marker}</span>{body}</> : <>{body}</>;
 }
 
 /** Lines wrapped in **…** render bold (prayer topic titles); bullets / numbering and highlight as the slide sets. */
@@ -358,6 +359,8 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
       const end = atEnd(v.currentTime, pb, d);
       if (end === 'loop') v.currentTime = playStart(pb);
       else if (end !== 'play') { v.pause(); if (end === 'rewind') v.currentTime = pb.poster ?? playStart(pb); }
+      // Animations › Trigger › On Bookmark: tell the show how far the clip has played.
+      if (live && pb.bookmarks?.length) window.dispatchEvent(new CustomEvent('lightcast-mediatime', { detail: { id: el.id, t: v.currentTime, marks: pb.bookmarks } }));
       if (!v.paused) raf = requestAnimationFrame(tick);
     };
     const onPlay = () => { setPlaying(true); raf = requestAnimationFrame(tick); };
@@ -418,6 +421,11 @@ export function ElementView({ el }: { el: SlideElement }) {
     const mask = el.maskShape ? shapeGeometry(el.maskShape, el.w, el.h)?.paths.map((q) => q.d).join(' ') : undefined;
     const style = { ...box, ...pictureStyleCss(el.pictureStyle, el.w, el.h), ...(el.stroke ? { outline: `${el.strokeWidth ?? 6}px ${OUTLINE_DASH[el.dash ?? ''] ?? 'solid'} ${el.stroke}`, outlineOffset: -(el.strokeWidth ?? 6) / 2 } : {}), ...(mask ? { clipPath: `path('${mask}')` } : {}) };
     const c = el.crop;
+    // An embedded OLE object (Excel, Word…): drawn as its preview picture, with a note that only PowerPoint opens it.
+    if (el.ole) return <>
+      <img src={url} alt={el.alt ?? ''} decoding="sync" title={OLE_NOTE} style={{ ...style, objectFit: el.fit ?? 'fill' }} />
+      {!show && <div className="ole-badge" title={OLE_NOTE} style={{ position: 'absolute', left: el.x, top: el.y, transform: elementTransform(el), pointerEvents: 'none', background: '#fff8e1', color: '#33691e', border: '2px solid #f9a825', fontSize: 22, lineHeight: 1.2, padding: '2px 8px', borderRadius: 4 }}>OLE · PowerPoint에서만 열림</div>}
+    </>;
     if (!c || c.every((v) => !v)) return <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ ...style, objectFit: el.fit ?? 'contain' }} />;
     // Cropped: the picture stretched so its kept part fills the box.
     const fw = Math.max(0.01, 1 - c[0] - c[2]), fh = Math.max(0.01, 1 - c[1] - c[3]);
@@ -525,6 +533,9 @@ function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
   );
 }
 
+/** A hanging first line (negative first-line indent) of paragraph `i`, as a positive px width, or 0. */
+const hangOf = (el: SlideElement, i: number) => Math.max(0, -(el.paragraphs?.[i]?.firstIndent ?? el.firstIndent ?? 0));
+
 function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties }) {
   // Shrink text on overflow: drawn at its fontScale, the stored sizes unchanged.
   const el = drawnText(stored);
@@ -534,12 +545,12 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
   const base = el.fontSize ?? 64;
   const lines = el.paragraphs ? el.paragraphs.map((p) => p.text) : (el.text ?? '').split('\n');
   const { markers, levels } = elementMarkers(el);
-  const perPara = !!el.paragraphs?.some((p) => p.list !== undefined || p.level || p.spaceBefore || p.spaceAfter || p.lineHeight);
+  const perPara = !!el.paragraphs?.some((p) => p.list !== undefined || p.level || p.marginLeft !== undefined || p.firstIndent !== undefined || p.spaceBefore || p.spaceAfter || p.lineHeight);
   const runs = lineRuns(el);
   const tabbed = !!el.tabStops?.length && lines.some((l) => l.includes('\t'));
   const styled = !!(el.list || perPara || el.highlight || runs.some(Boolean) || tabbed) || byPara;
   const lineBody = (text: string, i: number) => (
-    <ListLine marker={markers[i]} picture={bulletPictureOf(el)} highlight={text.trim() ? el.highlight : undefined}>
+    <ListLine marker={markers[i]} picture={bulletPictureOf(el)} hang={hangOf(el, i)} highlight={text.trim() ? el.highlight : undefined}>
       {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
         : runs[i] ? runs[i]!.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(text) ? <DynamicText text={text} /> : runText(text)}
     </ListLine>
@@ -564,7 +575,8 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
             <div key={i} data-para={i} style={{
               fontSize: (p.fontSize ?? base), fontWeight: p.weight !== undefined ? Math.min(900, Math.max(100, Math.round(p.weight / 100) * 100)) : p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
               color: p.color, ...alignCss(p.align), minHeight: '1.2em', flexShrink: 0,
-              ...(levels[i] ? { paddingLeft: levels[i] * INDENT_PX } : {}),
+              ...(p.marginLeft !== undefined || levels[i] ? { paddingLeft: paragraphIndent(p, levels[i]).left } : {}),
+              ...(p.firstIndent !== undefined ? { textIndent: p.firstIndent } : {}),
               ...(p.spaceBefore ? { marginTop: p.spaceBefore } : {}), ...(p.spaceAfter ? { marginBottom: p.spaceAfter } : {}),
               ...(p.lineHeight ? { lineHeight: p.lineHeight } : {}),
             }}>

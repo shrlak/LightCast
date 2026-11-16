@@ -13,6 +13,7 @@ import { CanvasEditor } from './CanvasEditor';
 import type { Commands } from './commands';
 import { resolveBackground } from '../../domain/autoBackground';
 import { CaptionHost, CaptionToggle } from './captionTools';
+import { PacingBar } from './pacingTools';
 import { LaserArea, NarrationHost, toggleLaser } from './showTools';
 
 interface Props {
@@ -119,6 +120,7 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
         <div className="presenter-top">
           <span className="presenter-clock">⏱ {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</span>
           <span>{new Date(now).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+          <PacingBar presentationId={cursor?.presentationId ?? null} slideIndex={cursor ? cursor.seq : null} total={seqLen} />
           <span className="muted truncate">{live.title ?? '라이브 없음'}</span>
           <div className="seg">
             <button className={mode === 'next' ? 'on' : ''} onClick={() => setMode('next')}>다음 슬라이드</button>

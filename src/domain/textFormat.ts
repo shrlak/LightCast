@@ -1,7 +1,7 @@
 // PowerPoint's text commands (홈 → 글꼴 / 단락) as plain functions: bullets and numbering,
 // 대/소문자 바꾸기, font size steps and line spacing.
 import type { CSSProperties } from 'react';
-import type { HAlign, ListStyle, SlideElement, TextDirection, TextRun } from './types';
+import type { ElementParagraph, HAlign, ListStyle, SlideElement, TextDirection, TextRun } from './types';
 
 /** One indent level (단락 → 들여쓰기 늘리기), in canvas pixels. */
 export const INDENT_PX = 60;
@@ -82,18 +82,30 @@ export function elementMarkers(el: Pick<SlideElement, 'text' | 'paragraphs' | 'l
   }
   const counters: number[] = [];
   const kinds: (string | undefined)[] = [];
+  const starts: (number | undefined)[] = [];
   const levels = paras.map((p) => Math.max(0, Math.min(8, Math.round(p.level ?? 0))));
   const markers = paras.map((p, i) => {
     const style = p.list === 'none' ? undefined : p.list ?? el.list;
     const lv = levels[i];
     counters.length = Math.min(counters.length, lv + 1);
     kinds.length = Math.min(kinds.length, lv + 1);
-    if (!style || !p.text.trim()) return null;
-    if (kinds[lv] !== style) { counters[lv] = 0; kinds[lv] = style; }
+    starts.length = Math.min(starts.length, lv + 1);
+    if (!p.text.trim()) return null;
+    if (!style) {
+      // A paragraph without a marker ends the numbering at its level (deeper levels were already dropped).
+      counters[lv] = 0; kinds[lv] = undefined; starts[lv] = undefined;
+      return null;
+    }
+    if (kinds[lv] !== style || (p.startAt !== undefined && p.startAt !== starts[lv])) { counters[lv] = (p.startAt ?? 1) - 1; kinds[lv] = style; starts[lv] = p.startAt; }
     counters[lv] = (counters[lv] ?? 0) + 1;
     return listMarker(style, counters[lv]);
   });
   return { markers, levels };
+}
+
+/** The left padding and first-line indent (canvas px) of a paragraph: its own margins, else its level's indent. */
+export function paragraphIndent(p: Pick<ElementParagraph, 'marginLeft' | 'firstIndent'>, level: number): { left: number; first: number } {
+  return { left: p.marginLeft ?? level * INDENT_PX, first: p.firstIndent ?? 0 };
 }
 
 export type CaseKind = 'sentence' | 'lower' | 'upper' | 'title' | 'toggle';

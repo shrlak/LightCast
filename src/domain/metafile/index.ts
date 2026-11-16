@@ -11,8 +11,12 @@
 //     DIB pattern), fonts; shapes, polygons / polylines / Béziers (32 and 16 bit), arcs, path
 //     brackets (fill / stroke / clip); ExtTextOutA / W, SmallTextOut; bitmaps (BitBlt, StretchBlt,
 //     StretchDIBits, SetDIBitsToDevice, AlphaBlend, TransparentBlt); rectangle and path clips.
-//   EMF+: header, objects (brushes: solid, hatch, linear gradient, path gradient as its centre
-//     colour; pens; paths; images: bitmap, PNG/JPEG/GIF, nested metafile; fonts; string formats),
+//   EMF+: header, objects (brushes: solid, hatch, linear gradient with blend factors / preset colours /
+//     gamma correction / wrap, path gradient with surround colours, blend factors / preset colours, focus
+//     scales, gamma and wrap (gradient.ts); pens; paths; images: bitmap, PNG/JPEG/GIF, nested metafile;
+//     fonts; string formats), image effects (SerializableObject + DrawImagePoints E flag: blur, sharpen,
+//     brightness / contrast, colour balance, colour curve, lookup table, colour matrix, hue / saturation /
+//     lightness, levels, tint as SVG filters; red-eye on the decoded pixels, effects.ts),
 //     Clear, Fill / Draw Rects, Polygon, Lines, Ellipse, Pie, Arc, Path, Beziers, curves, closed
 //     curves, DrawImage, DrawImagePoints, DrawString, DrawDriverString (character codes), world and
 //     page transforms, Save / Restore / containers, clip rectangle and path. In a file that holds
@@ -27,14 +31,26 @@
 //     Blend modes show in browsers and when the SVG is drawn to a canvas for the PNG; other renderers
 //     may ignore them.
 //   Bitmaps: AlphaBlend constant alpha and per-pixel alpha (also in 32-bit BI_BITFIELDS DIBs),
-//     TransparentBlt colour key, MaskBlt (the 1-bit mask makes the source's holes transparent; the
-//     foreground operation is SRCCOPY / SRCPAINT / SRCAND / SRCINVERT / NOTSRCCOPY, the background
-//     operation is taken as "leave the destination"), PlgBlt (a parallelogram from three corners).
-//   Text widths come from canvas measureText with a DOM, else built-in Helvetica / Times / fixed-pitch
-//     tables (metrics.ts). In double-byte code pages (Korean, Japanese, Chinese) the advance array has
-//     one entry per byte and is folded to one per character.
-//   Glyph-index text (ETO_GLYPH_INDEX, DrawDriverString without character codes): the indices cannot be
-//     mapped to characters without the font, so a pale box is drawn per glyph as a placeholder.
+//     TransparentBlt colour key, MaskBlt (where the 1-bit mask is 1 the foreground operation of the ROP4,
+//     where it is 0 its background operation: leave the destination, the source operations, BLACKNESS,
+//     WHITENESS, PATCOPY, DSTINVERT, PATINVERT), PlgBlt (a parallelogram from three corners).
+//   Flood fills (EMF EXTFLOODFILL, WMF FLOODFILL / EXTFLOODFILL; border and surface modes): a file that
+//     holds one records what it draws and a software rasteriser (raster.ts) paints it, without
+//     anti-aliasing, like GDI, over the frame (at most 4 M pixels); the 4-connected scanline fill's pixels
+//     are drawn with the current brush as rectangles at the flood's place in the drawing order. Text is
+//     not rasterised, dashes are drawn solid, and the page under the picture counts as white.
+//   Text widths come from the font's own advance widths (hmtx) when its file is known (imported or
+//     brought by a deck, fonts.ts), else canvas measureText with a DOM, else built-in Helvetica / Times /
+//     fixed-pitch tables (metrics.ts). In double-byte code pages (Korean, Japanese, Chinese) the advance
+//     array has one entry per byte and is folded to one per character.
+//   Glyph-index text (ETO_GLYPH_INDEX, DrawDriverString without character codes): mapped back to
+//     characters through the font's cmap (formats 4 and 12) when its file is known; otherwise, and for a
+//     glyph the cmap does not name, a pale box per glyph.
+//   EMF+ path gradients: an elliptical boundary with one surround colour is a radial gradient (with the
+//     tile wrap modes it is padded); any other is a bitmap of the boundary cut into triangles from the
+//     centre (at most 256 px a side). Focus scales that differ in x and y are blended by direction. The
+//     colour-curve, levels, balance and tint effect curves are look-alikes (the specification gives only
+//     their parameters).
 // Exact clips: the clip is kept as an expression over paths (AND, OR, XOR, DIFF, COPY; EMF+ also
 //   complement) and drawn as nested `clip-path` groups for intersections and as a `mask` for the
 //   rest, so a union, XOR or complement is exact however many clips are already open, and RestoreDC /
@@ -46,10 +62,10 @@
 // WMF output stays in logical units: a hairline pen (and the dash and sliver rules) is one pixel,
 //   which is the frame width over the size in pixels, not one logical unit.
 // Not drawn
-//   Flood fills (EMF EXTFLOODFILL, WMF FLOODFILL / EXTFLOODFILL): they read the pixels already drawn,
-//     and the reader draws vectors, not a pixel surface, so there is nothing to fill; they are skipped.
-//   EMF+ image effects (blur, sharpen, ...) and colour matrices / remap tables of the attributes object
-//     (only wrap mode and clamp colour are read); EMF+ path gradients beyond their centre colour.
+//   EMF+ ImageAttributes colour matrices, gamma, thresholds and remap tables: the EMF+ attributes object
+//     (MS-EMFPLUS 2.2.1.5) stores only the wrap mode and clamp colour, so a file cannot carry them.
+//   Red-eye correction of a PNG / JPEG image (it works on decoded bitmaps only); a WMF ExtTextOut with
+//     ETO_GLYPH_INDEX is read as characters.
 //   EMF+ region and clip changes beyond 128 nested combines, or a region tree of over 400 nodes, are
 //     ignored rather than approximated.
 import { Bytes } from './bytes';
@@ -66,6 +82,8 @@ export interface MetafileSvg {
   format: 'wmf' | 'emf' | 'emf+';
   /** Elements drawn; 0 means nothing the reader understands was in the file. */
   items: number;
+  /** Notes about parts that could not be drawn (e.g. a flood fill past the limits). */
+  warnings?: string[];
 }
 
 /** Files bigger than this are not read. */
@@ -89,7 +107,7 @@ function finish(p: Played, format: MetafileSvg['format']): MetafileSvg | null {
   let [w, h] = p.size && p.size[0] > 0 && p.size[1] > 0 ? p.size : [view[2], view[3]];
   const k = Math.min(1, 20000 / Math.max(w, h, 1));
   w = Math.max(1, w * k); h = Math.max(1, h * k);
-  return { svg: out.svg(view, w, h), width: w, height: h, format, items: out.items };
+  return { svg: out.svg(view, w, h), width: w, height: h, format, items: out.items, ...(out.warnings.length ? { warnings: [...out.warnings] } : {}) };
 }
 
 /** Reads a WMF / EMF / EMF+ and draws it as an SVG picture. Never throws: null when it is not a metafile or has no extent. */
