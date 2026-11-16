@@ -702,6 +702,14 @@ function walk(container: MNode, place: Map2, ctx: DmlContext, out: SlideElement[
   }
 }
 
+/** The objects of an already parsed shape tree (or any node holding shapes), moved by `offset` and put in `groupId`. */
+export function nodeToElements(container: MNode, ctx: DmlContext, offset?: { x: number; y: number; sx?: number; sy?: number }, groupId?: string): SlideElement[] {
+  const out: SlideElement[] = [];
+  const place: Map2 = offset ? (b) => ({ ...b, x: offset.x + b.x * (offset.sx ?? 1), y: offset.y + b.y * (offset.sy ?? 1), w: b.w * (offset.sx ?? 1), h: b.h * (offset.sy ?? 1) }) : (b) => b;
+  walk(container, place, ctx, out, groupId);
+  return out;
+}
+
 /**
  * A DrawingML drawing (a GVML locked canvas, or a slide's <p:spTree>) → LightCast objects. The locked
  * canvas's own group transform is ignored: its children keep their slide positions.

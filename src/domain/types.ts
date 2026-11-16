@@ -527,7 +527,7 @@ export interface Slide {
   preferredFontSize?: number;
   id: string;
   /** Original import type: PowerPoint objects remain editable; PDF page content is read-only. */
-  importSource?: { format: 'pptx' | 'ppt' | 'pdf' | 'odp'; name: string; page: number };
+  importSource?: { format: 'pptx' | 'ppt' | 'pdf' | 'odp'; name: string; page: number; /** What of this slide's original was approximated or left out (Korean, from the import report). */ warnings?: string[] };
   /** Original slide identity when a repeated arrangement occurrence is made independent. */
   sourceSlideId?: string;
   /** Main text is song lyrics; corner QR codes must leave equal space on both sides. */
