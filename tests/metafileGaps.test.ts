@@ -7,7 +7,7 @@ import { metafileToSvg } from '../src/domain/metafile';
 import { addMetafileFont, clearMetafileFonts, fontWidthEm, metafileFont } from '../src/domain/metafile/fonts';
 import { textWidth } from '../src/domain/metafile/metrics';
 import { effectGuid } from '../src/domain/metafile/effects';
-import { B, RED, BLUE, argb, comment, emf, emfBrush, emfFont, emfRec, emfRect, emfSelect, plusHeader, plusRec, wmf, wmfRec } from './fixtures/metafileBytes';
+import { B, RED, BLUE, argb, comment, emf, emfBrush, emfFont, emfRec, emfSelect, plusHeader, plusRec, wmf, wmfRec } from './fixtures/metafileBytes';
 
 const rects = (d: string) => [...d.matchAll(/M([\d.]+) ([\d.]+)H([\d.]+)V([\d.]+)H/g)].map((m) => m.slice(1).map(Number));
 const area = (d: string) => rects(d).reduce((a, [x0, y0, x1, y1]) => a + (x1 - x0) * (y1 - y0), 0);
@@ -123,7 +123,7 @@ describe('EMF+ gradients', () => {
     const svg = metafileToSvg(plusEmf(brush, fillWith(1, 0, 0, 100, 60)))!.svg;
     const g = /<radialGradient [^>]*gradientTransform="matrix\(([^)]+)\)">(.*?)<\/radialGradient>/.exec(svg)!;
     expect(g).not.toBeNull();
-    expect(g[1].split(' ').map(Number).slice(0, 4)).toEqual([4 * 40 / 4 * 0.25 * 4, 0, 0, 20]); // rx 40, ry 20 in px at 96 dpi (1 unit = 1 px)
+    expect(g[1].split(' ').map(Number).slice(0, 4)).toEqual([40, 0, 0, 20]); // rx 40, ry 20 (one EMF+ unit is one pixel here)
     const stops = [...g[2].matchAll(/offset="([\d.]+)" stop-color="(#[0-9a-f]+)"/g)].map((m) => [+m[1], m[2]]);
     expect(stops[0]).toEqual([0, '#ffffff']); // the centre
     expect(stops[stops.length - 1]).toEqual([1, '#000080']); // the boundary
