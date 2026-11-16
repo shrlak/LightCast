@@ -60,6 +60,11 @@ export function CloudMediaList({ token, library, dispatch }: { token: string; li
   const busy = progress !== null;
   const setV = (p: Partial<typeof view>) => { setView((v) => ({ ...v, ...p })); setLimit(PAGE); };
 
+  const rename = (r: ServerFileRow) => {
+    const name = prompt('새 파일 이름', r.name)?.trim();
+    if (name && name !== r.name) dispatch({ type: 'media/rename', id: r.id, name });
+  };
+
   /** Delete these files after asking: the unused ones from the server, the library's ones from the library and this computer too. */
   const remove = useCallback(async (targets: ServerFileRow[]) => {
     const plan = planDelete(targets);
@@ -112,12 +117,12 @@ export function CloudMediaList({ token, library, dispatch }: { token: string; li
       <p className="small">{shown.length}개 표시{shown.length !== sum.count ? ` (전체 ${sum.count}개 중)` : ''}{sel.length ? ` · ${sel.length}개 선택` : ''}</p>
       {progress && <p role="status">{progress}</p>}
       {result && !progress && <p role="status">{result}</p>}
-      {shown.length ? <div className="cloud-media-scroll"><table><thead><tr><th scope="col">선택</th><th scope="col">파일명</th><th scope="col">종류</th><th scope="col">크기</th><th scope="col">사용처</th><th scope="col">삭제</th></tr></thead>
+      {shown.length ? <div className="cloud-media-scroll"><table><thead><tr><th scope="col">선택</th><th scope="col">파일명</th><th scope="col">종류</th><th scope="col">크기</th><th scope="col">사용처</th><th scope="col">수정 · 삭제</th></tr></thead>
         <tbody>{shown.slice(0, limit).map((r) => <tr key={r.id} data-file-id={r.id}>
           <td><input type="checkbox" aria-label={`${r.name} 선택`} checked={selected.has(r.id)} disabled={busy} onChange={() => setSelected(toggleOne(selected, r.id))} /></td>
           <td title={r.id}>{r.name}</td><td>{KIND_LABEL[r.kind]}</td><td>{formatStorageBytes(r.size)}</td>
           <td className="small">{r.protectedFile ? '보호된 자료가 사용' : r.usedBy.length ? r.usedBy.slice(0, 2).join(', ') + (r.usedBy.length > 2 ? ` 외 ${r.usedBy.length - 2}개` : '') : r.inLibrary ? '보관함에만 있음' : r.listedElsewhere ? '다른 컴퓨터 라이브러리' : '사용 안 함'}</td>
-          <td><button className="danger" disabled={busy || r.protectedFile || r.listedElsewhere} title={r.protectedFile ? '보호된 자료가 쓰는 파일입니다' : r.listedElsewhere ? '먼저 동기화하세요' : undefined} onClick={() => void remove([r])}>삭제</button></td>
+          <td>{r.inLibrary && <button disabled={busy || r.protectedFile} title="파일 이름 수정" onClick={() => rename(r)}>이름 수정</button>} <button className="danger" disabled={busy || r.protectedFile || r.listedElsewhere} title={r.protectedFile ? '보호된 자료가 쓰는 파일입니다' : r.listedElsewhere ? '먼저 동기화하세요' : undefined} onClick={() => void remove([r])}>삭제</button></td>
         </tr>)}</tbody>
       </table></div> : <p>조건에 맞는 파일이 없습니다.</p>}
       {limit < shown.length && <button onClick={() => setLimit((n) => n + PAGE)}>{PAGE}개 더 보기 ({shown.length - limit}개 남음)</button>}

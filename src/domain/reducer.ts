@@ -75,6 +75,7 @@ type DomainAction =
   | { type: 'playlist/select'; index: number }
   | { type: 'media/add'; media: MediaMeta }
   | { type: 'media/remove'; id: string }
+  | { type: 'media/rename'; id: string; name: string }
   | { type: 'timer/upsert'; timer: Timer }
   | { type: 'timer/delete'; id: string }
   | { type: 'timer/op'; id: string; op: 'start' | 'stop' | 'reset'; now: number }
@@ -476,6 +477,10 @@ function core(s: AppState, a: Action): AppState {
     }
     case 'media/add':
       return setLib(s, { media: [...lib.media, a.media] });
+    case 'media/rename': {
+      const name = a.name.trim();
+      return name && lib.media.some((m) => m.id === a.id) ? setLib(s, { media: lib.media.map((m) => (m.id === a.id ? { ...m, name } : m)) }) : s;
+    }
     case 'media/remove': {
       const next = setLib(s, {
         media: lib.media.filter((m) => m.id !== a.id),
