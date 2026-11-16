@@ -247,11 +247,15 @@ export class SimClient {
           },
           store: this.fontStore(),
         },
-        { manifest: current.fonts ?? [], settings: DEFAULT_FONT_SYNC, used: new Set(), freeBytes: null },
+        // As useCloudSync's fonts step: the font list, its trash and the synced switches go in and come back.
+        { manifest: current.fonts ?? [], trash: current.fontTrash ?? [], prefs: current.fontPrefs, settings: DEFAULT_FONT_SYNC, used: new Set(), freeBytes: null },
       );
-      if (out.manifest) {
-        const { fonts: _old, ...rest } = syncable(this.lib);
-        this.dispatch({ type: 'library/merge', library: { ...rest, ...(out.manifest.length ? { fonts: out.manifest } : {}) } });
+      if (out.manifest || out.trash || out.prefs) {
+        const { fonts: oldFonts, fontTrash: oldTrash, fontPrefs: oldPrefs, ...rest } = syncable(this.lib);
+        const fonts = out.manifest ?? oldFonts;
+        const fontTrash = out.trash ?? oldTrash;
+        const fontPrefs = out.prefs ?? oldPrefs;
+        this.dispatch({ type: 'library/merge', library: { ...rest, ...(fonts?.length ? { fonts } : {}), ...(fontTrash?.length ? { fontTrash } : {}), ...(fontPrefs ? { fontPrefs } : {}) } });
       }
       return out.report.failed.length ? `글꼴 ${out.report.failed.length}개` : null;
     },

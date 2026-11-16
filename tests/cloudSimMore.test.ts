@@ -170,7 +170,11 @@ describe('media and fonts across computers', () => {
     a.fonts = [];
     await converge([a, b]);
     expect(b.fonts).toEqual([]);
-    expect(worker.account('church').media.has(fontId)).toBe(false);
+    // Removed fonts go to the 30-day font trash (fontTrash.ts), so the server keeps the file until the trash expires
+    // and the font can still be restored from 글꼴 휴지통 on any computer.
+    expect(b.lib.fonts ?? []).toEqual([]);
+    expect((b.lib.fontTrash ?? []).map((t) => t.id)).toContain(fontId);
+    expect(worker.account('church').media.has(fontId)).toBe(true);
   });
 });
 
