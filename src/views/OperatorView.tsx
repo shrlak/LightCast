@@ -6,6 +6,8 @@ import { TeamRequestsModal } from '../ui/TeamRequestsModal';
 import { blockedProtectedAction, protectedMediaIds, PROTECTED_MESSAGE } from '../domain/materialProtection';
 import type { TeamRequest } from '../domain/teamRequests';
 import { TrashModal } from '../ui/TrashModal';
+import { ImportReportDialog } from '../ui/ImportReportDialog';
+import { reportSummary, type ImportReport } from '../domain/io/importReport';
 import { RehearsalModal } from '../ui/RehearsalModal';
 import { RemoteControlModal } from '../ui/RemoteControlModal';
 import type { RemoteControlState } from '../domain/remoteControl';
@@ -100,6 +102,7 @@ function download(name: string, data: string, type: string) {
 export function OperatorView() {
   const [state, dispatchRaw] = useReducer(reducer, undefined, () => createInitialState(loadLibrary()));
   const [modal, setModal] = useState<Modal>(null);
+  const [importReports, setImportReports] = useState<ImportReport[] | null>(null);
   /** 단계별 수정: the wizard step opened alone (undefined = the whole 주일예배 마법사). */
   const [sundayStep, setSundayStep] = useState<number | undefined>(undefined);
   const [followOn, setFollowOn] = useState(false);
@@ -498,7 +501,8 @@ export function OperatorView() {
       } else {
         notify('Importing…');
         const approx: string[] = [];
-        const toSlides = (list: File[]) => filesToSlides(list, (m) => dispatch({ type: 'media/add', media: m }), notify, (n) => approx.push(n), notify);
+        const reports: ImportReport[] = [];
+        const toSlides = (list: File[]) => filesToSlides(list, (m) => dispatch({ type: 'media/add', media: m }), notify, (n) => approx.push(n), notify, (r) => reports.push(r));
         const isPptx = (f: File) => POWERPOINT_FILE.test(f.name) || /\.odp$/i.test(f.name);
         let total = 0;
         // Each PowerPoint or OpenDocument (.odp) file becomes its own presentation in a new 재생목록 named after the file.
@@ -535,6 +539,11 @@ export function OperatorView() {
         notify(approx.length
           ? `Imported ${total} slides — ${approx.join(', ')} was imported with simplified layout; text remains editable`
           : `Imported ${total} slides`);
+        // PowerPoint files: what was approximated or left out, in Korean; the full report opens when something was left out.
+        if (reports.length) {
+          notify(reports.map(reportSummary).join(' '));
+          if (reports.some((r) => r.items.some((i) => i.status === 'dropped'))) setImportReports(reports);
+        }
       }
     } catch (e) {
       notify(`Import failed: ${(e as Error).message}`);
@@ -619,6 +628,7 @@ export function OperatorView() {
       <AudioPlayer state={state} dispatch={dispatch} />
       {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
 
+      {importReports && <ImportReportDialog reports={importReports} onClose={() => setImportReports(null)} />}
       {modal === 'trash' && <TrashModal state={state} dispatch={dispatch} onClose={() => setModal(null)} />}
       {modal === 'rehearsal' && <RehearsalModal state={state} onPreview={setRehearsalPreview} commandRef={rehearsalCommandRef} onClose={() => setModal(null)} />}
       {modal === 'teamRequests' && <TeamRequestsModal requests={teamRequests} send={relay.send} onClose={() => setModal(null)} />}
