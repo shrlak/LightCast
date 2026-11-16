@@ -2200,3 +2200,7 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .pacing-chip small { font-size: .6em; font-weight: 500; opacity: .85; }
 .pacing-chip .pacing-pace { font-size: .7em; }
 @media (prefers-reduced-motion: reduce) { .pacing-flash { animation: none; outline: 3px solid #facc15; } }
+.cloud-file-filters input[type=search] { flex: 1 1 160px; min-width: 120px; }
+.cloud-file-bulk { align-items: center; margin: 6px 0; }
+.cloud-media-list td:first-child, .cloud-media-list th:first-child { text-align: center; width: 1%; }
+.cloud-media-list td:nth-child(2) { overflow-wrap: anywhere; }

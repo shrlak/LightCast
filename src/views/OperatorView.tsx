@@ -693,7 +693,7 @@ export function OperatorView() {
       {modal === 'chords' && <ChordSheetModal state={state} dispatch={dispatch} onClose={() => setModal(null)} notify={notify} />}
       {modal === 'retreatBg' && <RetreatBackgroundModal library={state.library} dispatch={dispatch} onClose={() => setModal(null)} notify={notify} />}
       {modal === 'sync' && <SyncStatusModal cloud={cloud} library={state.library} dispatch={dispatch} notify={notify} onClose={() => setModal(null)} onAccount={() => setModal('account')} />}
-      {modal === 'account' && <AccountModal cloud={cloud} onClose={() => setModal(null)} onActivity={() => setModal('activity')} onSync={() => setModal('sync')} />}
+      {modal === 'account' && <AccountModal cloud={cloud} library={state.library} dispatch={dispatch} onClose={() => setModal(null)} onActivity={() => setModal('activity')} onSync={() => setModal('sync')} />}
       {deviceSetup && <DeviceSetupDialog cloud={cloud} onClose={() => setDeviceSetup(false)} />}
       {(modal === 'song' || modal === 'songNew') && (
         <SongEditor library={state.library} dispatch={dispatch} song={modal === 'song' ? selected ?? null : null} notify={notify} reloadOnline={loadOnline} onClose={() => setModal(null)} />

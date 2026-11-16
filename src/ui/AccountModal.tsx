@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { CloudStoragePanel } from './CloudStoragePanel';
 import { DeviceProfileFields } from './DeviceProfileFields';
 import type { CloudSync } from './useCloudSync';
+import type { Library } from '../domain/types';
+import type { Action } from '../domain/reducer';
 
 /** Sign in to the church cloud library (or create an account with the 관리자 password). */
-export function AccountModal({ cloud, onClose, onActivity, onSync }: { cloud: CloudSync; onClose: () => void; onActivity: () => void; onSync: () => void }) {
+export function AccountModal({ cloud, library, dispatch, onClose, onActivity, onSync }: { cloud: CloudSync; library: Library; dispatch: (a: Action) => void; onClose: () => void; onActivity: () => void; onSync: () => void }) {
   const [tab, setTab] = useState<'login' | 'register'>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -48,7 +50,7 @@ export function AccountModal({ cloud, onClose, onActivity, onSync }: { cloud: Cl
             <div className="stack">
               <p><b>{status.session.username}</b>(으)로 로그인됨</p>
               {done && <p role="status">{done}</p>}
-              <CloudStoragePanel cloud={cloud} />
+              <CloudStoragePanel cloud={cloud} library={library} dispatch={dispatch} />
               <h3>현재 기기</h3>
               <p className="small">{device.platform}{device.computerName ? ` · ${device.computerName}` : ''}{device.appVersion ? ` · LightCast ${device.appVersion}` : ''}<br />기기 ID: {device.id}</p>
               <DeviceProfileFields cloud={cloud} />
