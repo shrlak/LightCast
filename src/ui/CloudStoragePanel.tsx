@@ -2,9 +2,11 @@ import { CloudMediaList } from './CloudMediaList';
 import { CloudFontList } from './CloudFontList';
 import { CloudClearPanel } from './CloudClearPanel';
 import type { CloudSync } from './useCloudSync';
+import type { Library } from '../domain/types';
+import type { Action } from '../domain/reducer';
 import { formatStorageBytes, formatStoragePercent, formatQuotaBytes } from '../domain/cloudStorage';
 
-export function CloudStoragePanel({ cloud }: { cloud: CloudSync }) {
+export function CloudStoragePanel({ cloud, library, dispatch }: { cloud: CloudSync; library: Library; dispatch: (a: Action) => void }) {
   const { usage, loading, error } = cloud.storage;
   const server = usage?.server;
   return <section className="cloud-storage" aria-label="서버 저장공간">
@@ -26,7 +28,7 @@ export function CloudStoragePanel({ cloud }: { cloud: CloudSync }) {
       <p className="muted small">확인: {new Date(usage.checkedAt).toLocaleString()}{error ? ' · 이전 조회 결과' : ''} · 30초마다 자동 갱신</p>
     </> : !error && <p role="status">{loading ? '서버 용량을 확인하고 있습니다…' : '서버 저장공간을 조회합니다.'}</p>}
     {error && <p role="alert">서버 용량 조회 실패: {error}</p>}
-    {cloud.status.session && <CloudMediaList key={cloud.status.session.token} token={cloud.status.session.token} />}
+    {cloud.status.session && <CloudMediaList key={cloud.status.session.token} token={cloud.status.session.token} library={library} dispatch={dispatch} />}
     {cloud.status.session && <CloudFontList key={`f${cloud.status.session.token}`} cloud={cloud} token={cloud.status.session.token} />}
     <CloudClearPanel cloud={cloud} />
   </section>;
