@@ -14,6 +14,9 @@ export const runStyle = (r: TextRun): CSSProperties => ({
   color: r.link ? 'var(--link-color, #0563c1)' : r.color,
   fontFamily: r.fontFamily,
   backgroundColor: r.highlight,
+  letterSpacing: r.letterSpacing || undefined,
+  textTransform: r.caps === 'all' ? 'uppercase' : undefined,
+  fontVariantCaps: r.caps === 'small' ? 'small-caps' : undefined,
 });
 
 /** What a run's characters draw: a soft line break (Shift+Enter, \v) is a line break inside the paragraph. */

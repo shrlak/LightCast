@@ -185,6 +185,9 @@ export interface TextRun {
   highlight?: string;
   /** Insert › Link on these characters: opened by a click in a slide show. */
   link?: string;
+  /** Character spacing (canvas pixels) and capitals of these characters (PowerPoint's 문자 간격 / 모두 대문자, 작은 대문자). */
+  letterSpacing?: number;
+  caps?: 'all' | 'small';
 }
 
 /** What clicking an object does in a slide show (Insert › Action). */

@@ -23,6 +23,8 @@ export interface DmlTheme {
   /** dk1, lt1, dk2, lt2, accent1–6, hlink, folHlink. */
   colors: Record<string, string>;
   majorLatin?: string; minorLatin?: string; majorEa?: string; minorEa?: string;
+  /** The theme's format scheme: fill styles (fillRef idx 1–3), background fills (bgRef idx 1001–1003), line styles (lnRef) and effect styles (effectRef). */
+  fills?: MNode[]; bgFills?: MNode[]; lines?: MNode[]; effects?: MNode[];
 }
 
 export const OFFICE_THEME: DmlTheme = {
@@ -40,7 +42,9 @@ export function readDmlTheme(xml: string): DmlTheme {
     if (c && /^[0-9a-f]{6}$/i.test(c)) colors[local(slot)] = `#${c.toLowerCase()}`;
   }
   const font = (part: string, script: string) => child(find(doc, part)[0], script)?.attrs.typeface || undefined;
-  return { colors, majorLatin: font('majorFont', 'latin'), minorLatin: font('minorFont', 'latin'), majorEa: font('majorFont', 'ea'), minorEa: font('minorFont', 'ea') };
+  const fmt = find(doc, 'fmtScheme')[0];
+  const list = (name: string) => { const l = child(fmt, name)?.children.filter((c) => c.name !== '#text'); return l?.length ? l : undefined; };
+  return { fills: list('fillStyleLst'), bgFills: list('bgFillStyleLst'), lines: list('lnStyleLst'), effects: list('effectStyleLst'), colors, majorLatin: font('majorFont', 'latin'), minorLatin: font('minorFont', 'latin'), majorEa: font('majorFont', 'ea'), minorEa: font('minorFont', 'ea') };
 }
 
 // ── Colours ─────────────────────────────────────────────────────────────────────────────────────
@@ -75,7 +79,7 @@ export function colorOf(node: MNode | null | undefined, theme: DmlTheme, ph?: st
   let hex: string | undefined;
   if (n === 'srgbClr') hex = `#${node.attrs.val}`;
   else if (n === 'sysClr') hex = `#${node.attrs.lastClr ?? (node.attrs.val === 'window' ? 'ffffff' : '000000')}`;
-  else if (n === 'schemeClr') hex = node.attrs.val === 'phClr' ? ph : theme.colors[SCHEME_ALIAS[node.attrs.val] ?? node.attrs.val];
+  else if (n === 'schemeClr') hex = node.attrs.val === 'phClr' ? ph : theme.colors[node.attrs.val] ?? theme.colors[SCHEME_ALIAS[node.attrs.val] ?? node.attrs.val];
   else if (n === 'prstClr') hex = PRESET[node.attrs.val];
   else if (n === 'scrgbClr') hex = toHex(+node.attrs.r / 1e5, +node.attrs.g / 1e5, +node.attrs.b / 1e5);
   else if (n === 'hslClr') hex = toHex(...fromHsl(+node.attrs.hue / 21600000, +node.attrs.sat / 1e5, +node.attrs.lum / 1e5));
@@ -105,10 +109,36 @@ const colorIn = (n: MNode | null | undefined, theme: DmlTheme, ph?: string) => (
 // ── Text ────────────────────────────────────────────────────────────────────────────────────────
 
 const ALIGN: Record<string, HAlign> = { l: 'left', ctr: 'center', r: 'right', just: 'justify', dist: 'distributed', justLow: 'justLow', thaiDist: 'distributed' };
-const AUTONUM: Record<string, ListStyle> = { arabicPeriod: 'number', arabicParenR: 'number-paren', arabicParenBoth: 'number-paren', romanUcPeriod: 'roman', romanLcPeriod: 'roman-lower', alphaLcPeriod: 'alpha-lower', alphaUcPeriod: 'alpha', alphaLcParenR: 'alpha-lower-paren', hangulGanadaPeriod: 'hangul', ganada: 'hangul' };
-const EAST_ASIAN = /[ᄀ-ᇿ　-鿿가-힯豈-﫿＀-￯]/;
+const AUTONUM: Record<string, ListStyle> = { arabicPeriod: 'number', arabicParenR: 'number-paren', arabicParenBoth: 'number-paren', arabicPlain: 'number', romanUcPeriod: 'roman', romanLcPeriod: 'roman-lower', alphaLcPeriod: 'alpha-lower', alphaUcPeriod: 'alpha', alphaLcParenR: 'alpha-lower-paren', alphaLcParenBoth: 'alpha-lower-paren', hangulGanadaPeriod: 'hangul', hangul: 'hangul', ganada: 'hangul' };
+const EAST_ASIAN = /[ᄀ-ᇿ　-鿿가-힯豈-﫿＀-￯]/;
 
 interface TextDefaults { size: number; color?: string; font: 'minor' | 'major'; bold?: boolean; italic?: boolean }
+
+const STRUCTURAL = new Set(['lstStyle', 'defPPr', 'pPr', 'defRPr', 'rPr', 'bodyPr', ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `lvl${n}pPr`)]);
+const FILL_KINDS = ['solidFill', 'gradFill', 'noFill', 'blipFill', 'pattFill', 'grpFill'];
+const BULLET_KINDS = ['buNone', 'buChar', 'buAutoNum', 'buBlip'];
+const EXCLUSIVE = [FILL_KINDS, BULLET_KINDS, ['buClrTx', 'buClr'], ['buSzTx', 'buSzPct', 'buSzPts'], ['buFontTx', 'buFont'], ['noAutofit', 'normAutofit', 'spAutoFit']];
+
+/**
+ * Layer one style node (lstStyle, lvlNpPr, defRPr, bodyPr …) over another, as PowerPoint layers master, layout
+ * and slide: attributes of `b` win, structural children merge, anything else (fills, spacing, bullets) of `b`
+ * replaces the same kind of `a`.
+ */
+export function mergeStyle(a: MNode | null | undefined, b: MNode | null | undefined): MNode | null {
+  if (!a) return b ?? null;
+  if (!b) return a;
+  const out = a.children.filter((c) => c.name !== '#text');
+  for (const c of b.children) {
+    if (c.name === '#text') continue;
+    const at = out.findIndex((k) => local(k) === local(c));
+    if (at >= 0 && STRUCTURAL.has(local(c))) { out[at] = mergeStyle(out[at], c)!; continue; }
+    const group = EXCLUSIVE.find((g) => g.includes(local(c)));
+    for (let i = out.length - 1; i >= 0; i--) if (i !== at && group?.includes(local(out[i]))) out.splice(i, 1);
+    const same = out.findIndex((k) => local(k) === local(c));
+    if (same >= 0) out[same] = c; else out.push(c);
+  }
+  return { name: b.name, attrs: { ...a.attrs, ...b.attrs }, children: out };
+}
 
 function resolveFace(face: string | undefined, theme: DmlTheme, which: 'minor' | 'major', ea: boolean): string | undefined {
   const pick = (f: 'Latin' | 'Ea', w: 'minor' | 'major') => theme[`${w}${f}` as keyof DmlTheme] as string | undefined;
@@ -122,21 +152,25 @@ function resolveFace(face: string | undefined, theme: DmlTheme, which: 'minor' |
 
 type Run = TextRun & { fontFamily?: string };
 
-function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, theme: DmlTheme, scale: number): Run {
+function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, theme: DmlTheme, scale: number, ctx?: DmlContext): Run {
   const rPr = child(r, 'rPr');
   const attr = (k: string) => rPr?.attrs[k] ?? base?.attrs[k];
   const sz = attr('sz');
   const ea = EAST_ASIAN.test(text);
   const face = (ea ? child(rPr, 'ea') ?? child(base, 'ea') : null)?.attrs.typeface ?? child(rPr, 'latin')?.attrs.typeface ?? child(base, 'latin')?.attrs.typeface ?? (ea ? undefined : child(rPr, 'ea')?.attrs.typeface);
   const fill = child(rPr, 'solidFill') ?? child(base, 'solidFill');
-  const hl = child(rPr, 'highlight');
+  const hl = child(rPr, 'highlight') ?? child(base, 'highlight');
   const bl = Number(attr('baseline') ?? 0);
   const b = attr('b'), i = attr('i'), u = attr('u'), st = attr('strike');
+  const spc = Number(attr('spc') ?? 0);
+  const cap = attr('cap');
   const resolved = resolveFace(face, theme, d.font, ea);
   // "Noto Sans KR Light" is the family "Noto Sans KR" at weight 300 (only for families that have such weights).
   const split = resolved ? splitWeightedFace(resolved) : undefined;
   const family = split?.family;
   const wp = split?.weight !== undefined ? weightPatch(split.weight) : undefined;
+  const hlink = child(rPr, 'hlinkClick');
+  const link = hlink ? ctx?.link?.(hlink) : undefined;
   return {
     text,
     fontSize: Math.round((sz ? (Number(sz) / 100) * 2 : d.size) * scale * 10) / 10,
@@ -149,44 +183,71 @@ function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, th
     color: colorIn(fill, theme)?.hex ?? d.color,
     highlight: colorIn(hl, theme)?.hex,
     fontFamily: family ? officeFont(family) : undefined,
-  };
+    ...(spc ? { letterSpacing: Math.round((spc / 100) * 2 * 10) / 10 } : {}),
+    ...(cap === 'all' ? { caps: 'all' as const } : cap === 'small' ? { caps: 'small' as const } : {}),
+    ...(link ? { link } : {}),
+  } as Run;
 }
 
-interface Para { runs: Run[]; align?: HAlign; list?: ListStyle; bulletPicture?: string; lineHeight?: number; lineExactPx?: number; before?: number; after?: number; empty: Run }
+export interface Para {
+  runs: Run[]; align?: HAlign; list?: ListStyle; bulletPicture?: string; lineHeight?: number; lineExactPx?: number; before?: number; after?: number; empty: Run;
+  /** Outline level (a:pPr@lvl). */
+  level?: number;
+  /** Left margin and first-line indent of the paragraph in canvas px (a:pPr@marL, @indent). */
+  marL?: number; indentPx?: number;
+}
 
-function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme, bulletPicture?: (rId: string) => string | undefined): Para[] {
-  const lst = child(txBody, 'lstStyle');
+/** The bullet an a:pPr sets (inherited ones included). */
+function bulletOf(pPr: MNode | null, bulletPicture?: (rId: string) => string | undefined): { list?: ListStyle; picture?: string } {
+  if (!pPr || child(pPr, 'buNone')) return {};
+  const auto = child(pPr, 'buAutoNum')?.attrs.type;
+  if (auto) return { list: AUTONUM[auto] ?? 'number' };
+  const blipRid = path(pPr, 'buBlip', 'blip')?.attrs['r:embed'];
+  if (child(pPr, 'buBlip')) { const picture = blipRid ? bulletPicture?.(blipRid) : undefined; return picture ? { list: 'picture', picture } : { list: 'bullet' }; }
+  const ch = child(pPr, 'buChar')?.attrs.char;
+  if (ch === undefined) return {};
+  return { list: /[○◦o]/.test(ch) ? 'circle' : /[■▪§]/.test(ch) ? 'square' : /[✓ü]/.test(ch) ? 'check' : /[➢Ø→➔]/.test(ch) ? 'arrow' : 'bullet' };
+}
+
+function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme, ctx?: DmlContext, lst?: MNode | null): Para[] {
+  const lstNode = lst ?? child(txBody, 'lstStyle');
   const scale = Number(path(txBody, 'bodyPr', 'normAutofit')?.attrs.fontScale ?? 100000) / 100000;
   return kids(txBody, 'p').map((p) => {
-    const pPr = child(p, 'pPr');
-    const lvl = Number(pPr?.attrs.lvl ?? 0);
-    const lvlPr = child(lst, `lvl${lvl + 1}pPr`);
-    const base = child(lvlPr, 'defRPr');
+    const own = child(p, 'pPr');
+    const lvl = Number(own?.attrs.lvl ?? 0);
+    const lvlPr = mergeStyle(child(lstNode, 'defPPr'), child(lstNode, `lvl${Math.min(9, lvl + 1)}pPr`));
+    const pPr = mergeStyle(lvlPr, own);
+    const base = mergeStyle(child(pPr, 'defRPr'), null);
     const runs: Run[] = [];
     for (const r of p.children) {
       const n = local(r);
-      if (n === 'r' || n === 'fld') runs.push(readRun(r, find(r, 't').map((t) => t.children.map((c) => c.text ?? '').join('')).join(''), base, d, theme, scale));
-      else if (n === 'br') runs.push({ ...readRun(r, '\v', base, d, theme, scale) });
+      if (n === 'r' || n === 'fld') runs.push(readRun(r, find(r, 't').map((t) => t.children.map((c) => c.text ?? '').join('')).join(''), base, d, theme, scale, ctx));
+      else if (n === 'br') runs.push({ ...readRun(r, '\v', base, d, theme, scale, ctx) });
+      else if (n === 'AlternateContent') {
+        // An equation (a14:m): its plain text stands in for it.
+        const math = find(r, 't').filter((t) => /^m:/.test(t.name)).map((t) => t.children.map((c) => c.text ?? '').join('')).join('');
+        if (math) runs.push(readRun({ name: 'a:r', attrs: {}, children: [] }, math, base, d, theme, scale, ctx));
+      }
     }
     const end = child(p, 'endParaRPr');
-    const empty = readRun({ name: 'a:r', attrs: {}, children: end ? [{ ...end, name: 'a:rPr' }] : [] }, '', base, d, theme, scale);
+    const empty = readRun({ name: 'a:r', attrs: {}, children: end ? [{ ...end, name: 'a:rPr' }] : [] }, '', base, d, theme, scale, ctx);
     const spc = (k: string) => {
       const pts = path(pPr, k, 'spcPts')?.attrs.val;
-      return pts ? (Number(pts) / 100) * 2 : undefined;
+      if (pts) return (Number(pts) / 100) * 2;
+      const pct = path(pPr, k, 'spcPct')?.attrs.val;
+      return pct ? Math.round(((Number(pct) / 100000) * 1.2 * (empty.fontSize ?? d.size)) * 10) / 10 : undefined;
     };
     const pct = path(pPr, 'lnSpc', 'spcPct')?.attrs.val;
     const lnPts = path(pPr, 'lnSpc', 'spcPts')?.attrs.val;
-    const auto = child(pPr, 'buAutoNum')?.attrs.type;
-    // 그림 글머리 기호 (a:buBlip): the picture it points at, already shrunk; without a usable picture it is a plain bullet.
-    const blipRid = path(pPr, 'buBlip', 'blip')?.attrs['r:embed'];
-    const picture = blipRid ? bulletPicture?.(blipRid) : undefined;
-    const list: ListStyle | undefined = child(pPr, 'buNone') ? undefined : child(pPr, 'buBlip') ? (picture ? 'picture' : 'bullet') : auto ? undefined : auto ? AUTONUM[auto] ?? 'number' : child(pPr, 'buChar') ? (/[○◦]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'circle' : /[■▪§]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'square' : /[✓ü]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'check' : /[➢Ø→]/.test(child(pPr, 'buChar')!.attrs.char ?? '') ? 'arrow' : 'bullet') : undefined;
-    const algn = pPr?.attrs.algn ?? lvlPr?.attrs.algn;
-    return { runs, align: algn ? ALIGN[algn] : undefined, list, bulletPicture: list === 'picture' ? picture : undefined, lineHeight: pct ? (Number(pct) / 100000) * 1.2 : undefined, lineExactPx: lnPts ? (Number(lnPts) / 100) * 2 : undefined, before: spc('spcBef'), after: spc('spcAft'), empty };
+    const { list, picture } = bulletOf(pPr, ctx?.bulletPicture);
+    const algn = pPr?.attrs.algn;
+    const marL = pPr?.attrs.marL !== undefined ? px(pPr.attrs.marL) : undefined;
+    const ind = pPr?.attrs.indent !== undefined ? px(pPr.attrs.indent) : undefined;
+    return { runs, align: algn ? ALIGN[algn] : undefined, list, bulletPicture: list === 'picture' ? picture : undefined, lineHeight: pct ? (Number(pct) / 100000) * 1.2 : undefined, lineExactPx: lnPts ? (Number(lnPts) / 100) * 2 : undefined, before: spc('spcBef'), after: spc('spcAft'), empty, level: lvl || undefined, marL, indentPx: ind };
   });
 }
 
-const RUN_KEYS = ['fontSize', 'bold', 'weight', 'italic', 'underline', 'strike', 'baseline', 'color', 'highlight', 'fontFamily'] as const;
+const RUN_KEYS = ['fontSize', 'bold', 'weight', 'italic', 'underline', 'strike', 'baseline', 'color', 'highlight', 'fontFamily', 'letterSpacing', 'caps', 'link'] as const;
 
 /** Paragraphs → the element's text, its own formatting (that of most of its text) and runs for the rest. */
 export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Partial<SlideElement> {
@@ -212,6 +273,9 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
   const aligns = lines.map((l) => l.p.align ?? fallbackAlign);
   const mixedAlign = aligns.some((a) => a !== aligns[0]);
   const lp = paras[0];
+  // Outline levels, bullets and spacing that differ between paragraphs are kept per paragraph.
+  const lvl = (p: Para) => p.level ?? 0;
+  const mixedPara = paras.some((p) => lvl(p) !== lvl(lp) || p.list !== lp.list || (p.before ?? 0) !== (lp.before ?? 0) || (p.after ?? 0) !== (lp.after ?? 0) || p.lineHeight !== lp.lineHeight);
   const fields: Partial<SlideElement> = {
     text,
     fontSize: (own.fontSize as number | undefined) ?? 36,
@@ -225,15 +289,26 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
     highlight: own.highlight as string | undefined,
     align: aligns[0],
     list: lp?.list,
+    ...(own.letterSpacing ? { letterSpacing: own.letterSpacing as number } : {}),
+    ...(own.caps ? { caps: own.caps as 'all' | 'small' } : {}),
     ...(lp?.list === 'picture' && lp.bulletPicture ? { bulletPicture: lp.bulletPicture } : {}),
     lineHeight: lp?.lineHeight,
     ...(lp?.lineExactPx ? { lineExact: { mode: 'exact' as const, px: lp.lineExactPx } } : {}),
     spaceBefore: lp?.before,
     spaceAfter: lp?.after,
+    ...(lvl(lp) ? { indent: lvl(lp) } : {}),
   };
   const formatted = runLines.some((l) => l.some((r) => Object.keys(r).length > 1));
-  if (mixedAlign) fields.paragraphs = lines.map((_l, i): ElementParagraph => ({ text: runLines[i].map((r) => r.text).join(''), runs: runLines[i], align: aligns[i] }));
-  else if (formatted) fields.runs = runLines;
+  if (mixedAlign || mixedPara) {
+    fields.paragraphs = lines.map((l, i): ElementParagraph => ({
+      text: runLines[i].map((r) => r.text).join(''), runs: runLines[i], align: aligns[i],
+      ...(mixedPara ? {
+        list: l.p.list ?? (lp.list ? 'none' : undefined), ...(lvl(l.p) ? { level: lvl(l.p) } : {}),
+        ...(l.p.before ? { spaceBefore: l.p.before } : {}), ...(l.p.after ? { spaceAfter: l.p.after } : {}), ...(l.p.lineHeight ? { lineHeight: l.p.lineHeight } : {}),
+      } : {}),
+    }));
+    if (mixedPara) delete fields.indent;
+  } else if (formatted) fields.runs = runLines;
   return fields;
 }
 
@@ -269,46 +344,89 @@ export interface DmlContext {
   media?: (rId: string) => string | undefined;
   /** A picture bullet's (a:buBlip) relationship id → the small PNG data URL it becomes (`bulletPicture`). */
   bulletPicture?: (rId: string) => string | undefined;
+  /** A text hyperlink (a:hlinkClick) → the address it opens (undefined: not an address, e.g. a jump to a slide). */
+  link?: (h: MNode) => string | undefined;
+  /** A hyperlink or action on a whole object → what clicking it does in a slide show. */
+  action?: (h: MNode) => Pick<SlideElement, 'href' | 'action'> | undefined;
+  /** A p:graphicFrame (table, chart, SmartArt, OLE object …) → the objects it becomes; null: not handled (the frame is reported and left out). */
+  frame?: (frame: MNode, box: { x: number; y: number; w: number; h: number; rot: number }, groupId?: string) => SlideElement[] | null;
+  /** The layout / master a placeholder takes its place, text style and look from. */
+  inherit?: (sp: MNode) => Inherit | null;
+  /** The presentation's default text style (presentation.xml defaultTextStyle), under every text. */
+  defaults?: MNode | null;
+  /** The stored video / audio file of a picture's video or audio relationship. */
+  mediaFile?: (rId: string) => { id: string; type: 'video' | 'audio' } | undefined;
+  /** An object was made from the drawing shape (or group) with this shape id — animations name their targets by it. */
+  made?: (shapeId: string, els: SlideElement[]) => void;
+  /** Something in the drawing could only be approximated or left out (for the import report). */
+  note?: (event: 'approximated' | 'dropped', what: string) => void;
+  /** Follow the file exactly: text starts at the left top unless the file says otherwise. */
+  strict?: boolean;
+}
+
+/** What a placeholder inherits (already layered master → layout): frame, shape properties, body properties and list style of its text. */
+export interface Inherit { spPr?: MNode | null; bodyPr?: MNode | null; lst?: MNode | null; font?: 'major' | 'minor' }
+
+const solidOf = (hex: string): MNode => ({ name: 'a:solidFill', attrs: {}, children: [{ name: 'a:srgbClr', attrs: { val: hex.replace('#', '') }, children: [] }] });
+const fillKindOf = (spPr: MNode | null) => spPr?.children.find((c) => FILL_KINDS.includes(local(c))) ?? null;
+
+/** The fill a shape draws: its own, else the theme fill its style points at (fillRef), with that style's colour in place of phClr. */
+function fillSource(spPr: MNode | null, style: MNode | null, ctx: DmlContext): { node: MNode; ph?: string } | null {
+  const own = fillKindOf(spPr);
+  if (own) return local(own) === 'noFill' || local(own) === 'grpFill' ? null : { node: own };
+  const ref = child(style, 'fillRef');
+  const idx = Number(ref?.attrs.idx ?? 0);
+  if (!ref || idx <= 0) return null;
+  const ph = colorIn(ref, ctx.theme)?.hex;
+  const themed = idx >= 1001 ? ctx.theme.bgFills?.[idx - 1001] : ctx.theme.fills?.[idx - 1];
+  if (themed && local(themed) !== 'noFill') return { node: themed, ph };
+  return ph ? { node: solidOf(ph) } : null;
+}
+
+/** A fill element (solidFill, gradFill, blipFill, pattFill) → the object's fill fields. */
+export function fillFromNode(node: MNode, ph: string | undefined, ctx: DmlContext): Partial<SlideElement> {
+  const t = ctx.theme;
+  switch (local(node)) {
+    case 'solidFill': { const c = colorIn(node, t, ph); return c ? { fill: c.hex, ...(c.alpha < 1 ? { fillTransparency: Math.round((1 - c.alpha) * 1000) / 1000 } : {}) } : {}; }
+    case 'gradFill': {
+      const gs = kids(child(node, 'gsLst'), 'gs').sort((a, b) => Number(a.attrs.pos) - Number(b.attrs.pos)).map((g) => ({ c: colorIn(g, t, ph), pos: Number(g.attrs.pos) / 1000 })).filter((g) => g.c);
+      const stops = gs.map((g) => g.c!.hex);
+      // More than two stops, or a stop that is partly transparent, keep every stop (Format Shape › Gradient stops).
+      const rich = gs.length > 2 || gs.some((g) => g.c!.alpha < 1);
+      if (!stops.length) return {};
+      return { fill: stops[0], gradient: [stops[0], stops[stops.length - 1]], gradientAngle: Number(child(node, 'lin')?.attrs.ang ?? 0) / 60000, ...(child(node, 'path') ? { gradientType: 'radial' as const } : {}), ...(rich ? { gradientStops: gs.map((g) => ({ pos: Math.round(g.pos * 10) / 10, color: g.c!.hex, ...(g.c!.alpha < 1 ? { transparency: Math.round((1 - g.c!.alpha) * 1000) / 1000 } : {}) })) } : {}) };
+    }
+    case 'blipFill': {
+      const blip = child(node, 'blip');
+      const media = blip && ctx.media?.(blip.attrs['r:embed'] ?? '');
+      if (!media) return {};
+      const keep = Number(child(blip, 'alphaModFix')?.attrs.amt ?? 100000) / 100000;
+      return { fillImage: media, ...(keep < 1 ? { fillTransparency: Math.round((1 - keep) * 1000) / 1000 } : {}) };
+    }
+    case 'pattFill': {
+      const fg = colorIn(child(node, 'fgClr'), t, ph)?.hex ?? '#000000', bg = colorIn(child(node, 'bgClr'), t, ph)?.hex ?? '#ffffff';
+      return { fill: bg, pattern: { kind: node.attrs.prst ?? 'pct50', fg, bg } };
+    }
+    default: return {};
+  }
 }
 
 function fillFields(spPr: MNode | null, style: MNode | null, ctx: DmlContext): Partial<SlideElement> {
-  const t = ctx.theme;
-  if (child(spPr, 'noFill')) return {};
-  const solid = child(spPr, 'solidFill');
-  if (solid) { const c = colorIn(solid, t); return c ? { fill: c.hex, ...(c.alpha < 1 ? { fillTransparency: Math.round((1 - c.alpha) * 1000) / 1000 } : {}) } : {}; }
-  const grad = child(spPr, 'gradFill');
-  if (grad) {
-    const gs = kids(child(grad, 'gsLst'), 'gs').sort((a, b) => Number(a.attrs.pos) - Number(b.attrs.pos)).map((g) => ({ c: colorIn(g, t), pos: Number(g.attrs.pos) / 1000 })).filter((g) => g.c);
-    const stops = gs.map((g) => g.c!.hex);
-    // More than two stops, or a stop that is partly transparent, keep every stop (Format Shape › Gradient stops).
-    const rich = gs.length > 2 || gs.some((g) => g.c!.alpha < 1);
-    if (stops.length) return { fill: stops[0], gradient: [stops[0], stops[stops.length - 1]], gradientAngle: Number(child(grad, 'lin')?.attrs.ang ?? 0) / 60000, ...(child(grad, 'path') ? { gradientType: 'radial' as const } : {}), ...(rich ? { gradientStops: gs.map((g) => ({ pos: Math.round(g.pos * 10) / 10, color: g.c!.hex, ...(g.c!.alpha < 1 ? { transparency: Math.round((1 - g.c!.alpha) * 1000) / 1000 } : {}) })) } : {}) };
-  }
-  const blip = path(spPr, 'blipFill', 'blip');
-  const media = blip && ctx.media?.(blip.attrs['r:embed'] ?? '');
-  if (media) {
-    const keep = Number(child(blip, 'alphaModFix')?.attrs.amt ?? 100000) / 100000;
-    return { fillImage: media, ...(keep < 1 ? { fillTransparency: Math.round((1 - keep) * 1000) / 1000 } : {}) };
-  }
-  const patt = child(spPr, 'pattFill');
-  if (patt) {
-    const fg = colorIn(child(patt, 'fgClr'), t)?.hex ?? '#000000', bg = colorIn(child(patt, 'bgClr'), t)?.hex ?? '#ffffff';
-    return { fill: bg, pattern: { kind: patt.attrs.prst ?? 'pct50', fg, bg } };
-  }
-  if (spPr && (solid || grad)) return {};
-  const ref = child(style, 'fillRef');
-  if (ref && Number(ref.attrs.idx) > 0) { const c = colorIn(ref, t); if (c) return { fill: c.hex }; }
-  return {};
+  const src = fillSource(spPr, style, ctx);
+  return src ? fillFromNode(src.node, src.ph, ctx) : {};
 }
 
 function lineFields(spPr: MNode | null, style: MNode | null, ctx: DmlContext): Partial<SlideElement> {
-  const ln = child(spPr, 'ln');
+  const own = child(spPr, 'ln');
   const ref = child(style, 'lnRef');
   const refIdx = Number(ref?.attrs.idx ?? 0);
+  const ph = ref ? colorIn(ref, ctx.theme)?.hex : undefined;
+  const themed = refIdx > 0 ? ctx.theme.lines?.[Math.min(refIdx, ctx.theme.lines.length) - 1] : undefined;
+  const ln = mergeStyle(themed, own);
   if (child(ln, 'noFill')) return {};
-  const c = colorIn(child(ln, 'solidFill'), ctx.theme) ?? colorIn(path(ln, 'gradFill', 'gsLst', 'gs'), ctx.theme) ?? (refIdx > 0 ? colorIn(ref, ctx.theme) : null);
+  const c = colorIn(child(ln, 'solidFill'), ctx.theme, ph) ?? colorIn(path(ln, 'gradFill', 'gsLst', 'gs'), ctx.theme, ph) ?? (refIdx > 0 && !fillKindOf(ln) ? colorIn(ref, ctx.theme) : null);
   if (!c) return {};
-  const w = ln?.attrs.w ? Number(ln.attrs.w) : LINE_STYLE_W[Math.min(refIdx, 3) - 1] ?? 12700;
+  const w = ln?.attrs.w ? Number(ln.attrs.w) : LINE_STYLE_W[Math.min(Math.max(refIdx, 1), 3) - 1] ?? 12700;
   const dash = DASH[child(ln, 'prstDash')?.attrs.val ?? ''];
   const arrow = (k: string) => { const ty = child(ln, k)?.attrs.type; return !!ty && ty !== 'none'; };
   const kind = (k: string) => ARROW_IN[child(ln, k)?.attrs.type ?? ''];
@@ -353,29 +471,119 @@ function format3dFields(spPr: MNode | null, ctx: DmlContext): Partial<SlideEleme
   return out;
 }
 
-function effectFields(spPr: MNode | null, ctx: DmlContext): Partial<SlideElement> {
-  const fx = child(spPr, 'effectLst');
-  if (!fx) return format3dFields(spPr, ctx);
+function effectFields(spPr: MNode | null, style: MNode | null, ctx: DmlContext): Partial<SlideElement> {
   const out: Partial<SlideElement> = format3dFields(spPr, ctx);
-  if (child(fx, 'outerShdw')) out.dropShadow = true;
+  // The shape's own effects, else those of the theme effect style its style points at.
+  let fx = child(spPr, 'effectLst');
+  let ph: string | undefined;
+  if (!fx && !child(spPr, 'effectDag')) {
+    const ref = child(style, 'effectRef');
+    const idx = Number(ref?.attrs.idx ?? 0);
+    const themed = idx > 0 ? ctx.theme.effects?.[Math.min(idx, ctx.theme.effects.length) - 1] : undefined;
+    fx = child(themed, 'effectLst');
+    ph = ref ? colorIn(ref, ctx.theme)?.hex : undefined;
+  }
+  if (!fx) return out;
+  const shadow = child(fx, 'outerShdw');
+  if (shadow) {
+    const c = colorIn(shadow, ctx.theme, ph);
+    out.dropShadow = true;
+    out.shadowOpts = {
+      ...(c ? { color: c.hex } : {}), ...(c && c.alpha < 1 ? { transparency: Math.round((1 - c.alpha) * 100) / 100 } : {}),
+      blur: Math.round(px(shadow.attrs.blurRad, 0) * 10) / 10, dist: Math.round(px(shadow.attrs.dist, 0) * 10) / 10, dir: Number(shadow.attrs.dir ?? 0) / 60000,
+    };
+  }
   if (child(fx, 'innerShdw')) { out.dropShadow = true; out.shadowKind = 'inner'; }
   const glow = child(fx, 'glow');
-  if (glow) { out.glow = colorIn(glow, ctx.theme)?.hex; out.glowSize = px(glow.attrs.rad, 10); }
+  if (glow) {
+    const c = colorIn(glow, ctx.theme, ph);
+    out.glow = c?.hex; out.glowSize = px(glow.attrs.rad, 10);
+    if (c && c.alpha < 1) out.glowAlpha = Math.round((1 - c.alpha) * 100) / 100;
+  }
   const soft = child(fx, 'softEdge');
   if (soft) out.softEdge = px(soft.attrs.rad);
-  if (child(fx, 'reflection')) out.reflection = true;
+  const refl = child(fx, 'reflection');
+  if (refl) {
+    out.reflection = true;
+    const end = Number(refl.attrs.endPos ?? 100000) / 100000, startA = Number(refl.attrs.stA ?? 100000) / 100000;
+    out.reflectionOpts = { size: Math.round(end * 100) / 100, transparency: Math.round((1 - startA) * 100) / 100, dist: px(refl.attrs.dist, 0) };
+  }
   return out;
 }
 
+// ── Freeform geometry (a:custGeom) → an SVG path ────────────────────────────────────────────────
+
+/** A freeform's paths as one SVG path in the first path's coordinate box; null when it uses guides or formulas this reader does not evaluate. */
+export function custGeomPath(geom: MNode): { path: string; w: number; h: number } | null {
+  const paths = kids(child(geom, 'pathLst'), 'path');
+  if (!paths.length) return null;
+  const w0 = Number(paths[0].attrs.w) || 0, h0 = Number(paths[0].attrs.h) || 0;
+  if (!(w0 > 0) || !(h0 > 0)) return null;
+  const f = (v: number) => Math.round(v * 100) / 100;
+  let d = '';
+  for (const p of paths) {
+    if (p.attrs.fill === 'none' && p.attrs.stroke === 'false') continue;
+    const sx = (Number(p.attrs.w) || w0) / w0, sy = (Number(p.attrs.h) || h0) / h0;
+    const pt = (n: MNode | undefined): [number, number] | null => {
+      if (!n) return null;
+      const x = Number(n.attrs.x), y = Number(n.attrs.y);
+      return Number.isFinite(x) && Number.isFinite(y) ? [x / sx, y / sy] : null;
+    };
+    let cur: [number, number] = [0, 0];
+    for (const c of p.children) {
+      const pts = kids(c, 'pt').map(pt);
+      if (pts.some((q) => !q)) return null;
+      const P = pts as [number, number][];
+      switch (local(c)) {
+        case 'moveTo': d += `M${f(P[0][0])} ${f(P[0][1])} `; cur = P[0]; break;
+        case 'lnTo': d += `L${f(P[0][0])} ${f(P[0][1])} `; cur = P[0]; break;
+        case 'cubicBezTo': d += `C${P.map((q) => `${f(q[0])} ${f(q[1])}`).join(' ')} `; cur = P[2]; break;
+        case 'quadBezTo': d += `Q${P.map((q) => `${f(q[0])} ${f(q[1])}`).join(' ')} `; cur = P[1]; break;
+        case 'close': d += 'Z '; break;
+        case 'arcTo': {
+          const wR = Number(c.attrs.wR) / sx, hR = Number(c.attrs.hR) / sy, st = Number(c.attrs.stAng) / 60000, sw = Number(c.attrs.swAng) / 60000;
+          if (![wR, hR, st, sw].every(Number.isFinite) || !wR || !hR) return null;
+          const param = (deg: number) => { const a = (deg * Math.PI) / 180; return Math.atan2(wR * Math.sin(a), hR * Math.cos(a)); };
+          const t0 = param(st), cx = cur[0] - wR * Math.cos(t0), cy = cur[1] - hR * Math.sin(t0);
+          const steps = Math.max(1, Math.ceil(Math.abs(sw) / 180));
+          for (let i = 1; i <= steps; i++) {
+            const deg = st + (sw * i) / steps;
+            let t1 = param(deg);
+            // Keep the parametric angle on the same turn as the visual one.
+            const turn = Math.round((((deg * Math.PI) / 180) - t1) / (2 * Math.PI));
+            t1 += turn * 2 * Math.PI;
+            const end: [number, number] = [cx + wR * Math.cos(t1), cy + hR * Math.sin(t1)];
+            d += `A${f(wR)} ${f(hR)} 0 ${Math.abs(sw / steps) > 180 ? 1 : 0} ${sw > 0 ? 1 : 0} ${f(end[0])} ${f(end[1])} `;
+            cur = end;
+          }
+          break;
+        }
+        default:
+      }
+    }
+  }
+  return d ? { path: d.trim(), w: w0, h: h0 } : null;
+}
+
+const idOf = (n: MNode) => child(child(n, 'nvSpPr') ?? child(n, 'nvCxnSpPr') ?? child(n, 'nvPicPr') ?? child(n, 'nvGrpSpPr') ?? child(n, 'nvGraphicFramePr'), 'cNvPr')?.attrs.id;
+
+/** The link or action of a shape's / picture's own hyperlink (a:hlinkClick in its cNvPr). */
+const clickOf = (nv: MNode | null, ctx: DmlContext) => { const h = child(child(nv, 'cNvPr'), 'hlinkClick'); return h ? ctx.action?.(h) : undefined; };
+
 function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string): SlideElement | null {
-  const spPr = child(sp, 'spPr');
+  const inh = ctx.inherit?.(sp) ?? null;
+  const ownSpPr = child(sp, 'spPr');
+  const spPr = inh?.spPr ? mergeStyle(inh.spPr, ownSpPr) : ownSpPr;
   const raw = xfrmOf(child(spPr, 'xfrm'));
   if (!raw) return null;
   const b = place(raw);
   const style = child(sp, 'style');
   const nv = child(sp, 'nvSpPr') ?? child(sp, 'nvCxnSpPr');
   const name = child(nv, 'cNvPr')?.attrs.name;
-  const prst = child(spPr, 'prstGeom')?.attrs.prst ?? (child(spPr, 'custGeom') ? 'rect' : 'rect');
+  const cust = child(spPr, 'custGeom');
+  const prst = child(spPr, 'prstGeom')?.attrs.prst ?? 'rect';
+  const freeform = cust ? custGeomPath(cust) : null;
+  if (cust && !freeform) ctx.note?.('approximated', '자유형 도형');
   const adj = kids(path(spPr, 'prstGeom', 'avLst'), 'gd').map((g) => Number(/val\s+(-?\d+)/.exec(g.attrs.fmla ?? '')?.[1])).filter((v) => Number.isFinite(v));
   const isLine = local(sp) === 'cxnSp' || /^(line|straightConnector1|bentConnector\d|curvedConnector\d)$/.test(prst);
   const txBody = child(sp, 'txBody') ?? path(sp, 'txSp', 'txBody');
@@ -383,33 +591,45 @@ function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string)
   const fill = isLine ? {} : fillFields(spPr, style, ctx);
   const line = lineFields(spPr, style, ctx);
   const fontRef = child(style, 'fontRef');
-  const d: TextDefaults = { size: 36, color: colorIn(fontRef, ctx.theme)?.hex ?? ctx.theme.colors.dk1, font: fontRef?.attrs.idx === 'major' ? 'major' : 'minor' };
-  const paras = txBody ? readParagraphs(txBody, d, ctx.theme, ctx.bulletPicture) : [];
+  const fontColor = colorIn(fontRef, ctx.theme)?.hex;
+  const d: TextDefaults = { size: 36, color: fontColor ?? ctx.theme.colors.dk1, font: inh?.font ?? (fontRef?.attrs.idx === 'major' ? 'major' : 'minor') };
+  // Text style layers: presentation default (without its colour when the shape's style names one), the placeholder's inherited
+  // style, the shape's own list style.
+  let defaults = ctx.defaults ?? null;
+  if (defaults && fontColor) defaults = { ...defaults, children: defaults.children.map((l) => ({ ...l, children: l.children.map((r) => (local(r) === 'defRPr' ? { ...r, children: r.children.filter((c) => local(c) !== 'solidFill') } : r)) })) };
+  const lst = mergeStyle(mergeStyle(inh ? null : defaults, inh?.lst), child(txBody, 'lstStyle'));
+  const paras = txBody ? readParagraphs(txBody, d, ctx.theme, ctx, lst) : [];
   const hasText = paras.some((p) => p.runs.some((r) => r.text && r.text !== '\v'));
-  const bodyPr = child(txBody, 'bodyPr');
+  const bodyPr = mergeStyle(inh?.bodyPr, child(txBody, 'bodyPr'));
   const anchor = bodyPr?.attrs.anchor;
+  const normFit = child(bodyPr, 'normAutofit');
   const textBits: Partial<SlideElement> = hasText || isTextBox ? {
-    ...textFields(paras, isTextBox ? 'left' : 'center'),
-    vAlign: anchor === 'ctr' ? 'middle' : anchor === 'b' ? 'bottom' : isTextBox ? 'top' : anchor === 't' ? 'top' : 'middle',
+    ...textFields(paras, isTextBox || ctx.strict ? 'left' : 'center'),
+    vAlign: anchor === 'ctr' ? 'middle' : anchor === 'b' ? 'bottom' : isTextBox || ctx.strict ? 'top' : anchor === 't' ? 'top' : 'middle',
     margins: [px(bodyPr?.attrs.lIns, 14.4), px(bodyPr?.attrs.tIns, 7.2), px(bodyPr?.attrs.rIns, 14.4), px(bodyPr?.attrs.bIns, 7.2)],
-    autoFit: !!child(bodyPr, 'spAutoFit'),
+    autoFit: !ctx.strict ? !!child(bodyPr, 'spAutoFit') : normFit ? ('shrink' as const) : child(bodyPr, 'spAutoFit') ? ('resize' as const) : false,
     ...(bodyPr?.attrs.wrap === 'none' ? { wrap: false } : {}),
     ...fromPptxVert(bodyPr?.attrs.vert),
     ...(bodyPr?.attrs.numCol && Number(bodyPr.attrs.numCol) > 1 ? { columns: Number(bodyPr.attrs.numCol) } : {}),
     ...(child(bodyPr, 'prstTxWarp') && child(bodyPr, 'prstTxWarp')!.attrs.prst !== 'textNoShape' ? { warp: child(bodyPr, 'prstTxWarp')!.attrs.prst } : {}),
   } : {};
-  const plainBox = !isLine && isTextBox && prst === 'rect' && !('fill' in fill) && !('stroke' in line);
+  if (normFit && Number(normFit.attrs.fontScale) > 0 && 'fontSize' in textBits) {
+    // The sizes are already scaled (readParagraphs applied fontScale); the box fits itself from there.
+    textBits.fontScale = undefined;
+  }
+  const plainBox = !isLine && isTextBox && prst === 'rect' && !cust && !('fill' in fill) && !('stroke' in line);
   const el: SlideElement = {
     id: uid('el'),
     kind: plainBox ? 'text' : 'shape',
-    ...(plainBox ? {} : { shape: prst }),
-    ...(adj.length ? { adj } : {}),
+    ...(plainBox ? {} : freeform ? { path: freeform.path, pathW: freeform.w, pathH: freeform.h } : { shape: prst }),
+    ...(adj.length && !freeform ? { adj } : {}),
     x: Math.round(b.x * 10) / 10, y: Math.round(b.y * 10) / 10, w: Math.round(b.w * 10) / 10, h: Math.round(b.h * 10) / 10,
     ...(b.rot ? { rotation: Math.round(b.rot * 100) / 100 } : {}),
     ...(b.flipH ? { flipH: true } : {}), ...(b.flipV ? { flipV: true } : {}),
-    ...fill, ...line, ...effectFields(spPr, ctx), ...textBits,
+    ...fill, ...line, ...effectFields(spPr, style, ctx), ...textBits,
     ...(name ? { name } : {}),
     ...(groupId ? { groupId } : {}),
+    ...clickOf(nv, ctx),
   };
   if (!plainBox && !hasText) { delete el.text; }
   if (sp.attrs.hidden === '1' || child(nv, 'cNvPr')?.attrs.hidden === '1') el.hidden = true;
@@ -425,38 +645,60 @@ function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: stri
   const blip = child(blipFill, 'blip');
   // PowerPoint's SVG picture: the vector (asvg:svgBlip) when the file has it, else the PNG fallback blip.
   const svgRid = find(blip ?? { name: '', attrs: {}, children: [] }, 'svgBlip')[0]?.attrs['r:embed'];
-  const media = (svgRid ? ctx.media?.(svgRid) : undefined) ?? ctx.media?.(blip?.attrs['r:embed'] ?? '');
-  if (!raw || !media) return null;
+  const poster = (svgRid ? ctx.media?.(svgRid) : undefined) ?? ctx.media?.(blip?.attrs['r:embed'] ?? '');
+  const nvPr = child(child(pic, 'nvPicPr'), 'nvPr');
+  const clip = child(nvPr, 'videoFile') ?? child(nvPr, 'audioFile') ?? find(nvPr ?? { name: '', attrs: {}, children: [] }, 'media')[0];
+  const file = clip ? ctx.mediaFile?.(clip.attrs['r:link'] ?? clip.attrs['r:embed'] ?? '') : undefined;
+  const mediaId = file?.id ?? poster;
+  if (!raw || !mediaId) return null;
   const b = place(raw);
   const src = child(blipFill, 'srcRect');
   const f = (k: string) => Number(src?.attrs[k] ?? 0) / 100000;
   const crop: [number, number, number, number] = [f('l'), f('t'), f('r'), f('b')];
   const prst = child(spPr, 'prstGeom')?.attrs.prst;
   const nv = child(child(pic, 'nvPicPr'), 'cNvPr');
-  return {
-    id: uid('el'), kind: 'image', mediaId: media, fit: 'fill',
+  const geometry = {
     x: Math.round(b.x * 10) / 10, y: Math.round(b.y * 10) / 10, w: Math.round(b.w * 10) / 10, h: Math.round(b.h * 10) / 10,
     ...(b.rot ? { rotation: Math.round(b.rot * 100) / 100 } : {}),
     ...(b.flipH ? { flipH: true } : {}), ...(b.flipV ? { flipV: true } : {}),
-    ...(crop.some((v) => v) ? { crop } : {}),
-    ...(prst && prst !== 'rect' ? { maskShape: prst } : {}),
-    ...lineFields(spPr, child(pic, 'style'), ctx), ...effectFields(spPr, ctx),
+  };
+  const common = {
     ...(nv?.attrs.name ? { name: nv.attrs.name } : {}),
     ...(nv?.attrs.descr ? { alt: nv.attrs.descr } : {}),
     ...(groupId ? { groupId } : {}),
+  };
+  if (file) return { id: uid('el'), kind: file.type, mediaId: file.id, ...geometry, ...common, fit: 'contain' };
+  // Colour changes of the picture (a:duotone, a:grayscl, a:biLevel, brightness / contrast) are not drawn.
+  const tone = find(blip ?? { name: '', attrs: {}, children: [] }, 'duotone')[0] ?? find(blip ?? { name: '', attrs: {}, children: [] }, 'biLevel')[0];
+  if (tone) ctx.note?.('approximated', '그림 색 변경');
+  const alpha = Number(child(blip, 'alphaModFix')?.attrs.amt ?? 100000) / 100000;
+  return {
+    id: uid('el'), kind: 'image', mediaId, fit: 'fill', ...geometry,
+    ...(crop.some((v) => v) ? { crop } : {}),
+    ...(prst && prst !== 'rect' ? { maskShape: prst } : {}),
+    ...(alpha < 1 ? { opacity: alpha } : {}),
+    ...lineFields(spPr, child(pic, 'style'), ctx), ...effectFields(spPr, child(pic, 'style'), ctx),
+    ...common, ...clickOf(child(pic, 'nvPicPr'), ctx),
   };
 }
 
 function walk(container: MNode, place: Map2, ctx: DmlContext, out: SlideElement[], groupId?: string) {
   for (const n of container.children) {
     const k = local(n);
+    const start = out.length;
     if (k === 'sp' || k === 'cxnSp') { const el = shapeElement(n, place, ctx, groupId); if (el) out.push(el); }
     else if (k === 'pic') { const el = pictureElement(n, place, ctx, groupId); if (el) out.push(el); }
     else if (k === 'grpSp') walk(n, groupMap(child(child(n, 'grpSpPr'), 'xfrm'), place), ctx, out, groupId ?? uid('g'));
-    else if (k === 'graphicFrame' || k === 'AlternateContent' || k === 'Choice' || k === 'Fallback') {
-      // Only fall-backs that are plain shapes or pictures are read (tables and charts come as a picture).
-      if (k === 'AlternateContent') { const fb = child(n, 'Fallback') ?? child(n, 'Choice'); if (fb) walk(fb, place, ctx, out, groupId); }
+    else if (k === 'graphicFrame') {
+      const raw = xfrmOf(child(n, 'xfrm'));
+      const made = raw && ctx.frame ? ctx.frame(n, place(raw), groupId) : null;
+      if (made) out.push(...made);
+    } else if (k === 'AlternateContent') {
+      const fb = child(n, 'Fallback') ?? child(n, 'Choice');
+      if (fb) walk(fb, place, ctx, out, groupId);
     }
+    const id = idOf(n);
+    if (id && out.length > start) ctx.made?.(id, out.slice(start));
   }
 }
 
