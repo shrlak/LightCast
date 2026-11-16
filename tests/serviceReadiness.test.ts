@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createSeedLibrary } from '../src/domain/defaults';
-import { emptySlide, referencedAssets, replaceDeckSlides, serviceDecks } from '../src/domain/serviceReadiness';
+import { appendDeckSlides, emptySlide, referencedAssets, replaceDeckSlides, serviceDecks } from '../src/domain/serviceReadiness';
 import { pruneIds } from '../src/domain/restorePoints';
 
 describe('service preparation', () => {
@@ -16,6 +16,29 @@ describe('service preparation', () => {
     expect(serviceDecks({ ...lib, presentations: [updated], playlists: [pl] }, pl.id)).toEqual([updated]);
     expect(pl.items[1].presentationId).toBe(updated.id);
     expect(serviceDecks(lib, 'absent')).toEqual([]);
+  });
+  it('uploading a sermon file keeps the slides already in the 설교 list and pastes the new ones after them', () => {
+    const lib = createSeedLibrary();
+    const old = [
+      { id: 'title', group: '설교', text: '설교 제목' },
+      { id: 'verse', group: '성경 말씀', text: '요한복음 3:16' },
+    ];
+    const p = { ...lib.presentations[0], title: '11/16 설교', slides: old, transition: { kind: 'fade' as const, duration: 400 } };
+    const first = [{ id: 'a1', group: 'sermon-a', text: '1' }, { id: 'a2', group: 'sermon-a', text: '2' }];
+    const once = appendDeckSlides(p, first);
+    expect(once.slides.map((x) => x.id)).toEqual(['title', 'verse', 'a1', 'a2']);
+    // identity and settings stay
+    expect(once).toMatchObject({ id: p.id, title: p.title, transition: p.transition });
+    // a second file goes after the first, not instead of it
+    const twice = appendDeckSlides(once, [{ id: 'b1', group: 'sermon-b', text: 'B' }]);
+    expect(twice.slides.map((x) => x.id)).toEqual(['title', 'verse', 'a1', 'a2', 'b1']);
+    // the input deck is not changed
+    expect(p.slides.map((x) => x.id)).toEqual(['title', 'verse']);
+    // a slide already in the deck is not added twice
+    expect(appendDeckSlides(once, [first[0]]).slides.map((x) => x.id)).toEqual(['title', 'verse', 'a1', 'a2']);
+    // an empty deck just gets the new slides; a file that gave no slides changes nothing and says so
+    expect(appendDeckSlides({ ...p, slides: [] }, first).slides.map((x) => x.id)).toEqual(['a1', 'a2']);
+    expect(() => appendDeckSlides(p, [])).toThrow('기존 PPT');
   });
   it('flags visually empty slides including notes-only and plain black slides', () => {
     expect(emptySlide({ id: 's', group: '', text: ' ', notes: 'speaker note' })).toBe(true);
