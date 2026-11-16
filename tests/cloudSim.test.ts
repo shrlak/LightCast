@@ -68,4 +68,16 @@ describe('two computers, ordinary editing', () => {
     expect(b.presentation('p_doxology')?.title).toBe('고친 송영');
     void textOf;
   });
+
+  it('three computers editing the same slide end with one copy per other version, the same everywhere', async () => {
+    const { clients } = await setup(3);
+    await converge(clients);
+    const slideId = clients[0].presentation('p_grace')!.slides[0].id;
+    for (const c of clients) c.dispatch({ type: 'slide/update', presentationId: 'p_grace', slideId, patch: { text: `${c.name}의 가사` } });
+    for (const c of clients) await c.settle();
+    await converge(clients);
+    const texts = (c: typeof clients[number]) => c.lib.presentations.filter((p) => p.title.startsWith('Amazing Grace')).map((p) => p.slides[0].text).sort();
+    expect(texts(clients[0])).toEqual(['A의 가사', 'B의 가사', 'C의 가사']);
+    for (const c of clients) expect(texts(c)).toEqual(texts(clients[0]));
+  });
 });
