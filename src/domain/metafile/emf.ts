@@ -5,6 +5,18 @@ import type { BlitOptions } from './gdi';
 import { BS_HATCHED, BS_NULL, colorref, decode8, decode8dx, Gdi, MAX_POINTS, patternBrush, PS_NULL, type GdiBrush, type Rect } from './gdi';
 import { Plus } from './emfplus';
 import { decodeDib } from './png';
+import { Recorder } from './raster';
+
+/** True when a record of `type` occurs (a flood fill: the drawing is then recorded for the rasteriser). */
+function hasRecord(b: Bytes, pos: number, type: number): boolean {
+  for (let n = 0; pos + 8 <= b.length && n < MAX_RECORDS; n++) {
+    const t = b.u32(pos), len = b.u32(pos + 4);
+    if (len < 8 || len % 4 !== 0 || pos + len > b.length || t === 14) return false;
+    if (t === type) return true;
+    pos += len;
+  }
+  return false;
+}
 import type { Played } from './wmf';
 
 const SIGNATURE = 0x464d4520;
@@ -38,6 +50,8 @@ export function playEmf(b: Bytes, preferPlus = true): EmfPlayed | null {
     frame = [bl, bt, br - bl, bb - bt];
     size = [br - bl, bb - bt];
   }
+  g.frameHint = () => frame;
+  if (hasRecord(b, Math.max(88, hsize), 53)) g.out.recorder = new Recorder();
   const plus = new Plus(g.out, frame ?? (br > bl && bb > bt ? [bl, bt, br - bl, bb - bt] : null));
   let gdiMute = false;
   let pos = Math.max(88, hsize);
@@ -49,9 +63,12 @@ export function playEmf(b: Bytes, preferPlus = true): EmfPlayed | null {
     const r = b.slice(pos, len);
     if (type === 70 && r.u32(12) === EMF_PLUS) {
       if (preferPlus) {
+        plus.settleFallback();
         g.out.muted = false;
         const getDc = plus.comment(r.tail(16));
         if (plus.active) gdiMute = !getDc;
+        // An image drawn with image attributes: the GDI records that follow are its fallback (EmfPlus.settleFallback).
+        g.mutedBitmap = plus.wantsFallback && gdiMute ? (img) => plus.offerFallback(img) : null;
       }
     } else {
       g.out.muted = gdiMute;
@@ -59,6 +76,8 @@ export function playEmf(b: Bytes, preferPlus = true): EmfPlayed | null {
     }
     pos += len;
   }
+  plus.settleFallback();
+  g.mutedBitmap = null;
   g.out.muted = false;
   return { gdi: g, frame, size, plusUsed: plus.active };
 }
@@ -73,7 +92,7 @@ function record(g: Gdi, type: number, r: Bytes): void {
     case 31: g.scaleViewportExt(r.i32(8), r.i32(12), r.i32(16), r.i32(20)); break;
     case 32: g.scaleWindowExt(r.i32(8), r.i32(12), r.i32(16), r.i32(20)); break;
     case 17: g.setMapMode(r.u32(8)); break;
-    case 18: d.bkMode = r.u32(8); break;
+    case 18: g.setBkMode(r.u32(8)); break;
     case 21: d.stretchMode = r.u32(8); break; // SETSTRETCHBLTMODE
     case 19: d.polyFill = r.u32(8); break;
     case 20: d.rop2 = r.u32(8); break;
@@ -95,8 +114,10 @@ function record(g: Gdi, type: number, r: Bytes): void {
       const cosmetic = (style & 0xf0000) === 0;
       const cap = style & 0xf00;
       const join = style & 0xf000;
+      const nUser = (style & 0xf) === 7 ? Math.min(r.u32(48), 16) : 0;
+      const user = nUser ? Array.from({ length: nUser }, (_, i) => r.u32(52 + i * 4)) : undefined;
       g.setObject(r.u32(8), { k: 'pen', pen: {
-        style: brush === BS_NULL ? PS_NULL : style & 0xf, width, color: colorref(r.u32(40)), cosmetic,
+        style: brush === BS_NULL ? PS_NULL : style & 0xf, width, color: colorref(r.u32(40)), cosmetic, ext: true, user,
         cap: cap === 0x100 ? 'square' : cap === 0x200 ? 'butt' : 'round', join: join === 0x1000 ? 'bevel' : join === 0x2000 ? 'miter' : 'round',
       } });
       break;
@@ -166,7 +187,9 @@ function record(g: Gdi, type: number, r: Bytes): void {
       if (r.u32(96) === 0 || r.u32(88) === 0) { g.rop(rop, ...dst); break; }
       const mask = maskOf(r, 100, 112, 120);
       // The foreground operation (bits 16..23 of the ROP4) decides how a masked-in pixel is combined; SRCCOPY (0xCC) is the usual one.
-      blit(g, r, dst, [r.i32(44), r.i32(48), dst[2], dst[3]], 84, 92, { rop: FG_ROP[(rop >>> 16) & 0xff] ?? 0x00cc0020, mask });
+      // The background operation (bits 24..31) decides what happens where the mask is 0.
+      const bg = (rop >>> 24) & 0xff;
+      blit(g, r, dst, [r.i32(44), r.i32(48), dst[2], dst[3]], 84, 92, { rop: FG_ROP[(rop >>> 16) & 0xff] ?? 0x00cc0020, mask, background: (FG_ROP[bg] ?? BG_ROP[bg] ?? 0x00aa0029) });
       break;
     }
     case 79: { // PLGBLT, or (in older files) EXTCREATEREGION: the region record is 16 bytes of header plus its RGNDATA, whose header starts with its own size, 32.
@@ -178,7 +201,7 @@ function record(g: Gdi, type: number, r: Bytes): void {
       blit(g, r, [0, 0, 0, 0], [r.i32(48), r.i32(52), r.i32(56), r.i32(60)], 96, 104, { para, mask });
       break;
     }
-    case 53: break; // EXTFLOODFILL: needs the pixels already drawn (see index.ts); nothing is drawn
+    case 53: g.floodFill(r.i32(8), r.i32(12), colorref(r.u32(16)), r.u32(20) === 1); break; // EXTFLOODFILL: start, colour, mode (raster.ts)
     case 114: case 116: { // ALPHABLEND / TRANSPARENTBLT: like STRETCHBLT with the blend function (BlendOp, flags, constant alpha, format) or colour key at 40
       const dst: [number, number, number, number] = [r.i32(24), r.i32(28), r.i32(32), r.i32(36)];
       const v = r.u32(40);
@@ -204,7 +227,9 @@ function record(g: Gdi, type: number, r: Bytes): void {
 const brushAt = (g: Gdi, i: number): GdiBrush | undefined => { const o = g.objects[i]; return o?.k === 'brush' ? o.brush : undefined; };
 
 /** Foreground operation of a ROP4 (its bits 16..23) as the full ternary raster operation that BitBlt would take. */
-const FG_ROP: Record<number, number> = { 0xcc: 0x00cc0020, 0xee: 0x00ee0086, 0x88: 0x008800c6, 0x66: 0x00660046, 0x33: 0x00330008 };
+const FG_ROP: Record<number, number> = { 0xcc: 0x00cc0020, 0xee: 0x00ee0086, 0x88: 0x008800c6, 0x66: 0x00660046, 0x33: 0x00330008, 0x22: 0x00220326, 0xbb: 0x00bb0226 };
+/** Background operations of a ROP4 that use no source. */
+const BG_ROP: Record<number, number> = { 0x00: 0x00000042, 0xff: 0x00ff0062, 0xf0: 0x00f00021, 0x55: 0x00550009, 0x5a: 0x005a0049, 0xaa: 0x00aa0029 };
 
 /** A mask bitmap: x / y of its origin at `xy`, its BITMAPINFO offset/size pair at `bmi`, its bits pair at `bits`. */
 function maskOf(r: Bytes, xy: number, bmi: number, bits: number): BlitOptions['mask'] {
@@ -278,7 +303,9 @@ function extTextOut(g: Gdi, r: Bytes, wide: boolean) {
   if (opts & ETO_GLYPH_INDEX) {
     const gdx: number[] = [];
     if (dxOff) for (let i = 0; i < n && r.has(dxOff + i * (opts & ETO_PDY ? 8 : 4), 4); i++) gdx.push(r.i32(dxOff + i * (opts & ETO_PDY ? 8 : 4)));
-    g.glyphText(x, y, n, gdx.length === n ? gdx : null);
+    const ids: number[] = [];
+    for (let i = 0; i < n && r.has(off + i * 2, 2); i++) ids.push(r.u16(off + i * 2));
+    g.glyphText(x, y, ids, gdx.length === n ? gdx : null);
     return;
   }
   const step = opts & ETO_PDY ? 8 : 4;
@@ -292,9 +319,14 @@ function extTextOut(g: Gdi, r: Bytes, wide: boolean) {
 function smallTextOut(g: Gdi, r: Bytes) {
   const x = r.i32(8), y = r.i32(12), n = Math.min(r.u32(16), 32768), opts = r.u32(20);
   if (!n) return;
-  if (opts & ETO_GLYPH_INDEX) { g.glyphText(x, y, n, null); return; }
   const noRect = (opts & ETO_NO_RECT) !== 0;
   const off = noRect ? 36 : 52;
+  if (opts & ETO_GLYPH_INDEX) { // 8-bit indices with ETO_SMALL_CHARS, else 16-bit
+    const ids: number[] = [];
+    for (let i = 0; i < n && r.has(off + i * (opts & ETO_SMALL_CHARS ? 1 : 2), 1); i++) ids.push(opts & ETO_SMALL_CHARS ? r.u8At(off + i) : r.u16(off + i * 2));
+    g.glyphText(x, y, ids, null);
+    return;
+  }
   const str = opts & ETO_SMALL_CHARS ? decode8(r.slice(off, n).u8, g.dc.font.charset) : r.utf16(off, n);
   g.text(x, y, str, null, noRect ? null : rect(r, 36), (opts & ETO_OPAQUE) !== 0);
 }

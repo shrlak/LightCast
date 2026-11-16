@@ -6,6 +6,7 @@ import { embedFontsInZip, mayEmbed, readEmbeddedFonts, sfntFormat, usedFamilies,
 import JSZip from 'jszip';
 import { importedFonts, importedSfnt, registerImportedFonts, embedStyleOf, notifyImportedFontsChanged, type ImportedFont } from './importedFonts';
 import { sha256Hex, type CloudFont } from './fontSync';
+import { addMetafileFont } from './metafile/fonts';
 
 export interface StoredEmbedded {
   id: string; family: string; style: FontStyle; bytes: number; source: string; at: number;
@@ -39,6 +40,7 @@ export async function refreshEmbeddedFonts(): Promise<StoredEmbedded[]> { cache 
 
 const registered = new Set<string>();
 async function register(id: string, family: string, style: FontStyle, data: ArrayBuffer): Promise<void> {
+  addMetafileFont(new Uint8Array(data.slice(0)), family); // glyph-index text and widths in metafiles
   if (registered.has(id) || typeof FontFace === 'undefined' || typeof document === 'undefined') return;
   try {
     const { weight, style: fs } = cssWeightStyle(style);

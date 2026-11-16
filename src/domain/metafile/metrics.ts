@@ -2,6 +2,9 @@
 // the font the browser will use; without one (node, tests, workers) built-in per-character width
 // tables (Helvetica / Times / Courier, 1000 units per em; CJK and Hangul full width) are used.
 // Either way the result is an estimate: the font the picture was made with is rarely installed.
+// When the font file itself is known (imported into LightCast or brought by a deck, see fonts.ts), its
+// own advance widths (hmtx) are used instead, with or without a DOM.
+import { fontWidthEm } from './fonts';
 
 const HELV = [278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015,
   667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333,
@@ -61,6 +64,8 @@ function canvas(): Measurer | null {
 export function textWidth(text: string, family: string, size: number, bold = false, italic = false): number {
   if (!text) return 0;
   const fam = family.replace(/['"\\<>&]/g, '');
+  const own = fontWidthEm(text, fam, bold, italic);
+  if (own !== null && Number.isFinite(own)) return own * size;
   const g = canvas();
   if (g) {
     try {

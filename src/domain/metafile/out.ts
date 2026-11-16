@@ -1,6 +1,9 @@
 // The SVG a metafile is played into: an element list, defs (patterns, gradients, clips), the bounds
 // of what was drawn, and the budgets that keep a hostile file from growing it without end.
 import { type Xf } from './bytes';
+import { Recorder, rgbaOf, invertXf, type Paint } from './raster';
+import type { Rgba } from './png';
+import { decodedImage } from './decode';
 
 /** Elements kept from one file; past this the picture is cut off where it stands. */
 export const MAX_ITEMS = 200_000;
@@ -86,6 +89,10 @@ export class Out {
   minX = Infinity; minY = Infinity; maxX = -Infinity; maxY = -Infinity;
   /** While true nothing is drawn (EMF+ files play their own records, not the GDI fallback). */
   muted = false;
+  /** Set when the file holds a flood fill: everything drawn is also kept for the rasteriser (raster.ts). */
+  recorder: Recorder | null = null;
+  /** Notes about what could not be drawn (index.ts passes them on). */
+  warnings: string[] = [];
   /** Output units per CSS pixel (see Gdi.hair). */
   hair: () => number = () => 1;
 
@@ -119,12 +126,16 @@ export class Out {
     return a;
   }
   /** One filled and/or stroked path. `blend` is a CSS mix-blend-mode that stands in for a raster operation that reads the destination. */
-  drawPath(p: PathData, fill: Fill, stroke: Stroke | null, evenOdd = false, blend?: string) {
+  drawPath(p: PathData, fill: Fill, stroke: Stroke | null, evenOdd = false, blend?: string, crisp = false) {
     if (p.empty || (!fill && !stroke)) return;
     // GDI paints no partial pixels: gradients that a producer draws as hundreds of slivers narrower than a
     // pixel would blend with the page behind each of them and come out washed out when anti-aliased.
     const extent = Math.min(p.hx - p.lx, p.hy - p.ly); // not finite for a path whose data was taken whole (a path bracket)
-    const thin = fill && !stroke && Number.isFinite(extent) && extent < this.hair();
+    const thin = crisp || fill && !stroke && Number.isFinite(extent) && extent < this.hair();
+    if (this.recorder && !this.muted && !this.full) {
+      const paint: Paint | null = !fill ? null : 'ref' in fill ? this.recorder.paints.get(fill.ref) ?? { k: 'solid', c: [128, 128, 128, 255] } : { k: 'solid', c: rgbaOf(fill.color) };
+      this.recorder.path(p.d, paint, stroke ? { c: rgbaOf(stroke.color), width: stroke.width, dash: stroke.dash, cap: stroke.cap } : null, evenOdd, blend, this.clipState);
+    }
     this.push(`<path d="${p.d}"${this.fillAttrs(fill, evenOdd)}${this.strokeAttrs(stroke)}${thin ? ' shape-rendering="crispEdges"' : ''}${blend ? ` style="mix-blend-mode:${blend}"` : ''}/>`);
   }
   /** Path data written without touching the bounds (for a huge "everything" rectangle). */
@@ -137,8 +148,24 @@ export class Out {
     }
     return this.invId;
   }
-  /** Raw element (text, image) drawn at once. */
-  element(s: string) { this.push(s); }
+  /** A bitmap just drawn as an element, kept for the rasteriser when one is recording. */
+  recordImage(m: Xf, img: Rgba, o: { blend?: string; invert?: boolean; opacity?: number } = {}) {
+    if (this.recorder && !this.muted && !this.full) this.recorder.image(m, img, this.clipState, o);
+  }
+  /** True when drawing is being recorded for the flood-fill rasteriser (text callers then work out what their text covers). */
+  get recording() { return !!this.recorder && !this.muted && !this.full; }
+  /** The area a piece of text covered (path data in device units, textraster.ts), kept for the rasteriser. */
+  recordText(d: string, color: Color) {
+    if (d && this.recording) this.recorder!.path(d, { k: 'solid', c: rgbaOf(color) }, null, false, undefined, this.clipState);
+  }
+  /** Raw element (text, image) drawn at once; returns its place in the picture (-1 when not drawn) for replaceElement. */
+  element(s: string): number { return this.push(s) ? this.body.length - 1 : -1; }
+  /** Puts `s` in place of an element drawn earlier (the index element() gave). */
+  replaceElement(i: number, s: string) {
+    if (i < 0 || i >= this.body.length || this.chars + s.length > MAX_CHARS) return;
+    this.chars += s.length - this.body[i].length;
+    this.body[i] = s;
+  }
 
   // ---- clip ----
 
@@ -245,17 +272,39 @@ export class Out {
     const back = bg ? `<rect width="${S}" height="${S}" fill="${bg.rgb}"${bg.a < 1 ? ` fill-opacity="${num(bg.a)}"` : ''}/>` : '';
     this.addDef(`<pattern id="${id}" width="${S}" height="${S}" patternUnits="userSpaceOnUse">${back}<path d="${lines.join('')}" fill="none" stroke="${fg.rgb}" stroke-width="1"/></pattern>`);
     this.hatches.set(key, id);
+    this.recorder?.paints.set(id, { k: 'hatch', style, fg: rgbaOf(fg), bg: bg ? rgbaOf(bg) : null });
     return id;
   }
-  imagePattern(href: string, w: number, h: number, xf?: Xf): string {
+  /**
+   * An image pattern: `img` its pixels when already decoded, else `bytes` (PNG / JPEG), decoded here only
+   * when the rasteriser needs them (decode.ts). A pattern whose pixels cannot be had (another format,
+   * damaged data, over the decode budget) counts as mid grey for flood fills.
+   */
+  imagePattern(href: string, w: number, h: number, xf?: Xf, img?: Rgba, bytes?: Uint8Array): string {
     const id = this.id('p');
+    if (this.recorder) {
+      const px = img && img.px.length >= img.w * img.h * 4 ? img : bytes ? decodedImage(bytes) : null;
+      this.recorder.paints.set(id, { k: 'pattern', img: px, w, h, xf: xf ?? null, avg: [128, 128, 128, 255] });
+    }
     this.addDef(`<pattern id="${id}" width="${num(w)}" height="${num(h)}" patternUnits="userSpaceOnUse"${xf ? ` patternTransform="matrix(${xf.map(num).join(' ')})"` : ''}><image href="${href}" width="${num(w)}" height="${num(h)}" preserveAspectRatio="none"/></pattern>`);
     return id;
   }
-  linearGradient(x1: number, y1: number, x2: number, y2: number, stops: [number, Color][], xf: Xf, pad: boolean): string {
+  linearGradient(x1: number, y1: number, x2: number, y2: number, stops: [number, Color][], xf: Xf, pad: boolean | 'pad' | 'repeat' | 'reflect'): string {
+    const spread = pad === true ? 'pad' : pad === false ? 'repeat' : pad;
+    const id = this.id('g');
+    const inv = invertXf(xf);
+    if (this.recorder && inv) this.recorder.paints.set(id, { k: 'linear', x1, y1, x2, y2, stops: stops.map(([o, c]) => [o, rgbaOf(c)]), inv, pad: spread === 'pad' });
+    const st = stops.map(([o, c]) => `<stop offset="${num(Math.max(0, Math.min(1, o)))}" stop-color="${c.rgb}"${c.a < 1 ? ` stop-opacity="${num(c.a)}"` : ''}/>`).join('');
+    this.addDef(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(x1)}" y1="${num(y1)}" x2="${num(x2)}" y2="${num(y2)}" gradientTransform="matrix(${xf.map(num).join(' ')})" spreadMethod="${spread}">${st}</linearGradient>`);
+    return id;
+  }
+
+  /** A radial gradient on the unit circle mapped by `xf` (centre 0 0, radius 1), focal point (fx, fy) in the same units. */
+  radialGradient(stops: [number, Color][], xf: Xf, fx: number, fy: number): string {
     const id = this.id('g');
     const st = stops.map(([o, c]) => `<stop offset="${num(Math.max(0, Math.min(1, o)))}" stop-color="${c.rgb}"${c.a < 1 ? ` stop-opacity="${num(c.a)}"` : ''}/>`).join('');
-    this.addDef(`<linearGradient id="${id}" gradientUnits="userSpaceOnUse" x1="${num(x1)}" y1="${num(y1)}" x2="${num(x2)}" y2="${num(y2)}" gradientTransform="matrix(${xf.map(num).join(' ')})" spreadMethod="${pad ? 'pad' : 'repeat'}">${st}</linearGradient>`);
+    const f = Math.hypot(fx, fy) < 0.999 ? ` fx="${num(fx)}" fy="${num(fy)}"` : '';
+    this.addDef(`<radialGradient id="${id}" gradientUnits="userSpaceOnUse" cx="0" cy="0" r="1"${f} gradientTransform="matrix(${xf.map(num).join(' ')})">${st}</radialGradient>`);
     return id;
   }
 

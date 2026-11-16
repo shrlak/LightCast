@@ -111,7 +111,7 @@ export interface FixtureSlide {
   transition?: { effect: number; speed?: number; onClick?: boolean; timeMs?: number };
 }
 export interface FixturePicture {
-  type: 'jpeg' | 'png' | 'wmf' | 'emf';
+  type: 'jpeg' | 'png' | 'wmf' | 'emf' | 'pict';
   bytes: number[];
   /** Metafiles: store the data deflated (default) or plain. */
   compress?: boolean;
@@ -191,12 +191,12 @@ const masterStyleAtom = (t: { type: number; levels: { pf?: FixturePF; cf?: Fixtu
 export function buildPpt(o: FixtureOptions): Uint8Array {
   const ps = o.pictures ?? [];
   const masters = o.masters ?? [];
-  const typeOf = (p: FixturePicture): [number, number, number] => ({ jpeg: [0xf01d, 0x46a, 5], png: [0xf01e, 0x6e0, 6], wmf: [0xf01b, 0x216, 3], emf: [0xf01a, 0x3d4, 2] } as Record<string, [number, number, number]>)[p.type];
+  const typeOf = (p: FixturePicture): [number, number, number] => ({ jpeg: [0xf01d, 0x46a, 5], png: [0xf01e, 0x6e0, 6], wmf: [0xf01b, 0x216, 3], emf: [0xf01a, 0x3d4, 2], pict: [0xf01c, 0x542, 4] } as Record<string, [number, number, number]>)[p.type];
   // Pictures stream: one blip record each.
   const blips: number[][] = ps.map((p) => {
     const uid = Array.from({ length: 16 }, (_, i) => i + 1);
     const [type, inst] = typeOf(p);
-    if (p.type === 'wmf' || p.type === 'emf') {
+    if (p.type === 'wmf' || p.type === 'emf' || p.type === 'pict') {
       const plain = Uint8Array.from(p.bytes);
       const compress = p.compress !== false;
       const data = compress ? deflateSync(plain) : plain;

@@ -41,8 +41,10 @@ DECKCRAFT_SYNCED=69379cf689f908d23cab9313d59fb9e1fd4b7a4f
 - Everything up to `6eebec7` (see README, "더 많은 DeckCraft 기능").
 - `6eebec7..9b1fe3f` (10 commits, 2026-11-12): nothing to port. They fix DeckCraft's own PPTX reader, writer and
   renderer (chart legend entries `c:legendEntry`, a picture in a placeholder showing the layout fill, custom
-  geometry guide lists); LightCast reads no charts or layout placeholder fills from PPTX and draws `custGeom` as a
-  rectangle. Revisit if LightCast ever imports PPTX charts or custom geometry.
+  geometry guide lists). Since then LightCast's own PPTX reader (`src/domain/io/pptxDeck.ts`) does read charts
+  (`pptxChart.ts`, cached values into an editable chart), placeholder inheritance from layout and master, and
+  `custGeom` with literal coordinates (guide formulas are still drawn as a rectangle and reported): compare
+  DeckCraft's PPTX reader changes against those files on the next sync.
 - `9b1fe3f..ef9ac9a` (60 commits, 2026-11-13):
   - Ported: `edit.duplicate` keeps a member of a group in its group (`duplicateSelection`; the copy goes after the
     group's last member; a group duplicated whole still gets a new group); `shape.merge` on group members (LightCast
@@ -74,8 +76,11 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
   draws any metafile it is handed into an ordinary image before it is stored.
 - When `craft-metafile` changes (check `git log -- Cargo.toml Cargo.lock` and commits mentioning "metafile"): port the
   change into `src/domain/metafile/` and add a test to `tests/metafile.test.ts` or `tests/metafileReal.test.ts` (real files
-  in `tests/fixtures/real/metafile/`, see its README). Not drawn (see the header of `src/domain/metafile/index.ts`):
-  flood fills (the reader draws vectors, there is no pixel surface), EMF+ image effects and colour matrices,
-  path gradients beyond their centre colour, glyph-index text (pale boxes instead of letters).
+  in `tests/fixtures/real/metafile/`, see its README; the gaps closed later are in `tests/metafileGaps.test.ts`).
+  Flood fills go through a small software rasteriser (`raster.ts`), EMF+ path gradients and blends through
+  `gradient.ts`, image effects through `effects.ts` (SVG filters), glyph-index text and text widths through the
+  font files registered in `fonts.ts` (imported fonts and fonts from decks). Still not drawn (see the header of
+  `src/domain/metafile/index.ts`): ImageAttributes colour matrices / remap tables (EMF+ cannot store them),
+  red-eye correction of PNG / JPEG images, glyph indices in WMF text.
 - DeckCraft plays the GDI records of an EMF+ "dual" file; LightCast prefers the EMF+ records and uses the GDI
   fallback only when EMF+ draws nothing, or between an EMF+ `GetDC` and the next EMF+ record.

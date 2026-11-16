@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { SlideElement } from './types';
 import { textElementBounds, type TextBounds } from './textBox';
-import { INDENT_PX, isVerticalText, elementMarkers, lineHeightCss, softToNewline, writingCss } from './textFormat';
+import { INDENT_PX, isVerticalText, elementMarkers, paragraphIndent, lineHeightCss, softToNewline, writingCss } from './textFormat';
 import { fitTextNode } from './boundedTextLayout';
 import { uniformTextBoxFont } from './textBoxFonts';
 import { lineRuns } from './richText';
@@ -26,9 +26,11 @@ export function elementTextStyle(el: SlideElement): CSSProperties {
     ...(el.wrap === false ? { whiteSpace: 'pre' } : {}),
     ...(el.firstIndent ? { textIndent: el.firstIndent } : {}),
     ...(el.rtl ? { direction: 'rtl' } : {}),
+    // A 광고 title (announcementTitle.ts) wraps at spaces, Korean words kept whole, its lines balanced.
+    ...(el.role === 'announcementTitle' ? { wordBreak: 'keep-all', textWrap: 'balance' } : {}),
   };
 }
-const px = new Set(['fontSize', 'letterSpacing', 'paddingLeft', 'marginTop', 'marginBottom']);
+const px = new Set(['fontSize', 'letterSpacing', 'paddingLeft', 'textIndent', 'marginTop', 'marginBottom']);
 function applyStyle(node: HTMLElement, styles: CSSProperties) {
   for (const [key, value] of Object.entries(styles)) if (value != null) (node.style as unknown as Record<string, string>)[key] = typeof value === 'number' && px.has(key) ? `${value}px` : String(value);
 }
@@ -42,9 +44,9 @@ function measurementNode(el: SlideElement): HTMLDivElement {
   const { markers, levels } = elementMarkers(el), runs = lineRuns(el);
   lines.forEach((text, i) => {
     const line = document.createElement('div'), p = el.paragraphs?.[i];
-    if (p) applyStyle(line, { fontSize: p.fontSize ?? el.fontSize ?? 64, fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined, minHeight: '1.2em', paddingLeft: levels[i] ? levels[i] * INDENT_PX : undefined, marginTop: p.spaceBefore, marginBottom: p.spaceAfter, lineHeight: p.lineHeight });
+    if (p) applyStyle(line, { fontSize: p.fontSize ?? el.fontSize ?? 64, fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined, minHeight: '1.2em', paddingLeft: p.marginLeft !== undefined || levels[i] ? paragraphIndent(p, levels[i]).left : undefined, textIndent: p.firstIndent, marginTop: p.spaceBefore, marginBottom: p.spaceAfter, lineHeight: p.lineHeight });
     line.style.flexShrink = '0';
-    if (markers[i]) { const marker = document.createElement('span'); marker.className = el.list === 'picture' ? 'list-marker list-picture' : 'list-marker'; if (el.list !== 'picture') marker.textContent = markers[i]; line.append(marker); }
+    if (markers[i]) { const marker = document.createElement('span'); marker.className = el.list === 'picture' ? 'list-marker list-picture' : 'list-marker'; if (el.list !== 'picture') marker.textContent = markers[i]; const hang = Math.max(0, -(p?.firstIndent ?? el.firstIndent ?? 0)); if (hang) Object.assign(marker.style, { minWidth: `${hang}px`, marginRight: '0', boxSizing: 'border-box', paddingRight: '.2em' }); line.append(marker); }
     // Runs with their own size or weight take the room they will be drawn in.
     if (runs[i]) for (const r of runs[i]!) {
       const span = document.createElement('span');
@@ -66,6 +68,9 @@ function measureText(el: SlideElement, width: number | null): { w: number; h: nu
     return { w: node.offsetWidth, h: Math.max(node.offsetHeight, node.scrollHeight) };
   } finally { node.remove(); }
 }
+
+/** The size the box's text takes laid out at the box's width, as the canvas draws it. */
+export const measureTextBox = (el: SlideElement) => measureText(el, el.w);
 
 /** PowerPoint's autofit modes (domain/textFit): the box after Resize shape to fit text, or the fontScale of Shrink text on overflow. */
 function fitPowerPoint(el: SlideElement): SlideElement {

@@ -4,8 +4,13 @@
 import { apply, compose, scaleOf, type Xf, Bytes } from './bytes';
 import { arcSegs } from './gdi';
 import { BIG, combineClips, hex, num, Out, xmlText, type Clip, type ClipNode, type Color, type Fill, type PathData, type Stroke } from './out';
-import { encodedImageUrl, pngDataUrl } from './png';
+import { cropRgba, encodedImageUrl, pngDataUrl, type Rgba } from './png';
+import { applyEffect, effectFilter, needsPixels, parseEffect, type Effect } from './effects';
+import { decodedImage } from './decode';
 import { textWidth } from './metrics';
+import { glyphAdvancesEm, glyphsToText } from './fonts';
+import { baselineOrigins, charAdvances, textCoverage } from './textraster';
+import { asEllipse, gradientStops, pathGradientImage, radialStops, type Blend, type C4, type PathGradient } from './gradient';
 
 /** Renders a nested metafile image to an SVG data URL (set by index.ts, which owns the whole reader). */
 export let nestedRenderer: ((u8: Uint8Array) => { href: string; w: number; h: number } | null) | null = null;
@@ -18,16 +23,19 @@ const MAX_OBJECT_BYTES = 64 * 1024 * 1024;
 const MAX_CHARS = 32768;
 
 const argb = (v: number): Color => ({ rgb: hex((v >>> 16) & 255, (v >>> 8) & 255, v & 255), a: (v >>> 24) / 255 });
+const c4 = (v: number): C4 => [(v >>> 16) & 255, (v >>> 8) & 255, v & 255, v >>> 24];
+const colorOf4 = (c: C4): Color => ({ rgb: hex(c[0], c[1], c[2]), a: c[3] / 255 });
 
 type Op = { t: 'M' | 'L'; x: number; y: number } | { t: 'C'; p: [number, number, number, number, number, number] } | { t: 'Z' };
 
 type BrushObj =
   | { k: 'solid'; c: Color }
   | { k: 'hatch'; style: number; fg: Color; bg: Color }
-  | { k: 'linear'; rect: [number, number, number, number]; stops: [number, Color][]; xf: Xf; repeat: boolean }
+  | { k: 'linear'; rect: [number, number, number, number]; c0: C4; c1: C4; blend: Blend | null; gamma: boolean; xf: Xf; wrap: number }
+  | { k: 'pathGradient'; g: PathGradient; ops: Op[]; xf: Xf }
   | { k: 'texture'; img: ImageObj; xf: Xf };
 interface PenObj { width: number; unit: number; brush: BrushObj; dash: number; cap: number; join: number; miter: number; dashes?: number[] }
-interface ImageObj { href: string; w: number; h: number }
+interface ImageObj { href: string; w: number; h: number; px?: Rgba; /** PNG / JPEG bytes of a compressed image, decoded where the pixels are needed (decode.ts). */ bytes?: Uint8Array }
 interface FontObj { em: number; unit: number; style: number; family: string }
 interface FormatObj { align: number; lineAlign: number }
 type R4 = [number, number, number, number];
@@ -53,6 +61,43 @@ export class Plus {
   /** The clip a container starts from: ResetClip and a replacing clip fall back to it, since a container's clip adds to its parent's. */
   private floor: Clip = null;
   private partial: { id: number; kind: number; total: number; data: number[] } | null = null;
+  /** The image effect of the last EmfPlusSerializableObject, for the next DrawImagePoints with the E flag. */
+  private effect: Effect | null = null;
+  /** An image drawn with image attributes, waiting to see the bitmap of its GDI fallback (see offerFallback). */
+  private fallback: { at: number; img: Rgba; src: [number, number, number, number]; m: Xf; offers: Rgba[] } | null = null;
+  /** True while an image waits for its GDI fallback (emf.ts then hands the fallback's bitmaps to offerFallback). */
+  get wantsFallback() { return !!this.fallback; }
+  /** A bitmap from the GDI records that follow the EMF+ record (the dual file's fallback for it). */
+  offerFallback(img: Rgba) { if (this.fallback && this.fallback.offers.length < 2) this.fallback.offers.push(img); }
+  /**
+   * After the fallback records: when they held exactly one bitmap and it shows the image recoloured, it is
+   * drawn in the image's place. An EmfPlusImageAttributes object keeps only the wrap mode and clamp colour
+   * (MS-EMFPLUS 2.2.1.5), so a colour matrix, gamma, threshold, colour key or remap table set on the GDI+
+   * ImageAttributes is not in the EMF+ records; the GDI fallback of a dual file is GDI+'s own rendering of
+   * the call, which has them applied. "Recoloured" is judged on a 32 x 32 grid of samples: the bitmaps
+   * differ there by more than 16 levels in at least 30 % of the samples (a resampled but unchanged copy
+   * does not), so a fallback at another resolution is used too.
+   */
+  settleFallback() {
+    const f = this.fallback;
+    this.fallback = null;
+    if (!f || f.offers.length !== 1 || f.at < 0) return;
+    const g = f.offers[0];
+    const [sx, sy, sw, sh] = f.src;
+    if (!(sw > 0 && sh > 0) || !g.w || !g.h) return;
+    let differ = 0, n = 0;
+    for (let j = 0; j < 32; j++) for (let i = 0; i < 32; i++) {
+      const u = (i + 0.5) / 32, v = (j + 0.5) / 32;
+      const ax = Math.floor(sx + u * sw), ay = Math.floor(sy + v * sh), bx = Math.floor(u * g.w), by = Math.floor(v * g.h);
+      if (ax < 0 || ay < 0 || ax >= f.img.w || ay >= f.img.h) continue;
+      const a = (ay * f.img.w + ax) * 4, b = (by * g.w + bx) * 4;
+      n++;
+      if ([0, 1, 2, 3].some((c) => Math.abs(f.img.px[a + c] - g.px[b + c]) > 16)) differ++;
+    }
+    if (!n || differ < n * 0.3) return;
+    const m = compose(f.m, [sw / g.w, 0, 0, sh / g.h, sx, sy]);
+    this.out.replaceElement(f.at, `<g transform="matrix(${m.map(num).join(' ')})"><image href="${pngDataUrl(g)}" width="${g.w}" height="${g.h}" preserveAspectRatio="none"/></g>`);
+  }
 
   constructor(private out: Out, private frame: [number, number, number, number] | null) {}
 
@@ -127,7 +172,8 @@ export class Plus {
         break;
       }
       case 0x401a: this.drawImage(id, r, compressed); break;
-      case 0x401b: this.drawImagePoints(id, r, compressed); break;
+      case 0x401b: this.drawImagePoints(id, r, compressed, flags); break;
+      case 0x4038: this.effect = parseEffect(r); break; // SerializableObject: an image effect
       case 0x401c: this.drawString(flags, r); break;
       case 0x4036: this.drawDriverString(flags, r); break;
       case 0x4025: case 0x4028: case 0x4027: // Save, BeginContainerNoParams, BeginContainer
@@ -283,9 +329,37 @@ export class Plus {
     if (!b) return null;
     if (b.k === 'solid') return { color: b.c };
     if (b.k === 'hatch') return { ref: this.out.hatch(b.style, b.fg, b.bg) };
-    if (b.k === 'texture') return { ref: this.out.imagePattern(b.img.href, b.img.w, b.img.h, compose(m, b.xf)) };
+    if (b.k === 'texture') return { ref: this.out.imagePattern(b.img.href, b.img.w, b.img.h, compose(m, b.xf), b.img.px, b.img.bytes) };
+    if (b.k === 'pathGradient') return this.pathFill(b, m);
     const [x, y, w] = b.rect;
-    return { ref: this.out.linearGradient(x, y, x + w, y, b.stops, compose(m, b.xf), !b.repeat) };
+    const stops = gradientStops(b.c0, b.c1, b.blend, b.gamma).map(([o, c]) => [o, colorOf4(c)] as [number, Color]);
+    // Tile repeats, a flip in x reflects (the gradient runs along x of its rectangle), clamp pads.
+    return { ref: this.out.linearGradient(x, y, x + w, y, stops, compose(m, b.xf), b.wrap === 1 || b.wrap === 3 ? 'reflect' : b.wrap === 4 ? 'pad' : 'repeat') };
+  }
+  /**
+   * A path gradient: a radial gradient when its boundary is an ellipse with one surround colour, else a
+   * bitmap of the triangulated boundary (gradient.ts) as an image pattern over the boundary's box. With the
+   * clamp wrap mode nothing is painted outside the boundary (shape() clips to it); the tile modes repeat
+   * the box, flipped for the flip modes.
+   */
+  private pathFill(b: BrushObj & { k: 'pathGradient' }, m: Xf): Fill {
+    const g = b.g;
+    const xf = compose(m, b.xf);
+    const ell = asEllipse(g.boundary);
+    const one = g.surround.every((c) => c.join() === g.surround[0].join());
+    if (ell && one) { // the tile modes would repeat the box around the ellipse: drawn padded instead
+      const st = radialStops(g).map(([o, c]) => [o, colorOf4(c)] as [number, Color]);
+      const unit = compose(xf, [ell.rx, 0, 0, ell.ry, ell.cx, ell.cy]);
+      return { ref: this.out.radialGradient(st, unit, (g.centerPt[0] - ell.cx) / ell.rx, (g.centerPt[1] - ell.cy) / ell.ry) };
+    }
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const [x, y] of g.boundary) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const side = Math.max(x1 - x0, y1 - y0) * scaleOf(xf);
+    const r = pathGradientImage(g, Math.min(256, Math.max(16, side)));
+    if (!r) return { color: colorOf4(g.center) };
+    const [bx, by, bw, bh] = r.box;
+    const fxTile = g.wrap === 1 || g.wrap === 3, fyTile = g.wrap === 2 || g.wrap === 3;
+    return { ref: this.out.imagePattern(pngDataUrl(r.img), bw * (fxTile ? 2 : 1), bh * (fyTile ? 2 : 1), compose(xf, [1, 0, 0, 1, bx, by]), r.img) };
   }
   private stroke(id: number): PenObj | null { const o = this.objects[id]; return o?.k === 'pen' ? o.v : null; }
   private strokeFor(p: PenObj | null, m: Xf): Stroke | null {
@@ -311,6 +385,16 @@ export class Plus {
   private shape(ops: Op[], fill: BrushObj | null, pen: PenObj | null) {
     if (!ops.length || (!fill && !pen)) return;
     const m = this.xf();
+    if (fill?.k === 'pathGradient' && (fill.g.wrap === 4 || fill.g.wrap > 4)) {
+      // Clamp: the path gradient paints only inside its boundary.
+      const keep = this.out.clip;
+      const bp = this.toPath(fill.ops, compose(m, fill.xf));
+      this.out.clip = combineClips(keep, { k: 'path', d: bp.empty ? 'M0 0' : bp.d, eo: false, n: 1 }, 'and');
+      this.out.drawPath(this.toPath(ops, m), this.fillFor(fill, m), null, true);
+      this.out.clip = keep;
+      if (pen) this.out.drawPath(this.toPath(ops, m), null, this.strokeFor(pen, m), true);
+      return;
+    }
     this.out.drawPath(this.toPath(ops, m), this.fillFor(fill, m), this.strokeFor(pen, m), true);
   }
 
@@ -324,15 +408,44 @@ export class Plus {
    * alternately in x and / or y), mode 4 (clamp) fills it with the clamp colour; with no attributes
    * it stays transparent.
    */
-  private place(img: ImageObj, src: [number, number, number, number], m: Xf, attrs: ImageAttrs | null = null) {
+  private place(img: ImageObj, src0: [number, number, number, number], m: Xf, attrs: ImageAttrs | null = null, effect: Effect | null = null) {
+    let src = src0;
+    let filt = '';
+    if (effect) {
+      // On the pixels when they are at hand (a bitmap object, or a PNG / JPEG decoded for an effect a
+      // filter cannot match); else as SVG filter primitives on the image (effects.ts).
+      const raw = img.px ?? (needsPixels(effect) && img.bytes ? smallDecoded(img.bytes) : null);
+      const res = raw ? applyEffect(effect, raw) : null;
+      if (raw && res) {
+        const kx = img.w / raw.w, ky = img.h / raw.h;
+        img = { href: pngDataUrl(res.img), w: res.img.w * kx, h: res.img.h * ky, px: res.img };
+        if (res.dx || res.dy) { // an expanding blur: the bitmap grew by its radius on every side, and so does what is shown
+          m = compose(m, [1, 0, 0, 1, res.dx * kx, res.dy * ky]);
+          src = [src[0], src[1], src[2] - 2 * res.dx * kx, src[3] - 2 * res.dy * ky];
+        }
+      } else if (!raw) {
+        const f = effectFilter(effect, img.w, img.h);
+        if (f) {
+          const id = this.out.id('f');
+          this.out.addDef(`<filter id="${id}" color-interpolation-filters="sRGB" ${f.region}>${f.prim}</filter>`);
+          filt = ` filter="url(#${id})"`;
+        }
+      }
+    }
     const [sx, sy, sw, sh] = src;
+    if (this.out.recording) this.recordImage(img, src, m, effect && filt ? effect : null);
     const whole = sx <= 0 && sy <= 0 && sx + sw >= img.w && sy + sh >= img.h;
     const inside = sx >= 0 && sy >= 0 && sx + sw <= img.w && sy + sh <= img.h;
     for (const [px, py] of [[sx, sy], [sx + sw, sy], [sx + sw, sy + sh], [sx, sy + sh]]) this.out.grow(...apply(m, px, py));
     const one = (x: number, y: number, fx: boolean, fy: boolean) =>
-      `<image href="${img.href}" ${fx || fy ? `transform="matrix(${fx ? -1 : 1} 0 0 ${fy ? -1 : 1} ${num(fx ? x + img.w : x)} ${num(fy ? y + img.h : y)})" ` : `x="${num(x)}" y="${num(y)}" `}width="${num(img.w)}" height="${num(img.h)}" preserveAspectRatio="none"/>`;
+      `<image href="${img.href}" ${fx || fy ? `transform="matrix(${fx ? -1 : 1} 0 0 ${fy ? -1 : 1} ${num(fx ? x + img.w : x)} ${num(fy ? y + img.h : y)})" ` : `x="${num(x)}" y="${num(y)}" `}width="${num(img.w)}" height="${num(img.h)}" preserveAspectRatio="none"${filt}/>`;
+    const waitFallback = (at: number) => {
+      const px = attrs && !effect ? img.px ?? (img.bytes ? smallDecoded(img.bytes) : null) : null;
+      // Two such images in one EMF+ comment share one stretch of fallback records: neither can be matched.
+      if (px && px.w === Math.round(img.w) && px.h === Math.round(img.h)) this.fallback = this.fallback ? { ...this.fallback, at: -1 } : { at, img: px, src, m, offers: [] };
+    };
     if (!(sw > 0 && sh > 0) || (whole && inside) || (!attrs && whole)) {
-      this.out.element(`<g transform="matrix(${m.map(num).join(' ')})">${one(0, 0, false, false)}</g>`);
+      waitFallback(this.out.element(`<g transform="matrix(${m.map(num).join(' ')})">${one(0, 0, false, false)}</g>`));
       return;
     }
     let content = '';
@@ -347,7 +460,19 @@ export class Plus {
       if (!inside && attrs && attrs.wrap === 4 && attrs.clamp.a > 0) content += `<rect x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" fill="${attrs.clamp.rgb}"${attrs.clamp.a < 1 ? ` fill-opacity="${num(attrs.clamp.a)}"` : ''}/>`;
       content += one(0, 0, false, false);
     }
-    this.out.element(`<g transform="matrix(${m.map(num).join(' ')})"><svg x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" viewBox="${num(sx)} ${num(sy)} ${num(sw)} ${num(sh)}" preserveAspectRatio="none" overflow="hidden">${content}</svg></g>`);
+    waitFallback(this.out.element(`<g transform="matrix(${m.map(num).join(' ')})"><svg x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" viewBox="${num(sx)} ${num(sy)} ${num(sw)} ${num(sh)}" preserveAspectRatio="none" overflow="hidden">${content}</svg></g>`));
+  }
+  /** An image just placed, for the flood-fill rasteriser: its pixels (decoded if need be, through the effect a filter applied) within the source rectangle. */
+  private recordImage(img: ImageObj, src: [number, number, number, number], m: Xf, effect: Effect | null) {
+    let px = img.px ?? (img.bytes ? decodedImage(img.bytes) : null);
+    if (!px) return;
+    if (effect) { const r = applyEffect(effect, px); if (r) { m = compose(m, [1, 0, 0, 1, (r.dx * img.w) / px.w, (r.dy * img.h) / px.h]); px = r.img; } }
+    const kx = img.w / px.w, ky = img.h / px.h;
+    const [sx, sy, sw, sh] = src;
+    const x0 = Math.max(0, Math.floor(sx / kx)), y0 = Math.max(0, Math.floor(sy / ky)), x1 = Math.min(px.w, Math.ceil((sx + sw) / kx)), y1 = Math.min(px.h, Math.ceil((sy + sh) / ky));
+    if (x1 <= x0 || y1 <= y0) return;
+    const part = x0 > 0 || y0 > 0 || x1 < px.w || y1 < px.h ? cropRgba(px, x0, y0, x1 - x0, y1 - y0) : px;
+    if (part) this.out.recordImage(compose(m, [kx, 0, 0, ky, x0 * kx, y0 * ky]), part);
   }
   /** DrawImage: attributes id, source unit, source rectangle (floats), destination rectangle. */
   private drawImage(id: number, r: Bytes, compressed: boolean) {
@@ -360,15 +485,17 @@ export class Plus {
     this.place(img, src, compose(this.xf(), [kx, 0, 0, ky, dst[0] - src[0] * kx, dst[1] - src[1] * ky]), this.attrs(r.u32(0)));
   }
   /** DrawImagePoints: three corner points (top-left, top-right, bottom-left) give the parallelogram. */
-  private drawImagePoints(id: number, r: Bytes, compressed: boolean) {
+  private drawImagePoints(id: number, r: Bytes, compressed: boolean, flags = 0) {
     const img = this.image(id);
     if (!img) return;
     const src: [number, number, number, number] = [r.f32(8), r.f32(12), r.f32(16), r.f32(20)];
-    const p = points(r, 28, Math.min(r.u32(24), 3), compressed);
+    const p = flags & 0x0800 ? relPoints(r, 28, Math.min(r.u32(24), 3)) : points(r, 28, Math.min(r.u32(24), 3), compressed);
+    // E flag: the image is drawn through the effect of the last SerializableObject record.
+    const effect = flags & 0x2000 ? this.effect : null;
     if (p.length < 3 || !src[2] || !src[3]) return;
     const [ul, ur, ll] = p;
     const a = (ur[0] - ul[0]) / src[2], b = (ur[1] - ul[1]) / src[2], c = (ll[0] - ul[0]) / src[3], d = (ll[1] - ul[1]) / src[3];
-    this.place(img, src, compose(this.xf(), [a, b, c, d, ul[0] - a * src[0] - c * src[1], ul[1] - b * src[0] - d * src[1]]), this.attrs(r.u32(0)));
+    this.place(img, src, compose(this.xf(), [a, b, c, d, ul[0] - a * src[0] - c * src[1], ul[1] - b * src[0] - d * src[1]]), this.attrs(r.u32(0)), effect);
   }
 
   // ---- text ----
@@ -378,7 +505,7 @@ export class Plus {
     const attrs = `font-family="${xmlText(`'${font.family.replace(/['"\\<>&]/g, '')}', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Segoe UI', Arial, sans-serif`)}" font-size="${num(size)}"${font.style & 1 ? ' font-weight="bold"' : ''}${font.style & 2 ? ' font-style="italic"' : ''}${font.style & 4 ? ' text-decoration="underline"' : font.style & 8 ? ' text-decoration="line-through"' : ''}`;
     return { size, attrs };
   }
-  private colorOf(b: BrushObj | null): Color { return !b ? { rgb: '#000000', a: 1 } : b.k === 'solid' ? b.c : b.k === 'hatch' ? b.fg : b.k === 'texture' ? { rgb: '#808080', a: 1 } : b.stops[0]?.[1] ?? { rgb: '#000000', a: 1 }; }
+  private colorOf(b: BrushObj | null): Color { return !b ? { rgb: '#000000', a: 1 } : b.k === 'solid' ? b.c : b.k === 'hatch' ? b.fg : b.k === 'texture' ? { rgb: '#808080', a: 1 } : b.k === 'pathGradient' ? colorOf4(b.g.center) : colorOf4(b.c0); }
 
   /** DrawString: brush, format, length, layout rectangle, UTF-16 text; the font object is in the flags. */
   private drawString(flags: number, r: Bytes) {
@@ -408,17 +535,31 @@ export class Plus {
       const lx = anchor === 'middle' ? -lw / 2 : anchor === 'end' ? -lw : 0;
       this.out.grow(px + lx, py - size); this.out.grow(px + lx + lw, py + size * 0.3);
       this.out.element(`<text xml:space="preserve" transform="translate(${num(px)} ${num(py)})${rot ? ` rotate(${num(rot)})` : ''}" ${attrs}${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(line)}</text>`);
+      if (this.out.recording) {
+        const bold = (o.v.style & 1) !== 0, italic = (o.v.style & 2) !== 0;
+        const chars = [...line], adv = charAdvances(chars, o.v.family, size, bold, italic);
+        const sum = adv.reduce((t, v) => t + v, 0), a = (rot * Math.PI) / 180;
+        const off = anchor === 'middle' ? -sum / 2 : anchor === 'end' ? -sum : 0;
+        this.out.recordText(textCoverage({ family: o.v.family, bold, italic, size, chars, origins: baselineOrigins(px + Math.cos(a) * off, py + Math.sin(a) * off, adv, a), advances: adv, angle: a, underline: (o.v.style & 4) !== 0, strike: (o.v.style & 8) !== 0 }), c);
+      }
     });
   }
 
-  /** DrawDriverString: brush, options, matrix flag, glyph count, glyph codes, positions. Only character codes (not glyph indices) are drawn. */
+  /**
+   * DrawDriverString: brush, options, matrix flag, glyph count, glyph codes, positions. Character codes
+   * are drawn as text; glyph indices (no CmapLookup option) are mapped back to characters through the
+   * font's cmap when its file is known (fonts.ts), else each glyph is a pale box where it would stand.
+   */
   private drawDriverString(flags: number, r: Bytes) {
     const o = this.objects[flags & 0xff];
     if (o?.k !== 'font') return;
     const opts = r.u32(4), n = Math.min(r.u32(12), MAX_CHARS);
     if (!n) return;
-    const glyphs = !(opts & 1); // glyph indices cannot be mapped to characters without the font
-    const str = glyphs ? '' : r.utf16(16, n);
+    const bold = (o.v.style & 1) !== 0, italic = (o.v.style & 2) !== 0;
+    const codes: number[] = [];
+    for (let i = 0; i < n && r.has(16 + i * 2, 2); i++) codes.push(r.u16(16 + i * 2));
+    const glyphs = !(opts & 1);
+    const chars = glyphs ? glyphsToText(o.v.family, codes, bold, italic) : codes.map((c) => String.fromCharCode(c));
     const realized = (opts & 4) !== 0;
     const pos = 16 + Math.ceil((n * 2) / 4) * 4;
     const m = this.xf();
@@ -428,20 +569,42 @@ export class Plus {
     const count = realized ? 1 : n;
     for (let i = 0; i < count && r.has(pos + i * 8, 8); i++) { const [px, py] = apply(m, r.f32(pos + i * 8), r.f32(pos + i * 8 + 4)); xs.push(px); ys.push(py); }
     if (!xs.length) return;
-    if (glyphs) { // a pale box per glyph where it would stand
-      const pd = this.out.path();
-      const w = size * 0.55;
-      for (let i = 0; i < n; i++) {
-        const x = realized ? xs[0] + i * w : xs[Math.min(i, xs.length - 1)], y = realized ? ys[0] : ys[Math.min(i, ys.length - 1)];
-        pd.m(x + w * 0.1, y - size * 0.75).l(x + w * 0.9, y - size * 0.75).l(x + w * 0.9, y).l(x + w * 0.1, y).z();
-      }
-      this.out.drawPath(pd, { color: { rgb: c.rgb, a: Math.min(c.a, 0.3) } }, null);
-      return;
+    // Realized advance: only the first position is given; the rest follow the font's own advances (or a typical width).
+    const adv = glyphs ? glyphAdvancesEm(o.v.family, codes, bold, italic) : null;
+    const dir: [number, number] = [m[0] / (scaleOf(m) || 1), m[1] / (scaleOf(m) || 1)];
+    const at = (i: number): [number, number] => {
+      if (!realized) return [xs[Math.min(i, xs.length - 1)], ys[Math.min(i, ys.length - 1)]];
+      let off = 0;
+      for (let k = 0; k < i; k++) off += adv ? adv[k] * size : !glyphs && chars ? textWidth(chars[k] ?? '', o.v.family, size, bold, italic) : size * 0.55;
+      return [xs[0] + dir[0] * off, ys[0] + dir[1] * off];
+    };
+    const tx: number[] = [], ty: number[] = [];
+    let str = '';
+    const pd = this.out.path();
+    const w = size * 0.55;
+    for (let i = 0; i < codes.length; i++) {
+      const [x, y] = at(i);
+      const ch = chars?.[i] ?? '';
+      if (ch && ch.codePointAt(0)! >= 32) { str += ch; for (let k = 0; k < ch.length; k++) { tx.push(x); ty.push(y); } }
+      else if (glyphs) pd.m(x + w * 0.1, y - size * 0.75).l(x + w * 0.9, y - size * 0.75).l(x + w * 0.9, y).l(x + w * 0.1, y).z();
+      this.out.grow(x, y - size); this.out.grow(x + size, y + size * 0.3);
     }
-    xs.forEach((x, i) => this.out.grow(x, ys[i] - size));
-    this.out.grow(xs[xs.length - 1] + size, ys[ys.length - 1] + size * 0.3);
-    this.out.element(`<text xml:space="preserve" x="${xs.map(num).join(' ')}" y="${ys.map(num).join(' ')}" ${attrs} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(str)}</text>`);
+    if (!pd.empty) this.out.drawPath(pd, { color: { rgb: c.rgb, a: Math.min(c.a, 0.3) } }, null);
+    if (this.out.recording) {
+      const origins = codes.map((_, i) => at(i));
+      const advances = codes.map((_, i) => (adv ? adv[i] * size : chars?.[i] ? textWidth(chars[i], o.v.family, size, bold, italic) : size * 0.55));
+      const angle = Math.atan2(dir[1], dir[0]);
+      const run = glyphs ? { glyphs: codes } : { chars: chars ?? [] };
+      this.out.recordText(textCoverage({ family: o.v.family, bold, italic, size, ...run, origins, advances, angle, underline: (o.v.style & 4) !== 0, strike: (o.v.style & 8) !== 0 }), c);
+    }
+    if (str) this.out.element(`<text xml:space="preserve" x="${tx.map(num).join(' ')}" y="${ty.map(num).join(' ')}" ${attrs} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(str)}</text>`);
   }
+}
+
+/** A PNG / JPEG decoded for an effect, if it has at most 4 M pixels (decode.ts). */
+function smallDecoded(u8: Uint8Array): Rgba | null {
+  const r = decodedImage(u8);
+  return r && r.w * r.h <= 4_000_000 ? r : null;
 }
 
 // ---- geometry ----
@@ -502,6 +665,19 @@ function points(r: Bytes, o: number, n: number, compressed: boolean): P2[] {
   for (let i = 0; i < Math.min(n, MAX_POINTS) && r.has(o + i * step, step); i++) out.push(compressed ? [r.i16(o + i * step), r.i16(o + i * step + 2)] : [r.f32(o + i * step), r.f32(o + i * step + 4)]);
   return out;
 }
+/** `n` EmfPlusPointR points at `o`: 7-bit or 15-bit signed integers, each relative to the one before. */
+function relPoints(r: Bytes, o: number, n: number): P2[] {
+  const out: P2[] = [];
+  let x = 0, y = 0;
+  const int = (): number => {
+    const b0 = r.u8At(o++);
+    if (!(b0 & 0x80)) return b0 & 0x40 ? (b0 & 0x7f) - 0x80 : b0 & 0x7f;
+    const v = ((b0 & 0x7f) << 8) | r.u8At(o++);
+    return v & 0x4000 ? v - 0x8000 : v;
+  };
+  for (let i = 0; i < n && o < r.length; i++) { x += int(); y += int(); out.push([x, y]); }
+  return out;
+}
 /** `n` rectangles (x, y, w, h) at `o`. */
 function rects(r: Bytes, o: number, n: number, compressed: boolean): [number, number, number, number][] {
   const out: [number, number, number, number][] = [];
@@ -539,22 +715,16 @@ function parseBrush(r: Bytes): BrushObj | null {
   const type = r.u32(4);
   if (type === 0) return { k: 'solid', c: argb(r.u32(8)) };
   if (type === 1) return { k: 'hatch', style: r.u32(8), fg: argb(r.u32(12)), bg: argb(r.u32(16)) };
-  if (type === 3) return { k: 'solid', c: argb(r.u32(16)) };
+  if (type === 3) return parsePathGradient(r);
   if (type === 4) {
     const bf = r.u32(8), wrap = r.u32(12);
     const rect: [number, number, number, number] = [r.f32(16), r.f32(20), r.f32(24), r.f32(28)];
-    const c0 = argb(r.u32(32)), c1 = argb(r.u32(36));
+    const c0 = c4(r.u32(32)), c1 = c4(r.u32(36));
     let o = 48;
     let xf: Xf = [1, 0, 0, 1, 0, 0];
     if (bf & 0x2) { xf = [r.f32(o), r.f32(o + 4), r.f32(o + 8), r.f32(o + 12), r.f32(o + 16), r.f32(o + 20)]; o += 24; }
-    let stops: [number, Color][] = [[0, c0], [1, c1]];
-    if (bf & 0x4) {
-      const n = Math.min(r.u32(o), 256);
-      const pos = Array.from({ length: n }, (_, i) => r.f32(o + 4 + i * 4));
-      const cols = Array.from({ length: n }, (_, i) => argb(r.u32(o + 4 + n * 4 + i * 4)));
-      if (n >= 2) stops = pos.map((p, i) => [p, cols[i]] as [number, Color]);
-    }
-    return { k: 'linear', rect, stops, xf, repeat: wrap === 0 };
+    const blend = readBlend(r, o, bf);
+    return { k: 'linear', rect, c0, c1, blend: blend.v, gamma: (bf & 0x80) !== 0, xf, wrap };
   }
   if (type === 2) { // texture brush: flags, wrap mode, optional transform, then the image object
     const bf = r.u32(8);
@@ -565,6 +735,79 @@ function parseBrush(r: Bytes): BrushObj | null {
     return img ? { k: 'texture', img, xf } : null;
   }
   return null;
+}
+
+/**
+ * Blend data after a gradient's transform: preset colours (flag 0x4: count, positions, ARGB colours) or
+ * horizontal blend factors (0x8: count, positions, factors); vertical factors (0x10) are read past.
+ */
+function readBlend(r: Bytes, o: number, bf: number): { v: Blend | null; end: number } {
+  let v: Blend | null = null;
+  const take = (kind: 'colors' | 'factors') => {
+    const n = Math.min(r.u32(o), 256);
+    const pos = Array.from({ length: n }, (_, i) => r.f32(o + 4 + i * 4));
+    const vals = Array.from({ length: n }, (_, i) => (kind === 'colors' ? r.u32(o + 4 + n * 4 + i * 4) : r.f32(o + 4 + n * 4 + i * 4)));
+    o += 4 + n * 8;
+    if (n < 2) return null;
+    return kind === 'colors' ? { pos, colors: vals.map(c4) } : { pos, factors: vals };
+  };
+  if (bf & 0x4) v = take('colors');
+  else {
+    if (bf & 0x8) v = take('factors');
+    if (bf & 0x10) { const h = take('factors'); v ??= h; }
+  }
+  return { v, end: o };
+}
+
+/**
+ * A path gradient brush: flags, wrap, centre colour, centre point, surround colours, the boundary (a path
+ * with flag 0x1, else points), then the optional transform (0x2), preset colours (0x4) or blend factors
+ * (0x8), focus scales (0x40); 0x80 is gamma correction.
+ */
+function parsePathGradient(r: Bytes): BrushObj | null {
+  const bf = r.u32(8), wrap = r.u32(12);
+  const center = c4(r.u32(16)), centerPt: [number, number] = [r.f32(20), r.f32(24)];
+  const ns = Math.min(r.u32(28), 4096);
+  const surround = Array.from({ length: Math.max(ns, 1) }, (_, i) => (ns ? c4(r.u32(32 + i * 4)) : center));
+  let o = 32 + ns * 4;
+  let ops: Op[] = [];
+  if (bf & 0x1) {
+    const size = r.u32(o);
+    ops = parsePath(r.slice(o + 4, size)) ?? [];
+    o += 4 + size;
+  } else {
+    const n = Math.min(r.u32(o), MAX_POINTS);
+    ops = polyOps(points(r, o + 4, n, false), true);
+    o += 4 + n * 8;
+  }
+  const boundary = flatten(ops);
+  if (boundary.length < 3) return { k: 'solid', c: colorOf4(center) };
+  let xf: Xf = [1, 0, 0, 1, 0, 0];
+  if (bf & 0x2) { xf = [r.f32(o), r.f32(o + 4), r.f32(o + 8), r.f32(o + 12), r.f32(o + 16), r.f32(o + 20)]; o += 24; }
+  const blend = readBlend(r, o, bf);
+  o = blend.end;
+  let focus: [number, number] | null = null;
+  if (bf & 0x40 && r.u32(o) === 2) focus = [r.f32(o + 4), r.f32(o + 8)];
+  // GDI+ hands one colour per boundary point; with fewer, the last one repeats.
+  const g: PathGradient = { center, centerPt, boundary, surround, blend: blend.v, focus, gamma: (bf & 0x80) !== 0, wrap };
+  return { k: 'pathGradient', g, ops, xf };
+}
+
+/** Path ops as one closed polygon (Béziers flattened; later figures appended). */
+function flatten(ops: Op[]): [number, number][] {
+  const pts: [number, number][] = [];
+  let cx = 0, cy = 0;
+  for (const o of ops) {
+    if (pts.length > 4096) break;
+    if (o.t === 'M' || o.t === 'L') { pts.push([o.x, o.y]); cx = o.x; cy = o.y; }
+    else if (o.t === 'C') {
+      const [x1, y1, x2, y2, x3, y3] = o.p;
+      for (let s = 1; s <= 12; s++) { const t = s / 12, a = 1 - t; pts.push([a * a * a * cx + 3 * a * a * t * x1 + 3 * a * t * t * x2 + t * t * t * x3, a * a * a * cy + 3 * a * a * t * y1 + 3 * a * t * t * y2 + t * t * t * y3]); }
+      cx = x3; cy = y3;
+    }
+  }
+  if (pts.length > 1 && pts[0][0] === pts[pts.length - 1][0] && pts[0][1] === pts[pts.length - 1][1]) pts.pop();
+  return pts;
 }
 
 /**
@@ -692,7 +935,7 @@ function parseImage(r: Bytes): ImageObj | null {
     if (compressed) {
       const u8 = r.tail(28).u8;
       const href = encodedImageUrl(u8);
-      return href ? { href, w: w || 1, h: h || 1 } : null;
+      return href ? { href, w: w || 1, h: h || 1, bytes: u8 } : null;
     }
     if (w <= 0 || h <= 0 || w > 16384 || h > 16384 || w * h > 40_000_000) return null;
     const bpp = (fmt >>> 8) & 0xff;
@@ -707,7 +950,7 @@ function parseImage(r: Bytes): ImageObj | null {
       } else if (bpp === 24) { px[d] = r.u8At(o + 2); px[d + 1] = r.u8At(o + 1); px[d + 2] = r.u8At(o); px[d + 3] = 255; }
       else return null;
     }
-    return { href: pngDataUrl({ w, h, px }), w, h };
+    return { href: pngDataUrl({ w, h, px }), w, h, px: { w, h, px } };
   }
   if (type === 2 && nestedRenderer && nesting < 2) {
     const size = r.u32(12);

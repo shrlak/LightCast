@@ -111,6 +111,8 @@ export interface Dib {
   img: Rgba;
   /** Compressed PNG / JPEG carried in the DIB (BI_PNG, BI_JPEG), to be drawn as it is. */
   encoded?: string;
+  /** Those compressed bytes, decoded (decode.ts) only where the pixels are needed (a flood fill reading them back). */
+  bytes?: Uint8Array;
 }
 
 /**
@@ -135,7 +137,7 @@ export function decodeDib(info: Bytes, bits: Bytes, packed = false): Dib | null 
   const pixelBytes = packed ? info.tail(hs + maskBytes + palN * entry) : bits;
   if (comp === 4 || comp === 5) {
     const url = encodedImageUrl(pixelBytes.u8);
-    return url ? { img: { w, h, px: new Uint8ClampedArray(4) }, encoded: url } : null;
+    return url ? { img: { w, h, px: new Uint8ClampedArray(4) }, encoded: url, bytes: pixelBytes.u8 } : null;
   }
   const masks = [0xff0000, 0xff00, 0xff];
   if (isMask) for (let i = 0; i < 3; i++) masks[i] = hs >= 52 ? info.u32(40 + i * 4) : info.u32(hs + i * 4);
