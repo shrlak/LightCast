@@ -18,6 +18,8 @@ import { qrDataUrl } from '../../domain/io/qr';
 import { loadTranslations } from '../BibleModal';
 import { IMPORT_ACCEPT, describeReport, importFilesWithSummary, type ImportReport } from '../importSummary';
 import { SundaySongs, type CoverInfo } from './SundaySongs';
+import { markContiAnnounced, songsUnchangedSince } from '../../domain/sunday/contiRun';
+import { applyContiRun, contiResultWaiting, useContiRun } from './useContiRun';
 import { AutoTextarea } from '../AutoTextarea';
 import { OpeningSongField } from './OpeningSongField';
 import { songsInService, SUNDAY_STEPS } from '../../domain/sunday/wizardSteps';
@@ -109,6 +111,26 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
     preacher: c.preacher || x.preacher,
     confession: c.confession || x.confession,
   }));
+
+  // The 콘티 is read outside the step's screen, so it goes on while another tab is open. Its result goes into the
+  // draft here, on whatever tab is showing, unless the songs were changed meanwhile (then the 찬양 tab offers it).
+  const contiRun = useContiRun();
+  useEffect(() => {
+    const run = contiRun;
+    if (!run || run.status === 'running') return;
+    if (run.status === 'error') {
+      if (!run.announced) { markContiAnnounced(run.id); notify(`콘티 읽기에 실패했습니다: ${run.error ?? ''}`); }
+      return;
+    }
+    if (run.applied) return;
+    if (songsUnchangedSince(run, JSON.stringify(latest.current.d.songs))) {
+      applyContiRun(run, { setSongs: (songs) => setD((x) => ({ ...x, songs })), onCover, notify });
+    } else if (!run.announced) {
+      markContiAnnounced(run.id);
+      notify('콘티 읽기가 끝났지만 그 사이 곡 목록을 고치셔서 바꾸지 않았습니다. 찬양 탭에서 “읽은 결과 넣기”를 누르세요.');
+    }
+  }, [contiRun]);
+  const contiReading = contiRun?.status === 'running';
 
   // When that week's playlist already exists, every change goes straight into it (only the part that changed).
   const synced = useRef(d);
@@ -247,7 +269,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
             <>
               <h2>⛪ 주일예배 · {mmdd(date)}</h2>
               <div className="steps-nav">
-                {STEPS.map((s, i) => <button key={s} className={i === step ? 'tab active' : 'tab'} onClick={() => setStep(i)}>{i + 1}. {s}</button>)}
+                {STEPS.map((s, i) => <button key={s} className={i === step ? 'tab active' : 'tab'} onClick={() => setStep(i)}>{i + 1}. {s}{i === 0 && contiReading ? ' ⏳' : i === 0 && contiResultWaiting(contiRun) ? ' ●' : ''}</button>)}
               </div>
             </>
           )}
@@ -255,6 +277,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
         </header>
         <div className="wizard-body">
           {busy && <div className="card busy">⏳ {busy}</div>}
+          {contiReading && <div className="card busy" role="status">⏳ 콘티 읽는 중{contiRun?.progress ? ` — ${contiRun.progress}` : ''} <span className="muted small">(다른 탭으로 옮겨도 계속 읽습니다)</span></div>}
           {step === 0 && (
             <SundaySongs songs={d.songs} setSongs={(songs) => set({ songs })} notice={d.notice} setNotice={(notice) => set({ notice })}
               library={state.library.presentations} linesPerSlide={sunday.linesPerSlide} confessionSong={d.confession || sunday.confessionSong}

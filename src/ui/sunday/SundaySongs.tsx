@@ -2,7 +2,8 @@ import { useRef, useState } from 'react';
 import type { Presentation } from '../../domain/types';
 import { findSong, parseLyricsMarkdown, type SongDraft, type SongSection } from '../../domain/sunday/songs';
 import { parseNotice, type ParsedNotice } from '../../domain/sunday/notice';
-import { readConti as readContiPdf } from '../../domain/recognition/conti';
+import { dismissContiRun, startContiRun } from '../../domain/sunday/contiRun';
+import { applyContiRun, contiResultWaiting, useContiRun } from './useContiRun';
 import { ai } from '../../domain/ai';
 import { AutoTextarea } from '../AutoTextarea';
 import { readScorePhotos, searchSongLyrics, type LyricsOption } from '../../domain/sunday/songLookup';
@@ -104,23 +105,16 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
     }
   };
 
-  const readConti = async (file: File | undefined) => {
+  // The 콘티 is read outside this screen (domain/sunday/contiRun): it goes on when another tab is opened, the wizard
+  // shows its progress on every tab, and the result is put into the draft when it is done.
+  const run = useContiRun();
+  const reading = run?.status === 'running';
+  const readConti = (file: File | undefined) => {
+    if (pdfRef.current) pdfRef.current.value = '';
     if (!file) return;
-    setBusy('콘티 읽는 중…');
-    try {
-      // The ppt site's recognition (domain/recognition): library first, the AI models for the rest.
-      const notes: string[] = [];
-      const r = await readContiPdf(file, { presentations: library, linesPerSlide, confessionSong: confessionSong ?? '', notify: (m) => notes.push(m), progress: setBusy });
-      setSongs(r.songs.map((s) => s.draft));
-      onCover({ date: r.date, scripture: r.scripture, sermonTitle: r.sermonTitle });
-      const unread = r.songs.filter((s) => s.needsReview).length;
-      notify(`콘티 read: ${r.songs.length} songs${unread ? ` (${unread} to check against the 악보)` : ''}.${notes.length ? ` ${notes.join(' ')}` : ''}`);
-    } catch (e) {
-      notify((e as Error).message);
-    } finally {
-      setBusy(null);
-      if (pdfRef.current) pdfRef.current.value = '';
-    }
+    // The ppt site's recognition (domain/recognition): library first, the AI models for the rest.
+    const started = startContiRun(file, { presentations: library, linesPerSlide, confessionSong: confessionSong ?? '', songsAtStart: JSON.stringify(songs), notifyLate: notify });
+    notify(started ? '콘티 읽기를 시작했습니다. 다른 탭으로 옮겨도 계속 읽고, 끝나면 알려 드립니다.' : '이미 콘티를 읽는 중입니다. 끝난 뒤에 다시 올려 주세요.');
   };
 
   const importMd = async (files: FileList | null) => {
@@ -177,7 +171,8 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
         <div className="card stack">
           <h3>콘티 PDF</h3>
           <p className="hint">AI가 표지(날짜, 본문, 설교 제목)와 곡마다 악보의 제목 · 키 · 진행(I-V1-C-V2-C-B-C) · 가사를 읽습니다.</p>
-          <button className="primary" disabled={!!busy} onClick={() => pdfRef.current?.click()}>콘티 PDF 올리기</button>
+          <button className="primary" disabled={!!busy || reading} onClick={() => pdfRef.current?.click()}>{reading ? '콘티 읽는 중…' : '콘티 PDF 올리기'}</button>
+          {reading && <p className="hint">⏳ {run?.fileName} — 다른 탭으로 옮겨도 계속 읽습니다.</p>}
           <input ref={pdfRef} type="file" accept="application/pdf,.pdf" hidden onChange={(e) => readConti(e.target.files?.[0])} />
         </div>
         <div className="card stack">
@@ -190,6 +185,23 @@ export function SundaySongs({ songs, setSongs, notice, setNotice, library, lines
         </div>
       </div>
       {busy && <div className="card busy">⏳ {busy}</div>}
+      {contiResultWaiting(run) && (
+        <div className="card stack" role="status">
+          <strong>콘티를 읽었습니다 — {run.reading.songs.length}곡 ({run.fileName})</strong>
+          <p className="hint">읽는 동안 곡 목록을 고치셔서 자동으로 바꾸지 않았습니다. 넣으면 지금 곡 목록이 읽은 결과로 바뀝니다.</p>
+          <div className="row gap-xs">
+            <button className="primary" onClick={() => applyContiRun(run, { setSongs, onCover, notify })}>읽은 결과 넣기</button>
+            <button onClick={() => dismissContiRun(run.id)}>버리기</button>
+          </div>
+        </div>
+      )}
+      {run?.status === 'error' && !run.applied && (
+        <div className="card stack" role="alert">
+          <strong>콘티를 읽지 못했습니다</strong>
+          <p className="hint">{run.error}</p>
+          <div className="row gap-xs"><button onClick={() => dismissContiRun(run.id)}>닫기</button></div>
+        </div>
+      )}
 
       <div className="row gap-s wrap">
         <strong>찬양 {songs.length}곡</strong>
