@@ -4,6 +4,7 @@
 import { apply, compose, scaleOf, type Xf, type Bytes } from './bytes';
 import { hex, num, Out, PathData, xmlText, BIG, type Clip, type Color, type Fill, type Stroke } from './out';
 import { textWidth } from './metrics';
+import { glyphAdvancesEm, glyphsToText } from './fonts';
 import { cropRgba, pngDataUrl, type Dib, type Rgba } from './png';
 
 export interface GdiPen { style: number; width: number; color: Color; cap: 'butt' | 'round' | 'square'; join: 'miter' | 'round' | 'bevel'; cosmetic: boolean }
@@ -461,32 +462,51 @@ export class Gdi {
   }
 
   /**
-   * Text drawn from glyph indices (ETO_GLYPH_INDEX, DrawDriverString without character codes). The
-   * indices only mean something in the font file they were made with, so the characters are not
-   * known: each glyph is drawn as a pale box where it would stand, so the layout is still visible.
+   * Text drawn from glyph indices (ETO_GLYPH_INDEX). The indices only mean something in the font file
+   * they were made with: when that font is known (imported into LightCast or brought by a deck, see
+   * fonts.ts) they are mapped back to characters through its cmap and drawn as text, with its own advance
+   * widths when the record has none. A glyph the font cannot name (or every glyph, without the font) is
+   * drawn as a pale box where it would stand, so the layout is still visible.
    */
-  glyphText(x: number, y: number, n: number, dx: number[] | null) {
+  glyphText(x: number, y: number, glyphs: number[], dx: number[] | null) {
+    const n = Math.min(glyphs.length, MAX_TEXT);
     if (n <= 0 || this.out.muted || this.pathOpen) return;
-    n = Math.min(n, MAX_TEXT);
     const d = this.dc, f = d.font, align = d.textAlign;
     if (align & 1) [x, y] = d.cur;
     const m = this.xf(), s = scaleOf(m);
     const em = f.height < 0 ? -f.height : f.height > 0 ? f.height * 0.85 : 12;
     const size = Math.max(em * s, 0.5);
     const [px, py] = apply(m, x, y);
-    const adv = Array.from({ length: n }, (_, i) => (dx && dx.length >= n ? Math.abs(dx[i] * s) : size * 0.55));
+    const bold = f.weight >= 600;
+    const ids = glyphs.slice(0, n);
+    const chars = glyphsToText(f.family, ids, bold, f.italic);
+    const own = glyphAdvancesEm(f.family, ids, bold, f.italic);
+    const adv = Array.from({ length: n }, (_, i) => (dx && dx.length >= n ? Math.abs(dx[i] * s) : own ? own[i] * size : size * 0.55));
     const total = adv.reduce((a, v) => a + v, 0);
     const h = align & 6;
-    let o = h === 6 ? -total / 2 : h === 2 ? -total : 0;
+    const start = h === 6 ? -total / 2 : h === 2 ? -total : 0;
     const base = (align & 24) === 24 ? 0 : align & 8 ? -size * 0.2 : size * 0.8;
-    const top = py - base + size * 0.15, bottom = py - base + size * 0.8;
+    const rot = (Math.atan2(d.world[1], d.world[0]) * 180) / Math.PI - f.escapement / 10;
+    let o = start, str = '';
+    const xs: string[] = [];
     const pd = this.out.path();
-    for (const a of adv) {
-      const gap = a * 0.12;
-      pd.m(px + o + gap, top).l(px + o + a - gap, top).l(px + o + a - gap, bottom).l(px + o + gap, bottom).z();
-      o += a;
+    const top = py - base + size * 0.15, bottom = py - base + size * 0.8;
+    for (let i = 0; i < n; i++) {
+      const ch = chars?.[i] ?? '';
+      if (ch && ch.codePointAt(0)! >= 32) { str += ch; for (let k = 0; k < ch.length; k++) xs.push(num(o)); }
+      else if (!rot) { const gap = adv[i] * 0.12; pd.m(px + o + gap, top).l(px + o + adv[i] - gap, top).l(px + o + adv[i] - gap, bottom).l(px + o + gap, bottom).z(); }
+      o += adv[i];
     }
-    this.out.drawPath(pd, { color: { rgb: d.textColor.rgb, a: 0.3 } }, null);
+    this.out.grow(px + start, py - size); this.out.grow(px + start + total, py + size * 0.3);
+    if (!pd.empty) this.out.drawPath(pd, { color: { rgb: d.textColor.rgb, a: 0.3 } }, null);
+    if (str) {
+      const fam = `'${f.family.replace(/['"\\<>&]/g, '')}', 'Malgun Gothic', 'Apple SD Gothic Neo', 'Segoe UI', Arial, sans-serif`;
+      const deco = [f.underline ? 'underline' : '', f.strike ? 'line-through' : ''].filter(Boolean).join(' ');
+      this.out.element(
+        `<text xml:space="preserve" transform="translate(${num(px)} ${num(py)})${rot ? ` rotate(${num(rot)})` : ''}" x="${xs.join(' ')}" y="${num(base)}" font-family="${xmlText(fam)}" font-size="${num(size)}"`
+        + `${bold ? ' font-weight="bold"' : ''}${f.italic ? ' font-style="italic"' : ''}${deco ? ` text-decoration="${deco}"` : ''} fill="${d.textColor.rgb}">${xmlText(str)}</text>`,
+      );
+    }
     if (align & 1) d.cur = [x + total / (s || 1), y];
   }
 

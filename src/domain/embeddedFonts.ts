@@ -5,6 +5,7 @@ import { getMedia, putMedia, deleteMedia } from './media';
 import { embedFontsInZip, mayEmbed, readEmbeddedFonts, sfntFormat, usedFamilies, type FontStyle, type ReadFont } from './io/pptxFonts';
 import JSZip from 'jszip';
 import { importedFonts, importedSfnt, registerImportedFonts, embedStyleOf } from './importedFonts';
+import { addMetafileFont } from './metafile/fonts';
 
 export interface StoredEmbedded { id: string; family: string; style: FontStyle; bytes: number; source: string; at: number }
 
@@ -31,6 +32,7 @@ const writeIndex = (list: StoredEmbedded[]) => putMedia(INDEX_KEY, new Blob([JSO
 
 const registered = new Set<string>();
 async function register(id: string, family: string, style: FontStyle, data: ArrayBuffer): Promise<void> {
+  addMetafileFont(new Uint8Array(data.slice(0)), family); // glyph-index text and widths in metafiles
   if (registered.has(id) || typeof FontFace === 'undefined' || typeof document === 'undefined') return;
   try {
     const { weight, style: fs } = cssWeightStyle(style);

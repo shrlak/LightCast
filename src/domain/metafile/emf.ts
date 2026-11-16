@@ -278,7 +278,9 @@ function extTextOut(g: Gdi, r: Bytes, wide: boolean) {
   if (opts & ETO_GLYPH_INDEX) {
     const gdx: number[] = [];
     if (dxOff) for (let i = 0; i < n && r.has(dxOff + i * (opts & ETO_PDY ? 8 : 4), 4); i++) gdx.push(r.i32(dxOff + i * (opts & ETO_PDY ? 8 : 4)));
-    g.glyphText(x, y, n, gdx.length === n ? gdx : null);
+    const ids: number[] = [];
+    for (let i = 0; i < n && r.has(off + i * 2, 2); i++) ids.push(r.u16(off + i * 2));
+    g.glyphText(x, y, ids, gdx.length === n ? gdx : null);
     return;
   }
   const step = opts & ETO_PDY ? 8 : 4;
@@ -292,9 +294,14 @@ function extTextOut(g: Gdi, r: Bytes, wide: boolean) {
 function smallTextOut(g: Gdi, r: Bytes) {
   const x = r.i32(8), y = r.i32(12), n = Math.min(r.u32(16), 32768), opts = r.u32(20);
   if (!n) return;
-  if (opts & ETO_GLYPH_INDEX) { g.glyphText(x, y, n, null); return; }
   const noRect = (opts & ETO_NO_RECT) !== 0;
   const off = noRect ? 36 : 52;
+  if (opts & ETO_GLYPH_INDEX) { // 8-bit indices with ETO_SMALL_CHARS, else 16-bit
+    const ids: number[] = [];
+    for (let i = 0; i < n && r.has(off + i * (opts & ETO_SMALL_CHARS ? 1 : 2), 1); i++) ids.push(opts & ETO_SMALL_CHARS ? r.u8At(off + i) : r.u16(off + i * 2));
+    g.glyphText(x, y, ids, null);
+    return;
+  }
   const str = opts & ETO_SMALL_CHARS ? decode8(r.slice(off, n).u8, g.dc.font.charset) : r.utf16(off, n);
   g.text(x, y, str, null, noRect ? null : rect(r, 36), (opts & ETO_OPAQUE) !== 0);
 }

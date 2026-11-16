@@ -6,6 +6,7 @@ import { arcSegs } from './gdi';
 import { BIG, combineClips, hex, num, Out, xmlText, type Clip, type ClipNode, type Color, type Fill, type PathData, type Stroke } from './out';
 import { encodedImageUrl, pngDataUrl } from './png';
 import { textWidth } from './metrics';
+import { glyphAdvancesEm, glyphsToText } from './fonts';
 
 /** Renders a nested metafile image to an SVG data URL (set by index.ts, which owns the whole reader). */
 export let nestedRenderer: ((u8: Uint8Array) => { href: string; w: number; h: number } | null) | null = null;
@@ -411,14 +412,21 @@ export class Plus {
     });
   }
 
-  /** DrawDriverString: brush, options, matrix flag, glyph count, glyph codes, positions. Only character codes (not glyph indices) are drawn. */
+  /**
+   * DrawDriverString: brush, options, matrix flag, glyph count, glyph codes, positions. Character codes
+   * are drawn as text; glyph indices (no CmapLookup option) are mapped back to characters through the
+   * font's cmap when its file is known (fonts.ts), else each glyph is a pale box where it would stand.
+   */
   private drawDriverString(flags: number, r: Bytes) {
     const o = this.objects[flags & 0xff];
     if (o?.k !== 'font') return;
     const opts = r.u32(4), n = Math.min(r.u32(12), MAX_CHARS);
     if (!n) return;
-    const glyphs = !(opts & 1); // glyph indices cannot be mapped to characters without the font
-    const str = glyphs ? '' : r.utf16(16, n);
+    const bold = (o.v.style & 1) !== 0, italic = (o.v.style & 2) !== 0;
+    const codes: number[] = [];
+    for (let i = 0; i < n && r.has(16 + i * 2, 2); i++) codes.push(r.u16(16 + i * 2));
+    const glyphs = !(opts & 1);
+    const chars = glyphs ? glyphsToText(o.v.family, codes, bold, italic) : codes.map((c) => String.fromCharCode(c));
     const realized = (opts & 4) !== 0;
     const pos = 16 + Math.ceil((n * 2) / 4) * 4;
     const m = this.xf();
@@ -428,19 +436,28 @@ export class Plus {
     const count = realized ? 1 : n;
     for (let i = 0; i < count && r.has(pos + i * 8, 8); i++) { const [px, py] = apply(m, r.f32(pos + i * 8), r.f32(pos + i * 8 + 4)); xs.push(px); ys.push(py); }
     if (!xs.length) return;
-    if (glyphs) { // a pale box per glyph where it would stand
-      const pd = this.out.path();
-      const w = size * 0.55;
-      for (let i = 0; i < n; i++) {
-        const x = realized ? xs[0] + i * w : xs[Math.min(i, xs.length - 1)], y = realized ? ys[0] : ys[Math.min(i, ys.length - 1)];
-        pd.m(x + w * 0.1, y - size * 0.75).l(x + w * 0.9, y - size * 0.75).l(x + w * 0.9, y).l(x + w * 0.1, y).z();
-      }
-      this.out.drawPath(pd, { color: { rgb: c.rgb, a: Math.min(c.a, 0.3) } }, null);
-      return;
+    // Realized advance: only the first position is given; the rest follow the font's own advances (or a typical width).
+    const adv = glyphs ? glyphAdvancesEm(o.v.family, codes, bold, italic) : null;
+    const dir: [number, number] = [m[0] / (scaleOf(m) || 1), m[1] / (scaleOf(m) || 1)];
+    const at = (i: number): [number, number] => {
+      if (!realized) return [xs[Math.min(i, xs.length - 1)], ys[Math.min(i, ys.length - 1)]];
+      let off = 0;
+      for (let k = 0; k < i; k++) off += adv ? adv[k] * size : !glyphs && chars ? textWidth(chars[k] ?? '', o.v.family, size, bold, italic) : size * 0.55;
+      return [xs[0] + dir[0] * off, ys[0] + dir[1] * off];
+    };
+    const tx: number[] = [], ty: number[] = [];
+    let str = '';
+    const pd = this.out.path();
+    const w = size * 0.55;
+    for (let i = 0; i < codes.length; i++) {
+      const [x, y] = at(i);
+      const ch = chars?.[i] ?? '';
+      if (ch && ch.codePointAt(0)! >= 32) { str += ch; for (let k = 0; k < ch.length; k++) { tx.push(x); ty.push(y); } }
+      else if (glyphs) pd.m(x + w * 0.1, y - size * 0.75).l(x + w * 0.9, y - size * 0.75).l(x + w * 0.9, y).l(x + w * 0.1, y).z();
+      this.out.grow(x, y - size); this.out.grow(x + size, y + size * 0.3);
     }
-    xs.forEach((x, i) => this.out.grow(x, ys[i] - size));
-    this.out.grow(xs[xs.length - 1] + size, ys[ys.length - 1] + size * 0.3);
-    this.out.element(`<text xml:space="preserve" x="${xs.map(num).join(' ')}" y="${ys.map(num).join(' ')}" ${attrs} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(str)}</text>`);
+    if (!pd.empty) this.out.drawPath(pd, { color: { rgb: c.rgb, a: Math.min(c.a, 0.3) } }, null);
+    if (str) this.out.element(`<text xml:space="preserve" x="${tx.map(num).join(' ')}" y="${ty.map(num).join(' ')}" ${attrs} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(str)}</text>`);
   }
 }
 
