@@ -3,7 +3,7 @@
 import { splitWeightedFace, weightPatch } from '../fontWeight';
 import JSZip from 'jszip';
 import type { MasterLayout, ArrowKind, Background, DashStyle, DocProperties, ListStyle, SlideAnimation, ElementParagraph, HAlign, Presentation, Slide, SlideElement, TextRun } from '../types';
-import type { TableData } from '../../engine';
+import type { CellBorder, CellBorders, TableData } from '../../engine';
 import { CANVAS_H, CANVAS_W } from '../canvas';
 import { uid } from '../lyrics';
 import { childNamed, childrenNamed, elementsOf, escapeXml, parseXml, textOf, type XNode } from './miniXml';
@@ -52,14 +52,28 @@ const listOf = (lvl: XNode | undefined): ListStyle | undefined => {
   const c = lvl.attrs['text:bullet-char'] ?? '';
   return /[○◦o]/.test(c) ? 'circle' : /[■▪□◼]/.test(c) ? 'square' : /[✔✓☑]/.test(c) ? 'check' : /[➢➔➤→►▶➜]/.test(c) ? 'arrow' : 'bullet';
 };
+/** LibreOffice's dash definitions (percent of the line width) for PowerPoint's ten presets: [dash %, dot-or-second %, second count, gap %]. */
+const DASH_TABLE: [DashStyle, number, number, number, number][] = [
+  ['dash', 400, 0, 0, 300], ['sysDash', 300, 0, 0, 100], ['sysDot', 100, 0, 0, 100], ['dot', 100, 0, 0, 300], ['dashDot', 400, 100, 1, 300],
+  ['lgDash', 800, 0, 0, 300], ['lgDashDot', 800, 100, 1, 300], ['lgDashDotDot', 800, 100, 2, 300], ['sysDashDot', 300, 100, 1, 100], ['sysDashDotDot', 300, 100, 2, 100],
+];
 function dashOf(d: XNode): DashStyle {
+  const pct = (v: string | undefined) => { const m = /^([\d.]+)%$/.exec((v ?? '').trim()); return m ? Number(m[1]) : undefined; };
+  const l1 = pct(d.attrs['draw:dots1-length']), dist = pct(d.attrs['draw:distance']);
+  const n2 = d.attrs['draw:dots2'] ? Number(d.attrs['draw:dots2']) || 1 : 0;
+  const l2 = n2 ? pct(d.attrs['draw:dots2-length']) ?? 100 : 0;
+  // A pattern that is one of the ten presets is that preset (the names LibreOffice gives them differ: Long Dash is "dash").
+  if (l1 !== undefined && dist !== undefined && Number(d.attrs['draw:dots1'] ?? 1) === 1) {
+    const hit = DASH_TABLE.find(([, a, b, c, g]) => a === Math.round(l1) && c === n2 && (!c || b === Math.round(l2)) && g === Math.round(dist));
+    if (hit) return hit[0];
+  }
+  // Anything else (absolute lengths, other ratios): the nearest of the plain ones.
   const len = Number(/\d+/.exec(d.attrs['draw:dots1-length'] ?? '')?.[0] ?? 100);
-  const dist = Number(/\d+/.exec(d.attrs['draw:distance'] ?? '')?.[0] ?? 100);
-  if (d.attrs['draw:dots2']) return 'dashDot';
+  const gap = Number(/\d+/.exec(d.attrs['draw:distance'] ?? '')?.[0] ?? 100);
+  if (n2) return n2 > 1 ? 'sysDashDotDot' : 'dashDot';
   if (len >= 700) return 'lgDash';
   if (len >= 300) return 'dash';
-  if (len <= 100 && Number(d.attrs['draw:dots1'] ?? 1) === 1) return dist >= 200 ? 'dot' : 'sysDot';
-  return 'dash';
+  return gap >= 200 ? 'dot' : 'sysDot';
 }
 const grey = (v: number) => `#${Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0').repeat(3)}`;
 const pctOf = (v: string | undefined) => { const m = /^([\d.]+)(%?)$/.exec(v ?? ''); return m ? Number(m[1]) / (m[2] ? 100 : 1) : 1; };
@@ -132,6 +146,13 @@ function textProps(p: Props): Omit<TextRun, 'text'> {
     const split = splitWeightedFace(family);
     out.fontFamily = split.family;
     if (split.weight !== undefined && out.weight === undefined) Object.assign(out, weightPatch(split.weight));
+  }
+  const ls = p['fo:letter-spacing'];
+  if (ls && ls !== 'normal') {
+    const m = /^(-?[\d.]+)(pt|cm|mm|in)$/.exec(ls);
+    const cm = m ? (m[2] === 'cm' ? Number(m[1]) : m[2] === 'mm' ? Number(m[1]) / 10 : m[2] === 'in' ? Number(m[1]) * 2.54 : (Number(m[1]) / 72) * 2.54) : 0;
+    const px = Math.round((cm / 2.54) * 72 * PX_PER_PT * 10) / 10;
+    if (px) (out as Record<string, unknown>).letterSpacing = px;
   }
   const pos = /^(super|sub|-?\d+%)/.exec(p['style:text-position'] ?? '')?.[1];
   if (pos === 'super' || (pos && parseInt(pos, 10) > 0)) out.baseline = 'super';
@@ -207,7 +228,7 @@ function paragraphLines(ctx: Ctx, p: XNode, inList: ListStyle | undefined, inher
       else if (c.name === 'text:tab') push('\t', style);
       else if (c.name === 'text:line-break') lines.push({ runs: [], align, list: inList });
       else if (c.name === 'text:span') walk(c, { ...style, ...textProps(resolveStyle(ctx.styles, 'text', c.attrs['text:style-name'])) });
-      else if (c.name === 'text:a') walk(c, style);
+      else if (c.name === 'text:a') walk(c, c.attrs['xlink:href'] ? { ...style, link: c.attrs['xlink:href'] } : style);
     }
   };
   walk(p, base);
@@ -252,6 +273,10 @@ function toParagraphs(lines: Line[]): ElementParagraph[] {
 
 function applyText(el: SlideElement, lines: Line[]) {
   if (!lines.some((l) => l.runs.length)) return;
+  // Character spacing is the object's (not a run's): the first run that has any sets it.
+  const spacing = lines.flatMap((l) => l.runs).map((r) => (r as { letterSpacing?: number }).letterSpacing).find((v) => !!v);
+  if (spacing) el.letterSpacing = spacing;
+  for (const l of lines) for (const r of l.runs) delete (r as { letterSpacing?: number }).letterSpacing;
   const paragraphs = toParagraphs(lines);
   el.text = paragraphs.map((p) => p.text).join('\n');
   el.paragraphs = paragraphs;
@@ -312,6 +337,18 @@ const GLUE_TO_SITE = [0, 3, 2, 1];
 const siteToGlue = (site: number) => GLUE_TO_SITE.indexOf(site);
 
 
+/** LibreOffice's Fontwork shapes (what it writes for PowerPoint's text transforms, 24.2) → the transform's name. */
+const WARP_BY_TYPE: Record<string, string> = {
+  'fontwork-plain-text': 'textPlain', 'fontwork-stop': 'textStop', 'fontwork-triangle-up': 'textTriangle', 'fontwork-triangle-down': 'textTriangleInverted',
+  'fontwork-chevron-up': 'textChevron', 'fontwork-chevron-down': 'textChevronInverted', 'mso-spt142': 'textRingInside', 'mso-spt143': 'textRingOutside',
+  'fontwork-arch-up-curve': 'textArchUp', 'fontwork-arch-down-curve': 'textArchDown', 'fontwork-circle-curve': 'textCircle', 'fontwork-open-circle-curve': 'textButton',
+  'fontwork-arch-up-pour': 'textArchUpPour', 'fontwork-arch-down-pour': 'textArchDownPour', 'fontwork-circle-pour': 'textCirclePour', 'fontwork-open-circle-pour': 'textButtonPour',
+  'fontwork-curve-up': 'textCurveUp', 'fontwork-curve-down': 'textCurveDown', 'mso-spt174': 'textCanUp', 'mso-spt175': 'textCanDown', 'fontwork-wave': 'textWave1',
+  'mso-spt157': 'textWave2', 'mso-spt159': 'textWave4', 'mso-spt158': 'textDoubleWave1', 'fontwork-inflate': 'textInflate', 'mso-spt161': 'textDeflate',
+  'mso-spt162': 'textInflateBottom', 'mso-spt163': 'textDeflateBottom', 'mso-spt164': 'textInflateTop', 'mso-spt165': 'textDeflateTop', 'mso-spt166': 'textDeflateInflate',
+  'mso-spt167': 'textDeflateInflateDeflate', 'fontwork-fade-right': 'textFadeRight', 'fontwork-fade-left': 'textFadeLeft', 'fontwork-fade-up': 'textFadeUp',
+  'fontwork-fade-down': 'textFadeDown', 'fontwork-slant-up': 'textSlantUp', 'fontwork-slant-down': 'textSlantDown', 'fontwork-fade-up-and-right': 'textCascadeUp', 'fontwork-fade-up-and-left': 'textCascadeDown',
+};
 const PH_KIND: Record<string, NonNullable<SlideElement['placeholder']>> = { title: 'title', outline: 'body', subtitle: 'text', footer: 'footer', 'date-time': 'date', 'page-number': 'slideNumber' };
 
 const SHAPES: Record<string, string> = {
@@ -378,6 +415,26 @@ function shadowOf(ctx: Ctx, g: Props): Partial<SlideElement> | undefined {
   return { dropShadow: true, shadowKind: 'outer', shadowOpts: { color, transparency: Math.round((1 - alpha) * 100) / 100, blur: Math.round((blur ?? 0) * ctx.kx), dist: Math.round(dist * ctx.kx), dir } };
 }
 
+/** `fo:border-left="1.11pt solid #ff0000"` and friends (LibreOffice writes them in the cell's paragraph properties) as the cell's borders. */
+function cellBorders(p: Props, _ctx: Ctx): CellBorders | undefined {
+  const out: CellBorders = {};
+  const one = (v: string | undefined): CellBorder | undefined => {
+    const m = /^\s*([\d.]+)(pt|cm|mm|in|px)?\s+(solid|dashed|dotted|double|dash-dot|dot-dash|groove|ridge|inset|outset)\s+(#[0-9a-f]{6})\s*$/i.exec(v ?? '');
+    if (!m) return undefined;
+    const n = Number(m[1]);
+    const pt = m[2] === 'cm' ? (n / 2.54) * 72 : m[2] === 'mm' ? (n / 25.4) * 72 : m[2] === 'in' ? n * 72 : m[2] === 'px' ? n * 0.75 : n;
+    const width = Math.max(1, Math.round(pt * PX_PER_PT));
+    const dash = m[3] === 'dashed' ? 'dash' : m[3] === 'dotted' ? 'dot' : m[3] === 'dash-dot' ? 'dashDot' : undefined;
+    return { color: m[4].toLowerCase(), width, ...(dash ? { dash } : {}) };
+  };
+  const all = one(p['fo:border']);
+  for (const [k, side] of [['t', 'top'], ['r', 'right'], ['b', 'bottom'], ['l', 'left']] as const) {
+    const b = one(p[`fo:border-${side}`]) ?? all;
+    if (b) out[k] = b;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** A table's cells and sizes (canvas px, scaled to `box`) plus each cell's font size (px). */
 async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data: TableData; sizes: (number | undefined)[][] }> {
   const cols: number[] = [];
@@ -413,6 +470,8 @@ async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data:
               if (first?.align) t.align = first.align;
               const fill = colorOf(cs['fo:background-color']) ?? (cs['draw:fill'] === 'solid' ? colorOf(cs['draw:fill-color']) : undefined);
               if (fill) t.fill = fill;
+              const borders = cellBorders(cs, ctx);
+              if (borders) t.borders = borders;
               row.push(t);
               srow.push(first?.fontSize);
             }
@@ -531,6 +590,12 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
       const shape = n.name === 'draw:ellipse' || n.name === 'draw:circle' ? 'ellipse' : n.name === 'draw:connector' ? CONNECTOR_SHAPE[connectorType ?? ''] ?? 'bentConnector3' : n.name === 'draw:line' ? 'line' : n.name === 'draw:rect' ? ((n.attrs['draw:corner-radius'] ?? n.attrs['svg:rx']) ? 'roundRect' : 'rect') : presetOf(type);
       const el: SlideElement = { id: uid('el'), kind: 'shape', shape, ...box };
       if (name) el.name = name;
+      const geo = childNamed(n, 'draw:enhanced-geometry');
+      if (geo?.attrs['draw:text-path'] === 'true') {
+        const prst = WARP_BY_TYPE[type ?? ''];
+        if (prst) el.warp = prst;
+        else ctx.warnings.add(`글자를 경로나 곡선에 맞추는 효과(${type ?? '워드아트'})는 지원하지 않아 일반 글자로 읽었습니다.`);
+      }
       shapeStyle(ctx, el, graphicStyle(ctx, n));
       if (shape === 'line' || connectorType) {
         if (flipH) el.flipH = true;
@@ -798,6 +863,8 @@ function runProps(r: Omit<TextRun, 'text'>): string {
   if (r.underline) a.push('style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"');
   if (r.strike) a.push('style:text-line-through-style="solid"');
   if (r.fontFamily) a.push(`fo:font-family="${escapeXml(r.fontFamily)}"`);
+  const ls = (r as { letterSpacing?: number }).letterSpacing;
+  if (ls) a.push(`fo:letter-spacing="${Math.round((ls / PX_PER_PT / 72) * 2.54 * 1000) / 1000}cm"`);
   if (r.baseline) a.push(`style:text-position="${r.baseline === 'super' ? 'super 58%' : 'sub 58%'}"`);
   return a.length ? `<style:text-properties ${a.join(' ')}/>` : '';
 }
@@ -806,7 +873,7 @@ const ALIGN_ODF: Record<string, string> = { left: 'start', center: 'center', rig
 
 /** A text object's lines, each with its runs and formatting. */
 function elementLines(el: SlideElement): { align?: HAlign; runs: TextRun[]; list?: ListStyle }[] {
-  const base: Omit<TextRun, 'text'> = { fontSize: el.fontSize, bold: el.bold, italic: el.italic, color: el.color, underline: el.underline, strike: el.strike, fontFamily: el.fontFamily };
+  const base: Omit<TextRun, 'text'> = { fontSize: el.fontSize, bold: el.bold, italic: el.italic, color: el.color, underline: el.underline, strike: el.strike, fontFamily: el.fontFamily, ...(el.letterSpacing ? { letterSpacing: el.letterSpacing } : {}) } as Omit<TextRun, 'text'>;
   const lines = (el.text ?? '').split('\n');
   return lines.map((text, i) => {
     const p = el.paragraphs?.[i];
@@ -824,7 +891,8 @@ function paragraphsXml(st: Styles, lines: { align?: HAlign; runs: TextRun[]; lis
     const spans = l.runs.filter((r) => r.text).map((r) => {
       const { text, ...props } = r;
       const body = runProps(props);
-      return body ? `<text:span text:style-name="${st.name('text', 'T', body)}">${odfText(text)}</text:span>` : odfText(text);
+      const inner = r.link && /^[a-z][a-z0-9+.-]*:|^#/i.test(r.link) ? `<text:a xlink:href="${escapeXml(r.link)}" xlink:type="simple">${odfText(text)}</text:a>` : odfText(text);
+      return body ? `<text:span text:style-name="${st.name('text', 'T', body)}">${inner}</text:span>` : inner;
     }).join('');
     return `<text:p${pAttr}>${spans}</text:p>`;
   };
@@ -856,9 +924,9 @@ export function geometryXml(table: PresetTable, shape: string, adj?: number[]): 
 }
 
 /** Dash patterns as [dash %, second dash %, gap %] of the line width (PowerPoint's presets, as LibreOffice reads them). */
-const DASHES: Record<DashStyle, [number, number, number] | undefined> = {
+const DASHES: Record<DashStyle, [number, number, number, number?] | undefined> = {
   solid: undefined, dash: [400, 0, 300], dot: [100, 0, 300], dashDot: [400, 100, 300], lgDash: [800, 0, 300], sysDash: [300, 0, 100], sysDot: [100, 0, 100],
-  lgDashDot: [800, 100, 300], lgDashDotDot: [800, 100, 300], sysDashDot: [300, 100, 100], sysDashDotDot: [300, 100, 100],
+  lgDashDot: [800, 100, 300], lgDashDotDot: [800, 100, 300, 2], sysDashDot: [300, 100, 100], sysDashDotDot: [300, 100, 100, 2],
 };
 /** Arrowhead outlines: [viewBox, path]. */
 const MARKERS: Record<ArrowKind, [string, string]> = {
@@ -936,7 +1004,7 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
     let dashName = '';
     if (dash) {
       dashName = `Dash_${el.dash}`;
-      if (!dashes.has(dashName)) dashes.set(dashName, `<draw:stroke-dash draw:name="${dashName}" draw:style="rect" draw:dots1="1" draw:dots1-length="${dash[0]}%"${dash[1] ? ` draw:dots2="1" draw:dots2-length="${dash[1]}%"` : ''} draw:distance="${dash[2]}%"/>`);
+      if (!dashes.has(dashName)) dashes.set(dashName, `<draw:stroke-dash draw:name="${dashName}" draw:style="rect" draw:dots1="1" draw:dots1-length="${dash[0]}%"${dash[1] ? ` draw:dots2="${dash[3] ?? 1}" draw:dots2-length="${dash[1]}%"` : ''} draw:distance="${dash[2]}%"/>`);
     }
     const arrow = (kind: ArrowKind | undefined, side: 'start' | 'end') => {
       const k = kind ?? 'triangle';
@@ -991,7 +1059,15 @@ export async function writeOdp(p: Pick<Presentation, 'title' | 'slides' | 'prope
         const rows = t.rows.map((row, r) => `<table:table-row table:style-name="${rowStyle(t.heights[r] ?? 60)}">${row.map((cell) => {
           if (cell.hMerge || cell.vMerge) return '<table:covered-table-cell/>';
           const fill = hexColor(cell.fill);
-          const cs = st.name('table-cell', 'ce', `<style:table-cell-properties fo:background-color="${fill ?? 'transparent'}" fo:border="0.05pt solid #999999"/>`);
+          const side = (b: CellBorder | null | undefined) => {
+            if (b === null) return 'none';
+            if (!b) return '0.05pt solid #999999';
+            const c = hexColor(b.color) ?? '#999999';
+            return `${Math.round((b.width / PX_PER_PT) * 100) / 100}pt ${b.dash === 'dash' || b.dash === 'longDash' ? 'dashed' : b.dash === 'dot' || b.dash === 'dashDot' ? 'dotted' : 'solid'} ${c}`;
+          };
+          const bd = cell.borders;
+          const border = bd ? `fo:border-left="${side(bd.l)}" fo:border-right="${side(bd.r)}" fo:border-top="${side(bd.t)}" fo:border-bottom="${side(bd.b)}"` : 'fo:border="0.05pt solid #999999"';
+          const cs = st.name('table-cell', 'ce', `<style:table-cell-properties fo:background-color="${fill ?? 'transparent'}" ${border}/>`);
           const lines = (cell.text || '').split('\n').map((text) => ({ align: cell.align as HAlign | undefined, runs: [{ text, bold: cell.bold, color: cell.color, fontSize: el.fontSize }] as TextRun[] }));
           const span = `${cell.span && cell.span > 1 ? ` table:number-columns-spanned="${cell.span}"` : ''}${cell.rowSpan && cell.rowSpan > 1 ? ` table:number-rows-spanned="${cell.rowSpan}"` : ''}`;
           return `<table:table-cell table:style-name="${cs}"${span} office:value-type="string">${paragraphsXml(st, lines)}</table:table-cell>`;
