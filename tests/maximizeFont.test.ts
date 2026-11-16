@@ -85,7 +85,8 @@ describe('initial maximum text size', () => {
     expect(fixed.elements![0]).toMatchObject({ x: 120, y: 100, w: 1244, h: 104, autoFit: false, fontSize: 40, text: '광고\nAnnouncements' });
     expect(fixed.elements![0].paragraphs).toEqual([{ text: '광고', fontSize: 40 }, { text: 'Announcements', fontSize: 40, bold: true }]);
     expect(fixed.elements![0].preferredFontSize).toBeUndefined();
-    expect(fixed.elements!.slice(1)).toEqual(s.elements!.slice(1));
+    // The title is only marked for its layout (announcementTitle.ts); a short one keeps its box.
+    expect(fixed.elements!.slice(1).map(({ role: _r, announceBase: _b, ...e }) => e)).toEqual(s.elements!.slice(1));
     expect(prepareAnnouncementSlide(fixed)).toBe(fixed);
   });
   it('fixes a QR slide pushed to the left edge by an earlier version the same way', () => {
@@ -95,7 +96,11 @@ describe('initial maximum text size', () => {
   });
   it('leaves a heading moved by hand, and slides without the heading, as they are', () => {
     const moved = adSlide(); moved.elements![0] = { ...moved.elements![0], x: 300, y: 40 };
-    expect(prepareAnnouncementSlide(moved)).toBe(moved);
+    const kept = prepareAnnouncementSlide(moved);
+    expect(kept.elements![0]).toBe(moved.elements![0]);
+    // (The short title is only marked for its layout: no box moves.)
+    expect(kept.elements!.map(({ x, y, w, h }) => ({ x, y, w, h }))).toEqual(moved.elements!.map(({ x, y, w, h }) => ({ x, y, w, h })));
+    expect(kept.elements![1].role).toBe('announcementTitle');
     const other: Slide = { id: 'x', group: '광고', text: '', elements: [{ ...box('body', '본문', 74), x: 77 }] };
     expect(prepareAnnouncementSlide(other)).toBe(other);
   });

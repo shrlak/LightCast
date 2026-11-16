@@ -443,7 +443,7 @@ export function ElementView({ el }: { el: SlideElement }) {
   if (el.kind === 'shape') {
     // Preset shapes (and anything rotated, flipped, dashed, gradient-filled or carrying text) are drawn
     // by the engine; a plain box or circle from an older slide stays the div it always was.
-    if (el.shape || el.text || el.gradient || el.dash || el.flipH || el.flipV || el.dropShadow || el.glow || el.strokeWidth) return <ShapeElement el={el} />;
+    if (el.shape || el.path || el.text || el.gradient || el.dash || el.flipH || el.flipV || el.dropShadow || el.glow || el.strokeWidth) return <ShapeElement el={el} />;
     return <div style={{ ...box, background: el.fill ?? '#ffffff', borderRadius: el.ellipse ? '50%' : el.radius ?? 0, border: el.stroke ? `4px solid ${el.stroke}` : undefined }} />;
   }
   if (el.kind === 'table') return <TableElement el={el} />;

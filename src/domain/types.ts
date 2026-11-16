@@ -185,6 +185,9 @@ export interface TextRun {
   highlight?: string;
   /** Insert › Link on these characters: opened by a click in a slide show. */
   link?: string;
+  /** Character spacing (canvas pixels) and capitals of these characters (PowerPoint's 문자 간격 / 모두 대문자, 작은 대문자). */
+  letterSpacing?: number;
+  caps?: 'all' | 'small';
 }
 
 /** What clicking an object does in a slide show (Insert › Action). */
@@ -355,7 +358,9 @@ export interface SlideElement {
   /** 줄 간격 고정 / 최소 (points × 2 = canvas px): replaces the `lineHeight` multiple while set. */
   lineExact?: { mode: 'exact' | 'min'; px: number };
   /** Text-box purpose, retained when editing or filling a template. */
-  role?: 'prayer' | 'lyrics';
+  role?: 'prayer' | 'lyrics' | 'announcementTitle';
+  /** A 광고 title box laid out by announcementTitle.ts: its one-line font size and height, and where the text box under it starts then. */
+  announceBase?: { fontSize: number; h: number; bodyY: number };
   /**
    * PowerPoint preset shape by its Office Open XML name (rect, roundRect, ellipse, star5, rightArrow,
    * heart, wedgeRoundRectCallout… 183 of them); the outline comes from the engine. Without it a shape
@@ -551,7 +556,7 @@ export interface Slide {
   preferredFontSize?: number;
   id: string;
   /** Original import type: PowerPoint objects remain editable; PDF page content is read-only. */
-  importSource?: { format: 'pptx' | 'ppt' | 'pdf' | 'odp'; name: string; page: number; /** The page size (cm) the file came in with, when it was not LightCast's 4:3 (slides were scaled onto the 4:3 canvas). */ pageCm?: { w: number; h: number } };
+  importSource?: { format: 'pptx' | 'ppt' | 'pdf' | 'odp'; name: string; page: number; /** The page size (cm) the file came in with, when it was not LightCast's 4:3 (slides were scaled onto the 4:3 canvas). */ pageCm?: { w: number; h: number }; /** What of this slide's original was approximated or left out (Korean, from the import report). */ warnings?: string[] };
   /** Original slide identity when a repeated arrangement occurrence is made independent. */
   sourceSlideId?: string;
   /** Main text is song lyrics; corner QR codes must leave equal space on both sides. */

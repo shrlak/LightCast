@@ -391,6 +391,10 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     if (e.button !== 0 && !(e.button === 2 && tool?.kind === 'points')) return;
     sinkMuted.current = true;
     if (sink.current) sink.current.value = '';
+    // The box being typed in: a press on the empty slide ends typing and leaves it selected (as Esc does).
+    // A box just drawn and left empty goes away instead.
+    const emptyFresh = freshBox.current === editing && !pendingText.current && !(elOf(editing ?? '')?.text ?? '').trim();
+    const wasEditing = editing && !tool && !emptyFresh ? editing : null;
     if (editing) stopEditing();
     focusRoot();
     const [x, y] = pointer(e);
@@ -505,6 +509,9 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
         return;
       }
       const add = e.shiftKey || e.ctrlKey || e.metaKey;
+      // PowerPoint: the first click outside a box being typed in only ends the typing, the box keeps its
+      // frame and handles; the next click on the empty slide deselects (or starts a marquee).
+      if (wasEditing && !add) { onSelect([wasEditing]); return; }
       if (!add) onSelect([]);
       drag.current = { mode: 'marquee', x0: x, y0: y, x1: x, y1: y, add };
       return;
