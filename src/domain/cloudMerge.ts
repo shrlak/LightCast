@@ -9,7 +9,13 @@ export function syncable(lib: Library): Library {
   return { ...lib, presentations: lib.presentations.filter((p) => !p.online) };
 }
 
-const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+/** JSON with the keys of every object in sorted order: equal content gives equal text, however the object was built. */
+export function canonicalJson(v: unknown): string {
+  return JSON.stringify(v, (_k, x) => (x && typeof x === 'object' && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : x));
+}
+/** The text two libraries are compared by: equal when their content is equal, whatever the order of their keys. */
+export const libraryKey = (lib: Library): string => canonicalJson(lib);
+const same = (a: unknown, b: unknown) => canonicalJson(a) === canonicalJson(b);
 /** Equal apart from the ids of slides and objects inside (which automatic changes may give anew). */
 const withoutInnerIds = (v: unknown) => JSON.stringify(v, function (this: unknown, k, x) { return k === 'id' && this !== v ? undefined : x; });
 const sameContent = (a: unknown, b: unknown) => a !== undefined && b !== undefined && withoutInnerIds(a) === withoutInnerIds(b);

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch } from
 import type { Action } from '../domain/reducer';
 import type { Library } from '../domain/types';
 import { cloudApi, loadBase, loadSession, saveBase, saveSession, getCloudStorageUsage, type CloudSession } from '../domain/cloud';
-import { syncable } from '../domain/cloudMerge';
+import { libraryKey, syncable } from '../domain/cloudMerge';
 import { PUSH_DELAY, syncOnce, type SyncControl, type SyncEnv } from '../domain/cloudSyncRound';
 import { getDevice, initializeDevice, saveDeviceProfile } from '../domain/device';
 import { type CloudStorageUsage } from '../domain/cloudStorage';
@@ -110,7 +110,7 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
     loadBase,
     saveBase,
     restorePoint: saveSyncRestorePoint,
-    pushed: (lib) => { ctl.lastPushed = JSON.stringify(lib); },
+    pushed: (lib) => { ctl.lastPushed = libraryKey(lib); },
     // Imported fonts: files both ways + the font list in the library (a changed list is pushed by the next round).
     fonts: async (current) => {
       const session = loadSession();
@@ -218,7 +218,7 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
   // Push shortly after local edits.
   useEffect(() => {
     if (!status.session) return;
-    const text = JSON.stringify(syncable(library));
+    const text = libraryKey(syncable(library));
     if (text === ctl.lastPushed) return;
     const t = setTimeout(() => sync('push'), PUSH_DELAY);
     return () => clearTimeout(t);
@@ -250,7 +250,7 @@ export function useCloudSync(library: Library, dispatch: Dispatch<Action>, notif
     // Rotate before awaiting local writes so old in-flight syncs can no longer commit their state.
     setSession({ token: result.token, username: result.username, version: result.version });
     libRef.current = empty;
-    ctl.lastPushed = JSON.stringify(syncable(empty)); ctl.requested = false;
+    ctl.lastPushed = libraryKey(syncable(empty)); ctl.requested = false;
     ctl.failures = 0; setPending(null); saveConflicts([]); setSavedConflicts([]);
     dispatch({ type: 'library/cloudReset', library: empty });
     await saveBase(empty).catch(() => notifyRef.current('서버 자료 삭제는 완료했지만 이 기기의 동기화 기록을 저장하지 못했습니다. 다시 로그인해 주세요.'));

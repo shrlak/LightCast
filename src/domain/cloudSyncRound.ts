@@ -3,7 +3,7 @@
 // the timers and the retry/backoff; everything it needs from the outside comes in through `SyncEnv`.
 import type { Library } from './types';
 import { cloudApi, syncMedia, type CloudSession, type MediaStore } from './cloud';
-import { mergeLibrary, syncable } from './cloudMerge';
+import { libraryKey, mergeLibrary, syncable } from './cloudMerge';
 import { normalizeLibrary } from './persistence';
 import { isOfflineError, type SyncState } from './syncStatus';
 
@@ -82,7 +82,7 @@ export async function runSyncRound(env: SyncEnv, reason: 'pull' | 'push'): Promi
   }
   if (!same()) return null;
   const base = await env.loadBase();
-  if (!base || JSON.stringify(base) !== JSON.stringify(current) || version === 0) {
+  if (!base || libraryKey(base) !== libraryKey(current) || version === 0) {
     // Merging may have incorporated newer edits; preserve the submitted state too.
     await env.restorePoint(current);
     let res = await cloudApi.putLibrary(session.token, version, current);
@@ -178,7 +178,7 @@ export async function syncOnce(ctl: SyncControl, env: SyncEnv, ui: SyncUi, reaso
     else ui.status({ state: err.status === 401 ? 'off' : 'error', message: err.message });
   } finally {
     ctl.busy = false;
-    if (env.session()?.token === session.token && (ctl.requested || (succeeded && JSON.stringify(syncable(env.local())) !== ctl.lastPushed))) {
+    if (env.session()?.token === session.token && (ctl.requested || (succeeded && libraryKey(syncable(env.local())) !== ctl.lastPushed))) {
       ctl.requested = false;
       ui.later(PUSH_DELAY);
     }
