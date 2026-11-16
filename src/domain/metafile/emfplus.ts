@@ -63,6 +63,41 @@ export class Plus {
   private partial: { id: number; kind: number; total: number; data: number[] } | null = null;
   /** The image effect of the last EmfPlusSerializableObject, for the next DrawImagePoints with the E flag. */
   private effect: Effect | null = null;
+  /** An image drawn with image attributes, waiting to see the bitmap of its GDI fallback (see offerFallback). */
+  private fallback: { at: number; img: Rgba; src: [number, number, number, number]; m: Xf; offers: Rgba[] } | null = null;
+  /** True while an image waits for its GDI fallback (emf.ts then hands the fallback's bitmaps to offerFallback). */
+  get wantsFallback() { return !!this.fallback; }
+  /** A bitmap from the GDI records that follow the EMF+ record (the dual file's fallback for it). */
+  offerFallback(img: Rgba) { if (this.fallback && this.fallback.offers.length < 2) this.fallback.offers.push(img); }
+  /**
+   * After the fallback records: when they held exactly one bitmap and it shows the image recoloured, it is
+   * drawn in the image's place. An EmfPlusImageAttributes object keeps only the wrap mode and clamp colour
+   * (MS-EMFPLUS 2.2.1.5), so a colour matrix, gamma, threshold, colour key or remap table set on the GDI+
+   * ImageAttributes is not in the EMF+ records; the GDI fallback of a dual file is GDI+'s own rendering of
+   * the call, which has them applied. "Recoloured" is judged on a 32 x 32 grid of samples: the bitmaps
+   * differ there by more than 16 levels in at least 30 % of the samples (a resampled but unchanged copy
+   * does not), so a fallback at another resolution is used too.
+   */
+  settleFallback() {
+    const f = this.fallback;
+    this.fallback = null;
+    if (!f || f.offers.length !== 1 || f.at < 0) return;
+    const g = f.offers[0];
+    const [sx, sy, sw, sh] = f.src;
+    if (!(sw > 0 && sh > 0) || !g.w || !g.h) return;
+    let differ = 0, n = 0;
+    for (let j = 0; j < 32; j++) for (let i = 0; i < 32; i++) {
+      const u = (i + 0.5) / 32, v = (j + 0.5) / 32;
+      const ax = Math.floor(sx + u * sw), ay = Math.floor(sy + v * sh), bx = Math.floor(u * g.w), by = Math.floor(v * g.h);
+      if (ax < 0 || ay < 0 || ax >= f.img.w || ay >= f.img.h) continue;
+      const a = (ay * f.img.w + ax) * 4, b = (by * g.w + bx) * 4;
+      n++;
+      if ([0, 1, 2, 3].some((c) => Math.abs(f.img.px[a + c] - g.px[b + c]) > 16)) differ++;
+    }
+    if (!n || differ < n * 0.3) return;
+    const m = compose(f.m, [sw / g.w, 0, 0, sh / g.h, sx, sy]);
+    this.out.replaceElement(f.at, `<g transform="matrix(${m.map(num).join(' ')})"><image href="${pngDataUrl(g)}" width="${g.w}" height="${g.h}" preserveAspectRatio="none"/></g>`);
+  }
 
   constructor(private out: Out, private frame: [number, number, number, number] | null) {}
 
@@ -404,8 +439,13 @@ export class Plus {
     for (const [px, py] of [[sx, sy], [sx + sw, sy], [sx + sw, sy + sh], [sx, sy + sh]]) this.out.grow(...apply(m, px, py));
     const one = (x: number, y: number, fx: boolean, fy: boolean) =>
       `<image href="${img.href}" ${fx || fy ? `transform="matrix(${fx ? -1 : 1} 0 0 ${fy ? -1 : 1} ${num(fx ? x + img.w : x)} ${num(fy ? y + img.h : y)})" ` : `x="${num(x)}" y="${num(y)}" `}width="${num(img.w)}" height="${num(img.h)}" preserveAspectRatio="none"${filt}/>`;
+    const waitFallback = (at: number) => {
+      const px = attrs && !effect ? img.px ?? (img.bytes ? smallDecoded(img.bytes) : null) : null;
+      // Two such images in one EMF+ comment share one stretch of fallback records: neither can be matched.
+      if (px && px.w === Math.round(img.w) && px.h === Math.round(img.h)) this.fallback = this.fallback ? { ...this.fallback, at: -1 } : { at, img: px, src, m, offers: [] };
+    };
     if (!(sw > 0 && sh > 0) || (whole && inside) || (!attrs && whole)) {
-      this.out.element(`<g transform="matrix(${m.map(num).join(' ')})">${one(0, 0, false, false)}</g>`);
+      waitFallback(this.out.element(`<g transform="matrix(${m.map(num).join(' ')})">${one(0, 0, false, false)}</g>`));
       return;
     }
     let content = '';
@@ -420,7 +460,7 @@ export class Plus {
       if (!inside && attrs && attrs.wrap === 4 && attrs.clamp.a > 0) content += `<rect x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" fill="${attrs.clamp.rgb}"${attrs.clamp.a < 1 ? ` fill-opacity="${num(attrs.clamp.a)}"` : ''}/>`;
       content += one(0, 0, false, false);
     }
-    this.out.element(`<g transform="matrix(${m.map(num).join(' ')})"><svg x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" viewBox="${num(sx)} ${num(sy)} ${num(sw)} ${num(sh)}" preserveAspectRatio="none" overflow="hidden">${content}</svg></g>`);
+    waitFallback(this.out.element(`<g transform="matrix(${m.map(num).join(' ')})"><svg x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" viewBox="${num(sx)} ${num(sy)} ${num(sw)} ${num(sh)}" preserveAspectRatio="none" overflow="hidden">${content}</svg></g>`));
   }
   /** An image just placed, for the flood-fill rasteriser: its pixels (decoded if need be, through the effect a filter applied) within the source rectangle. */
   private recordImage(img: ImageObj, src: [number, number, number, number], m: Xf, effect: Effect | null) {

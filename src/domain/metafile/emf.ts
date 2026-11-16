@@ -63,9 +63,12 @@ export function playEmf(b: Bytes, preferPlus = true): EmfPlayed | null {
     const r = b.slice(pos, len);
     if (type === 70 && r.u32(12) === EMF_PLUS) {
       if (preferPlus) {
+        plus.settleFallback();
         g.out.muted = false;
         const getDc = plus.comment(r.tail(16));
         if (plus.active) gdiMute = !getDc;
+        // An image drawn with image attributes: the GDI records that follow are its fallback (EmfPlus.settleFallback).
+        g.mutedBitmap = plus.wantsFallback && gdiMute ? (img) => plus.offerFallback(img) : null;
       }
     } else {
       g.out.muted = gdiMute;
@@ -73,6 +76,8 @@ export function playEmf(b: Bytes, preferPlus = true): EmfPlayed | null {
     }
     pos += len;
   }
+  plus.settleFallback();
+  g.mutedBitmap = null;
   g.out.muted = false;
   return { gdi: g, frame, size, plusUsed: plus.active };
 }

@@ -600,8 +600,21 @@ export class Gdi {
   // ---- bitmaps ----
 
   /** Draws `dib` (source rectangle `src` = [x, y, w, h] in pixels) into `dst` = [x, y, w, h] logical units; a negative size mirrors. */
+  /**
+   * Set while an EMF+ image drawn with image attributes waits for its GDI fallback (emf.ts): the bitmaps of
+   * the muted fallback records are handed to it instead of being dropped.
+   */
+  mutedBitmap: ((img: Rgba) => void) | null = null;
   bitmap(dib: Dib, src: [number, number, number, number], dst: [number, number, number, number], opt: BlitOptions = {}) {
-    if (this.out.muted || this.pathOpen) return;
+    if (this.pathOpen || (this.out.muted && !this.mutedBitmap)) return;
+    if (this.out.muted) {
+      let img: Rgba | null = dib.encoded ? (dib.bytes ? decodedImage(dib.bytes) : null) : dib.img;
+      const [sx, sy, sw, sh] = src;
+      if (img && !dib.encoded && sw > 0 && sh > 0) img = cropRgba(img, sx, sy, sw, sh);
+      if (img && opt.alpha === 'opaque') { const px = new Uint8ClampedArray(img.px); for (let i = 3; i < px.length; i += 4) px[i] = 255; img = { ...img, px }; }
+      if (img) this.mutedBitmap!(img);
+      return;
+    }
     let href = dib.encoded;
     let iw = dib.img.w, ih = dib.img.h;
     let unmasked: Rgba | null = null, drawn: Rgba | null = null;

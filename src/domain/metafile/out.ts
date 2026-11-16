@@ -158,8 +158,14 @@ export class Out {
   recordText(d: string, color: Color) {
     if (d && this.recording) this.recorder!.path(d, { k: 'solid', c: rgbaOf(color) }, null, false, undefined, this.clipState);
   }
-  /** Raw element (text, image) drawn at once. */
-  element(s: string) { this.push(s); }
+  /** Raw element (text, image) drawn at once; returns its place in the picture (-1 when not drawn) for replaceElement. */
+  element(s: string): number { return this.push(s) ? this.body.length - 1 : -1; }
+  /** Puts `s` in place of an element drawn earlier (the index element() gave). */
+  replaceElement(i: number, s: string) {
+    if (i < 0 || i >= this.body.length || this.chars + s.length > MAX_CHARS) return;
+    this.chars += s.length - this.body[i].length;
+    this.body[i] = s;
+  }
 
   // ---- clip ----
 

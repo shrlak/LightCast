@@ -286,3 +286,40 @@ describe('EMF+ effects by the GDI+ documentation', () => {
     expect(svg).toMatch(/transform="matrix\(20 0 0 20 -50 -50\)"/); // 2 px over 40 units, moved back by 3 px
   });
 });
+
+describe('EMF+ image attributes', () => {
+  // A 2 x 2 bitmap (B G R A rows: red, green / blue, white) and an image attributes object (wrap tile).
+  const pixels = [0, 0, 255, 255, 0, 255, 0, 255, 255, 0, 0, 255, 255, 255, 255, 255];
+  const image = plusRec(0x4008, (5 << 8) | 0, (b) => b.u32(0xdbc01002, 1, 2, 2, 8, 0x26200a, 0).u8(...pixels));
+  const attrs = plusRec(0x4008, (8 << 8) | 1, (b) => b.u32(0xdbc01002, 0, 0, 0, 0, 0));
+  const drawImage = (attrId: number) => plusRec(0x401a, 0, (b) => b.u32(attrId, 2).f32(0, 0, 2, 2).f32(10, 10, 40, 40));
+  /** The GDI fallback: STRETCHDIBITS of a 2 x 2 32-bit bottom-up DIB to (10, 10, 40, 40). */
+  const fallback = (bgra: number[]) => emfRec(81, (b) => {
+    b.u32(10, 10, 50, 50).u32(10, 10, 0, 0, 2, 2).u32(80, 40, 120, 16, 0, 0x00cc0020, 40, 40);
+    b.u32(40, 2, 2).u16(1, 32).u32(0, 16, 0, 0, 0, 0);
+    b.u8(...bgra.slice(8), ...bgra.slice(0, 8)); // bottom-up rows
+  });
+  const dual = (...gdi: number[][]) => emf([comment(plusHeader(true)), comment(image, attrs), comment(drawImage(1)), ...gdi, comment(plusRec(0x4002, 0, () => undefined))]);
+  const images = (svg: string) => [...svg.matchAll(/<image href="(data:image\/png;base64,[^"]+)"/g)].map((m) => m[1]);
+  it('the EmfPlusImageAttributes object holds no colour adjustment, so a recoloured GDI fallback bitmap is drawn in the image\'s place', () => {
+    const inverted = pixels.map((v, i) => (i % 4 === 3 ? v : 255 - v));
+    const plain = images(metafileToSvg(dual(fallback(pixels)))!.svg);
+    const recoloured = metafileToSvg(dual(fallback(inverted)))!.svg;
+    expect(images(recoloured)).toHaveLength(1);
+    expect(images(recoloured)[0]).not.toBe(plain[0]);
+    const px = decodeImage(new Uint8Array(Buffer.from(images(recoloured)[0].slice(22), 'base64')))!;
+    expect([...px.px.slice(0, 4)]).toEqual([0, 255, 255, 255]); // red inverted is cyan
+    expect(recoloured).toContain('transform="matrix(20 0 0 20 10 10)"');
+    // the same pixels in the fallback: the EMF+ image stays
+    expect(plain).toHaveLength(1);
+    const kept = decodeImage(new Uint8Array(Buffer.from(plain[0].slice(22), 'base64')))!;
+    expect([...kept.px.slice(0, 4)]).toEqual([255, 0, 0, 255]);
+  });
+  it('without image attributes, or with two fallback bitmaps, the EMF+ image is kept', () => {
+    const inverted = pixels.map((v, i) => (i % 4 === 3 ? v : 255 - v));
+    const red = (svg: string) => [...decodeImage(new Uint8Array(Buffer.from(images(svg)[0].slice(22), 'base64')))!.px.slice(0, 4)];
+    const noAttrs = emf([comment(plusHeader(true)), comment(image, attrs), comment(drawImage(0xff)), fallback(inverted)]);
+    expect(red(metafileToSvg(noAttrs)!.svg)).toEqual([255, 0, 0, 255]);
+    expect(red(metafileToSvg(dual(fallback(inverted), fallback(inverted)))!.svg)).toEqual([255, 0, 0, 255]);
+  });
+});
