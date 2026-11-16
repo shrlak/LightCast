@@ -1,7 +1,7 @@
 // A reader for Apple QuickDraw PICT version 2 pictures (as the Pictures stream of Mac-made .ppt files keeps them):
 // the bitmap opcodes (BitsRect / BitsRgn / PackBitsRect / PackBitsRgn / DirectBitsRect / DirectBitsRgn: 1-8 bit indexed,
 // 16 and 32 bit direct, PackBits-compressed rows), JPEG inside QuickTime-compressed opcodes (0x8200), and the simple vector
-// opcodes painting and framing rectangles, ovals and lines in the foreground RGB colour. Text, regions as shapes, patterns,
+// opcodes painting and framing rectangles, ovals and lines in the foreground RGB colour. Drawn in picture order. Text, regions as shapes, patterns,
 // polygons and arcs are skipped. Everything else is stepped over by the opcode length table. Version 1 pictures are not read.
 // Never throws: a picture that cannot be read gives null. Pixel counts and the opcode count are capped.
 import { encodePng, type Rgba } from '../metafile/png';
@@ -15,6 +15,7 @@ interface Rect { t: number; l: number; b: number; r: number }
 
 /** One bitmap drawn from a bits opcode: pixels and where they go in the picture frame. */
 interface Blit { img: Rgba; src: Rect; dst: Rect }
+/** Rectangle, oval and line drawing; drawn with the bitmaps in picture order. */
 interface Paint { kind: 'rect' | 'oval' | 'frameRect' | 'frameOval' | 'line'; r: Rect; color: [number, number, number]; pen: number }
 
 class Reader {
@@ -182,7 +183,8 @@ function decode(bytes: Uint8Array): PictImage | null {
   if (fw <= 0 || fh <= 0) return null;
   rd.skip(4); // version opcode 0x0011 and 0x02FF
   const blits: Blit[] = [];
-  const paints: Paint[] = [];
+  /** Everything drawn, in picture order. */
+  const items: (Blit | Paint)[] = [];
   const jpegs: Uint8Array[] = [];
   let fg: [number, number, number] = [0, 0, 0];
   let pen = 1;
@@ -199,7 +201,7 @@ function decode(bytes: Uint8Array): PictImage | null {
     if (op === 0x90 || op === 0x91 || (op >= 0x98 && op <= 0x9b)) {
       const blit = readBits(rd, op);
       if (!blit) return jpegs.length ? { mime: 'image/jpeg', bytes: jpegs[0] } : null;
-      blits.push(blit);
+      blits.push(blit); items.push(blit);
       continue;
     }
     if (op === 0x8200) {
@@ -215,22 +217,22 @@ function decode(bytes: Uint8Array): PictImage | null {
       last = r;
       const kind: Paint['kind'] = op >= 0x50 ? (op === 0x50 ? 'frameOval' : 'oval') : op === 0x30 ? 'frameRect' : 'rect';
       if (op === 0x34 || op === 0x54) { /* fill with a pattern: drawn in the foreground colour */ }
-      paints.push({ kind, r, color: fg, pen });
+      items.push({ kind, r, color: fg, pen });
       continue;
     }
     if ((op === 0x38 || op === 0x39 || op === 0x58 || op === 0x59) && last) {
-      paints.push({ kind: op === 0x38 ? 'frameRect' : op === 0x39 ? 'rect' : op === 0x58 ? 'frameOval' : 'oval', r: last, color: fg, pen });
+      items.push({ kind: op === 0x38 ? 'frameRect' : op === 0x39 ? 'rect' : op === 0x58 ? 'frameOval' : 'oval', r: last, color: fg, pen });
       continue;
     }
-    if (op === 0x20) { const y0 = rd.i16(), x0 = rd.i16(), y1 = rd.i16(), x1 = rd.i16(); paints.push({ kind: 'line', r: { t: y0, l: x0, b: y1, r: x1 }, color: fg, pen }); pos = { x: x1, y: y1 }; continue; }
-    if (op === 0x21) { const y1 = rd.i16(), x1 = rd.i16(); paints.push({ kind: 'line', r: { t: pos.y, l: pos.x, b: y1, r: x1 }, color: fg, pen }); pos = { x: x1, y: y1 }; continue; }
-    if (op === 0x22) { const y0 = rd.i16(), x0 = rd.i16(); const dx = (rd.u8() << 24) >> 24, dy = (rd.u8() << 24) >> 24; paints.push({ kind: 'line', r: { t: y0, l: x0, b: y0 + dy, r: x0 + dx }, color: fg, pen }); pos = { x: x0 + dx, y: y0 + dy }; continue; }
-    if (op === 0x23) { const dx = (rd.u8() << 24) >> 24, dy = (rd.u8() << 24) >> 24; paints.push({ kind: 'line', r: { t: pos.y, l: pos.x, b: pos.y + dy, r: pos.x + dx }, color: fg, pen }); pos = { x: pos.x + dx, y: pos.y + dy }; continue; }
+    if (op === 0x20) { const y0 = rd.i16(), x0 = rd.i16(), y1 = rd.i16(), x1 = rd.i16(); items.push({ kind: 'line', r: { t: y0, l: x0, b: y1, r: x1 }, color: fg, pen }); pos = { x: x1, y: y1 }; continue; }
+    if (op === 0x21) { const y1 = rd.i16(), x1 = rd.i16(); items.push({ kind: 'line', r: { t: pos.y, l: pos.x, b: y1, r: x1 }, color: fg, pen }); pos = { x: x1, y: y1 }; continue; }
+    if (op === 0x22) { const y0 = rd.i16(), x0 = rd.i16(); const dx = (rd.u8() << 24) >> 24, dy = (rd.u8() << 24) >> 24; items.push({ kind: 'line', r: { t: y0, l: x0, b: y0 + dy, r: x0 + dx }, color: fg, pen }); pos = { x: x0 + dx, y: y0 + dy }; continue; }
+    if (op === 0x23) { const dx = (rd.u8() << 24) >> 24, dy = (rd.u8() << 24) >> 24; items.push({ kind: 'line', r: { t: pos.y, l: pos.x, b: pos.y + dy, r: pos.x + dx }, color: fg, pen }); pos = { x: pos.x + dx, y: pos.y + dy }; continue; }
     if (!skipOp(rd, op)) break;
   }
   // Only a wrapped JPEG: keep it as it is.
-  if (jpegs.length && !blits.length && !paints.length) return { mime: 'image/jpeg', bytes: jpegs[0] };
-  if (!blits.length && !paints.length) return null;
+  if (jpegs.length && !items.length) return { mime: 'image/jpeg', bytes: jpegs[0] };
+  if (!items.length) return null;
   // Draw at the bitmaps' own resolution (frame units are 1/72 inch; a 300 dpi scan is drawn at 300 dpi).
   let scale = 1;
   for (const bl of blits) {
@@ -247,7 +249,22 @@ function decode(bytes: Uint8Array): PictImage | null {
     const o = (y * W + x) * 4;
     out[o] = c[0]; out[o + 1] = c[1]; out[o + 2] = c[2]; out[o + 3] = 255;
   };
-  for (const p of paints) {
+  function drawBlit(bl: Blit) {
+    const dl = X(bl.dst.l), dt = Y(bl.dst.t), dw = X(bl.dst.r) - dl, dh = Y(bl.dst.b) - dt;
+    const sw = bl.src.r - bl.src.l, sh = bl.src.b - bl.src.t;
+    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) return;
+    for (let y = Math.max(0, Math.floor(dt)); y < Math.min(H, Math.ceil(dt + dh)); y++) {
+      const sy = Math.min(bl.img.h - 1, Math.max(0, bl.src.t + Math.floor(((y + 0.5 - dt) / dh) * sh)));
+      for (let x = Math.max(0, Math.floor(dl)); x < Math.min(W, Math.ceil(dl + dw)); x++) {
+        const sx = Math.min(bl.img.w - 1, Math.max(0, bl.src.l + Math.floor(((x + 0.5 - dl) / dw) * sw)));
+        const si = (sy * bl.img.w + sx) * 4, o = (y * W + x) * 4;
+        out[o] = bl.img.px[si]; out[o + 1] = bl.img.px[si + 1]; out[o + 2] = bl.img.px[si + 2]; out[o + 3] = 255;
+      }
+    }
+  }
+  for (const it of items) {
+    if ('img' in it) { drawBlit(it); continue; }
+    const p = it;
     const l = Math.round(X(p.r.l)), t = Math.round(Y(p.r.t)), r = Math.round(X(p.r.r)), b = Math.round(Y(p.r.b));
     const pw = Math.max(1, Math.round(p.pen * scale));
     if (p.kind === 'line') {
@@ -263,19 +280,6 @@ function decode(bytes: Uint8Array): PictImage | null {
       if (p.kind === 'rect' || p.kind === 'oval') { put(x, y, p.color); continue; }
       const edge = oval ? ((x + 0.5 - cx) / Math.max(1, rx - pw)) ** 2 + ((y + 0.5 - cy) / Math.max(1, ry - pw)) ** 2 > 1 : x < l + pw || x >= r - pw || y < t + pw || y >= b - pw;
       if (edge) put(x, y, p.color);
-    }
-  }
-  for (const bl of blits) {
-    const dl = X(bl.dst.l), dt = Y(bl.dst.t), dw = X(bl.dst.r) - dl, dh = Y(bl.dst.b) - dt;
-    const sw = bl.src.r - bl.src.l, sh = bl.src.b - bl.src.t;
-    if (dw <= 0 || dh <= 0 || sw <= 0 || sh <= 0) continue;
-    for (let y = Math.max(0, Math.floor(dt)); y < Math.min(H, Math.ceil(dt + dh)); y++) {
-      const sy = Math.min(bl.img.h - 1, Math.max(0, bl.src.t + Math.floor(((y + 0.5 - dt) / dh) * sh)));
-      for (let x = Math.max(0, Math.floor(dl)); x < Math.min(W, Math.ceil(dl + dw)); x++) {
-        const sx = Math.min(bl.img.w - 1, Math.max(0, bl.src.l + Math.floor(((x + 0.5 - dl) / dw) * sw)));
-        const si = (sy * bl.img.w + sx) * 4, o = (y * W + x) * 4;
-        out[o] = bl.img.px[si]; out[o + 1] = bl.img.px[si + 1]; out[o + 2] = bl.img.px[si + 2]; out[o + 3] = 255;
-      }
     }
   }
   return { mime: 'image/png', bytes: encodePng({ w: W, h: H, px: out }) };
