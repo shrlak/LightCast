@@ -2,6 +2,8 @@
 // (fill, line, rotation, text frame), the shape type → LightCast preset map and the flip / group flags.
 import { colorRef, type Ctx, type Rec, type Scheme } from './pptRecords';
 import type { DashStyle } from '../types';
+import { LO_PRESETS } from './pptLoPresets';
+import { evaluateGeometry, geometryFingerprint, readGuides, type GeoInput } from './pptGeometry';
 
 /** Escher property id → value (the 32-bit number of the table; complex data is not kept). */
 export type Props = Map<number, number>;
@@ -167,149 +169,38 @@ export interface CustomPath {
   noLine?: boolean;
 }
 
-const MAX_PATH_POINTS = 20000;
-
 /**
- * Custom geometry of a freeform (msosptNotPrimitive): pVertices + pSegmentInfo (MS-ODRAW 2.3.6) as an SVG path.
- * Vertices that are guide formulas and the arc escapes are not read: null.
+ * Custom geometry of a freeform or a preset written as guide formulas (msosptNotPrimitive): pVertices + pSegmentInfo +
+ * pGuides (MS-ODRAW 2.3.6) evaluated by pptGeometry.ts into an SVG path. `aspect` is the shape box's width / height.
  */
+function geoInputOf(p: Props): GeoInput {
+  const adjust: (number | undefined)[] = [];
+  for (let k = 0; k < 8; k++) adjust.push(p.get(0x147 + k));
+  const l = p.get(P.geoLeft), t = p.get(P.geoTop), r = p.get(P.geoRight), b = p.get(P.geoBottom);
+  const rect = l !== undefined && t !== undefined && r !== undefined && b !== undefined && r > l && b > t ? { left: l, top: t, right: r, bottom: b } : undefined;
+  return { vertices: complexOf(p, P.pVertices), segments: complexOf(p, P.pSegmentInfo), guides: complexOf(p, 0x156), adjust, rect };
+}
+
+/** The preset a producer wrote a formula shape from, recognised by its formulas (LibreOffice's presets); the adjust values are in `adjust`. */
+export function recognisedPreset(p: Props): { shape: string; adjust: (number | undefined)[] } | undefined {
+  const input = geoInputOf(p);
+  if (input.rect || !input.guides) return undefined;
+  const shape = LO_PRESETS[geometryFingerprint(input)];
+  return shape ? { shape, adjust: input.adjust } : undefined;
+}
+
 export function customPathOf(p: Props, aspect?: number): CustomPath | null {
-  const vb = complexOf(p, P.pVertices), sb = complexOf(p, P.pSegmentInfo);
-  if (!vb || vb.length < 6) return null;
-  const vv = new DataView(vb.buffer, vb.byteOffset, vb.byteLength);
-  const n = vv.getUint16(0, true), size = vv.getUint16(4, true);
-  const elem = size === 0xfff0 ? 4 : size;
-  if (elem !== 4 && elem !== 8) return null;
-  const count = Math.min(n, Math.floor((vb.length - 6) / elem), MAX_PATH_POINTS);
-  const pts: [number, number][] = [];
-  for (let i = 0; i < count; i++) {
-    const o = 6 + i * elem;
-    pts.push(elem === 8 ? [vv.getInt32(o, true), vv.getInt32(o + 4, true)] : [vv.getInt16(o, true), vv.getInt16(o + 2, true)]);
+  const geo = evaluateGeometry(geoInputOf(p));
+  if (!geo || !geo.path) return null;
+  // Formulas without a stated space: the extent is only trusted when it fills a box of the shape's proportions.
+  if (geo.guessedSpace && complexOf(p, 0x156) && aspect) {
+    const ratio = geo.w / geo.h / aspect;
+    if (ratio < 0.75 || ratio > 1.33) return null;
   }
-  let segs: number[] = [];
-  if (sb && sb.length >= 6) {
-    const sv = new DataView(sb.buffer, sb.byteOffset, sb.byteLength);
-    const m = Math.min(sv.getUint16(0, true), Math.floor((sb.length - 6) / 2), MAX_PATH_POINTS);
-    for (let i = 0; i < m; i++) segs.push(sv.getUint16(6 + i * 2, true));
-  } else if (pts.length) segs = [0x4000, Math.max(0, pts.length - 1)];
-  let left = p.get(P.geoLeft) ?? 0, top = p.get(P.geoTop) ?? 0;
-  let right = p.get(P.geoRight) ?? 0, bottom = p.get(P.geoBottom) ?? 0;
-  const hasGeo = right > left && bottom > top;
-  if (!hasGeo) { left = 0; top = 0; right = 21600; bottom = 21600; }
-  const f = (v: number) => String(Math.round(v * 100) / 100);
-  // Coordinates with the formula flag (the high bit) are results of the shape's guides.
-  const guides = guideValues(p, left, top, right, bottom);
-  const coord = (v: number) => (v < 0 ? guides(v & (elem === 8 ? 0xffff : 0x7fff)) : v);
-  const formulaUsed = pts.some(([x, y]) => x < 0 || y < 0);
-  const rp = pts.map(([x, y]): [number, number] => [coord(x), coord(y)]);
-  if (!hasGeo && rp.length) {
-    // No geometry rectangle (LibreOffice, freeforms): the extent of the points is the space.
-    left = Math.min(...rp.map((q) => q[0])); top = Math.min(...rp.map((q) => q[1]));
-    right = Math.max(...rp.map((q) => q[0])); bottom = Math.max(...rp.map((q) => q[1]));
-    if (right <= left) right = left + 1;
-    if (bottom <= top) bottom = top + 1;
-    // Guide formulas without a geometry rectangle (LibreOffice's presets): only plain arithmetic ones whose points span the box are trusted;
-    // those with conditions or trigonometry did not evaluate to the right outline against LibreOffice's own rendering.
-    if (formulaUsed) {
-      if (!guideOps(p).every((op) => op <= 5)) return null;
-      const r = aspect ? (right - left) / (bottom - top) / aspect : 1;
-      if (r < 0.9 || r > 1.1) return null;
-    }
-  }
-  const gw = right - left, gh = bottom - top;
-  const at = (i: number) => `${f(rp[i][0] - left)} ${f(rp[i][1] - top)}`;
-  let d = '', i = 0;
-  const out: CustomPath = { path: '', w: gw, h: gh };
-  for (const s of segs) {
-    const type = (s >> 13) & 7;
-    const k = s & 0x1fff;
-    if (type === 2) { if (i >= pts.length) return null; d += `M${at(i++)}`; }
-    else if (type === 0) { const m = k || pts.length - i; if (i + m > pts.length) return null; for (let j = 0; j < m; j++) d += `L${at(i++)}`; }
-    else if (type === 1) { if (i + 3 * k > pts.length) return null; for (let j = 0; j < k; j++, i += 3) d += `C${at(i)} ${at(i + 1)} ${at(i + 2)}`; }
-    else if (type === 3) d += 'Z';
-    else if (type === 4) break;
-    else if (type === 5) {
-      const code = (s >> 8) & 0x1f, m = (s & 0xff) || pts.length - i;
-      if (code === 10) out.noFill = true;
-      else if (code === 11) out.noLine = true;
-      else if (code === 12 || code === 16 || code === 18) { if (i + m > pts.length) return null; for (let j = 0; j < m; j++) d += `L${at(i++)}`; }
-      else return null; // arcs, auto curves and the like
-    } else return null;
-  }
-  if (!d) return null;
-  out.path = d;
+  const out: CustomPath = { path: geo.path, w: geo.w, h: geo.h };
+  if (geo.noFill) out.noFill = true;
+  if (geo.noLine) out.noLine = true;
   return out;
-}
-
-/** The guide formulas (pGuides) of a shape: index → value, with the adjust values (adjust1-8) and the geometry rectangle as inputs. */
-function guideOps(p: Props): number[] {
-  const gb = complexOf(p, 0x156);
-  if (!gb || gb.length < 6) return [];
-  const gv = new DataView(gb.buffer, gb.byteOffset, gb.byteLength);
-  const out: number[] = [];
-  const m = Math.min(gv.getUint16(0, true), Math.floor((gb.length - 6) / 8), 512);
-  for (let i = 0; i < m; i++) out.push(gv.getUint16(6 + i * 8, true) & 0x1fff);
-  return out;
-}
-
-function guideValues(p: Props, left: number, top: number, right: number, bottom: number): (i: number) => number {
-  const gb = complexOf(p, 0x156);
-  const list: { op: number; a: number; b: number; c: number; fa: boolean; fb: boolean; fc: boolean }[] = [];
-  if (gb && gb.length >= 6) {
-    const gv = new DataView(gb.buffer, gb.byteOffset, gb.byteLength);
-    const m = Math.min(gv.getUint16(0, true), Math.floor((gb.length - 6) / 8), 512);
-    for (let i = 0; i < m; i++) {
-      const o = 6 + i * 8, w = gv.getUint16(o, true);
-      list.push({ op: w & 0x1fff, fa: (w & 0x2000) === 0, fb: (w & 0x4000) === 0, fc: (w & 0x8000) === 0, a: gv.getInt16(o + 2, true), b: gv.getInt16(o + 4, true), c: gv.getInt16(o + 6, true) });
-    }
-  }
-  const memo = new Map<number, number>();
-  const active = new Set<number>();
-  const param = (v: number, constant: boolean): number => {
-    if (constant) return v;
-    if (v & 0x400) return value(v & 0xff);
-    if (v >= 0x147 && v <= 0x14e) return p.get(v) ?? 0;
-    if (v === 0x140) return left;
-    if (v === 0x141) return top;
-    if (v === 0x142) return right;
-    if (v === 0x143) return bottom;
-    return 0;
-  };
-  const rad = (fixed16: number) => ((fixed16 / 65536) * Math.PI) / 180;
-  const value = (i: number): number => {
-    if (memo.has(i)) return memo.get(i)!;
-    const g = list[i];
-    if (!g || active.has(i)) return 0;
-    active.add(i);
-    const a = param(g.a, g.fa), b = param(g.b, g.fb), c = param(g.c, g.fc);
-    let r = 0;
-    switch (g.op) {
-      case 0: r = a + b - c; break;
-      case 1: r = c ? (a * b) / c : 0; break;
-      case 2: r = (a + b) / 2; break;
-      case 3: r = Math.abs(a); break;
-      case 4: r = Math.min(a, b); break;
-      case 5: r = Math.max(a, b); break;
-      case 6: r = a > 0 ? b : c; break;
-      case 7: r = Math.sqrt(a * a + b * b + c * c); break;
-      case 8: r = (Math.atan2(b, a) * 180 / Math.PI) * 65536; break;
-      case 9: r = a * Math.sin(rad(b)); break;
-      case 10: r = a * Math.cos(rad(b)); break;
-      case 11: r = a * Math.cos(Math.atan2(c, b)); break;
-      case 12: r = a * Math.sin(Math.atan2(c, b)); break;
-      case 13: r = Math.sqrt(Math.max(0, a)); break;
-      case 14: r = a + b - c; break; // sum of angles (16.16 degrees): same arithmetic
-      case 15: r = b ? c * Math.sqrt(Math.max(0, 1 - (a / b) ** 2)) : 0; break;
-      case 16: r = a * Math.tan(rad(b)); break;
-      case 0x17: case 0x1e: r = a; break; // val
-      default: r = 0;
-    }
-    active.delete(i);
-    if (!Number.isFinite(r)) r = 0;
-    memo.set(i, r);
-    return r;
-  };
-  return value;
 }
 
 /**
@@ -317,7 +208,7 @@ function guideValues(p: Props, left: number, top: number, right: number, bottom:
  * from the kind of formulas it uses: sine and cosine mean an ellipse.
  */
 export function guessPreset(p: Props): string | undefined {
-  const ops = guideOps(p);
+  const ops = readGuides(complexOf(p, 0x156)).map((g) => g.op);
   return ops.filter((o) => o === 9).length === 1 && ops.filter((o) => o === 10).length === 1 && ops.length <= 40 ? 'ellipse' : undefined;
 }
 

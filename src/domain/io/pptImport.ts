@@ -4,11 +4,14 @@
 // `store` callback that keeps a picture's bytes in the media library (and the metafile → SVG / PNG
 // conversion of WMF / EMF pictures).
 import type { TableCell, TableData } from '../../engine';
-import type { ElementParagraph, HAlign, ListStyle, Slide, SlideElement, TextRun, Transition } from '../types';
+import type { ElementParagraph, HAlign, ListStyle, Slide, SlideAnimation, SlideElement, TextRun, Transition } from '../types';
 import { CANVAS_H, CANVAS_W } from '../canvas';
+import { INDENT_PX } from '../textFormat';
 import { gradientCss } from '../backgroundFormat';
 import { metafileToBlob } from '../metafile/image';
 import { detectTables, type TablePlan } from './pptTable';
+import { numberStyleOf } from './pptText';
+import { effectOf } from './pptAnimations';
 import { parsePpt, type PptDocument, type PptPara, type PptPicture, type PptShape, type PptSlide } from './pptBinary';
 
 const EXT = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/bmp': 'bmp', 'image/tiff': 'tiff', 'image/svg+xml': 'svg' } as const;
@@ -104,10 +107,16 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
   const sizePx = (p: PptPara) => Math.round((p.runs.find((r) => r.text)?.size ?? 0) * sc.pt) || own.fontSize;
   // Space before / after: positive = percent of a line, negative = master units; |v| of 1 is rounding noise.
   const gap = (v: number | undefined, p: PptPara) => (!v ? 0 : v < 0 ? (-v > 2 ? Math.round(-v * sc.k) : 0) : Math.round((v / 100) * sizePx(p) * 1.2));
-  const listOf = (p: PptPara): ListStyle | undefined => (p.bullet ? bulletStyle(p.bullet) : undefined);
+  const listOf = (p: PptPara): ListStyle | undefined => (p.bullet ? (p.numbering ? numberStyleOf(p.numbering.scheme) : bulletStyle(p.bullet)) : undefined);
+  // Left margin and first-line indent in canvas px (the file's indent is the absolute first-line position; hanging = negative).
+  const marginOf = (p: PptPara): { left: number; first: number } | undefined => (p.leftMargin === undefined && p.indent === undefined ? undefined : (() => {
+    const lm = p.leftMargin ?? 0;
+    return { left: Math.round(lm * sc.k), first: Math.round(((p.indent ?? 0) - lm) * sc.k) };
+  })());
+  const startOf = (p: PptPara) => (p.numbering && p.numbering.startAt > 1 ? p.numbering.startAt : undefined);
   const lineOf = (p: PptPara) => (p.lineSpacing && p.lineSpacing !== 100 ? Math.round((p.lineSpacing / 100) * 1.2 * 100) / 100 : undefined);
   const first = real[0];
-  const sameAll = !first || real.every((p) => listOf(p) === listOf(first) && p.level === first.level && gap(p.spaceBefore, p) === gap(first.spaceBefore, first) && gap(p.spaceAfter, p) === gap(first.spaceAfter, first) && lineOf(p) === lineOf(first));
+  const sameAll = !first || real.every((p) => listOf(p) === listOf(first) && p.level === first.level && gap(p.spaceBefore, p) === gap(first.spaceBefore, first) && gap(p.spaceAfter, p) === gap(first.spaceAfter, first) && lineOf(p) === lineOf(first) && marginOf(p)?.left === marginOf(first)?.left && marginOf(p)?.first === marginOf(first)?.first && startOf(p) === startOf(first));
   if (mixedAlign || !sameAll) {
     const anyList = real.some((p) => p.bullet);
     fields.paragraphs = runLines.map((runs, i): ElementParagraph => {
@@ -118,6 +127,10 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
         if (list) para.list = list;
         else if (anyList) para.list = 'none';
         if (p.level) para.level = Math.min(8, p.level);
+        const mg = p.cont ? undefined : marginOf(p);
+        if (mg) { para.marginLeft = mg.left; if (mg.first) para.firstIndent = mg.first; }
+        else if (p.cont) { const own = marginOf(p); if (own) para.marginLeft = own.left; }
+        if (list && startOf(p)) para.startAt = startOf(p);
         const sb = p.cont ? 0 : gap(p.spaceBefore, p), sa = gap(p.spaceAfter, p);
         if (sb) para.spaceBefore = sb;
         if (sa) para.spaceAfter = sa;
@@ -131,7 +144,9 @@ function textFields(s: PptShape, sc: Scale): Partial<SlideElement> {
     if (first) {
       const list = listOf(first);
       if (list) fields.list = list;
-      if (first.level) fields.indent = Math.min(8, first.level);
+      const mg = marginOf(first);
+      if (mg) { if (mg.left) fields.indent = Math.round((mg.left / INDENT_PX) * 1000) / 1000; if (mg.first) fields.firstIndent = mg.first; }
+      else if (first.level) fields.indent = Math.min(8, first.level);
       const sb = gap(first.spaceBefore, first), sa = gap(first.spaceAfter, first);
       if (sb) fields.spaceBefore = sb;
       if (sa) fields.spaceAfter = sa;
@@ -179,15 +194,17 @@ function tableElement(plan: TablePlan, sc: Scale, newId: (p: string) => string):
 }
 
 /** The elements of one slide, for a canvas scale `k` and offset. */
-export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'width' | 'height'>, newId: (p: string) => string, mediaOf: (picture: number) => string | null): SlideElement[] {
+export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'width' | 'height'>, newId: (p: string) => string, mediaOf: (picture: number) => string | null, idOfSpid?: Map<number, string>): SlideElement[] {
   const sc = scaleOf(doc);
   const groups = new Map<number, string>();
   const out: SlideElement[] = [];
   const tables = detectTables(shapes);
+  const starts: number[] = [];
   const tableAt = new Map<number, TablePlan>();
   const inTable = new Set<number>();
   for (const plan of tables.values()) { tableAt.set(Math.min(...plan.members), plan); for (const m of plan.members) inTable.add(m); }
   for (const [at, s] of shapes.entries()) {
+    starts[at] = out.length;
     const plan = tableAt.get(at);
     if (plan) { out.push(tableElement(plan, sc, newId)); continue; }
     if (inTable.has(at)) continue;
@@ -238,7 +255,7 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       const mediaId = s.picture ? mediaOf(s.picture) : null;
       if (mediaId) out.push({ id: newId('e'), kind: 'image', ...rounded, mediaId, fit: 'fill', ...(s.crop ? { crop: s.crop } : {}), ...lineFields, ...common });
     } else if (s.kind === 'shape') {
-      const el: SlideElement = { id: newId('e'), kind: 'shape', ...(s.path ? { path: s.path.d, pathW: s.path.w, pathH: s.path.h } : { shape: s.shape ?? 'rect' }), ...rounded, ...common };
+      const el: SlideElement = { id: newId('e'), kind: 'shape', ...(s.path ? { path: s.path.d, pathW: s.path.w, pathH: s.path.h } : { shape: s.shape ?? 'rect', ...(s.adj ? { adj: s.adj } : {}) }), ...rounded, ...common };
       if (isLine) Object.assign(el, { stroke: s.line?.color ?? '#000000', strokeWidth: Math.max(1, Math.round((s.line?.width ?? 9525) * sc.emu)) }, lineFields);
       else Object.assign(el, { fill: 'transparent' }, fillFields(), lineFields);
       out.push(el);
@@ -246,42 +263,57 @@ export function shapesToElements(shapes: PptShape[], doc: Pick<PptDocument, 'wid
       const title = isTitle(s);
       const tf = textFields(s, sc);
       const frame = s.vAlign ?? (title ? 'middle' : 'top');
-      if (s.shape || s.path) out.push({ id: newId('e'), kind: 'shape', ...(s.path ? { path: s.path.d, pathW: s.path.w, pathH: s.path.h } : { shape: s.shape }), ...rounded, fill: 'transparent', ...fillFields(), ...lineFields, ...tf, vAlign: s.vAlign ?? 'middle', ...common });
+      if (s.shape || s.path) out.push({ id: newId('e'), kind: 'shape', ...(s.path ? { path: s.path.d, pathW: s.path.w, pathH: s.path.h } : { shape: s.shape, ...(s.adj ? { adj: s.adj } : {}) }), ...rounded, fill: 'transparent', ...fillFields(), ...lineFields, ...tf, vAlign: s.vAlign ?? 'middle', ...common });
       else out.push({ id: newId('e'), kind: 'text', ...rounded, ...fillFields(), ...lineFields, ...tf, vAlign: frame, ...common });
     } else if (s.fill || s.line) {
       // A box with no text but a fill or outline.
       out.push({ id: newId('e'), kind: 'shape', shape: 'rect', ...rounded, fill: 'transparent', ...fillFields(), ...lineFields, ...common });
     }
   }
+  if (idOfSpid) shapes.forEach((s, at) => { if (s.spid !== undefined && starts[at] !== undefined && starts[at] < (starts[at + 1] ?? out.length) && out[starts[at]]) idOfSpid.set(s.spid, out[starts[at]].id); });
   return out;
 }
 
+/** A slide's animations as LightCast's: entrance effects on objects that were imported; the rest are counted as skipped. */
+export function animationsOf(list: NonNullable<PptSlide['animations']>, idOfSpid: Map<number, string>, newId: (p: string) => string): { animations: SlideAnimation[]; skipped: number } {
+  const animations: SlideAnimation[] = [];
+  let skipped = 0;
+  for (const a of list) {
+    const fx = effectOf(a);
+    const elementId = idOfSpid.get(a.spid);
+    if (!fx || !elementId) { skipped++; continue; }
+    animations.push({ id: newId('a'), elementId, effect: fx.effect, class: 'entrance', ...(fx.option ? { option: fx.option } : {}), start: a.start, durationMs: a.durationMs, delayMs: a.delayMs });
+  }
+  return { animations, skipped };
+}
+
 /**
- * SlideShowSlideInfoAtom effect type → LightCast transition and its option. The ids and directions were read from files
- * LibreOffice wrote for known transitions (0 cut, 1 random, 2 blinds, 3 checker, 4 cover, 5 dissolve, 7 uncover, 8 random bars,
- * 10 wipe, 13 split, 17 diamond, 18 plus, 19 wedge, 20 push, 21 comb, 22 newsflash, 23 fade, 26 wheel, 27 circle); 6, 9, 11 and 12
- * follow the older PowerPoint numbering.
+ * SlideShowSlideInfoAtom effect type and direction → LightCast transition and option (the engine's options are PowerPoint's
+ * pptx `dir` values: the direction of motion). Checked by converting pptx decks with every transition and direction to .ppt with
+ * LibreOffice 24.2 and reading the atoms back: cover / uncover / push number the motion r, u, l, d, then the diagonals lu, ru,
+ * ld, rd; wipe numbers it l, u, r, d; split 0-3 are horizontal out / in, vertical out / in; blinds 0 vertical, 1 horizontal;
+ * checker, random bars and comb 0 horizontal, 1 vertical; wheel's direction is its number of spokes. 6 is fade through black,
+ * 23 smooth fade; 9 (strips) uses the diagonal numbers of cover; 11 is box in / out (pptx zoom).
  */
-const MOVE = ['l', 'u', 'r', 'd'];
-const SIDE = ['r', 'd', 'l', 'u'];
+const WIPE_DIR = ['l', 'u', 'r', 'd'];
+const MOTION_DIR = ['r', 'u', 'l', 'd', 'lu', 'ru', 'ld', 'rd'];
 const EFFECT: Record<number, (dir: number) => { kind: Transition['kind']; option?: string }> = {
   1: () => ({ kind: 'fx:random' }),
   2: (d) => ({ kind: 'fx:blinds', option: d === 1 ? 'horz' : 'vert' }),
   3: (d) => ({ kind: 'fx:checker', option: d === 1 ? 'vert' : 'horz' }),
-  4: (d) => ({ kind: 'fx:cover', ...(SIDE[d] ? { option: SIDE[d] } : {}) }),
+  4: (d) => ({ kind: 'fx:cover', ...(MOTION_DIR[d] ? { option: MOTION_DIR[d] } : {}) }),
   5: () => ({ kind: 'fx:dissolve' }),
-  6: () => ({ kind: 'fade' }),
-  7: (d) => ({ kind: 'fx:uncover', ...(SIDE[d] ? { option: SIDE[d] } : {}) }),
+  6: () => ({ kind: 'fade', option: 'throughBlack' }),
+  7: (d) => ({ kind: 'fx:uncover', ...(MOTION_DIR[d] ? { option: MOTION_DIR[d] } : {}) }),
   8: (d) => ({ kind: 'fx:randomBar', option: d === 1 ? 'vert' : 'horz' }),
-  9: () => ({ kind: 'fx:wipe' }),
-  10: (d) => ({ kind: 'fx:wipe', ...(MOVE[d] ? { option: MOVE[d] } : {}) }),
+  9: (d) => ({ kind: 'fx:wipe', option: d >= 4 && d <= 7 ? MOTION_DIR[d] : 'rd' }),
+  10: (d) => ({ kind: 'fx:wipe', ...(WIPE_DIR[d] ? { option: WIPE_DIR[d] } : {}) }),
   11: (d) => ({ kind: 'fx:shape', option: d === 1 ? 'in' : 'out' }),
-  12: (d) => ({ kind: 'fx:shape', option: d === 1 ? 'in' : 'out' }),
   13: (d) => ({ kind: 'fx:split', option: d === 0 ? 'horzOut' : d === 1 ? 'horzIn' : d === 3 ? 'vertIn' : 'vertOut' }),
   17: () => ({ kind: 'fx:shape', option: 'diamond' }),
   18: () => ({ kind: 'fx:shape', option: 'plus' }),
   19: () => ({ kind: 'fx:clock', option: 'wedge' }),
-  20: (d) => ({ kind: 'fx:push', ...(MOVE[d] ? { option: MOVE[d] } : {}) }),
+  20: (d) => ({ kind: 'fx:push', ...(d < 4 && MOTION_DIR[d] ? { option: MOTION_DIR[d] } : {}) }),
   21: (d) => ({ kind: 'fx:comb', option: d === 1 ? 'vert' : 'horz' }),
   22: () => ({ kind: 'fx:flash' }),
   23: () => ({ kind: 'fade', option: 'smoothly' }),
@@ -329,13 +361,15 @@ export async function importPpt(bytes: Uint8Array, name: string, opts: PptImport
   }
   if (metafileFailed) warnings.push('일부 WMF/EMF 그림은 가져오지 못했습니다.');
   const mediaOf = (n: number) => mediaIds.get(n) ?? null;
+  let skippedAnims = 0;
   const slides = doc.slides.map((s, i): Slide => {
+    const idOfSpid = new Map<number, string>();
     const slide: Slide = {
       id: opts.newId('s'),
       group: opts.group,
       text: '',
       background: { kind: 'color', value: '#ffffff' },
-      elements: shapesToElements(s.shapes, doc, opts.newId, mediaOf),
+      elements: shapesToElements(s.shapes, doc, opts.newId, mediaOf, idOfSpid),
       notes: s.notes,
       importSource: { format: 'ppt', name, page: i + 1 },
     };
@@ -345,7 +379,13 @@ export async function importPpt(bytes: Uint8Array, name: string, opts: PptImport
     else if (bg?.kind === 'picture') { const id = mediaOf(bg.picture); if (id) slide.background = { kind: 'media', mediaId: id, mediaType: 'image', fit: 'cover' }; }
     if (s.hidden) slide.disabled = true;
     if (s.transition) Object.assign(slide, transitionOf(s.transition));
+    if (s.animations?.length) {
+      const { animations, skipped } = animationsOf(s.animations, idOfSpid, opts.newId);
+      if (animations.length) slide.animations = animations;
+      skippedAnims += skipped;
+    }
     return slide;
   });
+  if (skippedAnims) warnings.push('일부 애니메이션(나타내기 외 효과 등)은 가져오지 못했습니다.');
   return { slides, warnings };
 }
