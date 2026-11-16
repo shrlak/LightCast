@@ -16,11 +16,17 @@ import { WIZARD_PARTS, type ServiceUploads, type WizardPart } from '../ppt/useSe
 import { exportPptx } from '../../domain/io/pptxExport';
 import { qrDataUrl } from '../../domain/io/qr';
 import { loadTranslations } from '../BibleModal';
-import { filesToSlides } from '../importFiles';
+import { IMPORT_ACCEPT, describeReport, importFilesWithSummary, type ImportReport } from '../importSummary';
 import { SundaySongs, type CoverInfo } from './SundaySongs';
 import { AutoTextarea } from '../AutoTextarea';
 import { OpeningSongField } from './OpeningSongField';
 import { songsInService, SUNDAY_STEPS } from '../../domain/sunday/wizardSteps';
+
+/** Per-file result of the last import: slides read, and why a file was skipped or read only roughly. */
+function ImportReports({ list }: { list?: ImportReport[] }) {
+  if (!list?.length) return null;
+  return <ul className="file-list small">{list.map((r, i) => <li key={`${r.name}-${i}`} className={r.error || r.warnings.length ? 'warn' : ''}>{r.error ? '⚠ ' : r.warnings.length ? '△ ' : '✓ '}{describeReport(r)}</li>)}</ul>;
+}
 
 interface Props {
   state: AppState;
@@ -80,6 +86,8 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
     return { ...draft, songs, prayer };
   });
   const [busy, setBusy] = useState<string | null>(null);
+  /** What each file gave the last time files were added to 설교 / 추가 자료. */
+  const [reports, setReports] = useState<Partial<Record<'sermonSlides' | 'extraSlides', ImportReport[]>>>({});
   const sermonRef = useRef<HTMLInputElement>(null);
   const extraRef = useRef<HTMLInputElement>(null);
   const { sunday } = state.library;
@@ -156,9 +164,12 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
     setBusy('Importing…');
     try {
       await saveRestorePoint(state.library, 'import', Date.now(), `${d.date} 주일예배`);
-      const slides = await filesToSlides(Array.from(files), addMedia, setBusy);
-      if (!slides.length) throw new Error('슬라이드를 읽지 못했습니다. 기존 자료는 유지됩니다.');
+      const { slides, reports: found } = await importFilesWithSummary(Array.from(files), addMedia, setBusy);
+      setReports((r) => ({ ...r, [key]: found }));
+      if (!slides.length) throw new Error(`${found.map(describeReport).join(' / ') || '슬라이드를 읽지 못했습니다.'} 기존 자료는 유지됩니다.`);
       set({ [key]: key === 'sermonSlides' ? slides : [...d[key], ...slides] } as Partial<Draft>);
+      const problems = found.filter((r) => r.error || r.warnings.length);
+      if (problems.length) notify(problems.map(describeReport).join(' / '));
     } catch (e) {
       notify(`Import failed: ${(e as Error).message}`);
     } finally {
@@ -272,9 +283,10 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
           )}
           {step === 2 && (
             <div className="stack narrow">
-              <p>설교 PPT (.pptx, .ppt) or PDF — its slides go right after the scripture. Skip if there is none.</p>
+              <p>설교 PPT (.pptx · .ppt · .ppsx · .odp) or PDF — its slides go right after the scripture. Skip if there is none.</p>
               <button className="primary" onClick={() => sermonRef.current?.click()}>설교 파일 올리기</button>
-              <input ref={sermonRef} type="file" accept=".pptx,.ppt,.pptm,.ppsx,.pps,.potx,.pdf,image/*,.wmf,.emf,.svgz" multiple hidden onChange={(e) => { importInto(e.target.files, 'sermonSlides'); e.target.value = ''; }} />
+              <input ref={sermonRef} type="file" accept={IMPORT_ACCEPT} multiple hidden onChange={(e) => { importInto(e.target.files, 'sermonSlides'); e.target.value = ''; }} />
+              <ImportReports list={reports.sermonSlides} />
               {slideList(d.sermonSlides, 'sermonSlides')}
             </div>
           )}
@@ -283,7 +295,7 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
               <OpeningSongField title={d.openingTitle} setTitle={(openingTitle) => set({ openingTitle })}
                 deck={openingDeck} setDeck={(deck) => set({ openingDeckId: deck?.id ?? null, ...(deck ? { openingTitle: deck.title } : {}) })}
                 presentations={state.library.presentations} theme={state.library.themes.find((t) => t.id === 'theme_classic') ?? state.library.themes[0]}
-                addMedia={addMedia} create={(deck) => dispatch({ type: 'presentation/createMany', presentations: [deck] })} notify={notify} />
+                addMedia={addMedia} create={(deck) => dispatch({ type: 'presentation/createMany', presentations: [deck] })} notify={notify} library={state.library} />
               <div className="two-col">
                 <AutoTextarea rows={16} placeholder={'1. 회개와 마음의 정결\n- 지난 한 주간 …\n- …\n\n2. 예배를 위한 기도\n- …'} value={d.prayer} onChange={(e) => set({ prayer: e.target.value })} />
                 <div className="stack">
@@ -313,7 +325,8 @@ export function SundayWizard({ state, dispatch, onClose, notify, service, only }
             <div className="stack narrow">
               <p>추가 자료: PDF (one slide per page), images, PPTX. They go after the Back/End slides, in this order.</p>
               <button onClick={() => extraRef.current?.click()}>＋ Add files</button>
-              <input ref={extraRef} type="file" accept=".pdf,.pptx,.ppt,.pptm,.ppsx,.pps,.potx,image/*,.wmf,.emf,.svgz" multiple hidden onChange={(e) => { importInto(e.target.files, 'extraSlides'); e.target.value = ''; }} />
+              <input ref={extraRef} type="file" accept={IMPORT_ACCEPT} multiple hidden onChange={(e) => { importInto(e.target.files, 'extraSlides'); e.target.value = ''; }} />
+              <ImportReports list={reports.extraSlides} />
               {slideList(d.extraSlides, 'extraSlides')}
             </div>
           )}

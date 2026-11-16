@@ -24,6 +24,7 @@ import { PrintPanel } from './printPanel';
 import { InfoStats } from './infoPanel';
 import { EmbedFontsOption } from './EmbedFontsOption';
 import { NativeOpenCard, NativeSaveCards, OdpSaveCard, PasswordProtectCard } from './fileFormats';
+import { DeckDownloadCards } from './downloadCards';
 import { ExportPanel } from './exportPanel';
 import { ExportMorePanel } from './exportMorePanel';
 import { ReadingLaser, ReadingLaserToggle } from './showTools';
@@ -414,6 +415,7 @@ export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             <EmbedFontsOption />
             <div className="bs-cards">
               <Card icon={RI.paste} title="PowerPoint 파일로 저장 (.pptx)" text="지금 재생목록을 MMDD.pptx로" onClick={() => run(cmd.exportPlaylistPptx)} />
+              <DeckDownloadCards ed={ed} />
               <OdpSaveCard ed={ed} />
               <NativeSaveCards ed={ed} />
               <Card icon="🗜" title="전체 백업 저장 (.zip)" text="라이브러리와 미디어 전부" onClick={() => run(cmd.exportBackup)} />
