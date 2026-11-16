@@ -669,7 +669,7 @@ function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: stri
   };
   if (file) return { id: uid('el'), kind: file.type, mediaId: file.id, ...geometry, ...common, fit: 'contain' };
   // Colour changes of the picture (a:duotone, a:grayscl, a:biLevel, brightness / contrast) are not drawn.
-  const tone = find(blip ?? { name: '', attrs: {}, children: [] }, 'duotone')[0] ?? find(blip ?? { name: '', attrs: {}, children: [] }, 'biLevel')[0];
+  const tone = (blip?.children ?? []).find((c) => ['duotone', 'biLevel', 'grayscl', 'clrChange', 'lum', 'hsl', 'tint'].includes(local(c)));
   if (tone) ctx.note?.('approximated', '그림 색 변경');
   const alpha = Number(child(blip, 'alphaModFix')?.attrs.amt ?? 100000) / 100000;
   return {

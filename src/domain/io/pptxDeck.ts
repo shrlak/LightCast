@@ -545,7 +545,7 @@ export async function readPptxDeck(data: ArrayBuffer | Uint8Array, opts: DeckOpt
       // Count what came over, by kind.
       const byKind = new Map<string, number>();
       for (const e of own) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
-      for (const [kind, c] of byKind) note(report, KIND_LABEL[kind] ?? kind, 'converted', n, undefined, c);
+      for (const [kind, c] of byKind) if (kind !== 'table' && kind !== 'chart') note(report, KIND_LABEL[kind] ?? kind, 'converted', n, undefined, c);
       if (art.length) note(report, '마스터·레이아웃 배경 개체', 'converted', n, '잠긴 개체로', art.length);
       const warnings = slideWarnings(report, n);
       if (warnings.length) slide.importSource = { ...slide.importSource!, warnings };
