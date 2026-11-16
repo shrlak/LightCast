@@ -2,9 +2,13 @@
 // deck register their bytes here (importedFonts.ts, embeddedFonts.ts), so that
 //   - glyph-index text (EMF ETO_GLYPH_INDEX, EMF+ DrawDriverString without character codes) is mapped
 //     back to characters through the font's cmap (formats 4 and 12, reversed), and
-//   - text widths come from the font's own advance widths (hmtx) instead of the built-in tables.
-// Only the cmap / hmtx / hhea / head / name / OS/2 tables are read, synchronously, from the sfnt bytes;
-// bad data gives no font, never an exception.
+//   - text widths come from the font's own advance widths (hmtx) instead of the built-in tables,
+//   - a font height means what GDI makes of it (a positive LOGFONT height is the cell, ascent + descent,
+//     from the Windows metrics in OS/2, else hhea), and
+//   - flood fills see the pixels text covers, from the glyph outlines (glyf or CFF, outline.ts).
+// Only the cmap / hmtx / hhea / head / maxp / name / OS/2 / post / glyf / loca / CFF tables are read,
+// synchronously, from the sfnt bytes; bad data gives no font, never an exception.
+import { outlineSource, type Outline } from './outline';
 
 export interface MetafileFont {
   family: string;
@@ -17,6 +21,14 @@ export interface MetafileFont {
   advance(glyph: number): number;
   /** The code point a glyph stands for (the lowest one that maps to it), or -1. */
   charOf(glyph: number): number;
+  /** Cell ascent and descent (both positive), cap height, underline and strikeout position (above the baseline) and thickness, in font units. */
+  ascent: number;
+  descent: number;
+  capHeight: number;
+  underline: [number, number];
+  strike: [number, number];
+  /** The glyph's outline in font units, y up (null: the font has no outlines this reader can read). */
+  outline(glyph: number): Outline | null;
 }
 
 const MAX_FONTS = 64;
@@ -58,9 +70,33 @@ export function parseMetafileFont(u8: Uint8Array, family?: string): MetafileFont
     if (os2 && os2[1] >= 64) { weight = v.getUint16(os2[0] + 4) || 400; italic = (v.getUint16(os2[0] + 62) & 1) !== 0; }
     const fam = family?.trim() || nameOf(v, tables.get('name')) || '';
     if (!fam) return null;
+    // GDI's cell: usWinAscent / usWinDescent, else the hhea ascender / descender.
+    let ascent = Math.round(unitsPerEm * 0.8), descent = Math.round(unitsPerEm * 0.2), capHeight = Math.round(unitsPerEm * 0.7);
+    if (hhea && hhea[1] >= 8) { ascent = v.getInt16(hhea[0] + 4) || ascent; descent = Math.abs(v.getInt16(hhea[0] + 6)) || descent; }
+    let strike: [number, number] = [Math.round(unitsPerEm * 0.26), Math.round(unitsPerEm * 0.05)];
+    if (os2 && os2[1] >= 78) {
+      const wa = v.getUint16(os2[0] + 74), wd = v.getUint16(os2[0] + 76);
+      if (wa + wd > 0) { ascent = wa; descent = wd; }
+      strike = [v.getInt16(os2[0] + 28), v.getInt16(os2[0] + 26) || strike[1]];
+      if (v.getUint16(os2[0]) >= 2 && os2[1] >= 90) capHeight = v.getInt16(os2[0] + 88) || capHeight;
+    }
+    let underline: [number, number] = [-Math.round(unitsPerEm * 0.1), Math.round(unitsPerEm * 0.05)];
+    const post = tables.get('post');
+    if (post && post[1] >= 12) underline = [v.getInt16(post[0] + 8), v.getInt16(post[0] + 10) || underline[1]];
+    const outlines = outlineSource(v, tables);
+    const shapes = new Map<number, Outline | null>();
     let reverse: Map<number, number> | null = null;
     return {
-      family: fam, weight, italic, unitsPerEm,
+      family: fam, weight, italic, unitsPerEm, ascent, descent, capHeight, underline, strike,
+      outline: (g) => {
+        if (!outlines) return null;
+        if (shapes.has(g)) return shapes.get(g)!;
+        let o: Outline | null = null;
+        try { o = outlines.outline(g); } catch { o = null; }
+        if (shapes.size > 4096) shapes.clear();
+        shapes.set(g, o);
+        return o;
+      },
       glyphOf: (cp) => { try { return sub.lookup(cp); } catch { return 0; } },
       advance: (g) => { try { return advance(g); } catch { return unitsPerEm / 2; } },
       charOf: (g) => {
@@ -229,6 +265,24 @@ export function fontWidthEm(text: string, family: string, bold = false, italic =
   let w = 0;
   for (const ch of text) w += f.advance(f.glyphOf(ch.codePointAt(0)!));
   return w / f.unitsPerEm;
+}
+
+/**
+ * The em size (in the same units) of a LOGFONT height: a negative height is the character height (the
+ * em), a positive one the cell height (ascent + descent), 0 a default of 12. Without the font file the
+ * cell is taken as 1 / 0.85 em.
+ */
+export function emOfHeight(height: number, family: string, bold = false, italic = false): number {
+  if (height < 0) return -height;
+  if (height === 0) return 12;
+  const f = metafileFont(family, bold, italic);
+  return f && f.ascent + f.descent > 0 ? (height * f.unitsPerEm) / (f.ascent + f.descent) : height * 0.85;
+}
+
+/** Cell ascent and descent of a font as fractions of the em (0.8 / 0.2 without the font file). */
+export function cellOf(family: string, bold = false, italic = false): { ascent: number; descent: number } {
+  const f = metafileFont(family, bold, italic);
+  return f ? { ascent: f.ascent / f.unitsPerEm, descent: f.descent / f.unitsPerEm } : { ascent: 0.8, descent: 0.2 };
 }
 
 /** Advances in em of glyph indices; null when the font is not registered. */

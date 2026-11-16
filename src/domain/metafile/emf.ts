@@ -87,7 +87,7 @@ function record(g: Gdi, type: number, r: Bytes): void {
     case 31: g.scaleViewportExt(r.i32(8), r.i32(12), r.i32(16), r.i32(20)); break;
     case 32: g.scaleWindowExt(r.i32(8), r.i32(12), r.i32(16), r.i32(20)); break;
     case 17: g.setMapMode(r.u32(8)); break;
-    case 18: d.bkMode = r.u32(8); break;
+    case 18: g.setBkMode(r.u32(8)); break;
     case 21: d.stretchMode = r.u32(8); break; // SETSTRETCHBLTMODE
     case 19: d.polyFill = r.u32(8); break;
     case 20: d.rop2 = r.u32(8); break;
@@ -109,8 +109,10 @@ function record(g: Gdi, type: number, r: Bytes): void {
       const cosmetic = (style & 0xf0000) === 0;
       const cap = style & 0xf00;
       const join = style & 0xf000;
+      const nUser = (style & 0xf) === 7 ? Math.min(r.u32(48), 16) : 0;
+      const user = nUser ? Array.from({ length: nUser }, (_, i) => r.u32(52 + i * 4)) : undefined;
       g.setObject(r.u32(8), { k: 'pen', pen: {
-        style: brush === BS_NULL ? PS_NULL : style & 0xf, width, color: colorref(r.u32(40)), cosmetic,
+        style: brush === BS_NULL ? PS_NULL : style & 0xf, width, color: colorref(r.u32(40)), cosmetic, ext: true, user,
         cap: cap === 0x100 ? 'square' : cap === 0x200 ? 'butt' : 'round', join: join === 0x1000 ? 'bevel' : join === 0x2000 ? 'miter' : 'round',
       } });
       break;

@@ -22,6 +22,8 @@ const MAX_ITEMS = 200_000;
 const MAX_EDGES = 2_000_000;
 
 type RGBA = [number, number, number, number];
+/** A pen as the rasteriser sees it: colour, width and dash lengths in device units, the cap of its ends. */
+export interface Stroke { c: RGBA; width: number; dash?: number[]; cap?: 'butt' | 'round' | 'square' }
 export type Paint =
   | { k: 'solid'; c: RGBA }
   | { k: 'hatch'; style: number; fg: RGBA; bg: RGBA | null }
@@ -29,7 +31,7 @@ export type Paint =
   | { k: 'linear'; x1: number; y1: number; x2: number; y2: number; stops: [number, RGBA][]; inv: Xf; pad: boolean };
 
 type Item =
-  | { k: 'path'; d: string; fill: Paint | null; stroke: { c: RGBA; width: number } | null; eo: boolean; blend?: string; clip: Clip }
+  | { k: 'path'; d: string; fill: Paint | null; stroke: Stroke | null; eo: boolean; blend?: string; clip: Clip }
   | { k: 'image'; m: Xf; img: Rgba; clip: Clip; blend?: string; invert?: boolean; opacity?: number };
 
 export const rgbaOf = (c: Color): RGBA => { const v = parseInt(c.rgb.slice(1), 16) || 0; return [(v >> 16) & 255, (v >> 8) & 255, v & 255, Math.round(Math.max(0, Math.min(1, c.a)) * 255)]; };
@@ -52,7 +54,7 @@ export class Recorder {
   private budget = FLOOD_BUDGET;
   private masks = new Map<ClipNode, Uint8Array>();
 
-  path(d: string, fill: Paint | null, stroke: { c: RGBA; width: number } | null, eo: boolean, blend: string | undefined, clip: Clip) {
+  path(d: string, fill: Paint | null, stroke: Stroke | null, eo: boolean, blend: string | undefined, clip: Clip) {
     if (this.items.length < MAX_ITEMS) this.items.push({ k: 'path', d, fill, stroke, eo, blend, clip });
   }
   image(m: Xf, img: Rgba, clip: Clip, o: { blend?: string; invert?: boolean; opacity?: number } = {}) {
@@ -65,7 +67,7 @@ export class Recorder {
    * picture frame in device units and `unitsPerPx` the size of one pixel in device units. Returns the
    * filled area as path data in device units (rectangles), or null when nothing is filled.
    */
-  flood(x: number, y: number, color: RGBA, surface: boolean, view: [number, number, number, number] | null, unitsPerPx: number, clip: Clip): string | null {
+  flood(x: number, y: number, color: RGBA, surface: boolean, view: [number, number, number, number] | null, unitsPerPx: number, clip: Clip, page: RGBA | null = null): string | null {
     if (++this.floods > MAX_FLOODS) { this.warn('more flood fills than the limit; the rest are skipped'); return null; }
     if (!this.buf) {
       if (!view || !(view[2] > 0 && view[3] > 0)) { this.warn('a flood fill with no picture frame is skipped'); return null; }
@@ -82,8 +84,16 @@ export class Recorder {
     const cm = this.clipMask(clip);
     const buf = this.buf;
     const target = (color[0] << 16) | (color[1] << 8) | color[2];
-    // An unpainted pixel shows the white page the picture is drawn on.
-    const colorAt = (i: number) => (buf[i * 4 + 3] < 128 ? 0xffffff : (buf[i * 4] << 16) | (buf[i * 4 + 1] << 8) | buf[i * 4 + 2]);
+    // A pixel nothing was drawn on is unknown (-1: it matches no colour) unless the caller knows the page
+    // (`page`, see Gdi.floodFill); a partly transparent one is seen over the page when it is known.
+    const pg = page ? (page[0] << 16) | (page[1] << 8) | page[2] : -1;
+    const colorAt = (i: number) => {
+      const a = buf[i * 4 + 3];
+      if (a === 0) return pg;
+      if (a === 255 || !page) return (buf[i * 4] << 16) | (buf[i * 4 + 1] << 8) | buf[i * 4 + 2];
+      const f = a / 255, mix = (q: number) => Math.round(buf[i * 4 + q] * f + page[q] * (1 - f));
+      return (mix(0) << 16) | (mix(1) << 8) | mix(2);
+    };
     const seen = new Uint8Array(W * H);
     const ok = (i: number) => !seen[i] && (!cm || cm[i]) && (surface ? colorAt(i) === target : colorAt(i) !== target);
     if (!ok(sy * W + sx)) return null;
@@ -148,7 +158,7 @@ export class Recorder {
       this.compose(cov, cm, it.fill, it.blend);
     }
     if (it.stroke && it.stroke.c[3] > 0) {
-      const cov = this.strokeCover(polys, it.d, it.stroke.width * this.k);
+      const cov = this.strokeCover(polys, it.stroke);
       this.compose(cov, cm, { k: 'solid', c: it.stroke.c }, it.blend);
     }
   }
@@ -226,44 +236,88 @@ export class Recorder {
     return cov;
   }
 
-  private strokeCover(polys: { pts: number[]; closed: boolean }[], _d: string, width: number): Uint8Array {
+  /**
+   * The pixels a pen covers. A hairline (at most 1.5 px) is GDI's cosmetic line: Bresenham from pixel to
+   * pixel, the last pixel of an open figure left out, a dash pattern stepping one unit per pixel along the
+   * figure (it starts afresh with each figure). A wider pen is segment quads with round joins and the
+   * figure's caps; a dash pattern is measured along the figure in pixels and each dash is stroked as its
+   * own open piece with the caps.
+   */
+  private strokeCover(polys: { pts: number[]; closed: boolean }[], st: Stroke): Uint8Array {
     const { W, H } = this;
+    const width = st.width * this.k;
     const cov = new Uint8Array(W * H);
     const set = (x: number, y: number) => { if (x >= 0 && y >= 0 && x < W && y < H) cov[y * W + x] = 1; };
+    const dash = st.dash?.length ? dashPattern(st.dash.map((v) => v * this.k), width <= 1.5) : null;
     for (const { pts, closed } of polys) {
       const m = pts.length / 2;
-      const segs = closed ? m : m - 1;
       if (m === 1) { set(Math.floor(pts[0]), Math.floor(pts[1])); continue; }
-      for (let j = 0; j < segs; j++) {
-        const ax = pts[j * 2], ay = pts[j * 2 + 1], bx = pts[((j + 1) % m) * 2], by = pts[((j + 1) % m) * 2 + 1];
-        if (width <= 1.5) {
-          // Bresenham between the pixels holding the end points (GDI's cosmetic pen).
+      const segs = closed ? m : m - 1;
+      if (width <= 1.5) {
+        const pos = { i: 0, left: dash ? dash[0] : 0, on: true };
+        for (let j = 0; j < segs; j++) {
+          const ax = pts[j * 2], ay = pts[j * 2 + 1], bx = pts[((j + 1) % m) * 2], by = pts[((j + 1) % m) * 2 + 1];
           let x0 = Math.floor(ax), y0 = Math.floor(ay);
           const x1 = Math.floor(bx), y1 = Math.floor(by);
           const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), stx = x0 < x1 ? 1 : -1, sty = y0 < y1 ? 1 : -1;
           let err = dx + dy, guard = 0;
           for (;;) {
-            set(x0, y0);
-            if ((x0 === x1 && y0 === y1) || guard++ > 4 * (W + H)) break;
+            if (x0 === x1 && y0 === y1) break; // the end pixel belongs to the next segment (or is left out)
+            if (!dash || pos.on) set(x0, y0);
+            if (dash) step(dash, pos, 1);
+            if (guard++ > 4 * (W + H)) break;
             const e2 = 2 * err;
             if (e2 >= dy) { err += dy; x0 += stx; }
             if (e2 <= dx) { err += dx; y0 += sty; }
           }
-        } else {
-          const len = Math.hypot(bx - ax, by - ay);
-          if (len > 0) {
-            const nx = (-(by - ay) / len) * width / 2, ny = ((bx - ax) / len) * width / 2;
-            this.cover([{ pts: [ax + nx, ay + ny, bx + nx, by + ny, bx - nx, by - ny, ax - nx, ay - ny] }], false, cov);
-          }
-          const r = width / 2, steps = Math.max(8, Math.min(32, Math.ceil(r)));
-          const disc: number[] = [];
-          for (let s = 0; s < steps; s++) { const t = (s / steps) * Math.PI * 2; disc.push(bx + r * Math.cos(t), by + r * Math.sin(t)); }
-          this.cover([{ pts: disc }], false, cov);
-          if (j === 0) this.cover([{ pts: disc.map((v, q) => v - (q & 1 ? by - ay : bx - ax)) }], false, cov);
+        }
+        continue;
+      }
+      if (!dash) { this.widePiece(pts, closed, width, st.cap ?? 'round', cov); continue; }
+      // Dashes along the figure.
+      const pos = { i: 0, left: dash[0], on: true };
+      let piece: number[] = [];
+      const flush = () => { if (piece.length >= 4) this.widePiece(piece, false, width, st.cap ?? 'butt', cov); piece = []; };
+      for (let j = 0; j < segs; j++) {
+        const ax = pts[j * 2], ay = pts[j * 2 + 1], bx = pts[((j + 1) % m) * 2], by = pts[((j + 1) % m) * 2 + 1];
+        const len = Math.hypot(bx - ax, by - ay);
+        let t = 0, guard = 0;
+        while (t < len && guard++ < 100_000) {
+          const run = Math.min(pos.left, len - t);
+          const p0 = [ax + ((bx - ax) * t) / len, ay + ((by - ay) * t) / len], p1 = [ax + ((bx - ax) * (t + run)) / len, ay + ((by - ay) * (t + run)) / len];
+          if (pos.on) { if (!piece.length) piece.push(p0[0], p0[1]); piece.push(p1[0], p1[1]); }
+          t += run;
+          if (run >= pos.left) { if (pos.on) flush(); step(dash, pos, run); } else pos.left -= run;
         }
       }
+      flush();
     }
     return cov;
+  }
+
+  /** A wide pen along one figure: segment quads, round joins, and the caps at the ends of an open figure. */
+  private widePiece(pts: number[], closed: boolean, width: number, cap: 'butt' | 'round' | 'square', cov: Uint8Array) {
+    const m = pts.length / 2;
+    const segs = closed ? m : m - 1;
+    const r = width / 2, steps = Math.max(8, Math.min(32, Math.ceil(r)));
+    const disc = (cx: number, cy: number) => {
+      const d: number[] = [];
+      for (let s = 0; s < steps; s++) { const t = (s / steps) * Math.PI * 2; d.push(cx + r * Math.cos(t), cy + r * Math.sin(t)); }
+      this.cover([{ pts: d }], false, cov);
+    };
+    for (let j = 0; j < segs; j++) {
+      let ax = pts[j * 2], ay = pts[j * 2 + 1], bx = pts[((j + 1) % m) * 2], by = pts[((j + 1) % m) * 2 + 1];
+      const len = Math.hypot(bx - ax, by - ay);
+      if (len > 0) {
+        const ux = (bx - ax) / len, uy = (by - ay) / len;
+        if (!closed && cap === 'square') { if (j === 0) { ax -= ux * r; ay -= uy * r; } if (j === segs - 1) { bx += ux * r; by += uy * r; } }
+        const nx = -uy * r, ny = ux * r;
+        this.cover([{ pts: [ax + nx, ay + ny, bx + nx, by + ny, bx - nx, by - ny, ax - nx, ay - ny] }], false, cov);
+      }
+      const last = j === segs - 1;
+      if (closed || !last || cap === 'round') disc(pts[((j + 1) % m) * 2], pts[((j + 1) % m) * 2 + 1]); // a join (or the round end cap)
+      if (!closed && j === 0 && cap === 'round') disc(pts[0], pts[1]);
+    }
   }
 
   private clipMask(c: Clip): Uint8Array | null {
@@ -346,6 +400,22 @@ export class Recorder {
       if (it.invert) c = [255 - c[0], 255 - c[1], 255 - c[2], c[3]];
       if (c[3] > 0) put(buf, i, c, it.blend);
     }
+  }
+}
+
+/** A dash array (pixels) as whole steps for a hairline (at least one pixel each), doubled when its length is odd, as GDI and SVG repeat it. */
+function dashPattern(d: number[], hairline: boolean): number[] {
+  let p = d.map((v) => (hairline ? Math.max(1, Math.round(v)) : Math.max(v, 1e-3)));
+  if (p.length % 2) p = p.concat(p);
+  return p.reduce((a, v) => a + v, 0) > 0 ? p.slice(0, 64) : [1, 0];
+}
+/** Advances a dash position by `n` pixels. */
+function step(p: number[], pos: { i: number; left: number; on: boolean }, n: number) {
+  let guard = 0;
+  while (n > 0 && guard++ < 10_000) {
+    if (pos.left > n) { pos.left -= n; return; }
+    n -= pos.left;
+    pos.i = (pos.i + 1) % p.length; pos.left = p[pos.i]; pos.on = pos.i % 2 === 0;
   }
 }
 

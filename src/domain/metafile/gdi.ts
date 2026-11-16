@@ -4,12 +4,27 @@
 import { apply, compose, scaleOf, type Xf, type Bytes } from './bytes';
 import { hex, num, Out, PathData, xmlText, BIG, type Clip, type Color, type Fill, type Stroke } from './out';
 import { textWidth } from './metrics';
-import { glyphAdvancesEm, glyphsToText } from './fonts';
+import { cellOf, emOfHeight, glyphAdvancesEm, glyphsToText } from './fonts';
+import { baselineOrigins, charAdvances, textCoverage } from './textraster';
 import { rgbaOf } from './raster';
 import { cropRgba, pngDataUrl, type Dib, type Rgba } from './png';
+import { decodedImage } from './decode';
 
-export interface GdiPen { style: number; width: number; color: Color; cap: 'butt' | 'round' | 'square'; join: 'miter' | 'round' | 'bevel'; cosmetic: boolean }
-export interface GdiBrush { style: number; color: Color; hatch: number; pattern?: { href: string; w: number; h: number; img?: Rgba } }
+export interface GdiPen {
+  style: number; width: number; color: Color; cap: 'butt' | 'round' | 'square'; join: 'miter' | 'round' | 'bevel'; cosmetic: boolean;
+  /** Made by ExtCreatePen (its dashes leave the gaps alone whatever the background mode). */
+  ext?: boolean;
+  /** PS_USERSTYLE dash and gap lengths (style units for a cosmetic pen, logical units for a geometric one). */
+  user?: number[];
+}
+
+/**
+ * GDI's dash patterns (as Wine's dibdrv reproduces them, dlls/win32u/dibdrv/objects.c, LGPL; the numbers
+ * only): a cosmetic (one-pixel) pen counts pixels, a geometric pen counts pen widths.
+ */
+const DASH_COSMETIC = [[18, 6], [3, 3], [9, 6, 3, 6], [9, 3, 3, 3, 3, 3]];
+const DASH_GEOMETRIC = [[3, 1], [1, 1], [3, 1, 1, 1], [3, 1, 1, 1, 1, 1]];
+export interface GdiBrush { style: number; color: Color; hatch: number; pattern?: { href: string; w: number; h: number; img?: Rgba; bytes?: Uint8Array } }
 export interface GdiFont { family: string; height: number; weight: number; italic: boolean; underline: boolean; strike: boolean; charset: number; escapement: number }
 export type GdiObject = { k: 'pen'; pen: GdiPen } | { k: 'brush'; brush: GdiBrush } | { k: 'font'; font: GdiFont } | { k: 'region'; rects: Rect[] } | { k: 'other' };
 export type Rect = [number, number, number, number];
@@ -118,6 +133,9 @@ export class Gdi {
   private lastPath = '';
   /** Window org / ext as first set, for the WMF view box. */
   winSeen: { org?: [number, number]; ext?: [number, number] } = {};
+  /** The file itself set an OPAQUE background mode (see floodFill). */
+  private bkOpaqueSet = false;
+  setBkMode(m: number) { this.dc.bkMode = m; if (m === 2) this.bkOpaqueSet = true; }
   /** The picture frame in device units, as far as it is known while playing (for flood fills). */
   frameHint: () => [number, number, number, number] | null = () => null;
 
@@ -213,7 +231,7 @@ export class Gdi {
   private fill(b: GdiBrush = this.dc.brush): Fill {
     if (b.style === BS_NULL) return null;
     if (b.style === BS_HATCHED) return { ref: this.out.hatch(b.hatch, b.color, this.dc.bkMode === 2 ? this.dc.bkColor : null) };
-    if (b.pattern && (b.style === BS_PATTERN || b.style === BS_DIBPATTERN || b.style === BS_DIBPATTERNPT)) return { ref: this.out.imagePattern(b.pattern.href, b.pattern.w, b.pattern.h, undefined, b.pattern.img) };
+    if (b.pattern && (b.style === BS_PATTERN || b.style === BS_DIBPATTERN || b.style === BS_DIBPATTERNPT)) return { ref: this.out.imagePattern(b.pattern.href, b.pattern.w, b.pattern.h, undefined, b.pattern.img, b.pattern.bytes) };
     return { color: b.color };
   }
   private stroke(): Stroke | null {
@@ -223,8 +241,18 @@ export class Gdi {
     const s = scaleOf(this.xf());
     const hr = this.out.hair();
     const width = p.cosmetic || p.width <= 0 ? hr : Math.max(p.width * s, 0.25 * hr);
-    const u = Math.max(width, hr);
-    const dash = style === 1 ? [u * 6, u * 2] : style === 2 ? [u, u * 2] : style === 3 ? [u * 6, u * 2, u, u * 2] : style === 4 ? [u * 6, u * 2, u, u * 2, u, u * 2] : undefined;
+    const geometric = !!p.ext && !p.cosmetic;
+    let dash: number[] | undefined;
+    if (style >= 1 && style <= 4) {
+      if (geometric) {
+        // In pen widths; with round or square caps each dash is shortened by a width (its caps add it back).
+        dash = DASH_GEOMETRIC[style - 1].map((v, i) => (p.cap === 'butt' ? v * width : i % 2 ? (v + 1) * width : Math.max(v - 1, 0.001) * width));
+      } else if (width <= hr * 1.5) dash = DASH_COSMETIC[style - 1].map((v) => v * hr);
+      // A wide pen made by CreatePen is drawn solid (GDI dashes only one-pixel cosmetic pens).
+    } else if (style === 7 && p.user?.length) {
+      const d = p.user.slice(0, 16).map((v) => Math.max(v, 0) * (geometric ? s : 3 * hr)); // a style unit is 3 pixels on a display
+      if (d.some((v) => v > 0)) dash = d.map((v) => Math.max(v, 0.001));
+    } else if (style === 8) dash = [hr, hr]; // PS_ALTERNATE: every other pixel
     return { color: p.color, width, dash, cap: p.cosmetic ? 'butt' : p.cap, join: p.join };
   }
 
@@ -234,7 +262,19 @@ export class Gdi {
     if (this.pathOpen) { this.pathD += pd.d; this.figure = false; return; }
     if (this.dc.rop2 === 11) return; // R2_NOP
     const r = this.rop2Paint(fill ? this.fill() : null, stroke ? this.stroke() : null);
-    this.out.drawPath(pd, r.fill, r.stroke, this.dc.polyFill === 1, r.blend);
+    this.drawWithGaps(pd, r.fill, r.stroke, r.blend);
+  }
+  /**
+   * A dashed pen made by CreatePen draws its gaps in the background colour when the background mode is
+   * OPAQUE (GDI fills them like a hatch brush's background); ExtCreatePen pens leave them alone.
+   */
+  private drawWithGaps(pd: PathData, fill: Fill, stroke: Stroke | null, blend?: string) {
+    if (stroke?.dash && !this.dc.pen.ext && this.dc.bkMode === 2) {
+      this.out.drawPath(pd, fill, { ...stroke, dash: undefined, color: this.dc.bkColor }, this.dc.polyFill === 1, blend);
+      this.out.drawPath(pd, null, stroke, this.dc.polyFill === 1, blend);
+      return;
+    }
+    this.out.drawPath(pd, fill, stroke, this.dc.polyFill === 1, blend);
   }
   /**
    * The binary raster operation (SetROP2) applied to the pen and brush. Operations that read the
@@ -359,7 +399,7 @@ export class Gdi {
     const pd = this.pathData();
     if (!pd) return;
     const r = this.rop2Paint(fill ? this.fill() : null, stroke ? this.stroke() : null);
-    this.out.drawPath(pd, r.fill, r.stroke, this.dc.polyFill === 1, r.blend);
+    this.drawWithGaps(pd, r.fill, r.stroke, r.blend);
     this.lastPath = '';
   }
   /** Combines `pd` into the clip: RGN_AND 1, OR 2, XOR 3, DIFF 4 (the clip minus the shape), COPY 5. All exact, nested or not. */
@@ -396,6 +436,14 @@ export class Gdi {
    * (FLOODFILLBORDER), true fills the area of exactly that colour (FLOODFILLSURFACE), with the current
    * brush. The pixels drawn so far come from the rasteriser (raster.ts), which records only in files that
    * hold a flood fill; the filled area is drawn as pixel rectangles at this point of the drawing order.
+   *
+   * The page under the picture: a flood fill reads the device, and what the device held before the
+   * picture was played (a white page, a slide's background, another picture) is not in the file. So a
+   * pixel the file has not drawn is unknown: a border fill runs over it (it is not the border colour), a
+   * surface fill stops at it. Only when the file itself has set an OPAQUE background mode (SetBkMode
+   * OPAQUE played before the flood, and still in force) does an undrawn pixel count as the background
+   * colour, as if the page had been erased with it; GDI's default mode, which a file did not ask for,
+   * does not count.
    */
   floodFill(x: number, y: number, color: Color, surface: boolean) {
     if (this.out.muted || this.pathOpen || this.out.full) return;
@@ -406,7 +454,8 @@ export class Gdi {
     const [dx, dy] = apply(this.xf(), x, y);
     const o = this.out;
     const view = this.frameHint() ?? (Number.isFinite(o.minX) && o.maxX > o.minX && o.maxY > o.minY ? [o.minX, o.minY, o.maxX - o.minX, o.maxY - o.minY] as [number, number, number, number] : null);
-    const d = rec.flood(dx, dy, rgbaOf(color), surface, view, this.out.hair(), this.out.clip);
+    const page = this.bkOpaqueSet && this.dc.bkMode === 2 ? rgbaOf(this.dc.bkColor) : null;
+    const d = rec.flood(dx, dy, rgbaOf(color), surface, view, this.out.hair(), this.out.clip, page);
     for (const w of rec.warnings) if (!o.warnings.includes(w)) o.warnings.push(w);
     if (d) this.out.drawPath(this.out.rawPath(d), fill, null, false, undefined, true);
   }
@@ -445,8 +494,9 @@ export class Gdi {
     if (align & 1) [x, y] = d.cur;
     const m = this.xf();
     const s = scaleOf(m);
-    const em = f.height < 0 ? -f.height : f.height > 0 ? f.height * 0.85 : 12;
-    const size = Math.max(em * s, 0.5);
+    const bold = f.weight >= 600;
+    const size = Math.max(emOfHeight(f.height, f.family, bold, f.italic) * s, 0.5);
+    const cell = cellOf(f.family, bold, f.italic);
     const [px, py] = apply(m, x, y);
     const rot = (Math.atan2(d.world[1], d.world[0]) * 180) / Math.PI - f.escapement / 10;
     if (opaque && bounds && d.bkMode === 2) {
@@ -455,7 +505,7 @@ export class Gdi {
       pd.m(...apply(m, l, t)).l(...apply(m, r, t)).l(...apply(m, r, b)).l(...apply(m, l, b)).z();
       this.out.drawPath(pd, { color: d.bkColor }, null);
     }
-    const base = (align & 24) === 24 ? 0 : align & 8 ? -size * 0.2 : size * 0.8;
+    const base = (align & 24) === 24 ? 0 : align & 8 ? -size * cell.descent : size * cell.ascent;
     const h = align & 6;
     let xs = '0', anchor = h === 6 ? 'middle' : h === 2 ? 'end' : 'start';
     let total = 0;
@@ -481,6 +531,15 @@ export class Gdi {
       + `${f.weight >= 600 ? ' font-weight="bold"' : ''}${f.italic ? ' font-style="italic"' : ''}${deco ? ` text-decoration="${deco}"` : ''}`
       + `${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''} fill="${c.rgb}">${xmlText(str)}</text>`,
     );
+    if (this.out.recording) {
+      const chars = [...str];
+      const adv = dx && dx.length >= chars.length ? chars.map((_, i) => Math.abs(dx[i] * s)) : charAdvances(chars, f.family, size, bold, f.italic);
+      const sum = adv.reduce((a, v) => a + v, 0);
+      const angle = (rot * Math.PI) / 180, co = Math.cos(angle), si = Math.sin(angle);
+      const lx = h === 6 ? -sum / 2 : h === 2 ? -sum : 0;
+      const o = baselineOrigins(px + co * lx - si * base, py + si * lx + co * base, adv, angle);
+      this.out.recordText(textCoverage({ family: f.family, bold, italic: f.italic, size, chars, origins: o, advances: adv, angle, underline: f.underline, strike: f.strike }), c);
+    }
     if (align & 1) d.cur = [x + (total || measured) / (s || 1), y];
   }
 
@@ -497,10 +556,10 @@ export class Gdi {
     const d = this.dc, f = d.font, align = d.textAlign;
     if (align & 1) [x, y] = d.cur;
     const m = this.xf(), s = scaleOf(m);
-    const em = f.height < 0 ? -f.height : f.height > 0 ? f.height * 0.85 : 12;
-    const size = Math.max(em * s, 0.5);
-    const [px, py] = apply(m, x, y);
     const bold = f.weight >= 600;
+    const size = Math.max(emOfHeight(f.height, f.family, bold, f.italic) * s, 0.5);
+    const cell = cellOf(f.family, bold, f.italic);
+    const [px, py] = apply(m, x, y);
     const ids = glyphs.slice(0, n);
     const chars = glyphsToText(f.family, ids, bold, f.italic);
     const own = glyphAdvancesEm(f.family, ids, bold, f.italic);
@@ -508,8 +567,13 @@ export class Gdi {
     const total = adv.reduce((a, v) => a + v, 0);
     const h = align & 6;
     const start = h === 6 ? -total / 2 : h === 2 ? -total : 0;
-    const base = (align & 24) === 24 ? 0 : align & 8 ? -size * 0.2 : size * 0.8;
+    const base = (align & 24) === 24 ? 0 : align & 8 ? -size * cell.descent : size * cell.ascent;
     const rot = (Math.atan2(d.world[1], d.world[0]) * 180) / Math.PI - f.escapement / 10;
+    if (this.out.recording) {
+      const angle = (rot * Math.PI) / 180, co = Math.cos(angle), si = Math.sin(angle);
+      const o = baselineOrigins(px + co * start - si * base, py + si * start + co * base, adv, angle);
+      this.out.recordText(textCoverage({ family: f.family, bold, italic: f.italic, size, glyphs: ids, origins: o, advances: adv, angle, underline: f.underline, strike: f.strike }), d.textColor);
+    }
     let o = start, str = '';
     const xs: string[] = [];
     const pd = this.out.path();
@@ -565,7 +629,7 @@ export class Gdi {
     if (!opt.para && (!dw || !dh)) return;
     if (!iw || !ih) return;
     const pr = opt.para;
-    const m = pr
+    let m = pr
       ? compose(this.xf(), [(pr[1][0] - pr[0][0]) / iw, (pr[1][1] - pr[0][1]) / iw, (pr[2][0] - pr[0][0]) / ih, (pr[2][1] - pr[0][1]) / ih, pr[0][0], pr[0][1]])
       : compose(this.xf(), [dw / iw, 0, 0, dh / ih, dx, dy]);
     for (const [px, py] of [[0, 0], [iw, 0], [iw, ih], [0, ih]]) this.out.grow(...apply(m, px, py));
@@ -575,6 +639,11 @@ export class Gdi {
     if (mode?.invert) extra += ` filter="url(#${this.out.invertFilter()})"`;
     if (mode?.blend) extra += ` style="mix-blend-mode:${mode.blend}"`;
     this.out.element(`<image href="${href}" width="${iw}" height="${ih}" preserveAspectRatio="none" transform="matrix(${m.map(num).join(' ')})"${extra}/>`);
+    if (!drawn && dib.bytes && this.out.recording) {
+      // A PNG / JPEG blit: its decoded pixels (at their own size) for the flood-fill rasteriser.
+      const dec = decodedImage(dib.bytes);
+      if (dec) { drawn = dec; m = compose(m, [iw / dec.w, 0, 0, ih / dec.h, 0, 0]); }
+    }
     if (drawn) this.out.recordImage(m, drawn, { opacity: opt.opacity, invert: mode?.invert, blend: mode?.blend });
     if (unmasked && opt.mask && opt.background !== undefined) this.maskBackground(unmasked, opt.mask, opt.background, m);
   }
@@ -686,7 +755,9 @@ export function sourceRop(rop: number): { invert?: boolean; blend?: string } | n
 
 /** A brush pattern from a decoded bitmap. */
 export function patternBrush(dib: Dib | null): GdiBrush | null {
-  if (!dib || dib.encoded) return null;
+  if (!dib) return null;
+  // A PNG / JPEG pattern (BI_PNG, BI_JPEG) is drawn as it is; its pixels are decoded only for a flood fill (out.ts).
+  if (dib.encoded) return { style: BS_DIBPATTERN, color: BLACK, hatch: 0, pattern: { href: dib.encoded, w: dib.img.w, h: dib.img.h, bytes: dib.bytes } };
   return { style: BS_DIBPATTERN, color: BLACK, hatch: 0, pattern: { href: pngDataUrl(dib.img), w: dib.img.w, h: dib.img.h, img: dib.img } };
 }
 

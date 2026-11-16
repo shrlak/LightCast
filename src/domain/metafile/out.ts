@@ -3,6 +3,7 @@
 import { type Xf } from './bytes';
 import { Recorder, rgbaOf, invertXf, type Paint } from './raster';
 import type { Rgba } from './png';
+import { decodedImage } from './decode';
 
 /** Elements kept from one file; past this the picture is cut off where it stands. */
 export const MAX_ITEMS = 200_000;
@@ -133,7 +134,7 @@ export class Out {
     const thin = crisp || fill && !stroke && Number.isFinite(extent) && extent < this.hair();
     if (this.recorder && !this.muted && !this.full) {
       const paint: Paint | null = !fill ? null : 'ref' in fill ? this.recorder.paints.get(fill.ref) ?? { k: 'solid', c: [128, 128, 128, 255] } : { k: 'solid', c: rgbaOf(fill.color) };
-      this.recorder.path(p.d, paint, stroke ? { c: rgbaOf(stroke.color), width: stroke.width } : null, evenOdd, blend, this.clipState);
+      this.recorder.path(p.d, paint, stroke ? { c: rgbaOf(stroke.color), width: stroke.width, dash: stroke.dash, cap: stroke.cap } : null, evenOdd, blend, this.clipState);
     }
     this.push(`<path d="${p.d}"${this.fillAttrs(fill, evenOdd)}${this.strokeAttrs(stroke)}${thin ? ' shape-rendering="crispEdges"' : ''}${blend ? ` style="mix-blend-mode:${blend}"` : ''}/>`);
   }
@@ -150,6 +151,12 @@ export class Out {
   /** A bitmap just drawn as an element, kept for the rasteriser when one is recording. */
   recordImage(m: Xf, img: Rgba, o: { blend?: string; invert?: boolean; opacity?: number } = {}) {
     if (this.recorder && !this.muted && !this.full) this.recorder.image(m, img, this.clipState, o);
+  }
+  /** True when drawing is being recorded for the flood-fill rasteriser (text callers then work out what their text covers). */
+  get recording() { return !!this.recorder && !this.muted && !this.full; }
+  /** The area a piece of text covered (path data in device units, textraster.ts), kept for the rasteriser. */
+  recordText(d: string, color: Color) {
+    if (d && this.recording) this.recorder!.path(d, { k: 'solid', c: rgbaOf(color) }, null, false, undefined, this.clipState);
   }
   /** Raw element (text, image) drawn at once. */
   element(s: string) { this.push(s); }
@@ -262,12 +269,16 @@ export class Out {
     this.recorder?.paints.set(id, { k: 'hatch', style, fg: rgbaOf(fg), bg: bg ? rgbaOf(bg) : null });
     return id;
   }
-  imagePattern(href: string, w: number, h: number, xf?: Xf, img?: Rgba): string {
+  /**
+   * An image pattern: `img` its pixels when already decoded, else `bytes` (PNG / JPEG), decoded here only
+   * when the rasteriser needs them (decode.ts). A pattern whose pixels cannot be had (another format,
+   * damaged data, over the decode budget) counts as mid grey for flood fills.
+   */
+  imagePattern(href: string, w: number, h: number, xf?: Xf, img?: Rgba, bytes?: Uint8Array): string {
     const id = this.id('p');
     if (this.recorder) {
-      let avg: [number, number, number, number] = [128, 128, 128, 255];
-      if (img && img.px.length) { const s = [0, 0, 0, 0]; const n = img.px.length / 4; for (let i = 0; i < img.px.length; i++) s[i & 3] += img.px[i]; avg = s.map((v) => Math.round(v / n)) as typeof avg; }
-      this.recorder.paints.set(id, { k: 'pattern', img: img ?? null, w, h, xf: xf ?? null, avg });
+      const px = img && img.px.length >= img.w * img.h * 4 ? img : bytes ? decodedImage(bytes) : null;
+      this.recorder.paints.set(id, { k: 'pattern', img: px, w, h, xf: xf ?? null, avg: [128, 128, 128, 255] });
     }
     this.addDef(`<pattern id="${id}" width="${num(w)}" height="${num(h)}" patternUnits="userSpaceOnUse"${xf ? ` patternTransform="matrix(${xf.map(num).join(' ')})"` : ''}><image href="${href}" width="${num(w)}" height="${num(h)}" preserveAspectRatio="none"/></pattern>`);
     return id;

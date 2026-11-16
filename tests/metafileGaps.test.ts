@@ -7,6 +7,8 @@ import { metafileToSvg } from '../src/domain/metafile';
 import { addMetafileFont, clearMetafileFonts, fontWidthEm, metafileFont } from '../src/domain/metafile/fonts';
 import { textWidth } from '../src/domain/metafile/metrics';
 import { effectGuid } from '../src/domain/metafile/effects';
+import { decodePng } from '../src/domain/metafile/decode';
+import { encodePng } from '../src/domain/metafile/png';
 import { B, RED, BLUE, argb, comment, emf, emfBrush, emfFont, emfRec, emfSelect, plusHeader, plusRec, wmf, wmfRec } from './fixtures/metafileBytes';
 
 const rects = (d: string) => [...d.matchAll(/M([\d.]+) ([\d.]+)H([\d.]+)V([\d.]+)H/g)].map((m) => m.slice(1).map(Number));
@@ -30,7 +32,8 @@ describe('flood fills', () => {
   });
 
   it('FLOODFILLSURFACE fills only the area of exactly the given colour (an ellipse of white inside black)', () => {
-    const r = metafileToSvg(wmf(...frame, ...nullBrush, wmfRec(0x0418, 90, 190, 50, 120), ...redBrush, wmfRec(0x0548, 1, 0xffff, 0xff, 70, 155)))!;
+    // the inside of the ellipse is not drawn: it is white only because the file set an opaque white background
+    const r = metafileToSvg(wmf(...frame, wmfRec(0x0102, 2), ...nullBrush, wmfRec(0x0418, 90, 190, 50, 120), ...redBrush, wmfRec(0x0548, 1, 0xffff, 0xff, 70, 155)))!;
     const fill = /<path d="(M[^"]+)" fill="#ff0000" shape-rendering="crispEdges"\/>/.exec(r.svg)!;
     // an ellipse of radii 35 x 20: about pi * 35 * 20 = 2199 units, a little less inside the outline
     expect(area(fill[1])).toBeGreaterThan(1900);
@@ -149,28 +152,42 @@ describe('EMF+ image effects', () => {
   const guid = (s: string) => { const h = s.replace(/-/g, ''); const b = new B(); b.u32(parseInt(h.slice(0, 8), 16)).u16(parseInt(h.slice(8, 12), 16), parseInt(h.slice(12, 16), 16)); for (let i = 16; i < 32; i += 2) b.u8(parseInt(h.slice(i, i + 2), 16)); return b.a; };
   const effect = (kind: Parameters<typeof effectGuid>[0], body: (b: B) => void) => { const p = new B(); body(p); return plusRec(0x4038, 0, (b) => b.u8(...guid(effectGuid(kind))).u32(p.length).u8(...p.a)); };
   const draw = (effectOn: boolean) => plusRec(0x401b, 2 | (effectOn ? 0x2000 : 0), (b) => b.u32(0xff, 2).f32(0, 0, 2, 2).u32(3).f32(10, 10, 50, 10, 10, 50));
-  it('a colour matrix effect is an feColorMatrix on the image, transposed from the GDI+ row-vector form', () => {
+  // The same picture as a PNG inside the EMF+ image object (compressed): its pixels are not decoded for most effects.
+  const pngImage = plusRec(0x4008, (5 << 8) | 2, (b) => {
+    const png = encodePng({ w: 2, h: 2, px: new Uint8ClampedArray([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 220, 50, 200, 255]) });
+    b.u32(0xdbc01002, 1, 2, 2, 0, 0x26200a, 1).u8(...png);
+  });
+  const pixelsOf = (svg: string) => decodePng(new Uint8Array(Buffer.from(/<image href="data:image\/png;base64,([^"]+)"/.exec(svg)![1], 'base64')))!;
+  it('a colour matrix effect on a bitmap is applied to its pixels in the GDI+ row-vector form; on a PNG it is an feColorMatrix', () => {
     const grey = [0.3, 0.3, 0.3, 0, 0, 0.59, 0.59, 0.59, 0, 0, 0.11, 0.11, 0.11, 0, 0, 0, 0, 0, 1, 0, 0.1, 0, 0, 0, 1];
     const svg = metafileToSvg(plusEmf(image, effect('matrix', (b) => b.f32(...grey)), draw(true)))!.svg;
-    const m = /<feColorMatrix type="matrix" values="([^"]+)"/.exec(svg)!;
+    const px = pixelsOf(svg);
+    // pixel 0 is red (B G R A = 0 0 255 255): 0.3 * 255 + 0.1 * 255 = 102 in red, 77 in green and blue
+    expect([...px.px.slice(0, 4)]).toEqual([102, 77, 77, 255]);
+    expect(svg).not.toContain('<filter');
+    const m = /<feColorMatrix type="matrix" values="([^"]+)"/.exec(metafileToSvg(plusEmf(pngImage, effect('matrix', (b) => b.f32(...grey)), draw(true)))!.svg)!;
     expect(m[1].split(' ').map(Number).slice(0, 5).map((v) => Math.round(v * 100) / 100)).toEqual([0.3, 0.59, 0.11, 0, 0.1]);
-    expect(svg).toMatch(/<image [^>]*filter="url\(#f\d+\)"/);
     // without the E flag the effect is not applied
-    expect(metafileToSvg(plusEmf(image, effect('matrix', (b) => b.f32(...grey)), draw(false)))!.svg).not.toContain('feColorMatrix');
+    expect(metafileToSvg(plusEmf(pngImage, effect('matrix', (b) => b.f32(...grey)), draw(false)))!.svg).not.toContain('feColorMatrix');
   });
-  it('blur, sharpen, lookup table, brightness / contrast, levels, HSL, tint, colour curve and balance become filter primitives', () => {
+  it('on a PNG, blur, sharpen, the lookup table and the channel curves become filter primitives (256-step tables), tint a matrix', () => {
     const cases: [Parameters<typeof effectGuid>[0], (b: B) => void, RegExp][] = [
       ['blur', (b) => b.f32(6).u32(0), /feGaussianBlur stdDeviation="2"/],
-      ['sharpen', (b) => b.f32(1).f32(50), /feConvolveMatrix order="3"/],
+      ['sharpen', (b) => b.f32(3).f32(50), /feGaussianBlur in="SourceGraphic" stdDeviation="1"[^>]*\/><feComposite [^>]*k2="1.5" k3="-0.5"/],
       ['lut', (b) => { for (let c = 0; c < 4; c++) for (let i = 0; i < 256; i++) b.u8(255 - i); }, /feFuncA type="table"/],
-      ['brightnessContrast', (b) => b.u32(50, 0), /feFuncR type="linear" slope="1" intercept="0.196"/],
+      ['brightnessContrast', (b) => b.u32(51, 0), /feFuncR type="table" tableValues="0.2 0.204 /],
       ['levels', (b) => b.u32(80, 0, 10), /feComponentTransfer><feFuncR type="table"/],
-      ['hsl', (b) => b.u32(90, 0, 0), /type="hueRotate" values="90"/],
       ['tint', (b) => b.u32(0, 50), /feColorMatrix type="matrix"/],
       ['colorCurve', (b) => b.u32(0, 1, 100), /<feFuncR type="table"[^/]*\/><\/feComponentTransfer>/],
-      ['colorBalance', (b) => b.u32(20, 0, 0), /feFuncR type="linear" slope="1" intercept="0.1"/],
+      ['colorBalance', (b) => b.u32(20, 0, 0), /feFuncR type="table" tableValues="0.102 0.106 /],
     ];
-    for (const [k, body, re] of cases) expect(metafileToSvg(plusEmf(image, effect(k, body), draw(true)))!.svg, k).toMatch(re);
+    for (const [k, body, re] of cases) {
+      const svg = metafileToSvg(plusEmf(pngImage, effect(k, body), draw(true)))!.svg;
+      expect(svg, k).toMatch(re);
+      expect(svg, k).toContain('data:image/png;base64,iVBOR'); // the PNG itself is kept
+    }
+    // a corrupt colour curve (an adjustment outside the enumeration, MS-EMFPLUS Appendix A <10>) is ignored
+    expect(metafileToSvg(plusEmf(pngImage, effect('colorCurve', (b) => b.u32(9, 0, 50)), draw(true)))!.svg).not.toContain('<filter');
   });
   it('red-eye correction changes the red pixels inside its areas', () => {
     const svg = metafileToSvg(plusEmf(image, effect('redEye', (b) => b.u32(1, 0, 0, 2, 1)), draw(true)))!.svg;

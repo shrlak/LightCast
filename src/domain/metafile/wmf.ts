@@ -73,7 +73,7 @@ function record(g: Gdi, fn: number, r: Bytes): void {
     case 0x001e: g.save(); break;
     case 0x0127: g.restore(s(0)); break;
     case 0x0103: g.setMapMode(u(0)); break;
-    case 0x0102: d.bkMode = u(0); break;
+    case 0x0102: g.setBkMode(u(0)); break;
     case 0x0107: d.stretchMode = u(0); break; // SETSTRETCHBLTMODE
     case 0x0104: d.rop2 = u(0); break;
     case 0x0106: d.polyFill = u(0); break;

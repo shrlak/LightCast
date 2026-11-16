@@ -4,10 +4,12 @@
 import { apply, compose, scaleOf, type Xf, Bytes } from './bytes';
 import { arcSegs } from './gdi';
 import { BIG, combineClips, hex, num, Out, xmlText, type Clip, type ClipNode, type Color, type Fill, type PathData, type Stroke } from './out';
-import { encodedImageUrl, pngDataUrl, type Rgba } from './png';
-import { effectFilter, effectPixels, parseEffect, type Effect } from './effects';
+import { cropRgba, encodedImageUrl, pngDataUrl, type Rgba } from './png';
+import { applyEffect, effectFilter, needsPixels, parseEffect, type Effect } from './effects';
+import { decodedImage } from './decode';
 import { textWidth } from './metrics';
 import { glyphAdvancesEm, glyphsToText } from './fonts';
+import { baselineOrigins, charAdvances, textCoverage } from './textraster';
 import { asEllipse, gradientStops, pathGradientImage, radialStops, type Blend, type C4, type PathGradient } from './gradient';
 
 /** Renders a nested metafile image to an SVG data URL (set by index.ts, which owns the whole reader). */
@@ -33,7 +35,7 @@ type BrushObj =
   | { k: 'pathGradient'; g: PathGradient; ops: Op[]; xf: Xf }
   | { k: 'texture'; img: ImageObj; xf: Xf };
 interface PenObj { width: number; unit: number; brush: BrushObj; dash: number; cap: number; join: number; miter: number; dashes?: number[] }
-interface ImageObj { href: string; w: number; h: number; px?: Rgba }
+interface ImageObj { href: string; w: number; h: number; px?: Rgba; /** PNG / JPEG bytes of a compressed image, decoded where the pixels are needed (decode.ts). */ bytes?: Uint8Array }
 interface FontObj { em: number; unit: number; style: number; family: string }
 interface FormatObj { align: number; lineAlign: number }
 type R4 = [number, number, number, number];
@@ -292,7 +294,7 @@ export class Plus {
     if (!b) return null;
     if (b.k === 'solid') return { color: b.c };
     if (b.k === 'hatch') return { ref: this.out.hatch(b.style, b.fg, b.bg) };
-    if (b.k === 'texture') return { ref: this.out.imagePattern(b.img.href, b.img.w, b.img.h, compose(m, b.xf)) };
+    if (b.k === 'texture') return { ref: this.out.imagePattern(b.img.href, b.img.w, b.img.h, compose(m, b.xf), b.img.px, b.img.bytes) };
     if (b.k === 'pathGradient') return this.pathFill(b, m);
     const [x, y, w] = b.rect;
     const stops = gradientStops(b.c0, b.c1, b.blend, b.gamma).map(([o, c]) => [o, colorOf4(c)] as [number, Color]);
@@ -371,20 +373,32 @@ export class Plus {
    * alternately in x and / or y), mode 4 (clamp) fills it with the clamp colour; with no attributes
    * it stays transparent.
    */
-  private place(img: ImageObj, src: [number, number, number, number], m: Xf, attrs: ImageAttrs | null = null, effect: Effect | null = null) {
-    const [sx, sy, sw, sh] = src;
+  private place(img: ImageObj, src0: [number, number, number, number], m: Xf, attrs: ImageAttrs | null = null, effect: Effect | null = null) {
+    let src = src0;
     let filt = '';
     if (effect) {
-      const fixed = img.px ? effectPixels(effect, img.px) : null;
-      if (fixed) img = { href: pngDataUrl(fixed), w: img.w, h: img.h, px: fixed };
-      const prim = effectFilter(effect);
-      if (prim) {
-        const id = this.out.id('f');
-        const box = effect.k === 'blur' && effect.expand ? 'x="-25%" y="-25%" width="150%" height="150%"' : 'x="0" y="0" width="100%" height="100%"';
-        this.out.addDef(`<filter id="${id}" color-interpolation-filters="sRGB" ${box}>${prim}</filter>`);
-        filt = ` filter="url(#${id})"`;
+      // On the pixels when they are at hand (a bitmap object, or a PNG / JPEG decoded for an effect a
+      // filter cannot match); else as SVG filter primitives on the image (effects.ts).
+      const raw = img.px ?? (needsPixels(effect) && img.bytes ? smallDecoded(img.bytes) : null);
+      const res = raw ? applyEffect(effect, raw) : null;
+      if (raw && res) {
+        const kx = img.w / raw.w, ky = img.h / raw.h;
+        img = { href: pngDataUrl(res.img), w: res.img.w * kx, h: res.img.h * ky, px: res.img };
+        if (res.dx || res.dy) { // an expanding blur: the bitmap grew by its radius on every side, and so does what is shown
+          m = compose(m, [1, 0, 0, 1, res.dx * kx, res.dy * ky]);
+          src = [src[0], src[1], src[2] - 2 * res.dx * kx, src[3] - 2 * res.dy * ky];
+        }
+      } else if (!raw) {
+        const f = effectFilter(effect, img.w, img.h);
+        if (f) {
+          const id = this.out.id('f');
+          this.out.addDef(`<filter id="${id}" color-interpolation-filters="sRGB" ${f.region}>${f.prim}</filter>`);
+          filt = ` filter="url(#${id})"`;
+        }
       }
     }
+    const [sx, sy, sw, sh] = src;
+    if (this.out.recording) this.recordImage(img, src, m, effect && filt ? effect : null);
     const whole = sx <= 0 && sy <= 0 && sx + sw >= img.w && sy + sh >= img.h;
     const inside = sx >= 0 && sy >= 0 && sx + sw <= img.w && sy + sh <= img.h;
     for (const [px, py] of [[sx, sy], [sx + sw, sy], [sx + sw, sy + sh], [sx, sy + sh]]) this.out.grow(...apply(m, px, py));
@@ -407,6 +421,18 @@ export class Plus {
       content += one(0, 0, false, false);
     }
     this.out.element(`<g transform="matrix(${m.map(num).join(' ')})"><svg x="${num(sx)}" y="${num(sy)}" width="${num(sw)}" height="${num(sh)}" viewBox="${num(sx)} ${num(sy)} ${num(sw)} ${num(sh)}" preserveAspectRatio="none" overflow="hidden">${content}</svg></g>`);
+  }
+  /** An image just placed, for the flood-fill rasteriser: its pixels (decoded if need be, through the effect a filter applied) within the source rectangle. */
+  private recordImage(img: ImageObj, src: [number, number, number, number], m: Xf, effect: Effect | null) {
+    let px = img.px ?? (img.bytes ? decodedImage(img.bytes) : null);
+    if (!px) return;
+    if (effect) { const r = applyEffect(effect, px); if (r) { m = compose(m, [1, 0, 0, 1, (r.dx * img.w) / px.w, (r.dy * img.h) / px.h]); px = r.img; } }
+    const kx = img.w / px.w, ky = img.h / px.h;
+    const [sx, sy, sw, sh] = src;
+    const x0 = Math.max(0, Math.floor(sx / kx)), y0 = Math.max(0, Math.floor(sy / ky)), x1 = Math.min(px.w, Math.ceil((sx + sw) / kx)), y1 = Math.min(px.h, Math.ceil((sy + sh) / ky));
+    if (x1 <= x0 || y1 <= y0) return;
+    const part = x0 > 0 || y0 > 0 || x1 < px.w || y1 < px.h ? cropRgba(px, x0, y0, x1 - x0, y1 - y0) : px;
+    if (part) this.out.recordImage(compose(m, [kx, 0, 0, ky, x0 * kx, y0 * ky]), part);
   }
   /** DrawImage: attributes id, source unit, source rectangle (floats), destination rectangle. */
   private drawImage(id: number, r: Bytes, compressed: boolean) {
@@ -469,6 +495,13 @@ export class Plus {
       const lx = anchor === 'middle' ? -lw / 2 : anchor === 'end' ? -lw : 0;
       this.out.grow(px + lx, py - size); this.out.grow(px + lx + lw, py + size * 0.3);
       this.out.element(`<text xml:space="preserve" transform="translate(${num(px)} ${num(py)})${rot ? ` rotate(${num(rot)})` : ''}" ${attrs}${anchor !== 'start' ? ` text-anchor="${anchor}"` : ''} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(line)}</text>`);
+      if (this.out.recording) {
+        const bold = (o.v.style & 1) !== 0, italic = (o.v.style & 2) !== 0;
+        const chars = [...line], adv = charAdvances(chars, o.v.family, size, bold, italic);
+        const sum = adv.reduce((t, v) => t + v, 0), a = (rot * Math.PI) / 180;
+        const off = anchor === 'middle' ? -sum / 2 : anchor === 'end' ? -sum : 0;
+        this.out.recordText(textCoverage({ family: o.v.family, bold, italic, size, chars, origins: baselineOrigins(px + Math.cos(a) * off, py + Math.sin(a) * off, adv, a), advances: adv, angle: a, underline: (o.v.style & 4) !== 0, strike: (o.v.style & 8) !== 0 }), c);
+      }
     });
   }
 
@@ -517,8 +550,21 @@ export class Plus {
       this.out.grow(x, y - size); this.out.grow(x + size, y + size * 0.3);
     }
     if (!pd.empty) this.out.drawPath(pd, { color: { rgb: c.rgb, a: Math.min(c.a, 0.3) } }, null);
+    if (this.out.recording) {
+      const origins = codes.map((_, i) => at(i));
+      const advances = codes.map((_, i) => (adv ? adv[i] * size : chars?.[i] ? textWidth(chars[i], o.v.family, size, bold, italic) : size * 0.55));
+      const angle = Math.atan2(dir[1], dir[0]);
+      const run = glyphs ? { glyphs: codes } : { chars: chars ?? [] };
+      this.out.recordText(textCoverage({ family: o.v.family, bold, italic, size, ...run, origins, advances, angle, underline: (o.v.style & 4) !== 0, strike: (o.v.style & 8) !== 0 }), c);
+    }
     if (str) this.out.element(`<text xml:space="preserve" x="${tx.map(num).join(' ')}" y="${ty.map(num).join(' ')}" ${attrs} fill="${c.rgb}"${c.a < 1 ? ` fill-opacity="${num(c.a)}"` : ''}>${xmlText(str)}</text>`);
   }
+}
+
+/** A PNG / JPEG decoded for an effect, if it has at most 4 M pixels (decode.ts). */
+function smallDecoded(u8: Uint8Array): Rgba | null {
+  const r = decodedImage(u8);
+  return r && r.w * r.h <= 4_000_000 ? r : null;
 }
 
 // ---- geometry ----
@@ -849,7 +895,7 @@ function parseImage(r: Bytes): ImageObj | null {
     if (compressed) {
       const u8 = r.tail(28).u8;
       const href = encodedImageUrl(u8);
-      return href ? { href, w: w || 1, h: h || 1 } : null;
+      return href ? { href, w: w || 1, h: h || 1, bytes: u8 } : null;
     }
     if (w <= 0 || h <= 0 || w > 16384 || h > 16384 || w * h > 40_000_000) return null;
     const bpp = (fmt >>> 8) & 0xff;
