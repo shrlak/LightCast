@@ -32,6 +32,7 @@ profile, so checks do not depend on each other.
 | media | audio recording | fake mic: record, stop, preview, insert (audio object on the slide) |
 | media | screenshot dialog | fake display capture, crop by dragging, insert |
 | media | metafile .wmf / .emf | inserted as a picture that decodes |
+| metafilePixels | glyph outlines, effect filters, flood around text | the flood raster's glyph outlines (Arimo glyf, Inter CFF when installed) cover what Chromium draws; EMF+ effect filters on a PNG equal the same effect on the pixels (within 2 levels); a flood fill leaves an O's strokes black |
 | media | SVG | inserted as a picture that decodes |
 | export | embedded fonts checkbox | on the 저장 page, remembered |
 | export | GIF | download starts with `GIF89a` |
