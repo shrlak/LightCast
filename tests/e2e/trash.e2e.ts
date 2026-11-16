@@ -5,13 +5,21 @@ let base = '';
 beforeAll(async () => { base = await boot(); });
 afterAll(async () => { await shutdown(); });
 
-/** Three entries in the 휴지통 (copies of the open deck with other titles), then the 휴지통 window. */
+/**
+ * Three entries in the 휴지통 (copies of the open deck with other titles), then the 휴지통 window.
+ * The entries are put into the saved library by a script that runs when the next page starts loading, after the
+ * old page has finished writing its own copy: writing them before the reload could be overwritten by the old page
+ * saving its library as it unloads (which showed up as an empty 휴지통 on a slow machine).
+ */
 async function openTrash(page: Page) {
   await openDeck(page, '휴지통 시험');
   await sleep(800); // the library is saved a moment after the import
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
     const KEY = 'freecast.library.v1';
-    const lib = JSON.parse(localStorage.getItem(KEY)!);
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return;
+    const lib = JSON.parse(raw);
+    if (lib.trash?.length) return;
     const base = lib.presentations[0];
     lib.trash = ['첫째 자료', '둘째 자료', '셋째 자료'].map((title, i) => ({
       id: `t${i}`, kind: 'presentation', deletedAt: Date.now() - i * 1000, expiresAt: Date.now() + 30 * 86400000, presentation: { ...base, id: `tp${i}`, title },
@@ -25,6 +33,8 @@ async function openTrash(page: Page) {
   await bs.getByRole('button', { name: /휴지통/ }).first().click();
   const dlg = page.getByRole('dialog', { name: '휴지통' });
   await see(dlg);
+  // Say plainly if the entries did not arrive (so a failure is not mistaken for a broken button).
+  await expect.poll(() => dlg.locator('.trash-row').count(), { timeout: 10_000, message: '휴지통에 시험용 항목 3개가 보여야 합니다' }).toBe(3);
   return dlg;
 }
 
@@ -71,8 +81,14 @@ describe('휴지통: 모두 선택 · 모두 삭제', () => {
     const app = await openApp(base);
     const { page } = app;
     const dlg = await openTrash(page);
-    await dlg.getByRole('textbox', { name: '휴지통 검색' }).fill('셋째');
-    await see(dlg.getByRole('button', { name: '검색된 1개 모두 삭제' }));
+    const search = dlg.getByRole('textbox', { name: '휴지통 검색' });
+    await search.fill('셋째');
+    // If the button does not show, say what the window shows (rows, search text), so the log explains the failure.
+    try {
+      await see(dlg.getByRole('button', { name: '검색된 1개 모두 삭제' }));
+    } catch (e) {
+      throw new Error(`${(e as Error).message}\n검색어: ${JSON.stringify(await search.inputValue().catch(() => '?'))}\n행 ${await dlg.locator('.trash-row').count()}개\n창 내용: ${(await dlg.innerText().catch(() => '?')).replace(/\s+/g, ' ').slice(0, 600)}`);
+    }
     page.once('dialog', (d: any) => { expect(d.message()).toContain('검색된 1개'); void d.accept(); });
     await dlg.getByRole('button', { name: '검색된 1개 모두 삭제' }).click();
     await sleep(400);
