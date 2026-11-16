@@ -252,6 +252,7 @@ export async function readPptxDeck(data: ArrayBuffer | Uint8Array, opts: DeckOpt
   const k = Math.min(CANVAS_W / W, CANVAS_H / H);
   const dx = (CANVAS_W - W * k) / 2, dy = (CANVAS_H - H * k) / 2;
   if (Math.abs(W / H - CANVAS_W / CANVAS_H) > 0.01) note(report, '슬라이드 크기', 'approximated', 0, `${(W / 144 * 2.54).toFixed(1)}×${(H / 144 * 2.54).toFixed(1)} cm를 4:3 화면에 맞춰 가운데에 놓아`);
+  const pageCm = Math.abs(W / H - CANVAS_W / CANVAS_H) > 0.01 ? { w: Math.round((W * 2.54 / 144) * 100) / 100, h: Math.round((H * 2.54 / 144) * 100) / 100 } : undefined;
   const defaults = find(pres, 'defaultTextStyle')[0] ?? null;
   const tableStyles = await readXml('ppt/tableStyles.xml');
   const sldIds = kids(find(pres, 'sldIdLst')[0], 'sldId').map((s) => ({ id: s.attrs.id, rId: s.attrs['r:id'] ?? Object.entries(s.attrs).find(([k2]) => /:id$/.test(k2) && k2 !== 'id')?.[1] }));
@@ -499,7 +500,7 @@ export async function readPptxDeck(data: ArrayBuffer | Uint8Array, opts: DeckOpt
 
       const slide: Slide = {
         id, group: sectionOf.get(sid) || opts.group, text: '', background, elements,
-        importSource: { format: 'pptx', name: opts.file, page: n },
+        importSource: { format: 'pptx', name: opts.file, page: n, ...(pageCm ? { pageCm } : {}) },
         ...(cSld?.attrs.name ? { label: cSld.attrs.name } : {}),
       };
       if (sld.attrs.show === '0') { slide.disabled = true; note(report, '숨긴 슬라이드', 'converted', n, '숨긴 슬라이드로'); }

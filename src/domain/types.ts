@@ -554,11 +554,7 @@ export interface Slide {
   preferredFontSize?: number;
   id: string;
   /** Original import type: PowerPoint objects remain editable; PDF page content is read-only. */
-<<<<<<< HEAD
-  importSource?: { format: 'pptx' | 'ppt' | 'pdf' | 'odp'; name: string; page: number; /** What of this slide's original was approximated or left out (Korean, from the import report). */ warnings?: string[] };
-=======
-  importSource?: { format: 'pptx' | 'ppt' | 'pdf' | 'odp'; name: string; page: number; /** The page size (cm) the file came in with, when it was not LightCast's 4:3 (slides were scaled onto the 4:3 canvas). */ pageCm?: { w: number; h: number } };
->>>>>>> origin/claude/sharp-lovelace-w9z3jk
+  importSource?: { format: 'pptx' | 'ppt' | 'pdf' | 'odp'; name: string; page: number; /** The page size (cm) the file came in with, when it was not LightCast's 4:3 (slides were scaled onto the 4:3 canvas). */ pageCm?: { w: number; h: number }; /** What of this slide's original was approximated or left out (Korean, from the import report). */ warnings?: string[] };
   /** Original slide identity when a repeated arrangement occurrence is made independent. */
   sourceSlideId?: string;
   /** Main text is song lyrics; corner QR codes must leave equal space on both sides. */
