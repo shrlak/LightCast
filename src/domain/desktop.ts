@@ -51,6 +51,8 @@ export interface DesktopBridge {
   spellSuggestions?(word: string): string[];
   /** PowerPoint's own copy of shapes on the clipboard (its "Art::GVML ClipFormat" package), if any. */
   readOfficeClipboard?(): Promise<Uint8Array | null>;
+  /** Every clipboard format with its bytes (capped at 200 MB), for telling slides, shapes and pictures apart by signature. Older apps lack it. */
+  scanClipboard?(): Promise<{ platform: string; formats: string[]; entries: { name: string; size: number; bytes?: Uint8Array; error?: string }[] } | null>;
   /** Insert › Screenshot: screens and windows with thumbnails, and the choice the next getDisplayMedia returns. Older apps lack them. */
   captureSources?(): Promise<import('./captureSources').RawCaptureSource[]>;
   selectCaptureSource?(id: string | null): Promise<boolean>;

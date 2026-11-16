@@ -1,3 +1,4 @@
+import { SLIDE_DECK_ACCEPT } from '../importFiles';
 import type { CloudStatus } from '../useCloudSync';
 import type { ServiceUploads } from './useServiceUploads';
 
@@ -50,7 +51,7 @@ export interface Commands {
 }
 
 export const ACCEPT = {
-  slides: '.pptx,.ppt,.pptm,.ppsx,.pps,.potx,.odp,.pdf,image/*,.wmf,.emf,.svgz',
+  slides: `${SLIDE_DECK_ACCEPT},.pdf,image/*,.wmf,.emf,.svgz`,
   lyrics: '.txt,.md,.pro6,.cho,.chopro,.chordpro,.crd,.xml,text/plain,text/markdown',
   backup: '.zip,application/zip',
   library: '.json,application/json',

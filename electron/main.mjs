@@ -469,6 +469,50 @@ ipcMain.handle('desktop:readOfficeClipboard', (e) => {
   }
   return null;
 });
+// Every format on the clipboard with its bytes (capped), so the app can tell by the bytes what PowerPoint / LibreOffice
+// copied (whole slides as a .pptx / .ppt / .odp package, shapes as GVML, pictures, text). Names are only a hint:
+// the app classifies by signature. Formats PowerPoint is known to write are tried even when not listed.
+const CLIP_TOTAL_CAP = 200 * 1024 * 1024;
+const CLIP_ENTRY_CAP = 128 * 1024 * 1024;
+const CLIP_KNOWN = [
+  ...OFFICE_SHAPES, 'Embed Source', 'Embedded Object', 'PowerPoint 12.0 Internal Slides', 'PowerPoint 12.0 Internal Shapes', 'Link Source', 'Object Descriptor',
+  'Rich Text Format', 'HTML Format', 'Csv', 'PNG', 'Office Drawing Shape Format', 'Drawing Format', 'GIF', 'JFIF',
+  'application/x-openoffice-embed-source-xml;windows_formatname="Star EMBS"', 'application/x-openoffice-drawing;windows_formatname="Drawing Format"',
+  'application/x-openoffice-embed-source;windows_formatname="Star Embed Source (XML)"', 'application/vnd.oasis.opendocument.presentation',
+  'org.openxmlformats.presentationml.presentation', 'com.microsoft.powerpoint.ppt', 'com.microsoft.Art--GVML-ClipFormat',
+];
+ipcMain.handle('desktop:scanClipboard', (e) => {
+  if (!fromMain(e)) return null;
+  const entries = [];
+  let total = 0;
+  let listed = [];
+  try { listed = clipboard.availableFormats(); } catch { /* none */ }
+  const seen = new Set();
+  for (const name of [...listed, ...CLIP_KNOWN]) {
+    if (typeof name !== 'string' || !name || seen.has(name) || name.length > 300) continue;
+    seen.add(name);
+    const isListed = listed.includes(name);
+    try {
+      const buf = clipboard.readBuffer(name);
+      if (!buf || !buf.length) { if (isListed) entries.push({ name, size: 0, error: 'empty' }); continue; }
+      if (buf.length > CLIP_ENTRY_CAP || total + buf.length > CLIP_TOTAL_CAP) { entries.push({ name, size: buf.length, error: 'large' }); continue; }
+      total += buf.length;
+      entries.push({ name, size: buf.length, bytes: new Uint8Array(buf) });
+    } catch (err) {
+      if (isListed) entries.push({ name, size: 0, error: String(err?.message ?? err).slice(0, 120) });
+    }
+  }
+  // Text, HTML, RTF and the picture have their own readers (they cover what readBuffer cannot see by name).
+  try {
+    const html = clipboard.readHTML();
+    if (html && !entries.some((x) => x.name === 'text/html' && x.bytes)) entries.push({ name: 'text/html', size: Buffer.byteLength(html), bytes: new Uint8Array(Buffer.from(html, 'utf8')) });
+    const text = clipboard.readText();
+    if (text && !entries.some((x) => x.name === 'text/plain' && x.bytes)) entries.push({ name: 'text/plain', size: Buffer.byteLength(text), bytes: new Uint8Array(Buffer.from(text, 'utf8')) });
+    const img = clipboard.readImage();
+    if (!img.isEmpty() && !entries.some((x) => /^(image\/png|PNG)$/.test(x.name) && x.bytes)) { const png = img.toPNG(); if (png.length < CLIP_ENTRY_CAP) entries.push({ name: 'image/png', size: png.length, bytes: new Uint8Array(png) }); }
+  } catch { /* unreadable */ }
+  return { platform: process.platform, formats: listed, entries };
+});
 ipcMain.handle('desktop:openView', (e, url, displayId) => {
   if (!fromMain(e) || typeof url !== 'string') return;
   openView(url, typeof displayId === 'number' ? displayId : displayId === null ? null : undefined);

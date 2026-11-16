@@ -1,12 +1,12 @@
 // Per-file import with a summary: every file is read on its own, so one that fails (or is read only
 // approximately) is reported by name instead of silently dropping out of the combined result.
 import type { MediaMeta, Slide } from '../domain/types';
-import { filesToSlides, POWERPOINT_FILE } from './importFiles';
+import { filesToSlides, SLIDE_DECK_ACCEPT, SLIDE_DECK_FILE } from './importFiles';
 
 /** Everything the 주일예배 file fields (and 기도회 찬양) take: every PowerPoint variant, OpenDocument, PDF and pictures. */
-export const IMPORT_ACCEPT = '.pptx,.ppt,.pptm,.ppsx,.ppsm,.potx,.potm,.pps,.pot,.odp,.pdf,image/*,.wmf,.emf,.svgz';
-const OTHER_FILE = /\.(odp|pdf|wmf|emf|svgz|png|jpe?g|gif|webp|bmp|svg|avif)$/i;
-export const isImportable = (f: Pick<File, 'name' | 'type'>) => POWERPOINT_FILE.test(f.name) || OTHER_FILE.test(f.name) || f.type.startsWith('image/') || f.type === 'application/pdf';
+export const IMPORT_ACCEPT = `${SLIDE_DECK_ACCEPT},.pdf,image/*,.wmf,.emf,.svgz`;
+const OTHER_FILE = /\.(pdf|wmf|emf|svgz|png|jpe?g|gif|webp|bmp|svg|avif)$/i;
+export const isImportable = (f: Pick<File, 'name' | 'type'>) => SLIDE_DECK_FILE.test(f.name) || OTHER_FILE.test(f.name) || f.type.startsWith('image/') || f.type === 'application/pdf';
 
 export interface ImportReport {
   name: string;

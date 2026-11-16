@@ -636,18 +636,68 @@ async function readShapes(ctx: Ctx, parent: XNode, out: SlideElement[], walk: Wa
 }
 
 
+/** The text of a flat OpenDocument file (.fodp / .fodg), or null when the bytes are not XML (a zip package). */
+function flatOdfText(b: Uint8Array): string | null {
+  if (b.length < 20 || (b[0] === 0x50 && b[1] === 0x4b)) return null;
+  if (b.length > 256 * 1024 * 1024) throw new Error('파일이 너무 큽니다 (256 MB 초과).');
+  const text = new TextDecoder('utf-8').decode(b.subarray(b[0] === 0xef && b[1] === 0xbb ? 3 : 0));
+  return /^\s*(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*<office:document[\s>]/.test(text.slice(0, 4096)) ? text : null;
+}
+
+/** Pictures a flat file carries as base64 (office:binary-data) become files of a small zip the reader's picture lookup uses. */
+function extractFlatPictures(root: XNode, zip: JSZip) {
+  let n = 0;
+  const walk = (node: XNode) => {
+    for (const c of elementsOf(node)) {
+      if (c.name === 'draw:image' && !c.attrs['xlink:href']) {
+        const data = childNamed(c, 'office:binary-data');
+        const raw = data ? textOf(data).replace(/\s+/g, '') : '';
+        if (raw && raw.length < 200 * 1024 * 1024) {
+          let bin: Uint8Array | null = null;
+          try { bin = Uint8Array.from(atob(raw), (ch) => ch.charCodeAt(0)); } catch { bin = null; }
+          if (bin && bin.length > 4) {
+            const ext = bin[0] === 0x89 && bin[1] === 0x50 ? 'png' : bin[0] === 0xff && bin[1] === 0xd8 ? 'jpg' : bin[0] === 0x47 && bin[1] === 0x49 ? 'gif' : bin[0] === 0x42 && bin[1] === 0x4d ? 'bmp' : bin[0] === 0x52 && bin[1] === 0x49 ? 'webp' : /<svg[\s>]/i.test(new TextDecoder().decode(bin.subarray(0, 1024))) ? 'svg' : 'png';
+            const path = `Pictures/flat${++n}.${ext}`;
+            zip.file(path, bin, { createFolders: false });
+            c.attrs['xlink:href'] = path;
+          }
+        }
+      } else walk(c);
+    }
+  };
+  walk(root);
+}
+
 /** Read a .odp: slides with text boxes (paragraphs, bold / italic / size / colour), pictures, simple shapes, tables and notes. */
 export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpReadOptions): Promise<OdpDocument> {
   const data = file instanceof Uint8Array || file instanceof ArrayBuffer ? file : await file.arrayBuffer();
   const sourceName = opts.name ?? (typeof (file as File).name === 'string' ? (file as File).name : '');
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
   let zip: JSZip;
-  try { zip = await JSZip.loadAsync(data); } catch { throw new Error('OpenDocument 파일(.odp)이 아닙니다.'); }
-  const mime = (await zip.file('mimetype')?.async('string'))?.trim();
-  const contentFile = zip.file('content.xml');
-  if (!contentFile || (mime && mime !== ODP_MIME && !/presentation/.test(mime))) throw new Error('OpenDocument 프레젠테이션(.odp)이 아닙니다.');
-  const content = parseXml(await contentFile.async('string'));
-  const stylesXml = await zip.file('styles.xml')?.async('string');
-  const stylesRoot = stylesXml ? parseXml(stylesXml) : undefined;
+  let content: XNode;
+  let stylesRoot: XNode | undefined;
+  let metaRoot: XNode | undefined;
+  const flat = flatOdfText(bytes);
+  if (flat !== null) {
+    // Flat XML (.fodp / .fodg): one document holding content, styles and meta; pictures are base64 inside the XML.
+    try { content = parseXml(flat); } catch { throw new Error('OpenDocument 파일(.fodp)을 읽지 못했습니다.'); }
+    const kind = content.attrs['office:mimetype'] ?? '';
+    if (content.name !== 'office:document' || (kind && !/presentation|graphics/.test(kind))) throw new Error('OpenDocument 프레젠테이션(.fodp)이 아닙니다.');
+    zip = new JSZip();
+    extractFlatPictures(content, zip);
+    stylesRoot = content;
+    metaRoot = childNamed(content, 'office:meta');
+  } else {
+    try { zip = await JSZip.loadAsync(data); } catch { throw new Error('OpenDocument 파일(.odp)이 아닙니다.'); }
+    const mime = (await zip.file('mimetype')?.async('string'))?.trim();
+    const contentFile = zip.file('content.xml');
+    if (!contentFile || (mime && mime !== ODP_MIME && !/presentation|graphics/.test(mime))) throw new Error('OpenDocument 프레젠테이션(.odp)이 아닙니다.');
+    content = parseXml(await contentFile.async('string'));
+    const stylesXml = await zip.file('styles.xml')?.async('string');
+    stylesRoot = stylesXml ? parseXml(stylesXml) : undefined;
+    const metaXml = await zip.file('meta.xml')?.async('string');
+    try { metaRoot = metaXml ? childNamed(parseXml(metaXml), 'office:meta') : undefined; } catch { metaRoot = undefined; }
+  }
 
   const styles = new Map<string, StyleDef>();
   const lib: StyleLib = { gradients: new Map(), opacities: new Map(), lists: new Map(), markers: new Map(), dashes: new Map() };
@@ -667,7 +717,9 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
   spacingWarning = false;
   const ctx: Ctx = { styles, zip, opts, kx: CANVAS_W / page.w, ky: CANVAS_H / page.h, images: new Map(), lib, ids: new Map(), warnings: new Set(), customGlue: new Set(), glued: [] };
 
-  const body = childNamed(childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] }, 'office:presentation');
+  // A presentation's pages, or a drawing's (.odg: one slide per page).
+  const officeBody = childNamed(content, 'office:body') ?? { name: '', attrs: {}, children: [] };
+  const body = childNamed(officeBody, 'office:presentation') ?? childNamed(officeBody, 'office:drawing');
   if (!body) throw new Error('OpenDocument 파일에 슬라이드가 없습니다.');
   const slides: Slide[] = [];
   // Objects on a master page (logos, lines, plain text) become background shapes at the bottom of each slide that shows it.
@@ -778,11 +830,10 @@ export async function parseOdp(file: Blob | ArrayBuffer | Uint8Array, opts: OdpR
     });
   }
 
-  const metaXml = await zip.file('meta.xml')?.async('string');
   const properties: DocProperties = {};
-  if (metaXml) {
-    const meta = childNamed(parseXml(metaXml), 'office:meta');
-    const pick = (n: string) => (meta && childNamed(meta, n) ? textOf(childNamed(meta, n)!).trim() : '') || undefined;
+  if (metaRoot) {
+    const meta = metaRoot;
+    const pick = (n: string) => (childNamed(meta, n) ? textOf(childNamed(meta, n)!).trim() : '') || undefined;
     properties.title = pick('dc:title');
     properties.subject = pick('dc:subject');
     properties.author = pick('meta:initial-creator') ?? pick('dc:creator');
