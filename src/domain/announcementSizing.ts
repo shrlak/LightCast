@@ -3,6 +3,7 @@ import { CANVAS_W } from './canvas';
 import { correctMixedTextSizes, uniformTextBoxFont } from './textBoxFonts';
 import { isFrontPresentation, isFrontSlide, keepFrontLayout, withoutPrayerCornerLogo } from './frontLayout';
 import { withQrElements } from './qrElements';
+import { layoutAnnouncementTitle } from './announcementTitle';
 
 /** Earlier versions kept text boxes out of a 300 px strip for the QR codes on the right. */
 const OLD_QR_EDGE = CANVAS_W - 300;
@@ -77,7 +78,19 @@ export function prepareAnnouncementSlide(s: Slide): Slide {
   const elements = placed?.map((e) => e.maximizeFont ? { ...e, maximizeFont: false } : e);
   const ready = s.maximizeFont || elements?.some((e, i) => e !== s.elements![i])
     ? { ...s, maximizeFont: false, ...(elements ? { elements } : {}) } : s;
-  return withQrElements(ready);
+  // A long "1. <제목>" wraps onto two lines and the text under it moves down (announcementTitle.ts).
+  return withQrElements(layoutAnnouncementTitle(ready));
+}
+
+/**
+ * After an edit: the 광고 slides that changed get their title laid out again (a title typed longer
+ * wraps and pushes the text down; shortened, it goes back to one line).
+ */
+export function relayoutEditedAnnouncements(before: Presentation, after: Presentation): Presentation {
+  if (after.protected || after.slides === before.slides) return after;
+  const old = new Map(before.slides.map((s) => [s.id, s]));
+  const slides = after.slides.map((s) => (old.get(s.id) === s || !s.elements ? s : layoutAnnouncementTitle(s)));
+  return slides.some((s, i) => s !== after.slides[i]) ? { ...after, slides } : after;
 }
 
 /** Preserve original sizes for ads and imported material; actual overflow is resolved at layout time. */
