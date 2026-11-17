@@ -345,6 +345,20 @@ pub fn info(name: &str) -> Option<&'static PresetInfo> {
     CATALOG.iter().find(|p| p.name == name)
 }
 
+/// Default adjust values of preset `name`: the gallery's, else the presetShapeDefinitions values of the presets that
+/// are drawn but not in the gallery (the routing connectors, whose guides default to 50000). A file may give only some
+/// of the values and rely on these for the rest.
+pub fn adjust_defaults(name: &str) -> &'static [f64] {
+    if let Some(i) = info(name) {
+        return i.defaults;
+    }
+    match name {
+        "bentConnector4" | "curvedConnector4" => &[50000.0, 50000.0],
+        "bentConnector5" | "curvedConnector5" => &[50000.0, 50000.0, 50000.0],
+        _ => &[],
+    }
+}
+
 /// Whether PowerPoint joins this preset's outline with sharp (miter) corners when the line names
 /// no join (it rounds them otherwise). Observed per preset on its export: the plus, the right,
 /// up and down block arrows (not the left one), chevrons, stars from five points up, the

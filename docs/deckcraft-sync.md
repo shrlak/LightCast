@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=69379cf689f908d23cab9313d59fb9e1fd4b7a4f
+DECKCRAFT_SYNCED=5c698493bc1f7ec36f90deb29df247b93330e654
 ```
 
-(`Naming: use Diagram and Decorative Text for own features (#1981)`.)
+(`ci: lock workflow actions through an actions.lock lockfile (#2078)`.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -84,3 +84,14 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
   red-eye correction of PNG / JPEG images, glyph indices in WMF text.
 - DeckCraft plays the GDI records of an EMF+ "dual" file; LightCast prefers the EMF+ records and uses the GDI
   fallback only when EMF+ draws nothing, or between an EMF+ `GetDC` and the next EMF+ record.
+- `69379cf..5c69849` (38 commits, 2026-11-14 to 2026-11-16):
+  - Ported: the 3- and 4-bend elbow and curved connectors (`bentConnector4/5`, `curvedConnector2/4/5`) follow
+    presetShapeDefinitions, with `adjust_defaults()` giving the spec's 50000 to presets outside the gallery (the
+    reader's guides are read by name, so a file giving only `adj2` no longer loses the others: `presetAdjust` in
+    `drawingml.ts`); a slide show that advances to a slide starts it over so its animations play again
+    (`ShowState::enter_forward`, patch applied to the vendored `anim` crate); `arrange.align` / `arrange.distribute`
+    refuse an `edge`, `dir` or `to` they do not name (`freecast-engine/src/arrange.rs`).
+  - Not applicable: the shared-library cutovers (craft-drawingml, craft-cfb, craft-deckcraft-format, Base64, RTF,
+    OPC names, XML escaping), PPTX import budgets, the Greek sigma / Arabic Letter Mark / engineering-notation text
+    fixes (DeckCraft's own formatting engine), CI and release housekeeping.
+

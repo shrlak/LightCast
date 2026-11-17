@@ -22,8 +22,17 @@ pub struct AlignReq {
     pub slide_h: f64,
 }
 
+/// `to` is slide or selection; left out it keeps each command's own rule. Any other value is refused, nothing moves.
+fn check_to(to: &str) -> Result<(), String> {
+    if matches!(to, "" | "slide" | "selection") { Ok(()) } else { Err("`to` must be slide or selection".into()) }
+}
+
 /// How far each object moves: `[{id, dx, dy}]`.
 pub fn align(r: AlignReq) -> Res {
+    if !matches!(r.edge.as_str(), "left" | "center" | "right" | "top" | "middle" | "bottom") {
+        return Err("`edge` must be left, center, right, top, middle or bottom".into());
+    }
+    check_to(&r.to)?;
     let (sw, sh) = (fin(r.slide_w, 1440.0), fin(r.slide_h, 1080.0));
     let frame = if r.to == "selection" && r.boxes.len() > 1 { union(&r.boxes).unwrap_or([0.0, 0.0, sw, sh]) } else { [0.0, 0.0, sw, sh] };
     let out: Vec<_> = r
@@ -38,7 +47,7 @@ pub fn align(r: AlignReq) -> Res {
                 "top" => (0.0, frame[1] - a[1]),
                 "middle" => (0.0, (frame[1] + frame[3]) / 2.0 - (a[1] + a[3]) / 2.0),
                 "bottom" => (0.0, frame[3] - a[3]),
-                _ => (0.0, 0.0),
+                _ => unreachable!("edge is checked above"),
             };
             json!({ "id": b.id, "dx": dx.round(), "dy": dy.round() })
         })
@@ -61,7 +70,12 @@ pub struct DistributeReq {
 /// Equal gaps between the objects: across the selection (the outer two stay), or across the slide
 /// (the outer two go to its edges). `[{id, dx, dy}]`.
 pub fn distribute(r: DistributeReq) -> Res {
-    let horiz = r.dir != "vertical";
+    let horiz = match r.dir.as_str() {
+        "horizontal" => true,
+        "vertical" => false,
+        _ => return Err("`dir` must be horizontal or vertical".into()),
+    };
+    check_to(&r.to)?;
     let (sw, sh) = (fin(r.slide_w, 1440.0), fin(r.slide_h, 1080.0));
     let mut items: Vec<(&BoxIn, [f64; 4])> = r.boxes.iter().map(|b| (b, b.aabb())).collect();
     let lo = |a: &[f64; 4]| if horiz { a[0] } else { a[1] };
