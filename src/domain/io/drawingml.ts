@@ -33,6 +33,22 @@ export const OFFICE_THEME: DmlTheme = {
 };
 
 /** A theme part (<a:theme>) → its colours and fonts. */
+/**
+ * The adjust values a preset's guide list gives. Guides are named adj1, adj2, … and a file may give only some of
+ * them: a routing connector (bentConnector4, curvedConnector5 …) given only adj2 keeps its other guides at the spec's
+ * 50000 instead of reading adj2 as its first value. Other presets keep the values in the order given.
+ */
+export function presetAdjust(guides: { name: string; value: number }[], prst: string): number[] {
+  const valid = guides.filter((g) => Number.isFinite(g.value));
+  if (!/^(bent|curved)Connector\d$/.test(prst)) return valid.map((g) => g.value);
+  const out: number[] = [];
+  for (const g of valid) {
+    const n = Number(/^adj(\d+)$/.exec(g.name)?.[1]);
+    if (Number.isInteger(n) && n >= 1 && n <= 8) { while (out.length < n) out.push(50000); out[n - 1] = g.value; }
+  }
+  return out;
+}
+
 export function readDmlTheme(xml: string): DmlTheme {
   const doc = parseMarkup(xml);
   const scheme = find(doc, 'clrScheme')[0];
@@ -587,7 +603,7 @@ function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string)
   const prst = child(spPr, 'prstGeom')?.attrs.prst ?? 'rect';
   const freeform = cust ? custGeomPath(cust) : null;
   if (cust && !freeform) ctx.note?.('approximated', '자유형 도형');
-  const adj = kids(path(spPr, 'prstGeom', 'avLst'), 'gd').map((g) => Number(/val\s+(-?\d+)/.exec(g.attrs.fmla ?? '')?.[1])).filter((v) => Number.isFinite(v));
+  const adj = presetAdjust(kids(path(spPr, 'prstGeom', 'avLst'), 'gd').map((g) => ({ name: g.attrs.name ?? '', value: Number(/val\s+(-?\d+)/.exec(g.attrs.fmla ?? '')?.[1]) })), prst);
   const isLine = local(sp) === 'cxnSp' || /^(line|straightConnector1|bentConnector\d|curvedConnector\d)$/.test(prst);
   const txBody = child(sp, 'txBody') ?? path(sp, 'txSp', 'txBody');
   const isTextBox = child(nv, 'cNvSpPr')?.attrs.txBox === '1';

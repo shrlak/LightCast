@@ -167,7 +167,7 @@ pub struct AdjustReq {
 /// Dragging adjust handle `index` to (`x`, `y`): the shape's new adjust values.
 pub fn adjust(r: AdjustReq) -> Res {
     let (w, h) = dims(r.w, r.h);
-    let defaults = preset::info(&r.name).map(|i| i.defaults.to_vec()).unwrap_or_default();
+    let defaults = preset::adjust_defaults(&r.name).to_vec();
     let mut adj: Vec<f64> = (0..defaults.len().max(r.adj.len())).map(|i| r.adj.get(i).or(defaults.get(i)).copied().unwrap_or(0.0)).collect();
     let g = preset::build(&r.name, w, h, &adj).ok_or("no geometry")?;
     let handle = g.handles.iter().find(|x| x.index == r.index).ok_or("no such handle")?;

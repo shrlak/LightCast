@@ -550,3 +550,16 @@ fn palettes_and_gridlines() {
     assert_eq!(count(&svg_of(none), "stroke-opacity=\"0.25\""), 0);
     assert!(count(&colourful, "stroke-opacity=\"0.25\"") > 0);
 }
+
+#[test]
+fn align_and_distribute_refuse_values_they_do_not_name() {
+    let boxes = json!([{"id": "a", "x": 0, "y": 0, "w": 100, "h": 50}, {"id": "b", "x": 300, "y": 0, "w": 100, "h": 50}, {"id": "c", "x": 700, "y": 0, "w": 100, "h": 50}]);
+    let err = |req: serde_json::Value| -> String { handle(&req).err().unwrap_or_else(|| panic!("{req} was not refused")) };
+    assert!(err(json!({"op": "arrange.align", "boxes": boxes, "edge": "sideways", "to": "selection", "slideW": 1440, "slideH": 1080})).contains("edge"));
+    assert!(err(json!({"op": "arrange.align", "boxes": boxes, "edge": "left", "to": "page", "slideW": 1440, "slideH": 1080})).contains("`to`"));
+    assert!(err(json!({"op": "arrange.distribute", "boxes": boxes, "dir": "diagonal", "to": "selection", "slideW": 1440, "slideH": 1080})).contains("dir"));
+    assert!(err(json!({"op": "arrange.distribute", "boxes": boxes, "dir": "vertical", "to": "all", "slideW": 1440, "slideH": 1080})).contains("`to`"));
+    // a `dir` that merely starts with "v" is no longer vertical, and a left-out `to` still works
+    assert!(err(json!({"op": "arrange.distribute", "boxes": boxes, "dir": "vert", "slideW": 1440, "slideH": 1080})).contains("dir"));
+    assert!(handle(&json!({"op": "arrange.distribute", "boxes": boxes, "dir": "horizontal", "slideW": 1440, "slideH": 1080})).is_ok());
+}

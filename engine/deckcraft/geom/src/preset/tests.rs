@@ -418,3 +418,31 @@ fn wedge_callout_mirrors_with_its_tip() {
         assert!(a.iter().any(|p| (p.x - x).abs() < 1e-6 && (p.y - h).abs() < 1e-6), "no wedge corner at ({x}, {h}): {a:?}");
     }
 }
+
+// PowerPoint routes connectors around shapes with the 3-, 4- and 5-segment elbow and curved presets (a file may give
+// only some of their adjust values): each runs from the top left to the bottom right corner, and takes the spec's 50000
+// for the values a file leaves out.
+#[test]
+fn routing_connectors_follow_the_spec_and_default_their_adjust_values() {
+    for (name, n) in [("bentConnector2", 0), ("bentConnector3", 1), ("bentConnector4", 2), ("bentConnector5", 3), ("curvedConnector2", 0), ("curvedConnector3", 1), ("curvedConnector4", 2), ("curvedConnector5", 3)] {
+        assert_eq!(adjust_defaults(name).len(), n, "{name}");
+        let g = build(name, 200.0, 100.0, &[]).unwrap_or_else(|| panic!("{name} did not build"));
+        let bb = g.paths[0].path.bounding_box();
+        assert!((bb.x1 - 200.0).abs() < 1e-6 && (bb.y1 - 100.0).abs() < 1e-6 && bb.x0.abs() < 1e-6 && bb.y0.abs() < 1e-6, "{name} {bb:?}");
+        assert_eq!(g.handles.len(), n, "{name} has a handle per adjust value");
+    }
+    // 4- and 5-bend elbows keep their middle legs where the values put them.
+    let g = build("bentConnector4", 200.0, 100.0, &[50000.0, 25000.0]).unwrap();
+    let pts: Vec<kurbo::Point> = g.paths[0].path.elements().iter().filter_map(|e| e.end_point()).collect();
+    assert_eq!(pts, [kurbo::Point::new(0.0, 0.0), kurbo::Point::new(100.0, 0.0), kurbo::Point::new(100.0, 25.0), kurbo::Point::new(200.0, 25.0), kurbo::Point::new(200.0, 100.0)]);
+    let g = build("bentConnector5", 200.0, 100.0, &[10000.0, 50000.0, 90000.0]).unwrap();
+    let pts: Vec<kurbo::Point> = g.paths[0].path.elements().iter().filter_map(|e| e.end_point()).collect();
+    assert_eq!(pts, [kurbo::Point::new(0.0, 0.0), kurbo::Point::new(20.0, 0.0), kurbo::Point::new(20.0, 50.0), kurbo::Point::new(180.0, 50.0), kurbo::Point::new(180.0, 100.0), kurbo::Point::new(200.0, 100.0)]);
+    // curvedConnector2 is one cubic, the 3-, 4- and 5-segment ones two, three and four.
+    let curves = |name| build(name, 200.0, 100.0, &[]).unwrap().paths[0].path.elements().iter().filter(|e| matches!(e, kurbo::PathEl::CurveTo(..))).count();
+    assert_eq!([curves("curvedConnector2"), curves("curvedConnector3"), curves("curvedConnector4"), curves("curvedConnector5")], [1, 2, 3, 4]);
+    // a preset outside the gallery with only some values given: the rest come from the spec
+    assert_eq!(adjust_defaults("bentConnector4"), &[50000.0, 50000.0]);
+    assert_eq!(adjust_defaults("roundRect"), &[16667.0]);
+    assert!(adjust_defaults("notAPreset").is_empty());
+}
