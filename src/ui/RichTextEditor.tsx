@@ -12,6 +12,7 @@ import { CLIP_TYPE, pastedLines, runsHtml } from '../domain/clipboard';
 import { formatSpan, stepFontSize } from '../domain/textFormat';
 import { applyFormat, armedPainter, finishPainter, heldFormat, holdFormat, runFormatOf, textPart, type Painted } from '../domain/formatPainter';
 import { runStyle } from './runStyle';
+import { scriptPieces } from '../domain/fonts';
 import { deleteWord, paraDown, paraUp, paragraphRange, toOffset, toPos, wordMove, wordRange, type Pos } from '../domain/textEditing';
 import { autoCorrectAt, autoCorrectPrefs, smartQuote } from '../domain/autoCorrect';
 
@@ -69,7 +70,14 @@ function render(root: HTMLElement, lines: TextRun[][]) {
       // A soft line break (\v in the text) is a <br data-soft>: one character of the model, not a new block.
       r.text.split('\u000b').forEach((piece, i) => {
         if (i) span.append(softBreak());
-        if (piece) span.append(document.createTextNode(piece));
+        // Hangul / CJK in the run's 한글 글꼴, complex scripts in its a:cs typeface: inner spans without data-run, so reading back keeps the run whole.
+        for (const part of piece ? scriptPieces(piece, r.fontFamilyEa, r.fontFamilyCs) : []) {
+          if (!part.fontFamily) { span.append(document.createTextNode(part.text)); continue; }
+          const inner = document.createElement('span');
+          inner.style.fontFamily = part.fontFamily;
+          inner.textContent = part.text;
+          span.append(inner);
+        }
       });
       block.append(span);
     }
@@ -387,7 +395,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         if (document.activeElement === root) remember();
         const r = runAt(readLines(root), sel.current[0]) ?? { text: '' };
         const b = latest.current.base;
-        return { fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, weight: r.weight, italic: r.italic ?? b.italic, underline: r.underline, color: r.color ?? b.color, strike: r.strike, baseline: r.baseline };
+        return { fontSize: r.fontSize ?? b.fontSize, bold: r.bold ?? b.bold, weight: r.weight, italic: r.italic ?? b.italic, underline: r.underline, color: r.color ?? b.color, strike: r.strike, baseline: r.baseline, fontFamilyEa: r.fontFamilyEa };
       },
       spans: () => {
         if (document.activeElement === root) remember();
@@ -423,7 +431,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
         if (a === b) {
           // Nothing selected: the whole box takes it, as DeckCraft does when the selection is not a range.
           painterApi?.setBox((e) => applyFormat(e, textPart(p)));
-          reformat(() => ({ fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, strike: undefined, color: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined }));
+          reformat(() => ({ fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, strike: undefined, color: undefined, baseline: undefined, fontFamily: undefined, fontFamilyEa: undefined, fontFamilyCs: undefined, highlight: undefined }));
           return;
         }
         // Characters take the character formatting; the paragraph formatting only when the selection covers every paragraph.
@@ -655,7 +663,7 @@ export function RichTextEditor({ lines, base, style, onChange, onDone, plain, la
     else if (k === '=' && !e.shiftKey) api.apply({ baseline: cur.baseline === 'sub' ? undefined : 'sub' });
     else if (k === '+' || (k === '=' && e.shiftKey)) api.apply({ baseline: cur.baseline === 'super' ? undefined : 'super' });
     // Ctrl+Space: Clear All Formatting of the selected characters (the word at the caret).
-    else if (k === ' ' && !e.shiftKey) api.apply({ fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined });
+    else if (k === ' ' && !e.shiftKey) api.apply({ fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, fontFamilyEa: undefined, fontFamilyCs: undefined, highlight: undefined });
     else if (k === ']' || (e.shiftKey && (k === '>' || k === '.'))) api.step(1);
     else if (k === '[' || (e.shiftKey && (k === '<' || k === ','))) api.step(-1);
     else return;

@@ -11,7 +11,7 @@ import { FontImportButton, useImportedFonts } from './FontImport';
 import { importedFamilies } from '../../domain/importedFonts';
 import { SINGLE_SPACING } from '../../domain/textFormat';
 import { autoFitMode, autoFitValue } from '../../domain/textFit';
-import { formatAllRuns } from '../../domain/richText';
+import { elementLines, formatAllRuns } from '../../domain/richText';
 import { activeTextEditor } from '../RichTextEditor';
 import { AutoCorrectDialog } from './autoCorrectDialog';
 import { textTarget, type DialogKind, type Ed } from './editor';
@@ -45,6 +45,26 @@ export const Num = ({ value, onChange, step = 1, min, max, disabled }: { value: 
 );
 
 type Style = 'regular' | 'italic' | 'bold' | 'boldItalic';
+
+/** The fonts the Font dialog offers (its own, the imported ones, and the current one when it is neither). */
+function FontSelect({ value, onChange, blank, label, disabled }: { value: string; onChange: (v: string) => void; blank: string; label: string; disabled?: boolean }) {
+  useImportedFonts();
+  return (
+    <select value={value} aria-label={label} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{blank}</option>
+      {FONT_OPTIONS.map((o) => <option key={o.label} value={o.family}>{o.label}</option>)}
+      {importedFamilies().length > 0 && <optgroup label="가져온 글꼴">{importedFamilies().map((n) => <option key={`imp-${n}`} value={officeFont(n)}>{n}</option>)}</optgroup>}
+      {value && !FONT_OPTIONS.some((o) => o.family === value) && !importedFamilies().some((n) => officeFont(n) === value) && <option value={value}>{value.split(',')[0].replace(/"/g, '')}</option>}
+    </select>
+  );
+}
+
+/** The 한글 글꼴 (East Asian typeface) every text run of the box shares, else ''. */
+function boxEaFont(el: SlideElement | undefined): string {
+  const runs = el ? elementLines(el).flat().filter((r) => r.text) : [];
+  const fams = new Set(runs.map((r) => r.fontFamilyEa ?? ''));
+  return fams.size === 1 ? [...fams][0] : '';
+}
 const STYLES: [Style, string][] = [['regular', '보통'], ['italic', '기울임꼴'], ['bold', '굵게'], ['boldItalic', '굵은 기울임꼴']];
 
 /** Home › Font ⤡: font, style, size, colour, underline, effects (strikethrough, super/subscript, caps) and character spacing. */
@@ -56,6 +76,9 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const v = t?.value;
   const first = t?.els[0];
   const [family, setFamily] = useState(v?.fontFamily ?? '');
+  // 한글 글꼴: Hangul and other East Asian characters are drawn in it (a:ea); blank: in the 영어 글꼴.
+  const [eaStart] = useState(() => (sel ? cur?.fontFamilyEa ?? '' : boxEaFont(first)));
+  const [eaFamily, setEaFamily] = useState(eaStart);
   const [style, setStyle] = useState<Style>(() => { const b = cur?.bold ?? v?.bold, i = cur?.italic ?? v?.italic; return b && i ? 'boldItalic' : b ? 'bold' : i ? 'italic' : 'regular'; });
   // 글꼴 굵기: blank follows 글꼴 스타일 (보통 / 굵게); a weight (가늘게 … 가장 굵게) replaces it.
   const [weight, setWeight] = useState<number | undefined>(cur?.weight ?? v?.weight);
@@ -67,19 +90,18 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [caps, setCaps] = useState(first?.caps);
   const [spacing, setSpacing] = useState((v?.letterSpacing ?? 0) / 2);
   const [tab, setTab] = useState<'font' | 'spacing'>('font');
-  const importedNow = useImportedFonts();
   if (!t || !v) return <Dialog title="글꼴" onClose={onClose}><p>서식을 바꿀 텍스트를 고르세요.</p></Dialog>;
   const ok = () => {
     const italic = style === 'italic' || style === 'boldItalic';
     const { bold, weight: ownWeight } = weight === undefined ? { bold: style === 'bold' || style === 'boldItalic', weight: undefined } : weightPatch(weight);
     const fontSize = Math.max(2, Math.round(size * 2));
     if (sel && editor) {
-      editor.apply({ fontSize, bold, weight: ownWeight, italic, underline: underline || undefined, color, strike: strike || undefined, baseline });
+      editor.apply({ fontSize, bold, weight: ownWeight, italic, underline: underline || undefined, color, strike: strike || undefined, baseline, ...(eaFamily !== eaStart ? { fontFamilyEa: eaFamily || undefined } : {}) });
       t.patchEach(() => ({ fontFamily: family || undefined, caps, letterSpacing: spacing * 2 || undefined }));
     } else if (t.els.length) {
       t.patchEach((e) => ({
         fontFamily: family || undefined, fontSize, bold, weight: ownWeight, italic, underline: underline || undefined, strike: strike || undefined, color, caps, letterSpacing: spacing * 2 || undefined,
-        ...(baseline !== cur?.baseline || baseline ? formatAllRuns({ ...e }, { baseline }) : {}),
+        ...(baseline !== cur?.baseline || baseline || eaFamily !== eaStart ? formatAllRuns({ ...e }, { ...(baseline !== cur?.baseline || baseline ? { baseline } : {}), ...(eaFamily !== eaStart ? { fontFamilyEa: eaFamily || undefined } : {}) }) : {}),
       }));
     } else {
       t.onChange({ fontFamily: family || undefined, fontSize, bold, weight: ownWeight, italic, underline, strike, color, letterSpacing: spacing * 2 });
@@ -97,20 +119,16 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
       {tab === 'font' ? (
         <>
           <div className="dlg-grid3">
-            <Field label="한글/라틴 글꼴">
-              <select value={family} onChange={(e) => setFamily(e.target.value)}>
-                <option value="">테마 글꼴</option>
-                {FONT_OPTIONS.map((o) => <option key={o.label} value={o.family}>{o.label}</option>)}
-                {importedNow.length > 0 && <optgroup label="가져온 글꼴">{importedFamilies().map((n) => <option key={`imp-${n}`} value={officeFont(n)}>{n}</option>)}</optgroup>}
-                {family && !FONT_OPTIONS.some((o) => o.family === family) && !importedFamilies().some((n) => officeFont(n) === family) && <option value={family}>{family.split(',')[0].replace(/"/g, '')}</option>}
-              </select>
-            </Field>
+            <Field label="영어 글꼴"><FontSelect value={family} onChange={setFamily} blank="테마 글꼴" label="영어 글꼴" /></Field>
             <Field label="글꼴 스타일">
               <select value={style} onChange={(e) => setStyle(e.target.value as Style)}>{STYLES.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
             </Field>
             <Field label="크기 (pt)"><Num value={size} min={1} max={400} step={0.5} onChange={setSize} /></Field>
           </div>
-          <div className="dlg-grid3"><FontImportButton className="btn small" label="글꼴 가져오기…" /></div>
+          <div className="dlg-grid3">
+            <Field label="한글 글꼴"><FontSelect value={eaFamily} onChange={setEaFamily} blank="(영어 글꼴과 같게)" label="한글 글꼴" disabled={boxOnly} /></Field>
+            <FontImportButton className="btn small" label="글꼴 가져오기…" />
+          </div>
           <div className="dlg-grid3">
             <Field label="글꼴 굵기">
               <select value={weight ?? ''} onChange={(e) => setWeight(e.target.value ? Number(e.target.value) : undefined)} aria-label="글꼴 굵기">
@@ -143,8 +161,8 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             fontFamily: family || undefined, fontWeight: weight ?? (style.startsWith('bold') ? 800 : 400), fontStyle: style.toLowerCase().includes('italic') ? 'italic' : 'normal',
             textDecoration: [underline && 'underline', strike && 'line-through'].filter(Boolean).join(' ') || undefined, color,
             textTransform: caps === 'all' ? 'uppercase' : undefined, fontVariant: caps === 'small' ? 'small-caps' : undefined, letterSpacing: spacing,
-          }}>가나다 AaBbCc{baseline && <span style={{ verticalAlign: baseline, fontSize: '62%' }}>{baseline === 'super' ? '2' : '0'}</span>}</div>
-          {sel && <p className="dlg-note">선택한 글자에 적용합니다 (글꼴과 대문자는 텍스트 상자 전체).</p>}
+          }}><span style={{ fontFamily: eaFamily || undefined }}>가나다</span> AaBbCc{baseline && <span style={{ verticalAlign: baseline, fontSize: '62%' }}>{baseline === 'super' ? '2' : '0'}</span>}</div>
+          {sel && <p className="dlg-note">선택한 글자에 적용합니다 (영어 글꼴과 대문자는 텍스트 상자 전체).</p>}
         </>
       ) : (
         <div className="dlg-grid3">

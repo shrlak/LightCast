@@ -2,7 +2,7 @@
 // crates/ui-egui/src/dialogs/{hyperlink,date_time,equation}.rs, MIT OR Apache-2.0): Date & Time
 // formats, the Equation dialog's linear-form prettifier, Insert Hyperlink's targets, the actions
 // action buttons carry and the Symbol dialog's groups.
-import type { ElementAction, Slide, SlideElement } from './types';
+import type { ElementAction, Slide, SlideElement, SlideFooter } from './types';
 
 // ── Date & Time ─────────────────────────────────────────────────────────────────────────────
 
@@ -44,6 +44,32 @@ export const DATE_FORMATS: { id: string; lang: 'ko' | 'en'; format: (d: Date) =>
 export function formatDateField(id: string, d: Date): string {
   return (DATE_FORMATS.find((f) => f.id === id) ?? DATE_FORMATS[0]).format(d);
 }
+
+/** What the Header & Footer dialog asks for: an updating or fixed date, the slide number, footer text, not on the title slide. */
+export interface FooterChoice { date: boolean; fixed?: string; slideNumber: boolean; text?: string; hideOnTitle: boolean }
+
+/**
+ * Header & Footer › 적용 / 모두 적용 on one slide (DeckCraft design.headerFooter, 372c0e6c / 370b38e6).
+ * `picked` is the date format the user chose in the dialog this time ('' for the plain locale date),
+ * undefined when the format list was not touched. Only a picked format rewrites a slide's own
+ * updating date; a slide whose date has no format of its own yet (none, or fixed text) takes the
+ * deck's `remembered` format. A fixed date keeps the format it had, so turning it back to an
+ * updating date brings that format back.
+ */
+export function applyFooter(prev: SlideFooter | undefined, v: FooterChoice, picked: string | undefined, remembered: string | undefined): SlideFooter | undefined {
+  const own = prev?.dateFormat;
+  const format = v.date && v.fixed === undefined && picked !== undefined ? picked || undefined : prev?.date === true ? own : own ?? remembered;
+  const out: SlideFooter = {
+    ...(v.date ? { date: v.fixed ?? true, ...(format ? { dateFormat: format } : {}) } : {}),
+    ...(v.slideNumber ? { slideNumber: true } : {}),
+    ...(v.text?.trim() ? { text: v.text.trim() } : {}),
+    ...(v.hideOnTitle ? { hideOnTitle: true } : {}),
+  };
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** The format the Header & Footer dialog opens on: this slide's, else the first one the deck uses ('' = the locale date). */
+export const rememberedDateFormat = (slide: Slide | undefined, slides: Slide[]) => slide?.footer?.dateFormat ?? slides.find((s) => s.footer?.dateFormat)?.footer?.dateFormat ?? '';
 
 /** What Date & Time inserts: a field that updates by itself, or the date as fixed text. */
 export const dateFieldText = (id: string, update: boolean, now: Date) => (update ? `{date:${id}}` : formatDateField(id, now));

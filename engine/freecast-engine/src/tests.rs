@@ -563,3 +563,62 @@ fn align_and_distribute_refuse_values_they_do_not_name() {
     assert!(err(json!({"op": "arrange.distribute", "boxes": boxes, "dir": "vert", "slideW": 1440, "slideH": 1080})).contains("dir"));
     assert!(handle(&json!({"op": "arrange.distribute", "boxes": boxes, "dir": "horizontal", "slideW": 1440, "slideH": 1080})).is_ok());
 }
+
+/// The `y` of the `<text>` whose content is `body`, if any.
+fn text_y(svg: &str, body: &str) -> Option<f64> {
+    let end = svg.find(&format!(">{body}</text>"))?;
+    let start = svg[..end].rfind("<text")?;
+    let tag = &svg[start..end];
+    let y = tag.split(" y=\"").nth(1)?.split('"').next()?;
+    y.parse().ok()
+}
+
+#[test]
+fn line_series_label_each_point_with_its_own_value_above_it() {
+    // A stacked line: each label shows the point's own value, not the running total (DeckCraft #2066).
+    let svg = svg_of(json!({"kind": "lineStacked", "categories": ["1월", "2월", "3월"], "legend": false, "dataLabels": true,
+        "series": [{"name": "가", "values": [7, 9, 11]}, {"name": "나", "values": [24, 26, 22]}]}));
+    for v in ["7", "9", "11", "24", "26", "22"] {
+        assert!(text_y(&svg, v).is_some(), "label {v} in {svg}");
+    }
+    for total in ["31", "35", "33"] {
+        assert!(text_y(&svg, total).is_none(), "stacked total {total} shown");
+    }
+    // The second series sits above the first, so its label does too.
+    assert!(text_y(&svg, "24").unwrap() < text_y(&svg, "7").unwrap());
+    // With markers the label stands just above its point.
+    let svg = svg_of(json!({"kind": "lineMarkers", "categories": ["가"], "legend": false, "dataLabels": true,
+        "series": [{"name": "값", "values": [37]}]}));
+    let cy: f64 = svg.split("<circle").nth(1).unwrap().split(" cy=\"").nth(1).unwrap().split('"').next().unwrap().parse().unwrap();
+    let y = text_y(&svg, "37").unwrap();
+    assert!(y < cy && cy - y < 40.0, "label at {y}, point at {cy}");
+    // No value labels unless asked.
+    let svg = svg_of(json!({"kind": "lineMarkers", "categories": ["가"], "legend": false, "series": [{"name": "값", "values": [37]}]}));
+    assert!(text_y(&svg, "37").is_none());
+}
+
+#[test]
+fn tables_past_the_cell_cap_are_refused_or_clamped() {
+    use deckcraft_model::table::MAX_CELLS;
+    // One wide row and many empty ones: padding them out would allocate their product.
+    let mut rows = vec![json!([]); 2_000];
+    rows[0] = Value::Array(vec![json!({"text": "x"}); 1_000]);
+    let huge = json!({"rows": rows, "cols": [], "heights": []});
+    let edit = handle(&json!({"op": "table.edit", "table": huge, "action": "insertRowBelow", "r": 0, "c": 0}));
+    assert!(edit.unwrap_err().contains("refused"));
+    let lay = ok(json!({"op": "table.layout", "table": huge, "w": 900, "h": 400}));
+    assert_eq!(lay["cells"].as_array().unwrap().len(), MAX_CELLS, "drawn within the cap");
+    // A table at the cap refuses another row or column; a normal one still grows.
+    let full = json!({"rows": vec![Value::Array(vec![json!({"text": ""}); 1_000]); MAX_CELLS / 1_000]});
+    for action in ["insertRowAbove", "insertColRight"] {
+        let r = handle(&json!({"op": "table.edit", "table": full, "action": action, "r": 0, "c": 0}));
+        assert!(r.unwrap_err().contains("limit"), "{action}");
+    }
+    let small = ok(json!({"op": "table.edit", "table": {}, "action": "new", "r": 3, "c": 3}));
+    let grown = ok(json!({"op": "table.edit", "table": small, "action": "insertRowBelow", "r": 0, "c": 0}));
+    assert_eq!(grown["rows"].as_array().unwrap().len(), 4);
+    // A merge whose spans from the file would grow the rectangle a row per pass is refused at its work bound.
+    let spans = json!({"rows": vec![Value::Array(vec![json!({"text": "", "rowSpan": 2}); 10]); 1_000]});
+    let merged = ok(json!({"op": "table.edit", "table": spans, "action": "merge", "r": 998, "c": 0, "r1": 999, "c1": 9}));
+    assert_eq!(merged["rows"].as_array().unwrap().len(), 1_000);
+}

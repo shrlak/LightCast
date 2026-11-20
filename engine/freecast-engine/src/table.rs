@@ -3,7 +3,7 @@
 //! row, total row, first/last column and banding) colour the cells, as its renderer does.
 
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot, apply};
-use deckcraft_model::table::{Cell, Row, Table, table_styles};
+use deckcraft_model::table::{Cell, MAX_CELLS, Row, Table, table_styles};
 use deckcraft_model::text::TextBody;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -80,9 +80,21 @@ pub fn styles() -> Res {
 const MARK: char = '\u{1}';
 const END: char = '\u{2}';
 
+/// Columns of a LightCast table: its widest row (at least one).
+fn width_of(t: &TableIn) -> usize {
+    t.rows.iter().map(Vec::len).max().unwrap_or(1).max(1)
+}
+
+/// Whether the table is past DeckCraft's cell cap (`MAX_CELLS`), checked before anything is padded out:
+/// many rows and one wide row would otherwise allocate their product.
+fn over_cap(t: &TableIn) -> bool {
+    let nc = width_of(t);
+    nc > MAX_CELLS || t.rows.len() > (MAX_CELLS / nc).max(1)
+}
+
 /// LightCast's table → DeckCraft's, each cell's text tagged with where it came from.
 fn to_dc(t: &TableIn) -> Table {
-    let nc = t.rows.iter().map(Vec::len).max().unwrap_or(1).max(1);
+    let nc = width_of(t);
     let cols: Vec<f64> = (0..nc).map(|c| t.cols.get(c).map(|v| fin(*v, 1.0).max(0.01)).unwrap_or(1.0)).collect();
     let rows = t
         .rows
@@ -207,14 +219,36 @@ pub fn edit(q: EditReq) -> Res {
         };
         return to_value(t);
     }
+    // Edits walk the grid: an over-cap table is refused, not trimmed (a trim would delete rows while
+    // reporting success), as DeckCraft's table edits are.
+    if over_cap(&q.table) {
+        return Err(format!("the table is larger than {MAX_CELLS} cells; edit refused"));
+    }
     let mut d = to_dc(&q.table);
     d.normalize();
     let (r, c) = (q.r.min(d.rows.len().saturating_sub(1)), q.c.min(d.cols.len().saturating_sub(1)));
+    let at_cap = || Err(format!("the table is at its {MAX_CELLS}-cell limit"));
     match q.action.as_str() {
-        "insertRowAbove" => d.insert_row(r),
-        "insertRowBelow" => d.insert_row(r + 1),
-        "insertColLeft" => d.insert_col(c),
-        "insertColRight" => d.insert_col(c + 1),
+        "insertRowAbove" => {
+            if !d.insert_row(r) {
+                return at_cap();
+            }
+        }
+        "insertRowBelow" => {
+            if !d.insert_row(r + 1) {
+                return at_cap();
+            }
+        }
+        "insertColLeft" => {
+            if !d.insert_col(c) {
+                return at_cap();
+            }
+        }
+        "insertColRight" => {
+            if !d.insert_col(c + 1) {
+                return at_cap();
+            }
+        }
         "deleteRow" => {
             d.delete_row(r);
         }
@@ -348,8 +382,9 @@ fn edges(sizes: &[f64], total: f64) -> Vec<f64> {
 pub fn layout(q: LayoutReq) -> Res {
     let t = &q.table;
     let s = scheme_named(q.scheme.as_deref());
-    let nr = t.rows.len();
-    let nc = t.rows.iter().map(Vec::len).max().unwrap_or(0);
+    // A table past the cell cap is drawn as DeckCraft draws it: its leading columns, then rows, within the cap.
+    let nc = t.rows.iter().map(Vec::len).max().unwrap_or(0).min(MAX_CELLS);
+    let nr = t.rows.len().min((MAX_CELLS / nc.max(1)).max(1));
     if nr == 0 || nc == 0 {
         return Ok(json!({ "cells": [] }));
     }
@@ -372,7 +407,7 @@ pub fn layout(q: LayoutReq) -> Res {
     let (dk1, lt1) = (s.get(SchemeSlot::Dk1), s.get(SchemeSlot::Lt1));
     let on = |fill: Rgba| if dk1.contrast(fill) >= lt1.contrast(fill) { dk1 } else { lt1 };
     let mut cells: Vec<Value> = vec![];
-    for (r, row) in t.rows.iter().enumerate() {
+    for (r, row) in t.rows.iter().take(nr).enumerate() {
         for c in 0..nc {
             let cell = row.get(c).cloned().unwrap_or_default();
             if cell.h_merge || cell.v_merge {

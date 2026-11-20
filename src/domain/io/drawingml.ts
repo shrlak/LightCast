@@ -7,7 +7,7 @@ import JSZip from 'jszip';
 import type { DashStyle, ElementParagraph, HAlign, ListStyle, SlideElement, TextRun } from '../types';
 import { uid } from '../lyrics';
 import { normalizeRuns } from '../richText';
-import { officeFont } from '../fonts';
+import { hasComplexScript, hasEastAsian, officeFont } from '../fonts';
 import { splitWeightedFace, weightPatch } from '../fontWeight';
 import { fromPptxVert } from '../textFormat';
 import { child, find, kids, local, parseMarkup, path, type MNode } from './markup';
@@ -22,7 +22,7 @@ const px = (emu: string | undefined, dflt = 0) => (emu === undefined || emu === 
 export interface DmlTheme {
   /** dk1, lt1, dk2, lt2, accent1–6, hlink, folHlink. */
   colors: Record<string, string>;
-  majorLatin?: string; minorLatin?: string; majorEa?: string; minorEa?: string;
+  majorLatin?: string; minorLatin?: string; majorEa?: string; minorEa?: string; majorCs?: string; minorCs?: string;
   /** The theme's format scheme: fill styles (fillRef idx 1–3), background fills (bgRef idx 1001–1003), line styles (lnRef) and effect styles (effectRef). */
   fills?: MNode[]; bgFills?: MNode[]; lines?: MNode[]; effects?: MNode[];
 }
@@ -60,7 +60,7 @@ export function readDmlTheme(xml: string): DmlTheme {
   const font = (part: string, script: string) => child(find(doc, part)[0], script)?.attrs.typeface || undefined;
   const fmt = find(doc, 'fmtScheme')[0];
   const list = (name: string) => { const l = child(fmt, name)?.children.filter((c) => c.name !== '#text'); return l?.length ? l : undefined; };
-  return { fills: list('fillStyleLst'), bgFills: list('bgFillStyleLst'), lines: list('lnStyleLst'), effects: list('effectStyleLst'), colors, majorLatin: font('majorFont', 'latin'), minorLatin: font('minorFont', 'latin'), majorEa: font('majorFont', 'ea'), minorEa: font('minorFont', 'ea') };
+  return { fills: list('fillStyleLst'), bgFills: list('bgFillStyleLst'), lines: list('lnStyleLst'), effects: list('effectStyleLst'), colors, majorLatin: font('majorFont', 'latin'), minorLatin: font('minorFont', 'latin'), majorEa: font('majorFont', 'ea'), minorEa: font('minorFont', 'ea'), majorCs: font('majorFont', 'cs'), minorCs: font('minorFont', 'cs') };
 }
 
 // ── Colours ─────────────────────────────────────────────────────────────────────────────────────
@@ -126,7 +126,6 @@ const colorIn = (n: MNode | null | undefined, theme: DmlTheme, ph?: string) => (
 
 const ALIGN: Record<string, HAlign> = { l: 'left', ctr: 'center', r: 'right', just: 'justify', dist: 'distributed', justLow: 'justLow', thaiDist: 'distributed' };
 const AUTONUM: Record<string, ListStyle> = { arabicPeriod: 'number', arabicParenR: 'number-paren', arabicParenBoth: 'number-paren', arabicPlain: 'number', romanUcPeriod: 'roman', romanLcPeriod: 'roman-lower', alphaLcPeriod: 'alpha-lower', alphaUcPeriod: 'alpha', alphaLcParenR: 'alpha-lower-paren', alphaLcParenBoth: 'alpha-lower-paren', hangulGanadaPeriod: 'hangul', hangul: 'hangul', ganada: 'hangul' };
-const EAST_ASIAN = /[ᄀ-ᇿ　-鿿가-힯豈-﫿＀-￯]/;
 
 interface TextDefaults { size: number; color?: string; font: 'minor' | 'major'; bold?: boolean; italic?: boolean }
 
@@ -157,36 +156,50 @@ export function mergeStyle(a: MNode | null | undefined, b: MNode | null | undefi
 }
 
 function resolveFace(face: string | undefined, theme: DmlTheme, which: 'minor' | 'major', ea: boolean): string | undefined {
-  const pick = (f: 'Latin' | 'Ea', w: 'minor' | 'major') => theme[`${w}${f}` as keyof DmlTheme] as string | undefined;
+  const pick = (f: 'Latin' | 'Ea' | 'Cs', w: 'minor' | 'major') => theme[`${w}${f}` as keyof DmlTheme] as string | undefined;
   if (face) {
     const m = /^\+(mn|mj)-(lt|ea|cs)$/.exec(face);
     if (!m) return face;
-    return pick(m[2] === 'ea' ? 'Ea' : 'Latin', m[1] === 'mj' ? 'major' : 'minor');
+    const w = m[1] === 'mj' ? 'major' : 'minor';
+    return m[2] === 'lt' ? pick('Latin', w) : pick(m[2] === 'ea' ? 'Ea' : 'Cs', w) ?? pick('Latin', w);
   }
   return (ea ? pick('Ea', which) : undefined) ?? pick('Latin', which);
 }
 
-type Run = TextRun & { fontFamily?: string };
+/** `shadow`: the run's text has an outer shadow (a:effectLst/a:outerShdw), its own or inherited. */
+type Run = TextRun & { fontFamily?: string; shadow?: boolean };
 
 function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, theme: DmlTheme, scale: number, ctx?: DmlContext): Run {
   const rPr = child(r, 'rPr');
   const attr = (k: string) => rPr?.attrs[k] ?? base?.attrs[k];
   const sz = attr('sz');
-  const ea = EAST_ASIAN.test(text);
-  const face = (ea ? child(rPr, 'ea') ?? child(base, 'ea') : null)?.attrs.typeface ?? child(rPr, 'latin')?.attrs.typeface ?? child(base, 'latin')?.attrs.typeface ?? (ea ? undefined : child(rPr, 'ea')?.attrs.typeface);
+  const ea = hasEastAsian(text);
+  // A typeface per script (a:latin, a:ea, a:cs): the run's own, else its paragraph style's, else the theme's.
+  const typeface = (script: string) => (child(rPr, script) ?? child(base, script))?.attrs.typeface || undefined;
+  const latinFace = resolveFace(typeface('latin'), theme, d.font, false);
+  const eaFace = resolveFace(typeface('ea'), theme, d.font, true) ?? latinFace;
+  const csFace = typeface('cs') ? resolveFace(typeface('cs'), theme, d.font, false) : undefined;
   const fill = child(rPr, 'solidFill') ?? child(base, 'solidFill');
   const hl = child(rPr, 'highlight') ?? child(base, 'highlight');
   const bl = Number(attr('baseline') ?? 0);
   const b = attr('b'), i = attr('i'), u = attr('u'), st = attr('strike');
   const spc = Number(attr('spc') ?? 0);
   const cap = attr('cap');
-  const resolved = resolveFace(face, theme, d.font, ea);
-  // "Noto Sans KR Light" is the family "Noto Sans KR" at weight 300 (only for families that have such weights).
-  const split = resolved ? splitWeightedFace(resolved) : undefined;
+  // "Noto Sans KR Light" is the family "Noto Sans KR" at weight 300 (only for families that have such weights);
+  // a run with Hangul / CJK takes the weight from its East Asian typeface.
+  const split = latinFace ? splitWeightedFace(latinFace) : undefined;
+  const eaSplit = eaFace ? splitWeightedFace(eaFace) : undefined;
   const family = split?.family;
-  const wp = split?.weight !== undefined ? weightPatch(split.weight) : undefined;
+  // Kept on the run only when it has characters of that script (the rest draw in the Latin typeface anyway).
+  const eaFamily = ea && eaSplit?.family !== family ? eaSplit?.family : undefined;
+  const csFamily = csFace && hasComplexScript(text) ? splitWeightedFace(csFace).family : undefined;
+  const wSplit = ea && eaSplit ? eaSplit : split;
+  const wp = wSplit?.weight !== undefined ? weightPatch(wSplit.weight) : undefined;
   const hlink = child(rPr, 'hlinkClick');
   const link = hlink ? ctx?.link?.(hlink) : undefined;
+  // Text effects come from the run, else from its paragraph's defRPr, the list style or the presentation's default
+  // text style (all merged into `base`), as DeckCraft reads them.
+  const shadow = !!child(child(rPr, 'effectLst') ?? child(base, 'effectLst'), 'outerShdw');
   return {
     text,
     fontSize: Math.round((sz ? (Number(sz) / 100) * 2 : d.size) * scale * 10) / 10,
@@ -199,9 +212,12 @@ function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, th
     color: colorIn(fill, theme)?.hex ?? d.color,
     highlight: colorIn(hl, theme)?.hex,
     fontFamily: family ? officeFont(family) : undefined,
+    ...(eaFamily ? { fontFamilyEa: officeFont(eaFamily) } : {}),
+    ...(csFamily && csFamily !== family ? { fontFamilyCs: officeFont(csFamily) } : {}),
     ...(spc ? { letterSpacing: Math.round((spc / 100) * 2 * 10) / 10 } : {}),
     ...(cap === 'all' ? { caps: 'all' as const } : cap === 'small' ? { caps: 'small' as const } : {}),
     ...(link ? { link } : {}),
+    ...(shadow ? { shadow } : {}),
   } as Run;
 }
 
@@ -263,7 +279,7 @@ function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme, ctx?: D
   });
 }
 
-const RUN_KEYS = ['fontSize', 'bold', 'weight', 'italic', 'underline', 'strike', 'baseline', 'color', 'highlight', 'fontFamily', 'letterSpacing', 'caps', 'link'] as const;
+const RUN_KEYS = ['fontSize', 'bold', 'weight', 'italic', 'underline', 'strike', 'baseline', 'color', 'highlight', 'fontFamily', 'fontFamilyEa', 'fontFamilyCs', 'letterSpacing', 'caps', 'link'] as const;
 
 /** Paragraphs → the element's text, its own formatting (that of most of its text) and runs for the rest. */
 export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Partial<SlideElement> {
@@ -274,7 +290,8 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
   // The box's own formatting is its first text's (as PowerPoint shows it when the box is selected).
   const own: Partial<Record<(typeof RUN_KEYS)[number], unknown>> = {};
   // A link stays on its own characters (the box has no link of its own).
-  for (const k of RUN_KEYS) if (k !== 'link') own[k] = first[k];
+  // Nor a script typeface: the box has only one font, so a run's 한글 글꼴 stays on the run.
+  for (const k of RUN_KEYS) if (k !== 'link' && k !== 'fontFamilyEa' && k !== 'fontFamilyCs') own[k] = first[k];
   const strip = (r: Run): TextRun => {
     const out: TextRun = { text: r.text };
     for (const k of RUN_KEYS) if (r[k] !== own[k] && r[k] !== undefined) (out as unknown as Record<string, unknown>)[k] = r[k];
@@ -308,6 +325,8 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
     list: lp?.list,
     ...(own.letterSpacing ? { letterSpacing: own.letterSpacing as number } : {}),
     ...(own.caps ? { caps: own.caps as 'all' | 'small' } : {}),
+    // 텍스트 그림자: the box draws one shadow for all its text, so the shadow of its first text.
+    ...((first as Run).shadow ? { shadow: true } : {}),
     ...(lp?.list === 'picture' && lp.bulletPicture ? { bulletPicture: lp.bulletPicture } : {}),
     lineHeight: lp?.lineHeight,
     ...(lp?.lineExactPx ? { lineExact: { mode: 'exact' as const, px: lp.lineExactPx } } : {}),

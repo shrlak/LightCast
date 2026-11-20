@@ -189,7 +189,7 @@ export function usedFamilies(root: unknown): string[] {
     seen.add(x);
     if (Array.isArray(x)) return x.forEach(walk);
     for (const [k, v] of Object.entries(x)) {
-      if (k === 'fontFamily' && typeof v === 'string') {
+      if ((k === 'fontFamily' || k === 'fontFamilyEa' || k === 'fontFamilyCs') && typeof v === 'string') {
         const first = v.split(',')[0].replace(/["']/g, '').trim();
         if (first && !/^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit)$/i.test(first)) found.add(first);
       } else walk(v);

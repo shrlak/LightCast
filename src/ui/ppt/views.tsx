@@ -183,10 +183,16 @@ export function ReadingView({ ed, onClose, ids, rehearse }: { ed: Ed; onClose: (
     const t = setInterval(() => setNow(Date.now()), 500);
     return () => clearInterval(t);
   }, [rehearse]);
+  /** The slide on screen before this one; the canvas plays no transition into the first. */
+  const shownBefore = useRef(slide);
   useEffect(() => {
     if (!slide) return;
     shownAt.current = Date.now();
-    void import('../../domain/animations').then(({ initialBuild }) => setBuild(ed.p?.showSetup?.noAnimation ? null : initialBuild(slide, Date.now()) ?? null));
+    const before = shownBefore.current;
+    shownBefore.current = slide;
+    const tr = ed.p?.showSetup?.noTransitions ? undefined : slide.transition ?? ed.p?.transition;
+    // The slide's animations start once its transition has played (DeckCraft #2089).
+    void import('../../domain/animations').then(({ initialBuild, transitionHold }) => setBuild(ed.p?.showSetup?.noAnimation ? null : initialBuild(slide, Date.now(), transitionHold(before, slide, tr)) ?? null));
   }, [slide, ed.p?.showSetup?.noAnimation]);
   const record = () => { if (rehearse && slide) times.current[slide.id] = (times.current[slide.id] ?? 0) + (Date.now() - shownAt.current) / 1000; };
   const finish = () => {

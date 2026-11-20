@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=5c698493bc1f7ec36f90deb29df247b93330e654
+DECKCRAFT_SYNCED=5b422e8dc5fb24558f90175475d68cdc03a29e19
 ```
 
-(`ci: lock workflow actions through an actions.lock lockfile (#2078)`.)
+(`rtf: delegate outline RTF heading/body emission to craft-rtf (refs storytold/craft-libs#778) (#2269)`.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -94,4 +94,20 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
   - Not applicable: the shared-library cutovers (craft-drawingml, craft-cfb, craft-deckcraft-format, Base64, RTF,
     OPC names, XML escaping), PPTX import budgets, the Greek sigma / Arabic Letter Mark / engineering-notation text
     fixes (DeckCraft's own formatting engine), CI and release housekeeping.
-
+- `5c69849..5b422e8` (73 commits, 2026-11-17 to 2026-11-20), ported by importance, redesigned to LightCast's own code:
+  - Ported: a slide's animations wait for its transition (`e1ca7149`: `transitionHold` and `initialBuild(…, afterMs)` in
+    `animations.ts`, used by `goLive` and the reading view); separate Latin / East Asian / complex-script typefaces
+    (`3a1a74d2`, `e39e693d`, `1a16bf97`: `TextRun.fontFamilyEa` / `fontFamilyCs`, Hangul drawn in the 한글 글꼴, `a:ea` /
+    `a:cs` read and written, 글꼴 dialog 영어 글꼴 / 한글 글꼴); text shadow from the run, `defRPr`, list style and default
+    text style (from `53044b2c`; glow is not modelled); table cell cap of 100,000 (`1629e4d9`: vendored
+    `deckcraft/model/src/table.rs` now matches DeckCraft at that commit, `freecast-engine/src/table.rs`, `drawTable.ts`,
+    `pptxTable.ts`, `odp.ts`); PPTX media timing round trip (`8c85789c`, `9fb1c5f9`, `0fabcf1d`, `ea85b041`, `fc6a3c4d`:
+    `readMediaTiming` in `pptxTiming.ts`, `pptxMedia.ts`; export now embeds video and audio); 머리글/바닥글 keeps and
+    remembers the date format (`372c0e6c`, `370b38e6`: `applyFooter` in `insertTools.ts`, format and language lists).
+  - Already in LightCast (tests added): line-chart value labels (`8d51427d`, `b5dfac13`), text in scaled groups
+    (`ba63277c`), empty notes slides (`e4b1a609`), every slide as PNG / JPEG (`53f09a02`).
+  - Not applicable / skipped: `.ppt` 97-2003 reader (LightCast has its own, `io/pptImport.ts`), outline RTF, Serbian
+    proofing languages, gradient-stop double-click (LightCast's stops are colour inputs that open on one click), the
+    transparent-background picture option, footer date import (LightCast does not read footers into `Slide.footer`),
+    egui canvas clipping, Preferences slider and Save As list, craft-libs cutovers (rtf, numfmt, mcp, media, table-style
+    writer), docs, CI.

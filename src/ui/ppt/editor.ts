@@ -106,7 +106,7 @@ export interface TextTarget {
 }
 
 /** Clear All Formatting on selected characters: their own formatting goes, the box's shows. */
-const CLEAR_RUN = { fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, highlight: undefined };
+const CLEAR_RUN = { fontSize: undefined, bold: undefined, weight: undefined, italic: undefined, underline: undefined, color: undefined, strike: undefined, baseline: undefined, fontFamily: undefined, fontFamilyEa: undefined, fontFamilyCs: undefined, highlight: undefined };
 
 /** The size of text with none of its own in this object (as the slide editor draws it). */
 const baseSize = (e: SlideElement) => (e.kind === 'shape' ? 40 : e.kind === 'table' ? 32 : 64);

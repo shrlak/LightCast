@@ -3,7 +3,7 @@
 // when no step is left the click goes on to the next slide. The timeline itself — which effect is in
 // which step, how long each step runs, what every object looks like at a moment — comes from the
 // engine (DeckCraft's timeline).
-import type { Slide, SlideAnimation, SlideElement } from './types';
+import type { Slide, SlideAnimation, SlideElement, Transition } from './types';
 import { prepareTimeline, sampleTimeline, type AnimPara, type AnimSpec, type AnimState, type PreparedTimeline, type TriggerPlayhead } from '../engine';
 
 /** Timing › Repeat › Until Next Click (DeckCraft stores it as `u32::MAX`). */
@@ -63,20 +63,36 @@ export const slideTimeline = (slide: Slide): PreparedTimeline | null => {
   return spec ? prepareTimeline(spec) : null;
 };
 
-/** The builds of a slide as it comes on screen: its first step plays at once unless it waits for a click. */
-export function initialBuild(slide: Slide, now: number): LiveBuild | undefined {
+/**
+ * How long (ms) the slide's own transition plays as it replaces `prev` on screen: 0 when it cuts, when
+ * nothing was shown before it, or when the same slide is shown again (the canvas plays no transition then).
+ */
+export function transitionHold(prev: Slide | null | undefined, slide: Slide, transition: Transition | undefined): number {
+  if (!transition || transition.kind === 'cut' || !prev) return 0;
+  if (prev === slide || (prev.id === slide.id && JSON.stringify(prev) === JSON.stringify(slide))) return 0;
+  return Math.max(0, transition.duration);
+}
+
+/**
+ * The builds of a slide as it comes on screen: its first step plays at once unless it waits for a click.
+ * `afterMs` is the slide's transition (transitionHold): a first step that starts With / After Previous
+ * begins when the transition has finished, as in PowerPoint (DeckCraft #2089), not under it.
+ */
+export function initialBuild(slide: Slide, now: number, afterMs = 0): LiveBuild | undefined {
   const tl = slideTimeline(slide);
   if (!tl) return undefined;
   // Only triggered effects: nothing plays on the clicks, but their objects start as the triggers leave them.
   if (!tl.steps) return tl.triggers?.length ? { step: 0, startedAt: null } : undefined;
-  return { step: 0, startedAt: tl.auto[0] ? now : null };
+  return { step: 0, startedAt: tl.auto[0] ? now + Math.max(0, afterMs) : null };
 }
 
 /** The step actually playing at `now` (steps that start by themselves follow on) and seconds into it. */
 export function buildPosition(tl: PreparedTimeline, build: LiveBuild, now: number): { step: number; t: number; settled: boolean } {
   if (build.startedAt === null) return { step: build.step, t: 0, settled: true };
   let step = build.step;
-  let t = Math.max(0, (now - build.startedAt) / 1000) + 1e-4;
+  // A step due to start later (after the slide's transition) still shows the slide as it was before it.
+  const since = (now - build.startedAt) / 1000;
+  let t = since < 0 ? 0 : since + 1e-4;
   while (step + 1 < tl.steps && t >= (tl.durations[step] ?? 0) && (build.all || tl.auto[step + 1])) {
     t -= tl.durations[step] ?? 0;
     step++;

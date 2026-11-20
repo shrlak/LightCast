@@ -1,6 +1,6 @@
 import PptxGenJS from 'pptxgenjs';
 import { embedFontsPref, embedUsedFonts } from '../embeddedFonts';
-import type { Background, HAlign, Library, ListStyle, Playlist, Presentation, SlideElement, TextDirection, Theme } from '../types';
+import type { Background, HAlign, Library, ListStyle, Playlist, Presentation, SlideElement, TextDirection, TextRun, Theme } from '../types';
 import { chartSvg, iconCatalog, layoutTable } from '../../engine';
 import { histogramColumns, pptxPlan } from '../chartTypes';
 import { lineRuns } from '../richText';
@@ -27,6 +27,7 @@ import { bulletMedia, bulletPictureOf, bulletPlaceholder, patchBulletXml } from 
 import { fillXml, lnXml, needsShapePatch, patchPptx, type ShapePatch } from './shapeXml';
 import { scene3dXml } from '../shape3d';
 import { patchOleObjects, type OlePatch } from './oleObjects';
+import { mediaExtension, patchMediaClips, type MediaPatch } from './pptxMedia';
 
 const W = 10;
 const H = 7.5;
@@ -40,6 +41,24 @@ const shapePatches = new WeakMap<PptxGenJS, ShapePatch[]>();
 let markerSeq = 0;
 /** OLE objects of an export: their preview pictures are turned back into the original objects when the file is written (oleObjects.ts). */
 const olePatches = new WeakMap<PptxGenJS, OlePatch[]>();
+/** Audio and video of an export: named, marked as audio and given their playback (p:timing) when the file is written (pptxMedia.ts). */
+const mediaPatches = new WeakMap<PptxGenJS, MediaPatch[]>();
+
+/** An audio or video clip, embedded with its playback settings (자동 실행, 반복 재생, 되감기, 여러 슬라이드에서 재생, 전체 화면 재생, 볼륨). */
+async function addMediaElement(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideElement, box: Box): Promise<void> {
+  const kind = el.kind as 'video' | 'audio';
+  const blob = await getMedia(el.mediaId!);
+  if (!blob) return;
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const data = `data:${blob.type || (kind === 'video' ? 'video/mp4' : 'audio/mpeg')};base64,${btoa(bin)}`;
+  const marker = `lcm-${++markerSeq}`;
+  s.addMedia({ x: box.x, y: box.y, w: box.w, h: box.h, type: kind, data, extn: mediaExtension(blob.type, kind), objectName: marker } as PptxGenJS.MediaProps);
+  const list = mediaPatches.get(pptx) ?? [];
+  list.push({ marker, kind, name: el.name, playback: el.playback });
+  mediaPatches.set(pptx, list);
+}
 /** The picture bullets of an export (data URLs), by the index their placeholder character carries. */
 const bulletPictures = new WeakMap<PptxGenJS, string[]>();
 function registerBulletPicture(pptx: PptxGenJS, dataUrl: string): number {
@@ -281,6 +300,30 @@ function weightedFace(family: string, own: { bold?: boolean; weight?: number }, 
   return pptxWeightedFont(family, own, inherited);
 }
 const fontFace = (t: Theme) => pptxFont(t.fontFamily);
+
+/*
+ * A run's typeface per script (a:latin 영어 글꼴, a:ea 한글 글꼴, a:cs): PptxGenJS writes one name into all three, so a
+ * run with its own East Asian or complex-script typeface gets the three names joined by SCRIPT_SEP, and the written
+ * slides are split back into a:latin / a:ea / a:cs (splitScriptFaces).
+ */
+const SCRIPT_SEP = '\u2063';
+const scriptFaced = new WeakSet<PptxGenJS>();
+function scriptFace(pptx: PptxGenJS, latin: string, r: Pick<TextRun, 'fontFamilyEa' | 'fontFamilyCs'>): string {
+  if (!r.fontFamilyEa && !r.fontFamilyCs) return latin;
+  scriptFaced.add(pptx);
+  return [latin, r.fontFamilyEa ? pptxFont(r.fontFamilyEa) : latin, r.fontFamilyCs ? pptxFont(r.fontFamilyCs) : latin].join(SCRIPT_SEP);
+}
+/** A written slide's joined typefaces (scriptFace) split into a:latin, a:ea and a:cs; anywhere else the Latin one. */
+export function splitScriptFaces(xml: string): string {
+  if (!xml.includes(SCRIPT_SEP)) return xml;
+  return xml
+    .replace(/<a:(latin|ea|cs)( [^>]*?)?typeface="([^"]*)"/g, (m, tag: string, pre: string | undefined, face: string) => {
+      if (!face.includes(SCRIPT_SEP)) return m;
+      const parts = face.split(SCRIPT_SEP);
+      return `<a:${tag}${pre ?? ' '}typeface="${parts[tag === 'ea' ? 1 : tag === 'cs' ? 2 : 0] ?? parts[0]}"`;
+    })
+    .replace(new RegExp(`${SCRIPT_SEP}[^"<]*`, 'g'), '');
+}
 /** A paragraph's bold flag, and its font when its weight (Light …) differs from the box's: PowerPoint picks weights by family name. */
 function paragraphFace(p: { bold?: boolean; weight?: number }, el: { bold?: boolean; weight?: number }, family: string, box: { face: string }): { bold: boolean | undefined; fontFace?: string } {
   if (p.weight === undefined) return { bold: p.bold ?? el.bold };
@@ -385,7 +428,7 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
         const richLines = runs.some(Boolean) || el.text.includes('\u000b') ? (el.paragraphs?.map((x) => x.text) ?? el.text.split('\n')) : null;
         const rich: PptxGenJS.TextProps[] | null = richLines && richLines.flatMap((line, i) => {
           const parts = runs[i] ?? [{ text: line || ' ' }];
-          return parts.flatMap((r, k) => { const rf = weightedFace(r.fontFamily ?? elFamily, r, el); return r.text.split('\u000b').map((piece, j) => ({ text: piece, options: { ...(j > 0 ? { softBreakBefore: true } : {}), ...(r.link ? { hyperlink: { url: r.link } } : {}), fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: rf.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), fontFace: r.fontFamily || rf.face !== boxFace.face ? rf.face : undefined, highlight: r.highlight?.replace('#', ''), strike: r.strike ? ('sngStrike' as const) : undefined, superscript: r.baseline === 'super' || undefined, subscript: r.baseline === 'sub' || undefined, breakLine: k === parts.length - 1 && i < richLines.length - 1 && j === r.text.split('\u000b').length - 1 } })); });
+          return parts.flatMap((r, k) => { const rf = weightedFace(r.fontFamily ?? elFamily, r, el); return r.text.split('\u000b').map((piece, j) => ({ text: piece, options: { ...(j > 0 ? { softBreakBefore: true } : {}), ...(r.link ? { hyperlink: { url: r.link } } : {}), fontSize: (r.fontSize ?? el.paragraphs?.[i]?.fontSize ?? el.fontSize ?? 64) * 0.5, bold: rf.bold, italic: r.italic ?? el.italic, underline: r.underline ? { style: 'sng' as const } : undefined, color: (r.color ?? el.color ?? '#ffffff').replace('#', ''), fontFace: r.fontFamily || rf.face !== boxFace.face || r.fontFamilyEa || r.fontFamilyCs ? scriptFace(pptx, rf.face, r) : undefined, highlight: r.highlight?.replace('#', ''), strike: r.strike ? ('sngStrike' as const) : undefined, superscript: r.baseline === 'super' || undefined, subscript: r.baseline === 'sub' || undefined, breakLine: k === parts.length - 1 && i < richLines.length - 1 && j === r.text.split('\u000b').length - 1 } })); });
         });
         const content = rich ?? (el.paragraphs?.length ? el.paragraphs.map((p, i) => ({ text: fixed ? p.text.replace(/\n$/, '').split('\n').map((line) => line || '\u00a0').join('\n') : p.text, options: { fontSize: (p.fontSize ?? el.fontSize ?? 64) * 0.5, lineSpacing: exactPts(p.fontSize ?? el.fontSize ?? 64), ...paragraphFace(p, el, elFamily, boxFace), italic: p.italic ?? el.italic, color: (p.color ?? el.color ?? '#ffffff').replace('#', ''), align: pptxAlign(p.align ?? el.align), breakLine: i < el.paragraphs!.length - 1 } })) : el.text);
         s.addText(content, { ...box, fontFace: boxFace.face, lineSpacing: el.paragraphs?.length ? undefined : exactPts(el.fontSize ?? 64), margin: NO_MARGIN, lang: langOf(el.text), fontSize: (el.fontSize ?? 64) * 0.5, color: (el.color ?? '#ffffff').replace('#', ''), bold: boxFace.bold, italic: el.italic, underline: el.underline ? { style: 'sng' } : undefined, ...textOptions(el, pptx), align: pptxAlign(el.align) ?? 'center', valign: el.vAlign === 'top' ? 'top' : el.vAlign === 'bottom' ? 'bottom' : 'middle', fit: el.autoFit === 'resize' ? 'resize' : el.autoFit === 'shrink' ? 'shrink' : undefined, ...(el.wrap === false ? { wrap: false } : {}) });
@@ -402,6 +445,8 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
           const data = await dataUrl(el.mediaId);
           if (data) s.addImage({ ...box, data, sizing: { type: el.fit === 'cover' ? 'cover' : 'contain', w: box.w, h: box.h } });
         }
+      } else if ((el.kind === 'video' || el.kind === 'audio') && el.mediaId) {
+        await addMediaElement(pptx, s, el, box);
       } else if (el.kind === 'qr' && el.link) {
         s.addImage({ ...box, data: qrDataUrl(el.link) });
       } else if (el.kind === 'shape') {
@@ -474,15 +519,18 @@ function patchOnWrite(pptx: PptxGenJS) {
   const patches = shapePatches.get(pptx) ?? [];
   const bullets = bulletPictures.get(pptx) ?? [];
   const oles = olePatches.get(pptx) ?? [];
-  if (!patches.length && !bullets.length && !oles.length) return;
+  const media = mediaPatches.get(pptx) ?? [];
+  if (!patches.length && !bullets.length && !oles.length && !media.length && !scriptFaced.has(pptx)) return;
   const write = pptx.write.bind(pptx);
   const patched = async (props?: PptxGenJS.WriteProps) => {
     const type = typeof props === 'string' ? props : props?.outputType ?? 'blob';
     const out = await write({ ...(typeof props === 'object' ? props : {}), outputType: 'arraybuffer' });
     const zip = await JSZip.loadAsync(out as ArrayBuffer);
+    if (scriptFaced.has(pptx)) for (const f of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) zip.file(f, splitScriptFaces(await zip.file(f)!.async('string')));
     await patchPptx(zip, patches);
     await patchBulletPictures(zip, bullets);
     await patchOleObjects(zip, oles);
+    await patchMediaClips(zip, media);
     const asType = ({ nodebuffer: 'nodebuffer', arraybuffer: 'arraybuffer', uint8array: 'uint8array', base64: 'base64', binarystring: 'binarystring', blob: 'blob' } as const)[type as 'blob'] ?? 'blob';
     return zip.generateAsync({ type: asType as 'blob', compression: 'DEFLATE' });
   };

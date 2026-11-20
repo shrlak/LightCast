@@ -23,7 +23,7 @@ import { colorOf, EMU_PER_PX, fillFromNode, mergeStyle, nodeToElements, OFFICE_T
 import { child, find, kids, local, parseMarkup, path, textOf, type MNode } from './markup';
 import { readTable } from './pptxTable';
 import { readChart, readChartEx } from './pptxChart';
-import { readAnimations, readTransition } from './pptxTiming';
+import { readAnimations, readMediaTiming, readTransition } from './pptxTiming';
 import { newReport, note, slideWarnings, type ImportReport } from './importReport';
 
 /** Size caps: parts in the package, one XML part, one media file, all media together, slides. */
@@ -417,8 +417,8 @@ export async function readPptxDeck(data: ArrayBuffer | Uint8Array, opts: DeckOpt
         const base = { x: box.x, y: box.y, w: box.w, h: box.h, ...(groupId ? { groupId } : {}), ...(nv?.attrs.name ? { name: nv.attrs.name } : {}), ...(nv?.attrs.descr ? { alt: nv.attrs.descr } : {}) };
         const tbl = child(gd, 'tbl');
         if (tbl) {
-          const { table, styled } = readTable(tbl, box.w, box.h, theme, tableStyles);
-          note(report, '표', styled === 'unknown' ? 'approximated' : 'converted', n, styled === 'unknown' ? '알 수 없는 표 스타일을 기본 스타일로' : undefined);
+          const { table, styled, capped } = readTable(tbl, box.w, box.h, theme, tableStyles);
+          note(report, '표', styled === 'unknown' || capped ? 'approximated' : 'converted', n, capped ? '셀이 너무 많아 뒤쪽 행·열을 빼고' : styled === 'unknown' ? '알 수 없는 표 스타일을 기본 스타일로' : undefined);
           if (find(tbl, 'r').some((r) => find(r, 'rPr').some((p) => p.attrs.sz || p.attrs.i === '1' || child(p, 'latin')))) note(report, '표 셀 글자 서식', 'approximated', n, '셀마다 하나의 굵기·색으로');
           return [{ id: uid('el'), kind: 'table', ...base, table }];
         }
@@ -513,6 +513,12 @@ export async function readPptxDeck(data: ArrayBuffer | Uint8Array, opts: DeckOpt
       for (const a of tr.approximated) note(report, a, 'approximated', n, '비슷한 전환으로');
       for (const d of tr.dropped) note(report, d, 'dropped', n);
       const an = readAnimations(sld, targets);
+      // Playback of the slide's audio and video (자동 실행, 반복 재생, 되감기, 여러 슬라이드에서 재생, 전체 화면 재생, 볼륨).
+      const playback = readMediaTiming(sld, targets);
+      for (const e of elements) {
+        const pb = (e.kind === 'video' || e.kind === 'audio') ? playback.get(e.id) : undefined;
+        if (pb && Object.keys(pb).length) e.playback = { ...e.playback, ...pb };
+      }
       if (an.animations.length) { slide.animations = an.animations; note(report, '애니메이션', 'converted', n, undefined, an.animations.length); }
       for (const a of an.approximated) note(report, a, 'approximated', n, '비슷한 효과로');
       for (const d of an.dropped) note(report, d, 'dropped', n);

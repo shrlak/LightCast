@@ -5,6 +5,7 @@
 import type { CellBorder, CellBorders, TableCell, TableData } from '../../engine';
 import { colorOf, EMU_PER_PX, type DmlTheme } from './drawingml';
 import { child, find, kids, local, path, textOf, type MNode } from './markup';
+import { MAX_TABLE_CELLS, maxTableRows } from '../drawTable';
 
 /** Built-in table styles by their GUID → the engine's style id. */
 const BUILTIN: Record<string, string> = {
@@ -53,7 +54,8 @@ function styleLook(part: MNode | null, theme: DmlTheme): Look {
   };
 }
 
-export interface TableResult { table: TableData; styled: 'file' | 'builtin' | 'unknown' }
+/** `capped`: the file's grid was past the cell cap, so its last columns / rows were left out. */
+export interface TableResult { table: TableData; styled: 'file' | 'builtin' | 'unknown'; capped?: boolean }
 
 /** a:tbl → the table, sized to `w` × `h` canvas px. `styles`: the deck's ppt/tableStyles.xml, parsed. */
 export function readTable(tbl: MNode, w: number, h: number, theme: DmlTheme, styles: MNode | null): TableResult {
@@ -61,8 +63,12 @@ export function readTable(tbl: MNode, w: number, h: number, theme: DmlTheme, sty
   const flag = (k: string) => tblPr?.attrs[k] === '1' || tblPr?.attrs[k] === 'true';
   const styleId = child(tblPr, 'tableStyleId')?.children.map((c) => c.text ?? '').join('').trim() ?? '';
   const fileStyle = styleId && styles ? find(styles, 'tblStyle').find((s) => s.attrs.styleId === styleId) ?? null : null;
-  const cols = kids(child(tbl, 'tblGrid'), 'gridCol').map((c) => Number(c.attrs.w) / EMU_PER_PX || 1);
-  const trs = kids(tbl, 'tr');
+  // A grid past the cell cap keeps its leading columns and rows, so a file naming many rows and many columns
+  // (but few cells) cannot make the reader pad out their product.
+  const allCols = kids(child(tbl, 'tblGrid'), 'gridCol'), allTrs = kids(tbl, 'tr');
+  const cols = allCols.slice(0, MAX_TABLE_CELLS).map((c) => Number(c.attrs.w) / EMU_PER_PX || 1);
+  const trs = allTrs.slice(0, maxTableRows(cols.length));
+  const capped = cols.length < allCols.length || trs.length < allTrs.length;
   const heights = trs.map((r) => Number(r.attrs.h) / EMU_PER_PX || 1);
   // The frame's size wins over the grid's (PowerPoint grows rows to fit their text).
   const sw = w / (cols.reduce((a, b) => a + b, 0) || 1), sh = h / (heights.reduce((a, b) => a + b, 0) || 1);
@@ -123,6 +129,11 @@ export function readTable(tbl: MNode, w: number, h: number, theme: DmlTheme, sty
   }));
   // Short rows are padded so every row has a cell per column.
   for (const row of rows) while (row.length < C) row.push({ text: '' });
+  // Merges are cut to the rows and columns a capped grid kept.
+  if (capped) rows.forEach((row, r) => row.forEach((cell, c) => {
+    if (cell.rowSpan && cell.rowSpan > R - r) cell.rowSpan = Math.max(1, R - r);
+    if (cell.span && cell.span > Math.max(1, C) - c) cell.span = Math.max(1, C - c);
+  }));
   const builtin = BUILTIN[styleId];
   const styled: TableResult['styled'] = fileStyle ? 'file' : builtin || !styleId ? 'builtin' : 'unknown';
   const table: TableData = {
@@ -132,5 +143,5 @@ export function readTable(tbl: MNode, w: number, h: number, theme: DmlTheme, sty
     firstRow: !fileStyle && flag('firstRow'), firstCol: !fileStyle && flag('firstCol'), lastRow: !fileStyle && flag('lastRow'), lastCol: !fileStyle && flag('lastCol'),
     bandRow: !fileStyle && flag('bandRow'), bandCol: !fileStyle && flag('bandCol'),
   };
-  return { table, styled };
+  return { table, styled, ...(capped ? { capped } : {}) };
 }
