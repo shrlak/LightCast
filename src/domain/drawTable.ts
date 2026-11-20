@@ -10,6 +10,40 @@ import type { CellBorders, TableCell, TableData } from '../engine';
 export const SNAP = 8;
 /** Cap on the grid so a runaway pencil can't build an enormous table. */
 export const MAX_GRID = 200;
+/** Cells a table may hold (DeckCraft's cap; PowerPoint's own limit is 75 × 75). A file or an edit past it
+ * is clamped or refused, so a huge row/column count cannot make the editor allocate or walk their product. */
+export const MAX_TABLE_CELLS = 100_000;
+
+/** How many rows of `cols` columns fit the cell cap (always at least one). */
+export const maxTableRows = (cols: number) => Math.max(1, Math.floor(MAX_TABLE_CELLS / Math.max(1, cols)));
+
+/** The table's column count: its grid or its widest row, whichever is more. */
+function widthOf(t: Pick<TableData, 'rows' | 'cols'>): number {
+  let nc = t.cols.length;
+  for (const r of t.rows) if (r.length > nc) nc = r.length;
+  return nc;
+}
+
+/** Whether a table is larger than the cell cap. */
+export function tableOverCap(t: Pick<TableData, 'rows' | 'cols'>): boolean {
+  const nc = widthOf(t);
+  return nc > MAX_TABLE_CELLS || t.rows.length > maxTableRows(nc);
+}
+
+/**
+ * The table cut to the cell cap: its last columns and then its last rows go, and every merge is clipped to
+ * what remains. A table within the cap comes back as it was.
+ */
+export function capTable(t: TableData): { table: TableData; capped: boolean } {
+  if (!tableOverCap(t)) return { table: t, capped: false };
+  const nc = Math.min(MAX_TABLE_CELLS, widthOf(t));
+  const nr = Math.min(t.rows.length, maxTableRows(nc));
+  const rows = t.rows.slice(0, nr).map((row, r) => row.slice(0, nc).map((cell, c) => {
+    const rs = cell.rowSpan && cell.rowSpan > nr - r ? nr - r : cell.rowSpan, cs = cell.span && cell.span > nc - c ? nc - c : cell.span;
+    return rs === cell.rowSpan && cs === cell.span ? cell : { ...cell, rowSpan: rs, span: cs };
+  }));
+  return { table: { ...t, rows, cols: t.cols.slice(0, nc), heights: t.heights.slice(0, nr) }, capped: true };
+}
 
 interface Anchor { r: number; c: number; rs: number; cs: number; cell: TableCell }
 
@@ -17,11 +51,22 @@ const covered = (c: TableCell) => !!(c.hMerge || c.vMerge);
 const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
 const edges = (sizes: number[]) => sizes.reduce<number[]>((e, s) => [...e, e[e.length - 1] + s], [0]);
 
+/**
+ * Every visible cell with its spans clipped to the grid. Merges of a well-formed table do not overlap, so
+ * together they cover at most the grid; a file's overlapping spans past that lose their span (as DeckCraft
+ * drops them), so laying the grid out again cannot revisit cells without bound.
+ */
 function anchorsOf(t: TableData): Anchor[] {
   const out: Anchor[] = [];
+  let area = t.rows.length * t.cols.length;
   t.rows.forEach((row, r) => row.forEach((cell, c) => {
-    if (covered(cell)) return;
-    out.push({ r, c, rs: Math.min(Math.max(1, cell.rowSpan ?? 1), t.rows.length - r), cs: Math.min(Math.max(1, cell.span ?? 1), t.cols.length - c), cell });
+    if (covered(cell) || c >= t.cols.length) return;
+    let rs = Math.min(Math.max(1, cell.rowSpan ?? 1), t.rows.length - r), cs = Math.min(Math.max(1, cell.span ?? 1), t.cols.length - c);
+    if (rs * cs > 1) {
+      if (rs * cs > area) rs = cs = 1;
+      else area -= rs * cs;
+    }
+    out.push({ r, c, rs, cs, cell });
   }));
   return out;
 }
@@ -59,7 +104,7 @@ function splitRows(t: TableData, y: number, x0: number, x1: number, snap: number
   // Boundary index b: an existing grid line near y, or a new one splitting row k.
   let b = ys.findIndex((e) => Math.abs(e - y) <= snap);
   if (b < 0) {
-    if (t.heights.length >= MAX_GRID) return null;
+    if (t.heights.length >= MAX_GRID || (t.heights.length + 1) * t.cols.length > MAX_TABLE_CELLS) return null;
     const k = ys.findIndex((e, i) => i < ys.length - 1 && e < y && y < ys[i + 1]);
     if (k < 0) return null;
     heights = [...t.heights.slice(0, k), y - ys[k], ys[k + 1] - y, ...t.heights.slice(k + 1)];
@@ -106,16 +151,26 @@ export function eraseTableLine(t: TableData, w: number, h: number, p: [number, n
   const q: [number, number] = [p[0] * sx, p[1] * sy];
   const ys = edges(t.heights), xs = edges(t.cols);
   const a = anchorsOf(t);
+  // Anchors by their top-left cell, so each cell's right and lower neighbours are looked up rather than
+  // every pair of cells compared (a large table would take the square of its cells).
+  const at = new Map<number, number>();
+  const nc = t.cols.length + 1;
+  a.forEach((u, i) => at.set(u.r * nc + u.c, i));
   let best: { d: number; i: number; j: number } | null = null;
-  a.forEach((u, i) => a.forEach((v, j) => {
+  a.forEach((u, i) => {
     const [ul, ut, ur, ub] = [xs[u.c], ys[u.r], xs[u.c + u.cs], ys[u.r + u.rs]];
-    let d: number;
     // v directly right of u with the same rows, or directly below with the same columns.
-    if (v.c === u.c + u.cs && v.r === u.r && v.rs === u.rs && q[1] > ut && q[1] < ub) d = Math.abs(q[0] - ur) / sx;
-    else if (v.r === u.r + u.rs && v.c === u.c && v.cs === u.cs && q[0] > ul && q[0] < ur) d = Math.abs(q[1] - ub) / sy;
-    else return;
-    if (d <= tol && (!best || d < best.d)) best = { d, i, j };
-  }));
+    const right = at.get(u.r * nc + u.c + u.cs), below = at.get((u.r + u.rs) * nc + u.c);
+    for (const j of [right, below]) {
+      if (j === undefined) continue;
+      const v = a[j];
+      let d: number;
+      if (j === right && v.r === u.r && v.rs === u.rs && q[1] > ut && q[1] < ub) d = Math.abs(q[0] - ur) / sx;
+      else if (j === below && v.c === u.c && v.cs === u.cs && q[0] > ul && q[0] < ur) d = Math.abs(q[1] - ub) / sy;
+      else continue;
+      if (d <= tol && (!best || d < best.d)) best = { d, i, j };
+    }
+  });
   if (!best) return null;
   const { i, j } = best as { i: number; j: number };
   const v = a[j], u = { ...a[i], cell: { ...a[i].cell } };

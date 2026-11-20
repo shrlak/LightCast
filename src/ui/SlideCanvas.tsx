@@ -455,7 +455,7 @@ export function ElementView({ el }: { el: SlideElement }) {
 
 export { runStyle } from './runStyle';
 import { runStyle, runText, linkColorFor } from './runStyle';
-import { RunSpan } from './RunSpan';
+import { RunChars, RunSpan } from './RunSpan';
 
 /** Home › Paragraph › Tabs: a line whose tabs go to the box's tab stops (domain/tabStops). */
 function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; size: number }) {
@@ -473,7 +473,7 @@ function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; siz
   return <>{segs.map((seg, i) => (
     <span key={i}>
       {i > 0 && <span style={{ display: 'inline-block', width: gaps[i - 1] }} />}
-      {seg.map((r, k) => <span key={k} style={runStyle(r)}>{r.text}</span>)}
+      {seg.map((r, k) => <span key={k} style={runStyle(r)}><RunChars r={r} text={r.text} /></span>)}
     </span>
   ))}</>;
 }

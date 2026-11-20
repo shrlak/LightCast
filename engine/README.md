@@ -41,7 +41,8 @@ memory (`fc_reserve`), handled by `fc_call`, and answered as `{"ok": ...}` or `{
   `freecast-engine/src/inkshape.rs` come from **DeckCraft** (https://github.com/storytold/deckcraft,
   commit `0623b430324cf4c3d1962e6ae7885cf30c011c5e`), © 2026 ArtCraft Team and the DeckCraft
   contributors, used under the MIT License (see `deckcraft/LICENSE-MIT`; also available under
-  Apache-2.0, `deckcraft/LICENSE-APACHE`). The crates are unchanged; `inkshape.rs` lost one test that
+  Apache-2.0, `deckcraft/LICENSE-APACHE`). The crates are unchanged, except `deckcraft/model/src/table.rs`,
+  which is DeckCraft's file as of commit `1629e4d9533f1864b0fddd8ea976723eff03f5f6` (the table cell cap); `inkshape.rs` lost one test that
   needs DeckCraft's document session. The ArtCraft name and logos are not used.
 - `freecast-engine/src/icon_data.rs` holds Lucide icon paths as DeckCraft ships them (Lucide 1.56.0,
   commit `440a1e1dfb1e712505308da46bead3c28b1f1398`), ISC License, © 2026 Lucide Icons and Contributors;

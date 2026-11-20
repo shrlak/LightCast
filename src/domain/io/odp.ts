@@ -14,6 +14,7 @@ import {
 } from './odpGeometry';
 import { animationsXml, readAnimations } from './odpAnim';
 import { makePlaceholder, withMaster } from '../master';
+import { MAX_TABLE_CELLS, maxTableRows } from '../drawTable';
 
 export { hexColor, lengthToCm, animationsXml };
 
@@ -448,12 +449,14 @@ async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data:
   const rows: TableData['rows'] = [];
   const colWidth = (n: XNode) => lengthToCm(resolveStyle(ctx.styles, 'table-column', n.attrs['table:style-name'])['style:column-width']) ?? 3;
   const rowHeight = (n: XNode) => lengthToCm(resolveStyle(ctx.styles, 'table-row', n.attrs['table:style-name'])['style:row-height'] ?? resolveStyle(ctx.styles, 'table-row', n.attrs['table:style-name'])['style:min-row-height']) ?? 1;
+  // Cells read so far: a table past the cell cap stops taking rows (see MAX_TABLE_CELLS).
+  let cellCount = 0;
   const walk = (n: XNode) => {
     for (const c of elementsOf(n)) {
       if (c.name === 'table:table-column') for (let i = 0; i < Math.min(50, Number(c.attrs['table:number-columns-repeated'] ?? 1)); i++) { cols.push(colWidth(c)); colStyle.push(c.attrs['table:default-cell-style-name']); }
       else if (c.name === 'table:table-columns' || c.name === 'table:table-header-columns' || c.name === 'table:table-header-rows' || c.name === 'table:table-rows') walk(c);
       else if (c.name === 'table:table-row') {
-        for (let rep = 0; rep < Math.min(200, Number(c.attrs['table:number-rows-repeated'] ?? 1)); rep++) {
+        for (let rep = 0; rep < Math.min(200, Number(c.attrs['table:number-rows-repeated'] ?? 1)) && rows.length < MAX_TABLE_CELLS && cellCount < MAX_TABLE_CELLS; rep++) {
           const row: TableData['rows'][number] = [];
           const srow: (number | undefined)[] = [];
           for (const cell of elementsOf(c)) {
@@ -483,12 +486,17 @@ async function readTableParts(ctx: Ctx, table: XNode, box: Box): Promise<{ data:
           rows.push(row);
           sizes.push(srow);
           heights.push(rowHeight(c));
+          cellCount += row.length;
         }
       }
     }
   };
   walk(table);
-  const n = Math.max(cols.length, ...rows.map((r) => r.length), 1);
+  // Past the cell cap the last columns, then the last rows, are left out before the rows are padded out.
+  const n = Math.min(MAX_TABLE_CELLS, rows.reduce((m, r) => Math.max(m, r.length), Math.max(cols.length, 1)));
+  if (cols.length > n) cols.length = n;
+  for (const row of rows) if (row.length > n) row.length = n;
+  if (rows.length > maxTableRows(n)) { rows.length = sizes.length = heights.length = maxTableRows(n); }
   while (cols.length < n) cols.push(3);
   for (const row of rows) while (row.length < n) row.push({ text: '' });
   // A cell covered by a vertical merge sits under the cell that spans it.

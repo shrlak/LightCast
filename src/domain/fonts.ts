@@ -55,3 +55,33 @@ export function officeFont(name: string): string {
   const serif = /명조|바탕|Myeongjo|Batang|Times|Georgia|serif/i.test(face) && !/sans/i.test(face);
   return serif ? `${head}, "Nanum Myeongjo", AppleMyungjo, serif` : `${head}, ${KO}`;
 }
+
+// A run has a typeface per script, as in PowerPoint (ECMA-376 §21.1.2.3): a:latin (영어 글꼴), a:ea (한글 글꼴)
+// and a:cs. Hangul, kana, CJK ideographs, CJK punctuation and full-width forms take the East Asian one;
+// Hebrew, Arabic, Syriac, Thaana, the Indic scripts, Thai, Lao, Tibetan and Khmer the complex-script one;
+// everything else (Latin letters, digits, spaces, ASCII punctuation) the Latin one.
+const EA_CHAR = /[ᄀ-ᇿ⺀-⿟⿰-鿿ꥠ-꥿가-퟿豈-﫿︰-﹏＀-￯\u{20000}-\u{3ffff}]/u;
+const CS_CHAR = /[֐-ࣿऀ-෿฀-࿿ក-៿יִ-﷿ﹰ-﻾]/;
+export type FontScript = 'latin' | 'ea' | 'cs';
+export const scriptOf = (ch: string): FontScript => (EA_CHAR.test(ch) ? 'ea' : CS_CHAR.test(ch) ? 'cs' : 'latin');
+/** Does the text have characters PowerPoint draws in the East Asian typeface? */
+export const hasEastAsian = (text: string) => EA_CHAR.test(text);
+/** Does the text have characters PowerPoint draws in the complex-script typeface? */
+export const hasComplexScript = (text: string) => CS_CHAR.test(text);
+
+/**
+ * A run's text cut where its typeface changes: each piece with the East Asian / complex-script typeface it
+ * is drawn in (undefined: the run's own `fontFamily`, i.e. the Latin one). A run with no script typeface is one piece.
+ */
+export function scriptPieces(text: string, ea?: string, cs?: string): { text: string; fontFamily?: string }[] {
+  if (!ea && !cs) return [{ text }];
+  const out: { text: string; fontFamily?: string }[] = [];
+  for (const ch of text) {
+    const s = scriptOf(ch);
+    const fam = s === 'ea' ? ea : s === 'cs' ? cs : undefined;
+    const last = out[out.length - 1];
+    if (last && last.fontFamily === fam) last.text += ch;
+    else out.push({ text: ch, ...(fam ? { fontFamily: fam } : {}) });
+  }
+  return out;
+}

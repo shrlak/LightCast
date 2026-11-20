@@ -179,8 +179,12 @@ export interface TextRun {
   strike?: boolean;
   /** 위 첨자 / 아래 첨자. */
   baseline?: 'super' | 'sub';
-  /** The run's own typeface (kept from pasted PowerPoint / web text). */
+  /** The run's own typeface (kept from pasted PowerPoint / web text); its Latin typeface (a:latin, 영어 글꼴) when the run also has script typefaces. */
   fontFamily?: string;
+  /** The run's East Asian typeface (a:ea, 한글 글꼴): its Hangul, kana and CJK characters are drawn in it, the rest in `fontFamily`. */
+  fontFamilyEa?: string;
+  /** The run's complex-script typeface (a:cs): its Arabic, Hebrew, Thai and Indic characters are drawn in it. */
+  fontFamilyCs?: string;
   /** Highlighter colour behind the run. */
   highlight?: string;
   /** Insert › Link on these characters: opened by a click in a slide show. */

@@ -74,10 +74,11 @@ describe('PowerPoint clipboard (GVML) → objects', () => {
     // The box's formatting is that of most of its text; the rest is in runs.
     expect(el.fontSize).toBe(56);
     expect(el.color).toBe('#000000');
-    expect(el.fontFamily).toBe(officeFont('맑은 고딕'));
+    // The box's typeface is the Latin one (+mn-lt); the Hangul runs keep their East Asian one (+mn-ea).
+    expect(el.fontFamily).toBe(officeFont('Calibri'));
     // Two alignments → per-line paragraphs.
     expect(el.paragraphs?.map((p) => p.align)).toEqual(['left', 'center']);
-    expect(el.paragraphs?.[0].runs).toEqual([{ text: '은혜 ' }, { text: '아멘', bold: true, color: '#ff0000' }]);
+    expect(el.paragraphs?.[0].runs).toEqual([{ text: '은혜 ', fontFamilyEa: officeFont('맑은 고딕') }, { text: '아멘', bold: true, color: '#ff0000', fontFamilyEa: officeFont('맑은 고딕') }]);
     expect(el.paragraphs?.[1].runs).toEqual([{ text: 'Grace & peace', fontSize: 36, italic: true, color: undefined, fontFamily: officeFont('Arial') }].map((x) => Object.fromEntries(Object.entries(x).filter(([, v]) => v !== undefined))));
   });
 

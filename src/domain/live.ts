@@ -2,7 +2,7 @@ import type { Library, LiveState, Playlist, Presentation, Slide, Theme } from '.
 import { sequence } from './arrangement';
 import { resolveBackground } from './autoBackground';
 import { songKey, stageSettingsFor } from './chordChart';
-import { initialBuild } from './animations';
+import { initialBuild, transitionHold } from './animations';
 
 export interface Cursor {
   presentationId: string;
@@ -133,6 +133,7 @@ export function goLive<S extends NavState>(s: S, c: Cursor, now: number = Date.n
   const crossed = cursor.playlistIndex != null && cursor.playlistIndex !== s.playlistIndex;
   const first = c.seq === 0 || s.cursor?.presentationId !== p.id;
   const entering = s.cursor?.presentationId !== p.id;
+  const transition = p.showSetup?.noTransitions ? { kind: 'cut' as const, duration: 1 } : slide.transition ?? p.transition ?? s.live.transition;
   return {
     ...s,
     cursor,
@@ -143,10 +144,11 @@ export function goLive<S extends NavState>(s: S, c: Cursor, now: number = Date.n
       title: p.title,
       nextText: nextSlide ? [nextSlide.title, nextSlide.text].filter(Boolean).join('\n') : null,
       theme: themeFor(s.library, p),
-      transition: p.showSetup?.noTransitions ? { kind: 'cut', duration: 1 } : slide.transition ?? p.transition ?? s.live.transition,
+      transition,
       background: resolveBackground(slide, p),
       bgEffect: p.bgEffect ?? null,
-      build: p.showSetup?.noAnimation ? undefined : initialBuild(slide, now),
+      // The slide's animations wait for its transition (DeckCraft #2089).
+      build: p.showSetup?.noAnimation ? undefined : initialBuild(slide, now, transitionHold(s.live.slide, slide, transition)),
       number: c.seq + 1,
       black: false,
       songKey: songKey(p),

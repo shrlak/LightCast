@@ -2,9 +2,9 @@
 // and its animations (p:timing main sequence and triggered sequences) → LightCast's transition and
 // SlideAnimation list, by PowerPoint's preset ids. Effects without a LightCast counterpart become the
 // nearest one and are counted for the import report.
-import type { SlideAnimation, Transition } from '../types';
+import type { MediaPlayback, SlideAnimation, Transition } from '../types';
 import { uid } from '../lyrics';
-import { child, find, local, type MNode } from './markup';
+import { child, find, kids, local, path, type MNode } from './markup';
 
 const SPD: Record<string, number> = { fast: 500, med: 750, slow: 1000 };
 const P15: Record<string, string> = { fallOver: 'fallOver', drape: 'drape', curtains: 'curtains', wind: 'wind', prestige: 'prestige', fracture: 'fracture', crush: 'crush', peelOff: 'peelOff', pageCurlDouble: 'pageCurlDouble', pageCurlSingle: 'pageCurlDouble', airplane: 'airplane', origami: 'origami' };
@@ -97,6 +97,8 @@ export function readAnimations(slide: MNode, targets: Map<string, string[]>): An
         a = { effect: 'customPath', class: 'path', durationMs: Math.max(...durs, 500), delayMs: delay, ...(p ? { path: p } : {}) };
       } else {
         const table = cls === 'entr' ? ENTR : cls === 'exit' ? EXIT : cls === 'emph' ? EMPH : null;
+        // A Play effect on a clip is the clip's own playback (automatic or on click: readMediaTiming); Pause and Stop are dropped.
+        if (!table && cls === 'mediacall' && pid !== 2 && pid !== 3) continue;
         if (!table) { out.dropped.push('미디어 재생 효과'); continue; }
         const preset = table[pid];
         if (!preset) out.approximated.push(`애니메이션 효과 (${cls === 'entr' ? '나타내기' : cls === 'exit' ? '끝내기' : '강조'} ${pid})`);
@@ -115,5 +117,113 @@ export function readAnimations(slide: MNode, targets: Map<string, string[]>): An
     }
   }
   out.approximated = [...new Set(out.approximated)];
+  return out;
+}
+
+// ── Audio and video playback (p:video / p:audio > p:cMediaNode), after DeckCraft's read/timing.rs media_settings ──
+
+const delayOf = (c: MNode) => c.attrs.delay?.trim();
+const condsOf = (st: MNode) => kids(st, 'cond');
+
+/** Whether a start condition list (p:stCondLst) holds its node back (a click, another event, a targeted onBegin, a delay) instead of starting it with its parent. */
+export function defersStart(st: MNode): boolean {
+  const autoBegin = (c: MNode) => c.attrs.evt === 'onBegin' && delayOf(c) === '0' && !child(c, 'tgtEl') && !child(c, 'tn') && !child(c, 'rtn');
+  const conds = condsOf(st);
+  const hasOnBegin = conds.some(autoBegin);
+  return conds.some((c) => (!!c.attrs.evt && !autoBegin(c)) || (!hasOnBegin && delayOf(c) !== '0'));
+}
+
+/** PowerPoint's wrapper of an automatic main-sequence step: `delay="indefinite"` with only an `onBegin` of the enclosing mainSeq (`p:tn val` = its id). */
+function isMainSeqAuto(st: MNode, mainSeqId: string | undefined): boolean {
+  if (!mainSeqId) return false;
+  const bare = (c: MNode) => !child(c, 'tgtEl') && !child(c, 'rtn');
+  const indefinite = (c: MNode) => !c.attrs.evt && delayOf(c) === 'indefinite' && bare(c) && !child(c, 'tn');
+  const onMainSeq = (c: MNode) => c.attrs.evt === 'onBegin' && delayOf(c) === '0' && bare(c) && child(c, 'tn')?.attrs.val?.trim() === mainSeqId;
+  const conds = condsOf(st);
+  return conds.some(indefinite) && conds.some(onMainSeq) && conds.every((c) => indefinite(c) || onMainSeq(c));
+}
+
+interface Effect { ctn: MNode; triggered: boolean; offset: number; deferred: boolean }
+
+/** The effects of a time tree in document order, with what holds each back (DeckCraft's `collect`). */
+function effectsOf(n: MNode, at: { triggered: boolean; mainSeqId?: string; offset: number; deferred: boolean }, out: Effect[], depth = 0): Effect[] {
+  if (depth > 64 || out.length > 10_000) return out;
+  for (const c of n.children) {
+    if (c.name === '#text') continue;
+    const name = local(c);
+    if (name === 'cTn' && c.attrs.presetClass) {
+      const st = child(c, 'stCondLst');
+      out.push({ ctn: c, triggered: at.triggered, offset: at.offset, deferred: at.deferred || (!!st && defersStart(st)) });
+      continue;
+    }
+    const next = { ...at };
+    if (name === 'seq' && child(c, 'cTn')?.attrs.nodeType === 'interactiveSeq') { next.triggered = true; next.mainSeqId = undefined; }
+    if (name === 'cTn') {
+      const isMainSeq = c.attrs.nodeType === 'mainSeq';
+      const st = child(c, 'stCondLst');
+      if (st) {
+        if (!(!isMainSeq && !next.deferred && isMainSeqAuto(st, next.mainSeqId)) && defersStart(st)) next.deferred = true;
+        const first = condsOf(st)[0];
+        if (first) next.offset = delayOf(first) === 'indefinite' ? 0 : next.offset + (attrNum(first.attrs.delay) ?? 0);
+      }
+      next.mainSeqId = isMainSeq && !next.deferred ? c.attrs.id?.trim() : undefined;
+    }
+    effectsOf(c, next, out, depth + 1);
+  }
+  return out;
+}
+
+/**
+ * Playback settings of the slide's clips, by element id: volume and mute, 슬라이드 쇼 동안 숨기기
+ * (showWhenStopped="0"), 반복 재생 (repeatCount="indefinite"), 재생 후 되감기 (fill="remove"),
+ * 여러 슬라이드에서 재생 (numSld > 1), 전체 화면 재생 (fullScrn, video only), and 자동 실행: the media
+ * node's own start is immediate and nothing above it waits, or a Play effect leads the main sequence
+ * with no click, delay or event before it.
+ */
+export function readMediaTiming(slide: MNode, targets: Map<string, string[]>): Map<string, MediaPlayback> {
+  const out = new Map<string, MediaPlayback>();
+  const timing = child(slide, 'timing');
+  if (!timing) return out;
+  const set = (spid: string | undefined, patch: MediaPlayback) => {
+    for (const id of (spid && targets.get(spid)) || []) out.set(id, { ...out.get(id), ...patch });
+  };
+  const nodes: { node: MNode; deferred: boolean }[] = [];
+  const walk = (n: MNode, deferred: boolean, depth: number) => {
+    if (depth > 64 || nodes.length >= 10_000) return;
+    const st = local(n) === 'cTn' ? child(n, 'stCondLst') : null;
+    if (st && defersStart(st)) deferred = true;
+    if (local(n) === 'video' || local(n) === 'audio') { nodes.push({ node: n, deferred }); return; }
+    for (const c of n.children) if (c.name !== '#text') walk(c, deferred, depth + 1);
+  };
+  walk(timing, false, 0);
+  for (const { node, deferred } of nodes) {
+    const cm = child(node, 'cMediaNode');
+    const spid = find(child(cm, 'tgtEl') ?? { name: '', attrs: {}, children: [] }, 'spTgt')[0]?.attrs.spid;
+    if (!cm || !spid) continue;
+    const ctn = child(cm, 'cTn');
+    const pb: MediaPlayback = {};
+    const vol = attrNum(cm.attrs.vol);
+    if (vol !== undefined && vol < 100000) pb.volume = Math.max(0, vol / 100000);
+    if (cm.attrs.mute === '1' || cm.attrs.mute === 'true') pb.muted = true;
+    if (cm.attrs.showWhenStopped === '0' || cm.attrs.showWhenStopped === 'false') pb.hideDuringShow = true;
+    if (ctn?.attrs.repeatCount === 'indefinite') pb.loop = true;
+    if (ctn?.attrs.fill === 'remove') pb.rewind = true;
+    if ((attrNum(cm.attrs.numSld) ?? 0) > 1) pb.acrossSlides = true;
+    const own = condsOf(child(ctn, 'stCondLst') ?? { name: '', attrs: {}, children: [] })[0];
+    if (!deferred && own && !own.attrs.evt && delayOf(own) === '0') pb.autoplay = true;
+    if (local(node) === 'video' && (node.attrs.fullScrn === '1' || node.attrs.fullScrn === 'true')) pb.fullScreen = true;
+    set(spid, pb);
+  }
+  // A Play effect at the head of the main sequence (Start: With / After Previous, no delay) starts the clip with the slide.
+  const root = path(timing, 'tnLst', 'par', 'cTn', 'stCondLst');
+  const tn = child(timing, 'tnLst');
+  if (tn && !(root && defersStart(root))) {
+    for (const e of effectsOf(tn, { triggered: false, offset: 0, deferred: false }, []).filter((f) => !f.triggered)) {
+      if (e.ctn.attrs.nodeType === 'clickEffect' || e.deferred) break;
+      const pid = Number(e.ctn.attrs.presetID ?? 0);
+      const delay = attrNum(condsOf(child(e.ctn, 'stCondLst') ?? { name: '', attrs: {}, children: [] })[0]?.attrs.delay) ?? 0;
+      if (e.ctn.attrs.presetClass === 'mediacall' && pid !== 2 && pid !== 3 && e.offset === 0 && delay === 0) set(find(e.ctn, 'spTgt')[0]?.attrs.spid, { autoplay: true });
+    }
+  }
   return out;
 }

@@ -10,6 +10,7 @@ import { uid } from '../../domain/lyrics';
 import { CANVAS_W } from '../../domain/canvas';
 import { sections } from '../../domain/sections';
 import { withMaster } from '../../domain/master';
+import { applyFooter, DATE_FORMATS, rememberedDateFormat } from '../../domain/insertTools';
 import { RecordAudioDialog, ScreenCaptureDialog } from './captureDialogs';
 import { PhotoAlbumDialog } from './albumDialog';
 import { MediaPanel } from './mediaPanel';
@@ -54,16 +55,20 @@ function HeaderFooterDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [footer, setFooter] = useState(!!f.text);
   const [hideTitle, setHideTitle] = useState(!!f.hideOnTitle);
   const [text, setText] = useState(f.text ?? '');
-  const value = () => {
-    const v = { ...(date ? { date: fixed ? dateText : true } : {}), ...(number ? { slideNumber: true } : {}), ...(footer && text.trim() ? { text: text.trim() } : {}), ...(hideTitle ? { hideOnTitle: true } : {}) };
-    return Object.keys(v).length ? v : undefined;
-  };
+  // 자동으로 업데이트 format: opens on this slide's (else the deck's) format; only a format picked here is applied as such.
+  const remembered = useMemo(() => rememberedDateFormat(ed.slide ?? undefined, ed.p?.slides ?? []), [ed.slide, ed.p]);
+  const [format, setFormat] = useState(remembered);
+  const [picked, setPicked] = useState(false);
+  const [lang, setLang] = useState<'ko' | 'en'>(remembered.startsWith('en') ? 'en' : 'ko');
+  const now = new Date();
+  const pick = (id: string) => { setFormat(id); setPicked(true); };
   const apply = (all: boolean) => {
     const p = ed.p;
     if (!p) return;
-    const v = value();
-    if (all) ed.updatePres({ slides: p.slides.map((s) => ({ ...s, footer: v })) });
-    else ed.updateSlide({ footer: v });
+    const choice = { date, ...(fixed ? { fixed: dateText } : {}), slideNumber: number, text: footer ? text : undefined, hideOnTitle: hideTitle };
+    const at = (s: Slide) => applyFooter(s.footer, choice, picked ? format : undefined, remembered || undefined);
+    if (all) ed.updatePres({ slides: p.slides.map((s) => ({ ...s, footer: at(s) })) });
+    else if (ed.slide) ed.updateSlide({ footer: at(ed.slide) });
     onClose();
   };
   return (
@@ -72,7 +77,14 @@ function HeaderFooterDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         <legend>슬라이드에 포함할 내용</legend>
         <Check label="날짜 및 시간" checked={date} onChange={setDate} />
         <div className="dlg-indent">
-          <label className="rb-check"><input type="radio" name="hf-date" disabled={!date} checked={!fixed} onChange={() => setFixed(false)} /> 자동으로 업데이트 ({new Date().toLocaleDateString()})</label>
+          <label className="rb-check"><input type="radio" name="hf-date" disabled={!date} checked={!fixed} onChange={() => setFixed(false)} /> 자동으로 업데이트</label>
+          <div className="dlg-indent">
+            <select aria-label="날짜 형식" disabled={!date || fixed} value={format} onChange={(e) => pick(e.target.value)}>
+              {lang === 'ko' && <option value="">{now.toLocaleDateString('ko-KR')}</option>}
+              {DATE_FORMATS.filter((x) => x.lang === lang).map((x) => <option key={x.id} value={x.id}>{x.format(now)}</option>)}
+            </select>
+            <Field label="언어"><select disabled={!date || fixed} value={lang} onChange={(e) => { const l = e.target.value as 'ko' | 'en'; setLang(l); pick(l === 'ko' ? '' : 'en1'); }}><option value="ko">한국어</option><option value="en">영어(미국)</option></select></Field>
+          </div>
           <label className="rb-check"><input type="radio" name="hf-date" disabled={!date} checked={fixed} onChange={() => setFixed(true)} /> 고정</label>
           <input disabled={!date || !fixed} value={dateText} onChange={(e) => setDateText(e.target.value)} />
         </div>
