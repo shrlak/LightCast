@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=5b422e8dc5fb24558f90175475d68cdc03a29e19
+DECKCRAFT_SYNCED=0ccc68f61ce171393d53b30b1c6cc45ac40be738
 ```
 
-(`rtf: delegate outline RTF heading/body emission to craft-rtf (refs storytold/craft-libs#778) (#2269)`.)
+(`test(pptx): require named chart and edited series values in PPTX/POTX/PPSX parity test (#2295)`.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -111,3 +111,18 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
     transparent-background picture option, footer date import (LightCast does not read footers into `Slide.footer`),
     egui canvas clipping, Preferences slider and Save As list, craft-libs cutovers (rtf, numfmt, mcp, media, table-style
     writer), docs, CI.
+- `5b422e8..0ccc68f` (8 commits, 2026-11-20 to 2026-11-21):
+  - Ported: the craft-rtf tokenizer's RTF reading (`c355c063`) in LightCast's own RTF reader, `rtfToText` in
+    `io/songFormats.ts` (ProPresenter 6 `RTFData`): `\uN` is now read (before, it was swallowed as an unknown control
+    word, so Hangul stored only as RTF was lost), its `\ucN` fallback is skipped (a `\'hh` or control symbol counts as
+    one character, the skip ends at a group boundary), `\*` destinations are skipped wherever they appear, `\'hh` is
+    cp1252, `\bin` data is skipped (`tests/rtfText.test.ts`); strict shape-owner scoping in post-export XML patches
+    (`6ebac8b9`): `patchMediaClips` in `io/pptxMedia.ts` only renames a clip and points its timing at it when the
+    `lcm-N` marker is in that picture's own `p:nvPicPr` and no other shape opens inside the picture (`ownsCNvPr`,
+    `tests/deckcraftSync4.test.ts`).
+  - Not applicable: the craft-pptx reader/writer cutover and its follow-ups (`05d99074`, `94e7d0cf`: they restore
+    DeckCraft's own behaviour on top of the shared crate, such as `grpFill` on pictures in groups and preset
+    adjustments beyond ±2e9; LightCast writes with its own exporter, groups are flat); notes / handout master shape
+    bounds and POTX / PPSX export parity (`b16257a8`, `0ccc68f6`: LightCast's notes and handout masters are print
+    settings, not shape trees, and it exports `.pptx` / `.ppt` only); MCP transcript tests (`83d9383c`, automation
+    only); the shared AGENTS.md (`3ffeffcd`, docs). No Rust changed, so the wasm was not rebuilt.

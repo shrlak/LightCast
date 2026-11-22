@@ -64,30 +64,61 @@ export function parseOpenSong(xml: string, fallback: string): SongDraft {
   return { title, sections, progression: order?.length ? order : undefined };
 }
 
-/** Plain text out of the RTF ProPresenter 6 stores per text element. */
-function rtfToText(rtf: string): string {
-  let depth = 0;
-  let skip = -1;
+/** cp1252 bytes 0x80-0x9f (the rest of `\'hh` is Latin-1). */
+const CP1252 = '\u20ac\u0081\u201a\u0192\u201e\u2026\u2020\u2021\u02c6\u2030\u0160\u2039\u0152\u008d\u017d\u008f\u0090\u2018\u2019\u201c\u201d\u2022\u2013\u2014\u02dc\u2122\u0161\u203a\u0153\u009d\u017e\u0178';
+const cp1252 = (h: number) => (h >= 0x80 && h <= 0x9f ? CP1252[h - 0x80] : String.fromCharCode(h));
+
+/** Destinations whose text is not part of the slide. */
+const RTF_SKIP = new Set(['fonttbl', 'colortbl', 'expandedcolortbl', 'stylesheet', 'info', 'pict', 'object', 'header', 'footer', 'listtable', 'listoverridetable', 'generator']);
+const RTF_CHAR: Record<string, string> = { emdash: '\u2014', endash: '\u2013', bullet: '\u2022', lquote: '\u2018', rquote: '\u2019', ldblquote: '\u201c', rdblquote: '\u201d', tab: '\t' };
+
+/**
+ * Plain text out of the RTF ProPresenter 6 stores per text element. Tokenised the way DeckCraft's shared
+ * `craft-rtf` tokenizer does (DeckCraft c355c063): `\uN` is read (it used to be swallowed as an unknown control
+ * word, losing Hangul) and the `\ucN` fallback after it is skipped, counting a `\'hh` or a control symbol as one
+ * character; the skip ends at a group boundary; `\*` marks an ignorable destination wherever it appears.
+ */
+export function rtfToText(rtf: string): string {
+  type St = { skip: boolean; uc: number };
+  const stack: St[] = [];
+  let st: St = { skip: false, uc: 1 };
+  let pending = 0;
   let out = '';
-  for (let i = 0; i < rtf.length; i++) {
-    const ch = rtf[i];
-    if (ch === '{') { depth++; continue; }
-    if (ch === '}') { if (depth === skip) skip = -1; depth--; continue; }
-    if (skip >= 0) continue;
-    if (ch === '\\') {
-      const m = /^\\([a-z]+)(-?\d+)? ?|^\\'([0-9a-f]{2})|^\\u(-?\d+)\??|^\\(.)/i.exec(rtf.slice(i));
-      if (!m) continue;
-      i += m[0].length - 1;
-      if (m[1]) {
-        if (['par', 'line'].includes(m[1])) out += '\n';
-        else if (['fonttbl', 'colortbl', 'expandedcolortbl', 'stylesheet', 'info', '*'].includes(m[1])) skip = depth;
-      } else if (m[3]) out += String.fromCharCode(parseInt(m[3], 16));
-      else if (m[4]) out += String.fromCharCode((Number(m[4]) + 65536) % 65536);
-      else if (m[5] === '*') skip = depth;
-      else if (m[5] && '\\{}'.includes(m[5])) out += m[5];
-      continue;
+  const re = /\\([a-z]{1,32})(-?\d{1,10})? ?|\\'([0-9a-f]{2})|\\([^a-z'])|([{}])|([^\\{}\r\n]+)|[\r\n]+|\\/giy;
+  for (let m = re.exec(rtf); m; m = re.exec(rtf)) {
+    const [, word, param, hex, sym, brace, text] = m;
+    if (brace === '{') { pending = 0; stack.push(st); st = { ...st }; }
+    else if (brace === '}') { pending = 0; st = stack.pop() ?? { skip: false, uc: 1 }; }
+    else if (word !== undefined) {
+      const w = word.toLowerCase();
+      if (w === 'bin') { re.lastIndex += Math.max(0, Number(param ?? 0)); pending = 0; continue; }
+      if (pending > 0 && w !== 'u') { pending--; continue; }
+      if (w === 'u') {
+        if (!st.skip) out += String.fromCharCode((Number(param ?? 0) + 65536) % 65536);
+        pending = st.uc;
+      } else if (w === 'uc') st.uc = Math.min(8, Math.max(0, Number(param ?? 1)));
+      else if (RTF_SKIP.has(w)) st.skip = true;
+      else if (st.skip) continue;
+      else if (w === 'par' || w === 'line') out += '\n';
+      else if (RTF_CHAR[w]) out += RTF_CHAR[w];
+    } else if (hex !== undefined) {
+      if (pending > 0) { pending--; continue; }
+      const h = parseInt(hex, 16);
+      if (!st.skip && h) out += cp1252(h);
+    } else if (sym !== undefined) {
+      if (sym === '*') { pending = 0; st.skip = true; continue; }
+      if (pending > 0) { pending--; continue; }
+      if (st.skip) continue;
+      if ('\\{}'.includes(sym)) out += sym;
+      else if (sym === '~') out += ' ';
+      else if (sym === '_') out += '-';
+      else if (sym === '\n' || sym === '\r') out += '\n';
+    } else if (text !== undefined) {
+      const chars = [...text];
+      const drop = Math.min(pending, chars.length);
+      pending -= drop;
+      if (!st.skip) out += chars.slice(drop).join('');
     }
-    if (ch !== '\r' && ch !== '\n') out += ch;
   }
   return out.replace(/\n{2,}/g, '\n').trim();
 }
