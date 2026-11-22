@@ -55,6 +55,9 @@ pub struct ChartReq {
     pub legend: bool,
     #[serde(default)]
     pub data_labels: bool,
+    /// Pie and doughnut data labels show the value (c:showVal without c:showPercent) instead of the percentage.
+    #[serde(default)]
+    pub label_values: bool,
     #[serde(default = "yes")]
     pub gridlines: bool,
     #[serde(default)]
@@ -439,7 +442,8 @@ fn draw_pie(s: &mut String, r: &ChartReq, kind: Kind, ink: &Ink, w: f64, top: f6
         if r.data_labels {
             let am = (a0 + a1) / 2.0;
             let lr = if inner > 0.0 { (rad + inner) / 2.0 } else { rad * 0.65 };
-            let _ = write!(s, r#"<text x="{}" y="{}" text-anchor="middle" fill="white" font-weight="600">{}%</text>"#, n(cx + lr * am.cos()), n(cy + lr * am.sin() + fs * 0.35), (frac * 100.0).round());
+            let text = if r.label_values { esc(&label(*v)) } else { format!("{}%", (frac * 100.0).round()) };
+            let _ = write!(s, r#"<text x="{}" y="{}" text-anchor="middle" fill="white" font-weight="600">{}</text>"#, n(cx + lr * am.cos()), n(cy + lr * am.sin() + fs * 0.35), text);
         }
         a0 = a1;
     }

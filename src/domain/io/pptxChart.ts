@@ -114,6 +114,8 @@ export function readChart(xml: MNode, theme: DmlTheme): ChartResult | null {
   const autoDeleted = child(chartEl, 'autoTitleDeleted')?.attrs.val === '1';
   const titleText = title ? richText(child(title, 'tx')) ?? (series.length === 1 ? series[0].name : undefined) : !autoDeleted && series.length === 1 && /pie|doughnut/.test(first) ? series[0].name : undefined;
   const dLbls = find(plot, 'dLbls').some((d) => ['showVal', 'showPercent', 'showCatName'].some((k) => child(d, k)?.attrs.val === '1'));
+  // A pie labelled with its values (not percentages) shows them as PowerPoint does.
+  const labelValues = find(plot, 'dLbls').some((d) => child(d, 'showVal')?.attrs.val === '1') && !find(plot, 'dLbls').some((d) => child(d, 'showPercent')?.attrs.val === '1');
   const grid = find(plot, 'majorGridlines').length > 0;
   const txColor = colorIn(find(xml, 'txPr').map((t) => find(t, 'solidFill')[0]).find(Boolean), theme)?.hex;
   const chart: ChartData = {
@@ -121,6 +123,7 @@ export function readChart(xml: MNode, theme: DmlTheme): ChartResult | null {
     ...(titleText ? { title: titleText } : {}),
     legend: !!child(chartEl, 'legend'),
     ...(dLbls ? { dataLabels: true } : {}),
+    ...(dLbls && labelValues ? { labelValues: true } : {}),
     gridlines: grid,
     textColor: txColor ?? theme.colors.tx1 ?? theme.colors.dk1,
     ...(child(plots[0], 'upDownBars') ? { upDownBars: true } : {}),
@@ -173,3 +176,20 @@ export function readChartEx(xml: MNode, theme: DmlTheme): ChartResult | null {
     approximated: [...new Set(approximated)],
   };
 }
+
+/**
+ * What an imported chart takes from its file to look as it does in PowerPoint: the deck's theme colours (the
+ * accents its series and points use in turn) and the chart's text size (c:chartSpace/c:txPr, in points), in canvas
+ * pixels at `pxPerPt`.
+ */
+export function chartLook(xml: MNode, theme: DmlTheme, pxPerPt: number): Pick<ChartData, 'scheme' | 'fontSize'> {
+  const order = ['dk1', 'lt1', 'dk2', 'lt2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6', 'hlink', 'folHlink'];
+  const cols = order.map((k) => theme.colors[k]);
+  const space = find(xml, 'chartSpace')[0] ?? xml;
+  const sz = Number(path(child(space, 'txPr'), 'p', 'pPr', 'defRPr')?.attrs.sz ?? NaN);
+  return {
+    ...(cols.every((c) => /^#[0-9a-f]{6}$/i.test(c ?? '')) ? { scheme: `custom:Deck|${cols.join(',')}` } : {}),
+    ...(sz > 0 ? { fontSize: Math.round((sz / 100) * pxPerPt * 10) / 10 } : {}),
+  };
+}
+

@@ -88,6 +88,9 @@ function fromHsl(h: number, s: number, l: number): [number, number, number] {
   return [f(h + 1 / 3), f(h), f(h - 1 / 3)];
 }
 
+const toLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const fromLinear = (c: number) => { c = clamp01(c); return c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055; };
+
 /** A colour element (srgbClr, schemeClr, …) with its modifiers (lumMod, tint, alpha …). */
 export function colorOf(node: MNode | null | undefined, theme: DmlTheme, ph?: string): { hex: string; alpha: number } | null {
   if (!node) return null;
@@ -110,10 +113,23 @@ export function colorOf(node: MNode | null | undefined, theme: DmlTheme, ph?: st
         rgb = fromHsl(h, s, clamp01(local(m) === 'lumMod' ? l * v : l + v));
         break;
       }
-      case 'tint': rgb = rgb.map((c) => c + (1 - c) * (1 - v)) as typeof rgb; break;
-      case 'shade': rgb = rgb.map((c) => c * v) as typeof rgb; break;
+      // Office applies tint and shade in linear light (DeckCraft's craft-drawingml does the same), which keeps
+      // mid-tones from washing out: a 75 % tint of black is #898989, not #404040.
+      case 'tint': { const f = clamp01(v); rgb = rgb.map((c) => fromLinear(toLinear(c) * f + (1 - f))) as typeof rgb; break; }
+      case 'shade': { const f = clamp01(v); rgb = rgb.map((c) => fromLinear(toLinear(c) * f)) as typeof rgb; break; }
       case 'satMod': { const [h, s, l] = toHsl(rgb); rgb = fromHsl(h, clamp01(s * v), l); break; }
+      case 'satOff': { const [h, s, l] = toHsl(rgb); rgb = fromHsl(h, clamp01(s + v), l); break; }
+      case 'hueMod': { const [h, s, l] = toHsl(rgb); rgb = fromHsl(((h * v) % 1 + 1) % 1, s, l); break; }
+      case 'hueOff': { const [h, s, l] = toHsl(rgb); rgb = fromHsl((((h + Number(m.attrs.val) / 21600000) % 1) + 1) % 1, s, l); break; }
+      case 'comp': { const [h, s, l] = toHsl(rgb); rgb = fromHsl((h + 0.5) % 1, s, l); break; }
+      case 'inv': rgb = rgb.map((c) => 1 - c) as typeof rgb; break;
+      case 'gray': { const y = 0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]; rgb = [y, y, y]; break; }
+      case 'redMod': rgb = [clamp01(rgb[0] * v), rgb[1], rgb[2]]; break;
+      case 'greenMod': rgb = [rgb[0], clamp01(rgb[1] * v), rgb[2]]; break;
+      case 'blueMod': rgb = [rgb[0], rgb[1], clamp01(rgb[2] * v)]; break;
       case 'alpha': alpha = clamp01(v); break;
+      case 'alphaMod': alpha = clamp01(alpha * v); break;
+      case 'alphaOff': alpha = clamp01(alpha + v); break;
       default:
     }
   }
@@ -430,9 +446,17 @@ export function fillFromNode(node: MNode, ph: string | undefined, ctx: DmlContex
       const gs = kids(child(node, 'gsLst'), 'gs').sort((a, b) => Number(a.attrs.pos) - Number(b.attrs.pos)).map((g) => ({ c: colorIn(g, t, ph), pos: Number(g.attrs.pos) / 1000 })).filter((g) => g.c);
       const stops = gs.map((g) => g.c!.hex);
       // More than two stops, or a stop that is partly transparent, keep every stop (Format Shape › Gradient stops).
-      const rich = gs.length > 2 || gs.some((g) => g.c!.alpha < 1);
+      // Two stops moved off the ends keep their positions too.
+      const rich = gs.length > 2 || gs.some((g) => g.c!.alpha < 1) || (gs.length === 2 && (gs[0].pos > 0 || gs[1].pos < 100));
       if (!stops.length) return {};
-      return { fill: stops[0], gradient: [stops[0], stops[stops.length - 1]], gradientAngle: Number(child(node, 'lin')?.attrs.ang ?? 0) / 60000, ...(child(node, 'path') ? { gradientType: 'radial' as const } : {}), ...(rich ? { gradientStops: gs.map((g) => ({ pos: Math.round(g.pos * 10) / 10, color: g.c!.hex, ...(g.c!.alpha < 1 ? { transparency: Math.round((1 - g.c!.alpha) * 1000) / 1000 } : {}) })) } : {}) };
+      const lin = child(node, 'lin'), pathFill = child(node, 'path');
+      // lin@scaled (default off): off, the angle is measured on the shape as it is drawn, not on its box squeezed to a square.
+      const scaled = lin ? /^(1|true)$/.test(lin.attrs.scaled ?? '') : undefined;
+      // A path gradient's focus is the middle of its fillToRect (insets from the box's edges).
+      const ftr = child(pathFill, 'fillToRect');
+      const inset = (k: string) => Number(ftr?.attrs[k] ?? 0) / 100000;
+      const center: [number, number] | undefined = pathFill ? [Math.round(((inset('l') + 1 - inset('r')) / 2) * 1000) / 1000, Math.round(((inset('t') + 1 - inset('b')) / 2) * 1000) / 1000] : undefined;
+      return { fill: stops[0], gradient: [stops[0], stops[stops.length - 1]], gradientAngle: Number(lin?.attrs.ang ?? 0) / 60000, ...(scaled !== undefined ? { gradientScaled: scaled } : {}), ...(pathFill ? { gradientType: 'radial' as const } : {}), ...(center ? { gradientCenter: center } : {}), ...(rich ? { gradientStops: gs.map((g) => ({ pos: Math.round(g.pos * 10) / 10, color: g.c!.hex, ...(g.c!.alpha < 1 ? { transparency: Math.round((1 - g.c!.alpha) * 1000) / 1000 } : {}) })) } : {}) };
     }
     case 'blipFill': {
       const blip = child(node, 'blip');
@@ -648,7 +672,7 @@ function shapeElement(sp: MNode, place: Map2, ctx: DmlContext, groupId?: string)
     autoFit: !ctx.strict ? !!child(bodyPr, 'spAutoFit') : normFit ? ('shrink' as const) : child(bodyPr, 'spAutoFit') ? ('resize' as const) : false,
     ...(bodyPr?.attrs.wrap === 'none' ? { wrap: false } : {}),
     ...fromPptxVert(bodyPr?.attrs.vert),
-    ...(bodyPr?.attrs.numCol && Number(bodyPr.attrs.numCol) > 1 ? { columns: Number(bodyPr.attrs.numCol) } : {}),
+    ...(bodyPr?.attrs.numCol && Number(bodyPr.attrs.numCol) > 1 ? { columns: Number(bodyPr.attrs.numCol), columnSpacing: Math.round((Number(bodyPr.attrs.spcCol ?? 0) / EMU_PER_PX) * 10) / 10 } : {}),
     ...(child(bodyPr, 'prstTxWarp') && child(bodyPr, 'prstTxWarp')!.attrs.prst !== 'textNoShape' ? { warp: child(bodyPr, 'prstTxWarp')!.attrs.prst } : {}),
   } : {};
   if (normFit && Number(normFit.attrs.fontScale) > 0 && 'fontSize' in textBits) {
@@ -714,8 +738,9 @@ function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: stri
     ctx.note?.('approximated', '동영상 포스터 프레임');
     return [{ id: uid('el'), kind: 'image', mediaId: poster, fit: 'fill', ...geometry, name: '포스터 프레임', groupId: gid }, { ...clipEl, groupId: gid }];
   }
-  // Colour changes of the picture (a:duotone, a:grayscl, a:biLevel, brightness / contrast) are not drawn.
-  const tone = (blip?.children ?? []).find((c) => ['duotone', 'biLevel', 'grayscl', 'clrChange', 'lum', 'hsl', 'tint'].includes(local(c)));
+  const pictureFilter = blipFilter(blip);
+  // Colour changes CSS cannot draw (a:duotone, a:clrChange, a:hsl, a:tint) are left out.
+  const tone = (blip?.children ?? []).find((c) => ['duotone', 'clrChange', 'hsl', 'tint'].includes(local(c)));
   if (tone) ctx.note?.('approximated', '그림 색 변경');
   const alpha = Number(child(blip, 'alphaModFix')?.attrs.amt ?? 100000) / 100000;
   return {
@@ -723,9 +748,29 @@ function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: stri
     ...(crop.some((v) => v) ? { crop } : {}),
     ...(prst && prst !== 'rect' ? { maskShape: prst } : {}),
     ...(alpha < 1 ? { opacity: alpha } : {}),
+    ...(pictureFilter ? { pictureFilter } : {}),
     ...lineFields(spPr, child(pic, 'style'), ctx), ...effectFields(spPr, child(pic, 'style'), ctx),
     ...common, ...clickOf(child(pic, 'nvPicPr'), ctx),
   };
+}
+
+/**
+ * The picture's own colour effects as a CSS filter, as PowerPoint draws them: Grayscale (a:grayscl), Black and
+ * White (a:biLevel, a threshold, here at 50 %) and Brightness / Contrast (a:lum, both -100 %..100 %).
+ */
+export function blipFilter(blip: MNode | null | undefined): string | undefined {
+  const out: string[] = [];
+  for (const c of blip?.children ?? []) {
+    const k = local(c);
+    if (k === 'grayscl') out.push('grayscale(1)');
+    else if (k === 'biLevel') out.push('grayscale(1)', 'contrast(100)');
+    else if (k === 'lum') {
+      const bright = Number(c.attrs.bright ?? 0) / 100000, contrast = Number(c.attrs.contrast ?? 0) / 100000;
+      if (bright) out.push(`brightness(${Math.round((1 + bright) * 1000) / 1000})`);
+      if (contrast) out.push(`contrast(${Math.round((contrast > 0 ? 1 / Math.max(0.01, 1 - contrast) : 1 + contrast) * 1000) / 1000})`);
+    }
+  }
+  return out.length ? out.join(' ') : undefined;
 }
 
 function walk(container: MNode, place: Map2, ctx: DmlContext, out: SlideElement[], groupId?: string) {

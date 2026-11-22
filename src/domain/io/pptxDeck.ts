@@ -22,7 +22,8 @@ import { stopsCss } from './odpGeometry';
 import { colorOf, EMU_PER_PX, fillFromNode, mergeStyle, nodeToElements, OFFICE_THEME, readDmlTheme, type DmlContext, type DmlTheme, type Inherit } from './drawingml';
 import { child, find, kids, local, parseMarkup, path, textOf, type MNode } from './markup';
 import { readTable } from './pptxTable';
-import { readChart, readChartEx } from './pptxChart';
+import { chartLook, readChart, readChartEx } from './pptxChart';
+import { officeFont } from '../fonts';
 import { readAnimations, readMediaTiming, readTransition } from './pptxTiming';
 import { newReport, note, slideWarnings, type ImportReport } from './importReport';
 
@@ -123,6 +124,7 @@ export function scaleElement(el: SlideElement, k: number, dx: number, dy: number
   if (el.textOutline) out.textOutline = { ...el.textOutline, width: s(el.textOutline.width)! };
   if (el.table) out.table = { ...el.table, cols: el.table.cols.map((c) => s(c)!), heights: el.table.heights.map((h) => s(h)!), ...(el.table.margins ? { margins: el.table.margins.map((m) => s(m)!) as [number, number, number, number] } : {}) };
   if (el.tabStops) out.tabStops = el.tabStops.map((t) => ({ ...t, pos: s(t.pos)! }));
+  if (el.chart?.fontSize) out.chart = { ...el.chart, fontSize: s(el.chart.fontSize) };
   return out;
 }
 
@@ -420,7 +422,12 @@ export async function readPptxDeck(data: ArrayBuffer | Uint8Array, opts: DeckOpt
           const { table, styled, capped } = readTable(tbl, box.w, box.h, theme, tableStyles);
           note(report, '표', styled === 'unknown' || capped ? 'approximated' : 'converted', n, capped ? '셀이 너무 많아 뒤쪽 행·열을 빼고' : styled === 'unknown' ? '알 수 없는 표 스타일을 기본 스타일로' : undefined);
           if (find(tbl, 'r').some((r) => find(r, 'rPr').some((p) => p.attrs.sz || p.attrs.i === '1' || child(p, 'latin')))) note(report, '표 셀 글자 서식', 'approximated', n, '셀마다 하나의 굵기·색으로');
-          return [{ id: uid('el'), kind: 'table', ...base, table }];
+          // The cells' text size: the size most runs use, else PowerPoint's 18 pt for table text.
+          const sizes = find(tbl, 'rPr').map((p) => Number(p.attrs.sz)).filter((v) => v > 0);
+          const common = sizes.length ? [...new Set(sizes)].sort((a, b) => sizes.filter((v) => v === b).length - sizes.filter((v) => v === a).length)[0] : 1800;
+          // …and the theme's body font, as PowerPoint's table styles use (+mn-lt).
+          const face = find(tbl, 'latin').map((l) => l.attrs.typeface).find((f) => f && !f.startsWith('+')) ?? theme.minorLatin;
+          return [{ id: uid('el'), kind: 'table', ...base, table, fontSize: Math.round((common / 100) * 2 * 10) / 10, ...(face ? { fontFamily: officeFont(face) } : {}) }];
         }
         const chartRef = gd && gd.children.find((c) => local(c) === 'chart');
         if (chartRef) {
@@ -430,7 +437,8 @@ export async function readPptxDeck(data: ArrayBuffer | Uint8Array, opts: DeckOpt
           const res = xml ? (isEx ? readChartEx(xml, theme) : readChart(xml, theme)) : null;
           if (!res) { note(report, '차트', 'dropped', n, '읽을 수 없는 차트 종류라서'); return null; }
           note(report, '차트', res.approximated.length ? 'approximated' : 'converted', n, res.approximated.length ? `편집 가능한 차트로 (${res.approximated.join(', ')} 제외)` : '편집 가능한 차트로');
-          return [{ id: uid('el'), kind: 'chart', ...base, chart: res.chart }];
+          // The deck's own accents and the chart's text size, as PowerPoint draws it (2 px per point; scaleElement fits it).
+          return [{ id: uid('el'), kind: 'chart', ...base, chart: { ...res.chart, ...chartLook(xml!, theme, 2) } }];
         }
         const dgm = gd && gd.children.find((c) => local(c) === 'relIds');
         if (dgm) {

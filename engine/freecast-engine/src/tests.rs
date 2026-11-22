@@ -257,6 +257,19 @@ fn charts_draw_svg() {
 }
 
 #[test]
+fn pie_labels_show_values_or_percentages_and_custom_schemes_colour_slices() {
+    let req = |values: bool| json!({"op": "chart.svg", "kind": "pie", "categories": ["A", "B"], "series": [{"name": "S", "values": [30, 10]}],
+        "w": 400, "h": 300, "dataLabels": true, "labelValues": values,
+        "scheme": "custom:Deck|#000000,#ffffff,#1f497d,#eeece1,#4f81bd,#c0504d,#9bbb59,#8064a2,#4bacc6,#f79646,#0000ff,#800080"});
+    let pct = ok(req(false))["svg"].as_str().unwrap().to_string();
+    assert!(pct.contains(">75%<") && pct.contains(">25%<"));
+    let val = ok(req(true))["svg"].as_str().unwrap().to_string();
+    assert!(val.contains(">30<") && val.contains(">10<") && !val.contains("75%"));
+    let low = val.to_ascii_lowercase();
+    assert!(low.contains("#4f81bd") && low.contains("#c0504d"), "slices take the deck's accents");
+}
+
+#[test]
 fn colours_and_contrast() {
     let p = ok(json!({"op": "color.palette"}));
     assert_eq!(p["theme"].as_array().unwrap().len(), 10);

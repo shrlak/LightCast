@@ -21,6 +21,8 @@ import { AnimatedElements, FxTransition, ParagraphBuild } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
 import { shapeGeometry } from '../engine';
 import { pictureOpacity, tileLayout } from '../domain/pictureBackground';
+import { parseStopsCss, stopsCss } from '../domain/io/odpGeometry';
+import { powerPointRamp } from '../domain/shapeEffects';
 import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effectCss, effects, elementTransform, useEngineEpoch } from './EngineElements';
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
@@ -154,6 +156,12 @@ function TiledPicture({ src, pic }: { src: string; pic: NonNullable<Extract<Back
   return <div className="layer" style={{ backgroundImage: `url("${cell ?? src}")`, backgroundSize: `${lay.cellW}px ${lay.cellH}px`, backgroundPosition: lay.position, backgroundRepeat: 'repeat', opacity: pictureOpacity(pic) }} />;
 }
 
+/** A two-colour background gradient blended as PowerPoint blends it (see powerPointRamp); any other CSS as it is. */
+const powerPointGradientCss = (css: string) => {
+  const g = parseStopsCss(css);
+  return g && g.stops.length === 2 ? stopsCss({ ...g, stops: powerPointRamp(g.stops) }) : css;
+};
+
 function BackgroundLayer({ background, animate, video, onTime }: { background: Background | null; animate: boolean; video?: CanvasProps['video']; onTime?: CanvasProps['onVideoTime'] }) {
   const url = useMediaUrl(background?.kind === 'media' ? background.mediaId : null);
   const imageSrc = background?.kind === 'image' ? assetUrl(background.url) : background?.kind === 'media' && background.mediaType === 'image' ? url : null;
@@ -169,7 +177,7 @@ function BackgroundLayer({ background, animate, video, onTime }: { background: B
   let pending = false;
   if (background.kind === 'color') node = <div className="layer" style={{ background: background.value }} />;
   else if (background.kind === 'pattern') node = <PatternBg bg={background} />;
-  else if (background.kind === 'gradient') node = <div className="layer" style={{ backgroundImage: background.value }} />;
+  else if (background.kind === 'gradient') node = <div className="layer" style={{ backgroundImage: powerPointGradientCss(background.value) }} />;
   else if (background.kind === 'motion') node = <MotionLayer bg={background} animate={animate} />;
   else if (background.kind === 'camera') node = <CameraBg deviceId={background.deviceId} label={background.label} animate={animate} />;
   else if (background.kind === 'image' || background.mediaType === 'image') {
@@ -426,12 +434,14 @@ export function ElementView({ el }: { el: SlideElement }) {
       <img src={url} alt={el.alt ?? ''} decoding="sync" title={OLE_NOTE} style={{ ...style, objectFit: el.fit ?? 'fill' }} />
       {!show && <div className="ole-badge" title={OLE_NOTE} style={{ position: 'absolute', left: el.x, top: el.y, transform: elementTransform(el), pointerEvents: 'none', background: '#fff8e1', color: '#33691e', border: '2px solid #f9a825', fontSize: 22, lineHeight: 1.2, padding: '2px 8px', borderRadius: 4 }}>OLE · PowerPoint에서만 열림</div>}
     </>;
-    if (!c || c.every((v) => !v)) return <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ ...style, objectFit: el.fit ?? 'contain' }} />;
+    // The picture's own colour (Grayscale, Brightness / Contrast) goes on the picture, ahead of the box's shadow filter.
+    const tone = el.pictureFilter ? { filter: [el.pictureFilter, style.filter].filter(Boolean).join(' ') } : null;
+    if (!c || c.every((v) => !v)) return <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ ...style, ...tone, objectFit: el.fit ?? 'contain' }} />;
     // Cropped: the picture stretched so its kept part fills the box.
     const fw = Math.max(0.01, 1 - c[0] - c[2]), fh = Math.max(0.01, 1 - c[1] - c[3]);
     return (
       <div style={{ ...style, overflow: 'hidden' }}>
-        <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ position: 'absolute', left: -(c[0] / fw) * el.w, top: -(c[1] / fh) * el.h, width: el.w / fw, height: el.h / fh, objectFit: 'fill', maxWidth: 'none' }} />
+        <img src={url} alt={el.alt ?? ''} decoding="sync" style={{ position: 'absolute', left: -(c[0] / fw) * el.w, top: -(c[1] / fh) * el.h, width: el.w / fw, height: el.h / fh, objectFit: 'fill', maxWidth: 'none', ...(el.pictureFilter ? { filter: el.pictureFilter } : {}) }} />
       </div>
     );
   }

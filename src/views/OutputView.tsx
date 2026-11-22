@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { actionAt, actionOf, hoverActionOf, hoverAt, runLinkAt, type ShowAction } from '../domain/showActions';
 import type { SlideElement } from '../domain/types';
-import { SlideCanvas } from '../ui/SlideCanvas';
+import { SlideCanvas, assetUrl } from '../ui/SlideCanvas';
+import { preloadImage } from '../ui/hooks';
+import { mediaUrl } from '../domain/media';
 import { CANVAS_W } from '../domain/canvas';
 import { useLiveFeed } from '../ui/hooks';
 import { liveCanvasProps } from '../ui/liveProps';
@@ -25,6 +27,15 @@ export function OutputView() {
 
   // A ScreenTip belongs to the slide it was shown on.
   useEffect(() => setTip(null), [live?.slide?.id]);
+
+  // The next slide's pictures are decoded while this one is up, as PowerPoint does, so the next click shows it at once
+  // (a big photo otherwise decodes on the click, and the slide waits up to 0.6 s for it).
+  const ahead = live?.nextAssets;
+  useEffect(() => {
+    if (!ahead) return;
+    for (const u of ahead.urls) void preloadImage(assetUrl(u));
+    for (const id of ahead.ids) void mediaUrl(id).then((u) => (u ? preloadImage(u) : undefined)).catch(() => undefined);
+  }, [ahead?.ids.join(','), ahead?.urls.join(',')]);
 
   useEffect(() => {
     document.title = `LightCast — ${screen?.name ?? 'Output'}`;

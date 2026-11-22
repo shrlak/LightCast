@@ -245,6 +245,35 @@ export function gradientStopsOf(el: SlideElement): GradientStop[] | null {
   return [{ pos: 0, color: el.gradient[0] }, { pos: 100, color: el.gradient[1] }];
 }
 
+/**
+ * A gradient's stops as PowerPoint blends them (DeckCraft's `ramp.rs`, measured from PowerPoint's export): a
+ * two-colour gradient (two stops, at 0 % and 100 %) mixes in linear light with an S-shaped share of the second
+ * colour, so it is expanded into 16 pieces a renderer can blend in sRGB. Any other gradient is unchanged.
+ */
+export function powerPointRamp(stops: GradientStop[]): GradientStop[] {
+  if (stops.length !== 2 || stops[0].pos > 0.0001 || stops[1].pos < 99.9999) return stops;
+  const [a, b] = stops;
+  const ca = hexRgb(a.color), cb = hexRgb(b.color);
+  if (!ca || !cb) return stops;
+  const ta = a.transparency ?? 0, tb = b.transparency ?? 0;
+  return RAMP_WEIGHT.map((w, i) => {
+    const color = `#${[0, 1, 2].map((k) => toSrgb8(linear8(ca[k]) + (linear8(cb[k]) - linear8(ca[k])) * w).toString(16).padStart(2, '0')).join('')}`;
+    const t = ta + (tb - ta) * w;
+    return { pos: Math.round((i / (RAMP_WEIGHT.length - 1)) * 10000) / 100, color, ...(t > 0 ? { transparency: Math.round(t * 1000) / 1000 } : {}) };
+  });
+}
+/** The second colour's share at sixteenths of the way (DeckCraft's measured, symmetric table). */
+const RAMP_WEIGHT = [0, 0.0205, 0.0469, 0.0878, 0.1431, 0.2143, 0.2989, 0.3972, 0.5, 0.6028, 0.7011, 0.7857, 0.8569, 0.9122, 0.9531, 0.9795, 1];
+const hexRgb = (hex: string): [number, number, number] | null => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  return m ? [0, 2, 4].map((i) => parseInt(m[1].slice(i, i + 2), 16)) as [number, number, number] : null;
+};
+const linear8 = (v: number) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+const toSrgb8 = (v: number) => {
+  const c = Math.max(0, Math.min(1, v));
+  return Math.round(Math.max(0, Math.min(1, c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055)) * 255);
+};
+
 /** Sets a gradient's stops, keeping `gradient` (first and last colour) in step for code that reads the pair. */
 export function withGradientStops(stops: GradientStop[]): Partial<SlideElement> {
   const sorted = [...stops].sort((a, b) => a.pos - b.pos);
