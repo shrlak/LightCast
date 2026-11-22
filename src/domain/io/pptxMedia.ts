@@ -59,6 +59,20 @@ export function mediaTimingXml(clips: { spid: string; kind: 'video' | 'audio'; p
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+/** A p:pic whose p:cNvPr carries an `lcm-N` clip marker; neither side may run past the picture's own end. */
+const CLIP_PIC = /<p:pic>((?:(?!<\/p:pic>)[\s\S])*?)<p:cNvPr id="(\d+)" name="(lcm-\d+)"((?:(?!<\/p:pic>)[\s\S])*?)<\/p:pic>/g;
+const SHAPE_OPEN = /<p:(?:sp|cxnSp|pic|grpSp|graphicFrame)[ >]/;
+
+/**
+ * Whether the marked p:cNvPr belongs to the p:pic the match starts at (DeckCraft 6ebac8b9, strict shape-owner
+ * scoping): it sits in that picture's own p:nvPicPr, and no other shape opens between the picture's start and end.
+ */
+export function ownsCNvPr(before: string, rest: string): boolean {
+  const nv = before.lastIndexOf('<p:nvPicPr>');
+  if (nv < 0 || SHAPE_OPEN.test(before) || SHAPE_OPEN.test(rest)) return false;
+  return !/<\/p:nvPicPr>|<p:nvGrpSpPr>|<p:nvGraphicFramePr>|<p:nvSpPr>|<p:nvCxnSpPr>/.test(before.slice(nv));
+}
+
 /** Finishes the exported clips in the written file: names, a:audioFile for audio, and each slide's p:timing. */
 export async function patchMediaClips(zip: JSZip, patches: MediaPatch[]): Promise<void> {
   if (!patches.length) return;
@@ -66,9 +80,9 @@ export async function patchMediaClips(zip: JSZip, patches: MediaPatch[]): Promis
   for (const f of Object.keys(zip.files).filter((n) => /^ppt\/slides\/slide\d+\.xml$/.test(n))) {
     let xml = await zip.file(f)!.async('string');
     const clips: { spid: string; kind: 'video' | 'audio'; playback?: MediaPlayback }[] = [];
-    xml = xml.replace(/<p:pic>((?:(?!<\/p:pic>)[\s\S])*?)<p:cNvPr id="(\d+)" name="(lcm-\d+)"([\s\S]*?)<\/p:pic>/g, (all, before: string, spid: string, marker: string, rest: string) => {
+    xml = xml.replace(CLIP_PIC, (all, before: string, spid: string, marker: string, rest: string) => {
       const p = byMarker.get(marker);
-      if (!p) return all;
+      if (!p || !ownsCNvPr(before, rest)) return all;
       clips.push({ spid, kind: p.kind, playback: p.playback });
       const body = p.kind === 'audio' ? rest.replace(/<a:videoFile /, '<a:audioFile ') : rest;
       return `<p:pic>${before}<p:cNvPr id="${spid}" name="${esc(p.name || (p.kind === 'video' ? '동영상' : '오디오'))}"${body}</p:pic>`;
