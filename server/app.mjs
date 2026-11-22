@@ -15,6 +15,7 @@ import { cloudMiddleware } from './cloud.mjs';
 import { recognitionMiddleware } from './recognition.mjs';
 import { songPptMiddleware } from './songPpt.mjs';
 import { songLyricsMiddleware } from './songLyrics.mjs';
+import { fontFinderMiddleware } from './fontFinder.mjs';
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
@@ -52,8 +53,8 @@ export function startServer({ root, port, host = '127.0.0.1', publicOpen = () =>
   const serveStatic = staticHandler(path.resolve(root));
   let control = (_req, _res, next) => next();
   // Visitors on the public internet address get the app files and the remote relay only:
-  // no AI, cloud, DMX, X32, song search or control endpoints.
-  const everything = (req, res) => remoteMediaMiddleware(req, res, () => aiMiddleware(req, res, () => recognitionMiddleware(req, res, () => songPptMiddleware(req, res, () => songLyricsMiddleware(req, res, () => cloudMiddleware(req, res, () => dmxMiddleware(req, res, () => x32Middleware(req, res, () => control(req, res, () => serveStatic(req, res))))))))));
+  // no AI, cloud, DMX, X32, song search, font search or control endpoints.
+  const everything = (req, res) => remoteMediaMiddleware(req, res, () => aiMiddleware(req, res, () => recognitionMiddleware(req, res, () => songPptMiddleware(req, res, () => songLyricsMiddleware(req, res, () => fontFinderMiddleware(req, res, () => cloudMiddleware(req, res, () => dmxMiddleware(req, res, () => x32Middleware(req, res, () => control(req, res, () => serveStatic(req, res)))))))))));
   // The console (and its login) is never offered on the internet address: any page there is the remote.
   const publicPage = (req, res) => {
     const url = new URL(req.url ?? '/', 'http://local');

@@ -73,10 +73,13 @@ export async function sha256Hex(data: Uint8Array | ArrayBuffer): Promise<string>
 
 const lower = (s: string) => s.trim().toLowerCase();
 
-/** Does this font go to the cloud? Its own switch wins; otherwise fonts the person imported do, deck fonts only when a synced deck uses them. */
+/**
+ * Does this font go to the cloud? Its own switch wins; otherwise fonts the person imported and fonts downloaded from the
+ * internet for a deck ("web:…", open licence) do, deck fonts only when a synced deck uses them.
+ */
 export function wantsSync(f: Pick<ImportedFont, 'sync' | 'source' | 'family'>, settings: FontSyncSettings, used: Set<string>): boolean {
   if (typeof f.sync === 'boolean') return f.sync;
-  if (f.source === 'user') return true;
+  if (f.source === 'user' || f.source.startsWith('web:')) return true;
   return settings.includeDeckFonts || used.has(lower(f.family));
 }
 

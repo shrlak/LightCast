@@ -283,8 +283,8 @@ export function fontAvailable(family: string, ownFamilies: string[] = []): boole
   } catch { return true; }
 }
 
-/** The generic names and bundled families that never need importing. */
-export const NEVER_MISSING = /^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit|arial|calibri|inter|helvetica|georgia|times new roman|courier new|맑은 고딕|malgun gothic|apple sd gothic neo|nanum gothic|나눔고딕|nanum myeongjo)$/i;
+/** The generic names, bundled families and system fonts that never need importing (나눔명조 is not bundled: it is fetched from the internet when missing). */
+export const NEVER_MISSING = /^(sans-serif|serif|monospace|cursive|fantasy|system-ui|inherit|arial|calibri|inter|helvetica|georgia|times new roman|courier new|맑은 고딕|malgun gothic|apple sd gothic neo|nanum gothic|나눔고딕)$/i;
 
 /** Families a deck uses that this computer cannot draw (for the "import it" notice). */
 export function missingFamilies(used: string[], ownFamilies: string[] = []): string[] {
