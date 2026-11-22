@@ -357,6 +357,8 @@ export interface SlideElement {
   bulletPicture?: string;
   indent?: number;
   columns?: number;
+  /** Imported bodyPr@spcCol: the gap between columns in px (PowerPoint's default 0); unset = LightCast's 1.2em. */
+  columnSpacing?: number;
   vertical?: boolean;
   direction?: TextDirection;
   /** 줄 간격 고정 / 최소 (points × 2 = canvas px): replaces the `lineHeight` multiple while set. */
@@ -390,6 +392,10 @@ export interface SlideElement {
   gradientAngle?: number;
   /** Shape Fill › Gradient: linear (default, along gradientAngle) or radial (from the centre). */
   gradientType?: 'linear' | 'radial';
+  /** Imported lin@scaled: false = the angle is the drawn angle on the shape (PowerPoint's default), true = on the box squeezed to a square. Unset: as LightCast always drew it (on the box). */
+  gradientScaled?: boolean;
+  /** Imported path gradient focus (0–1 of the box, from fillToRect); unset = the middle. */
+  gradientCenter?: [number, number];
   /** Shape Fill › Picture: a media id; the picture fills the outline (cropped to fit). */
   fillImage?: string;
   /** Shape Fill › Pattern: one of PATTERNS, foreground over background colour. */
@@ -461,6 +467,8 @@ export interface SlideElement {
   master?: boolean;
   /** Pictures: crop as fractions of the picture cut from each side (l, t, r, b). */
   crop?: [number, number, number, number];
+  /** Picture colour from an imported PowerPoint picture (a:grayscl, a:lum, a:biLevel) as a CSS filter on the picture itself. */
+  pictureFilter?: string;
   picture?: PictureAdjust;
   /** Picture Styles preset. */
   pictureStyle?: string;
@@ -978,6 +986,8 @@ export interface LiveState {
   slide: Slide | null;
   title: string | null;
   nextText: string | null;
+  /** The next slide's background and pictures (media ids, picture URLs), decoded ahead by the output so the next slide change does not wait for them. */
+  nextAssets?: { ids: string[]; urls: string[] } | null;
   theme: Theme;
   transition: Transition;
   background: Background | null;

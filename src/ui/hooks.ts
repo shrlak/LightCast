@@ -42,9 +42,13 @@ export function preloadImage(url: string): Promise<void> {
   if (decoded.has(url)) return Promise.resolve();
   const img = new Image();
   img.src = url;
+  // The decoded picture is held a while (the last few), so the browser keeps it ready for the slide that shows it.
+  held.push(img);
+  if (held.length > 24) held.shift();
   const done = () => void decoded.add(url);
   return img.decode().then(done, done);
 }
+const held: HTMLImageElement[] = [];
 
 /**
  * The URL once the browser has decoded the picture. A new picture loads off-screen first and the

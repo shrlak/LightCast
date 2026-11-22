@@ -257,6 +257,12 @@ export interface ChartData {
   categoryLevels?: string[][];
   /** Stock: open-high-low-close boxes. */
   upDownBars?: boolean;
+  /** An imported chart's own theme colours (`custom:<name>|dk1,lt1,dk2,lt2,accent1…6,hlink,folHlink`); unset: LightCast's. */
+  scheme?: string;
+  /** An imported chart's text size (c:txPr) in canvas pixels; unset: from the chart's height. */
+  fontSize?: number;
+  /** Pie and doughnut labels show the value (c:showVal without c:showPercent) instead of the percentage. */
+  labelValues?: boolean;
 }
 const chartCache = cached<string>(300);
 export const chartSvg = (chart: ChartData, w: number, h: number, scheme?: string, fontFamily?: string) =>

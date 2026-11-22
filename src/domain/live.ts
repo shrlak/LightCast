@@ -1,4 +1,4 @@
-import type { Library, LiveState, Playlist, Presentation, Slide, Theme } from './types';
+import type { Background, Library, LiveState, Playlist, Presentation, Slide, Theme } from './types';
 import { sequence } from './arrangement';
 import { resolveBackground } from './autoBackground';
 import { songKey, stageSettingsFor } from './chordChart';
@@ -122,6 +122,15 @@ function copyrightLine(p: Presentation): string | null {
   return parts.length ? parts.join(' · ') : null;
 }
 
+/** A slide's background picture and image objects: what the output decodes ahead of showing it. */
+export function slidePictures(slide: Slide, background: Background | null): { ids: string[]; urls: string[] } | null {
+  const ids: string[] = [], urls: string[] = [];
+  if (background?.kind === 'image') urls.push(background.url);
+  else if (background?.kind === 'media' && background.mediaType === 'image') ids.push(background.mediaId);
+  for (const e of slide.elements ?? []) if (e.kind === 'image' && e.mediaId && !e.hidden) ids.push(e.mediaId);
+  return ids.length || urls.length ? { ids: [...new Set(ids)], urls } : null;
+}
+
 /** Put the slide at `c` on screen. Returns the new state, or `s` unchanged if the slide does not exist. */
 export function goLive<S extends NavState>(s: S, c: Cursor, now: number = Date.now()): S {
   const p = findPres(s.library, c.presentationId);
@@ -143,6 +152,7 @@ export function goLive<S extends NavState>(s: S, c: Cursor, now: number = Date.n
       slide,
       title: p.title,
       nextText: nextSlide ? [nextSlide.title, nextSlide.text].filter(Boolean).join('\n') : null,
+      nextAssets: nextSlide && next ? slidePictures(nextSlide, resolveBackground(nextSlide, findPres(s.library, next.presentationId) ?? p)) : null,
       theme: themeFor(s.library, p),
       transition,
       background: resolveBackground(slide, p),

@@ -2,7 +2,7 @@
 // them), tables, charts, icons and ink.
 import { useId, useSyncExternalStore, type CSSProperties } from 'react';
 import type { SlideElement } from '../domain/types';
-import { ARROW_SCALE, arrowPath, capOf, compoundLayers, dashPattern, effectFilter, effectStyle, fillOpacityOf, gradientStopsOf, joinOf, transformOf } from '../domain/shapeEffects';
+import { ARROW_SCALE, arrowPath, capOf, compoundLayers, dashPattern, effectFilter, effectStyle, fillOpacityOf, gradientStopsOf, joinOf, powerPointRamp, transformOf } from '../domain/shapeEffects';
 import { extrusionOf, faceShading } from '../domain/shape3d';
 import { lineRuns } from '../domain/richText';
 
@@ -57,7 +57,8 @@ export function ShapeElement({ el }: { el: SlideElement }) {
     ? { paths: [{ d: el.path, fill: 'norm' as const, stroke: true, evenOdd: false }], textRect: [0, 0, el.w, el.h] as [number, number, number, number], handles: [], open: false, sites: [] }
     : geometryOf(el);
   const custom = el.path ? `scale(${el.w / Math.max(0.01, el.pathW ?? el.w)}, ${el.h / Math.max(0.01, el.pathH ?? el.h)})` : undefined;
-  const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), filter: effects(el), ...effectCss(el) };
+  // A soft edge follows the outline (an SVG mask below), not the box, so the CSS box mask is left out here.
+  const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), filter: effects(el), ...effectCss(el.softEdge ? { ...el, softEdge: undefined } : el) };
   const line = isLineShape(el);
   const sw = el.strokeWidth ?? (el.stroke || line ? DEFAULT_STROKE_WIDTH : 0);
   const stroke = el.stroke ?? (line ? el.fill ?? '#ffffff' : undefined);
@@ -68,8 +69,10 @@ export function ShapeElement({ el }: { el: SlideElement }) {
     return <div style={{ ...box, background: el.gradient ? `linear-gradient(${(el.gradientAngle ?? 90) + 90}deg, ${el.gradient[0]}, ${el.gradient[1]})` : el.fill ?? '#ffffff', borderRadius: el.ellipse || el.shape === 'ellipse' ? '50%' : el.radius ?? 0, border: el.stroke ? `${sw}px solid ${el.stroke}` : undefined }} />;
   }
   const a = ((el.gradientAngle ?? 90) * Math.PI) / 180;
+  const soft = Math.max(0, el.softEdge ?? 0);
   const [tx, ty, tw, th] = g.textRect;
-  const stops = gradientStopsOf(el);
+  const rawStops = gradientStopsOf(el);
+  const stops = rawStops && powerPointRamp(rawStops);
   const stopEls = stops?.map((st, i) => <stop key={i} offset={st.pos / 100} stopColor={st.color} stopOpacity={1 - (st.transparency ?? 0)} />);
   const fillAlpha = fillOpacityOf(el);
   const cap = capOf(el, line), join = joinOf(el);
@@ -79,13 +82,14 @@ export function ShapeElement({ el }: { el: SlideElement }) {
   const ext = closedShape ? extrusionOf(el) : null;
   const shading = closedShape ? faceShading(el) : null;
   const sideSvg = (key: string, z: number, color: string, width: number) => (
-    <svg key={key} width={el.w} height={el.h} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} aria-hidden style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none', transform: `translateZ(${z}px)` }}>
+    <svg key={key} width={Math.max(1, el.w)} height={Math.max(1, el.h)} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} aria-hidden style={{ position: 'absolute', inset: 0, overflow: 'visible', pointerEvents: 'none', transform: `translateZ(${z}px)` }}>
       <g transform={custom}>{g.paths.map((p, i) => p.fill === 'none' ? null : <path key={i} d={p.d} fillRule={p.evenOdd ? 'evenodd' : undefined} fill={color} stroke={color} strokeWidth={width} strokeLinejoin="round" vectorEffect={custom ? 'non-scaling-stroke' : undefined} />)}</g>
     </svg>
   );
+  // A straight line can be 0 wide or high: the svg keeps at least 1 px so its viewBox does not scale it to nothing.
   const face = (
     <>
-      <svg width={el.w} height={el.h} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} style={{ position: 'absolute', inset: 0, overflow: 'visible' }} aria-label={el.alt}>
+      <svg width={Math.max(1, el.w)} height={Math.max(1, el.h)} viewBox={`0 0 ${Math.max(1, el.w)} ${Math.max(1, el.h)}`} style={{ position: 'absolute', inset: 0, overflow: 'visible' }} aria-label={el.alt}>
         <defs>
           {el.fillImage && imageUrl && (
             <pattern id={`i${gid}`} patternUnits="objectBoundingBox" patternContentUnits="objectBoundingBox" width="1" height="1">
@@ -98,11 +102,19 @@ export function ShapeElement({ el }: { el: SlideElement }) {
               <path d={patternPath(el.pattern.kind, 2)} fill={el.pattern.fg} />
             </pattern>
           )}
-          {stops && el.gradientType === 'radial' && (
-            <radialGradient id={`g${gid}`} cx="0.5" cy="0.5" r="0.7">{stopEls}</radialGradient>
+          {stops && el.gradientType === 'radial' && (el.gradientCenter || el.gradientScaled !== undefined
+            // An imported path gradient as PowerPoint draws it: from its focus out to the circle around the whole box.
+            ? <radialGradient id={`g${gid}`} gradientUnits="userSpaceOnUse" cx={el.w / 2} cy={el.h / 2} r={Math.hypot(el.w, el.h) / 2} fx={(el.gradientCenter?.[0] ?? 0.5) * el.w} fy={(el.gradientCenter?.[1] ?? 0.5) * el.h} gradientTransform={custom ? `matrix(${Math.max(0.01, el.pathW ?? el.w) / Math.max(0.01, el.w)} 0 0 ${Math.max(0.01, el.pathH ?? el.h) / Math.max(0.01, el.h)} 0 0)` : undefined}>{stopEls}</radialGradient>
+            : <radialGradient id={`g${gid}`} cx="0.5" cy="0.5" r="0.7">{stopEls}</radialGradient>
           )}
-          {stops && el.gradientType !== 'radial' && (
-            <linearGradient id={`g${gid}`} x1={0.5 - Math.cos(a) / 2} y1={0.5 - Math.sin(a) / 2} x2={0.5 + Math.cos(a) / 2} y2={0.5 + Math.sin(a) / 2}>{stopEls}</linearGradient>
+          {stops && el.gradientType !== 'radial' && (el.gradientScaled === false
+            // lin@scaled off (PowerPoint's default): the angle as drawn on the shape, the gradient reaching the far corners.
+            ? (() => {
+              const L = Math.abs(el.w * Math.cos(a)) + Math.abs(el.h * Math.sin(a)), cx = el.w / 2, cy = el.h / 2;
+              const k = custom ? [Math.max(0.01, el.pathW ?? el.w) / Math.max(0.01, el.w), Math.max(0.01, el.pathH ?? el.h) / Math.max(0.01, el.h)] : null;
+              return <linearGradient id={`g${gid}`} gradientUnits="userSpaceOnUse" x1={cx - (Math.cos(a) * L) / 2} y1={cy - (Math.sin(a) * L) / 2} x2={cx + (Math.cos(a) * L) / 2} y2={cy + (Math.sin(a) * L) / 2} gradientTransform={k ? `matrix(${k[0]} 0 0 ${k[1]} 0 0)` : undefined}>{stopEls}</linearGradient>;
+            })()
+            : <linearGradient id={`g${gid}`} x1={0.5 - Math.cos(a) / 2} y1={0.5 - Math.sin(a) / 2} x2={0.5 + Math.cos(a) / 2} y2={0.5 + Math.sin(a) / 2}>{stopEls}</linearGradient>
           )}
           {shading && (shading.radial
             ? <radialGradient id={`l${gid}`} cx={shading.x1} cy={shading.y1} r="0.75">{shading.stops.map((st, i) => <stop key={i} offset={st.offset} stopColor={st.color} stopOpacity={st.opacity} />)}</radialGradient>
@@ -116,7 +128,18 @@ export function ShapeElement({ el }: { el: SlideElement }) {
               </marker>
             );
           })}
+          {soft > 0 && (
+            // Soft edges as DeckCraft measured them on PowerPoint's export: the outline shrunk by 0.85 r and
+            // blurred by r / 3, so the shape is half opaque 0.85 r inside its edge and clear at the edge.
+            <>
+              <filter id={`fb${gid}`} x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation={soft / 3} /></filter>
+              <mask id={`f${gid}`} maskUnits="userSpaceOnUse" x={-el.w} y={-el.h} width={3 * Math.max(1, el.w)} height={3 * Math.max(1, el.h)}>
+                <g filter={`url(#fb${gid})`}><g transform={custom}>{g.paths.map((p, i) => <path key={i} d={p.d} fill="#fff" fillRule={p.evenOdd ? 'evenodd' : undefined} stroke="#000" strokeWidth={soft * 1.7} strokeLinejoin="round" vectorEffect={custom ? 'non-scaling-stroke' : undefined} />)}</g></g>
+              </mask>
+            </>
+          )}
         </defs>
+        <g mask={soft > 0 ? `url(#f${gid})` : undefined}>
         <g transform={custom}>
         {g.paths.map((p, i) => {
           const shade = SHADE[p.fill];
@@ -153,6 +176,7 @@ export function ShapeElement({ el }: { el: SlideElement }) {
             </g>
           );
         })}
+        </g>
         </g>
       </svg>
       {el.text ? (
@@ -239,7 +263,7 @@ export function TableElement({ el }: { el: SlideElement }) {
 export function ChartElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
   if (!el.chart) return null;
-  const svg = chartSvg({ ...el.chart, textColor: el.chart.textColor ?? el.color ?? '#ffffff' }, Math.round(el.w), Math.round(el.h), undefined, el.fontFamily);
+  const svg = chartSvg({ ...el.chart, textColor: el.chart.textColor ?? el.color ?? '#ffffff' }, Math.round(el.w), Math.round(el.h), el.chart.scheme, el.fontFamily);
   const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), background: el.fill, filter: effects(el), ...effectCss(el) };
   // The SVG is built by the engine, which escapes every label.
   return svg ? <div data-chart style={box} dangerouslySetInnerHTML={{ __html: svg }} /> : <div style={{ ...box, outline: '2px dashed #888' }} />;

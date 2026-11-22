@@ -17,7 +17,8 @@ export function elementTextStyle(el: SlideElement): CSSProperties {
     fontSize: el.fontSize ?? 64, fontFamily: el.fontFamily, fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500,
     fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, el.fontSize ?? 64, el.paragraphs ? 1.2 : 1.25),
     letterSpacing: el.letterSpacing || undefined, paddingLeft: el.indent ? el.indent * INDENT_PX : undefined,
-    ...(el.columns && el.columns > 1 ? { columnCount: el.columns, columnGap: '1.2em', display: 'block' } : {}),
+    // PowerPoint fills one column to the bottom of the box before the next (no balancing).
+    ...(el.columns && el.columns > 1 ? { columnCount: el.columns, columnGap: el.columnSpacing !== undefined ? el.columnSpacing : '1.2em', columnFill: 'auto', display: 'block' } : {}),
     ...writingCss(el),
     // Font dialog / WordArt / Format Shape › Text Box.
     ...(el.caps === 'all' ? { textTransform: 'uppercase' } : el.caps === 'small' ? { fontVariant: 'small-caps' } : {}),
@@ -30,7 +31,7 @@ export function elementTextStyle(el: SlideElement): CSSProperties {
     ...(el.role === 'announcementTitle' ? { wordBreak: 'keep-all', textWrap: 'balance' } : {}),
   };
 }
-const px = new Set(['fontSize', 'letterSpacing', 'paddingLeft', 'textIndent', 'marginTop', 'marginBottom']);
+const px = new Set(['fontSize', 'letterSpacing', 'paddingLeft', 'textIndent', 'marginTop', 'marginBottom', 'columnGap']);
 function applyStyle(node: HTMLElement, styles: CSSProperties) {
   for (const [key, value] of Object.entries(styles)) if (value != null) (node.style as unknown as Record<string, string>)[key] = typeof value === 'number' && px.has(key) ? `${value}px` : String(value);
 }

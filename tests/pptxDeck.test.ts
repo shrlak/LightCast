@@ -55,7 +55,8 @@ describe('PPTX deck reader: text', () => {
     const { slides } = await read('text.pptx');
     const title = byText(slides[1], 'Title placeholder');
     expect(title).toMatchObject({ kind: 'text', x: 108, w: 1224, fontSize: 88, align: 'center' });
-    expect(byText(slides[1], 'Subtitle').color).toBe('#404040');
+    // tx1 with a 75 % tint, mixed in linear light as PowerPoint does (#404040 would be the sRGB mix).
+    expect(byText(slides[1], 'Subtitle').color).toBe('#898989');
     const body = byText(slides[2], 'First bullet');
     expect(body.list).toBe('bullet');
     expect(body.paragraphs!.map((p) => p.level ?? 0)).toEqual([0, 1, 2, 0]);
@@ -93,8 +94,9 @@ describe('PPTX deck reader: shapes, pictures and backgrounds', () => {
     expect(slides[1].background).toEqual({ kind: 'gradient', value: 'linear-gradient(0deg, #0a1e50 0%, #5096dc 100%)' });
     expect(byText(slides[1], '3-D rotation')).toMatchObject({ rotate3d: { x: 30, y: 20 }, bevel: true, bevelKind: 'circle' });
     expect(item(report, '슬라이드 크기')[0].status).toBe('approximated');
-    expect(item(report, '그림 색 변경')[0]).toMatchObject({ status: 'approximated', slides: [1] });
-    expect(s.importSource?.warnings).toContain('그림 색 변경: 비슷하게 가져왔습니다');
+    // a:grayscl is drawn (a CSS filter on the picture), so nothing is reported.
+    expect(round.pictureFilter).toBe('grayscale(1)');
+    expect(item(report, '그림 색 변경')).toHaveLength(0);
   });
 
   it('master and layout art comes behind the slide, locked; the master background and title style apply', async () => {
