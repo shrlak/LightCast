@@ -1,5 +1,6 @@
 // 글꼴 가져오기: the button (font picker, 글꼴 dialog, 디자인 › 글꼴, 설정), the list of imported fonts with
-// remove / filter by source, the drop of font files onto the window, and the "this deck needs a font" notice.
+// remove / filter by source, the drop of font files onto the window, and the "this deck needs a font" notice, which
+// finds the missing fonts on the internet and downloads them by itself (webFonts.ts).
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import {
   FONT_ACCEPT, groupFamilies, importFontFiles, importSummary, importedFonts, isFontFileName, missingFamilies, removeImportedFonts,
@@ -12,6 +13,7 @@ import { FontConflictsPanel } from '../FontConflicts';
 import { weightLabel } from '../../domain/fontWeight';
 import { FONT_OPTIONS } from '../../domain/fonts';
 import { usedFamilies } from '../../domain/io/pptxFonts';
+import { fetchMissingWebFonts, fetchWebFont, isWebSource, loadAutoWebFonts, saveAutoWebFonts, webFontSummary, webFontTried } from '../../domain/webFonts';
 
 /** The imported fonts of this window, re-rendering when they change. */
 export function useImportedFonts(): ImportedFont[] {
@@ -48,7 +50,41 @@ export function FontImportButton({ onDone, label = '글꼴 가져오기…', cla
   );
 }
 
-type Source = 'all' | 'user' | 'pptx' | 'lcast';
+type Source = 'all' | 'user' | 'web' | 'pptx' | 'lcast';
+
+/** Type a font's name, find it on the internet (Google Fonts · Fontsource · Pretendard) and add it. */
+export function WebFontSearch({ onDone }: { onDone?: (message: string) => void }) {
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [auto, setAuto] = useState(loadAutoWebFonts);
+  const run = async () => {
+    const n = name.trim();
+    if (!n || busy) return;
+    setBusy(true);
+    setMsg(`“${n}” 찾는 중…`);
+    try {
+      const m = webFontSummary([await fetchWebFont(n)]);
+      setMsg(m);
+      onDone?.(m);
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="web-font-search" style={{ borderLeft: '3px solid #1565c0', background: '#e8f1fb', padding: '4px 8px', marginBottom: 6, fontSize: 12 }}>
+      <form className="row gap-xs wrap" style={{ alignItems: 'center' }} onSubmit={(e) => { e.preventDefault(); void run(); }}>
+        <input type="text" value={name} placeholder="글꼴 이름 (예: 나눔명조, Noto Sans KR, Pretendard)" aria-label="인터넷에서 찾을 글꼴 이름"
+          onChange={(e) => setName(e.target.value)} style={{ flex: '1 1 180px', minWidth: 0 }} />
+        <button type="submit" className="btn small" disabled={busy || !name.trim()}>{busy ? '받는 중…' : '인터넷에서 찾아 받기'}</button>
+      </form>
+      <label style={{ display: 'block', marginTop: 4 }}><input type="checkbox" checked={auto} onChange={(e) => { setAuto(e.target.checked); saveAutoWebFonts(e.target.checked); }} /> 프레젠테이션에 없는 글꼴은 인터넷에서 자동으로 찾아 받기</label>
+      <span className="muted">무료 글꼴(Google Fonts · Fontsource · Pretendard)만 받습니다. 받은 글꼴은 교회 서버와 동기화되어 다른 컴퓨터에서도 쓸 수 있습니다.</span>
+      {msg && <div role="status" className="font-import-msg">{msg}</div>}
+    </div>
+  );
+}
+
+const sourceLabel = (source: string) =>
+  source === 'user' ? '파일' : source.startsWith('lcast:') ? `LightCast: ${source.slice(6)}` : isWebSource(source) ? `인터넷: ${source.slice(4)}` : `PPTX: ${source}`;
 
 /** The list of imported fonts by family: weights, size, where each came from; remove one face or a family. */
 export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => void }) {
@@ -71,7 +107,7 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
     return () => { live = false; };
   }, [tick]);
   const all = [...mine, ...fromDecks];
-  const shown = all.filter((f) => filter === 'all' || (filter === 'user' ? f.source === 'user' : filter === 'lcast' ? f.source.startsWith('lcast:') : !f.source.startsWith('lcast:') && f.source !== 'user'));
+  const shown = all.filter((f) => filter === 'all' || (filter === 'user' ? f.source === 'user' : filter === 'web' ? isWebSource(f.source) : filter === 'lcast' ? f.source.startsWith('lcast:') : !f.source.startsWith('lcast:') && f.source !== 'user' && !isWebSource(f.source)));
   const groups = groupFamilies(shown);
   const remove = async (f: ImportedFont) => {
     if (f.id.startsWith('embfont:')) await removeEmbeddedFont(f.id); else await removeImportedFonts({ id: f.id });
@@ -84,9 +120,10 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
       <div className="row gap-xs wrap" style={{ alignItems: 'center', marginBottom: 6 }}>
         <FontImportButton className="btn" onDone={(m) => { setTick((t) => t + 1); onNotice?.(m); }} />
         <select value={filter} aria-label="글꼴 출처" onChange={(e) => setFilter(e.target.value as Source)}>
-          <option value="all">모든 출처</option><option value="user">내가 가져온 글꼴 파일</option><option value="pptx">PPTX 파일에서 온 글꼴</option><option value="lcast">LightCast 파일에서 온 글꼴</option>
+          <option value="all">모든 출처</option><option value="user">내가 가져온 글꼴 파일</option><option value="web">인터넷에서 받은 글꼴</option><option value="pptx">PPTX 파일에서 온 글꼴</option><option value="lcast">LightCast 파일에서 온 글꼴</option>
         </select>
       </div>
+      <WebFontSearch onDone={(m) => { setTick((t) => t + 1); onNotice?.(m); }} />
       <div className="font-sync-settings" style={{ borderLeft: '3px solid #2e7d32', background: '#f1f8e9', padding: '4px 8px', marginBottom: 6, fontSize: 12 }}>
         <label style={{ display: 'block' }}><input type="checkbox" checked={sync.enabled} onChange={(e) => change({ enabled: e.target.checked })} /> 교회 서버와 글꼴 동기화 (로그인했을 때)</label>
         <label style={{ display: 'block', opacity: sync.enabled ? 1 : 0.5 }}><input type="checkbox" disabled={!sync.enabled} checked={sync.includeDeckFonts} onChange={(e) => change({ includeDeckFonts: e.target.checked })} /> PPTX · LightCast 파일에서 온 글꼴도 동기화 (끄면 동기화되는 프레젠테이션이 쓰는 글꼴만)</label>
@@ -102,7 +139,7 @@ export function ImportedFontsManager({ onNotice }: { onNotice?: (m: string) => v
           </div>
           {g.fonts.map((f) => (
             <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 12 }}>
-              <span>{weightLabel(f.weight)}{f.weightRange ? ` (${f.weightRange[0]}–${f.weightRange[1]})` : ''}{f.italic ? ' · 기울임' : ''} · <span className="muted">{f.source === 'user' ? '파일' : f.source.startsWith('lcast:') ? `LightCast: ${f.source.slice(6)}` : `PPTX: ${f.source}`}</span></span>
+              <span>{weightLabel(f.weight)}{f.weightRange ? ` (${f.weightRange[0]}–${f.weightRange[1]})` : ''}{f.italic ? ' · 기울임' : ''} · <span className="muted">{sourceLabel(f.source)}</span></span>
               {<select aria-label={`${f.family} 동기화`} value={f.sync === true ? 'on' : f.sync === false ? 'off' : 'auto'} onChange={(e) => setFontSync(f, e.target.value)} style={{ fontSize: 11 }}>
                 <option value="auto">동기화: 자동</option><option value="on">동기화: 켬</option><option value="off">동기화: 끔</option></select>}
               <button type="button" className="btn small" aria-label={`${f.family} 지우기`} onClick={() => void remove(f)}>지우기</button>
@@ -132,17 +169,47 @@ export function useMissingFonts(deck: unknown, key: string | undefined): string[
   return missing;
 }
 
-/** "이 프레젠테이션은 이 컴퓨터에 없는 글꼴을 씁니다" with 가져오기. Shows nothing when every font is available. */
+/**
+ * "이 프레젠테이션은 이 컴퓨터에 없는 글꼴을 씁니다": the missing fonts are looked up on the internet and downloaded by
+ * themselves (unless switched off), then synced to the church server like imported ones. What the internet does not
+ * have stays listed with 가져오기. Shows nothing when every font is available.
+ */
 export function MissingFontsNotice({ deck, deckKey }: { deck: unknown; deckKey?: string }) {
   const missing = useMissingFonts(deck, deckKey);
   const [hidden, setHidden] = useState<string>('');
+  const [busy, setBusy] = useState('');
+  const [done, setDone] = useState('');
+  const running = useRef(false);
   const sig = missing.join('|');
-  if (!missing.length || hidden === sig) return null;
+  const fetchFonts = async (names: string[], again: boolean) => {
+    if (running.current || !names.length) return;
+    running.current = true;
+    try {
+      const results = await fetchMissingWebFonts(names, { again, onProgress: (i, n, name) => setBusy(`인터넷에서 “${name}” 글꼴을 찾는 중… (${i + 1}/${n})`) });
+      if (results.length) setDone(webFontSummary(results));
+    } finally { running.current = false; setBusy(''); }
+  };
+  useEffect(() => {
+    if (!missing.length || !loadAutoWebFonts()) return;
+    const fresh = missing.filter((m) => !webFontTried(m));
+    if (fresh.length) void fetchFonts(fresh, false);
+    // Runs when the set of missing fonts changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig]);
+  useEffect(() => {
+    if (!done || missing.length) return;
+    const t = setTimeout(() => setDone(''), 10_000);
+    return () => clearTimeout(t);
+  }, [done, missing.length]);
+  if ((!missing.length && !done) || (hidden && hidden === sig + done)) return null;
+  const ok = !missing.length;
   return (
-    <div role="status" className="font-missing-notice" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 12px', background: '#fff8d6', borderBottom: '1px solid #e6d27a', color: '#4d4200', fontSize: 13 }}>
-      <span>이 컴퓨터에 없는 글꼴이 있습니다: <b>{missing.slice(0, 4).join(', ')}{missing.length > 4 ? ` 외 ${missing.length - 4}개` : ''}</b>. 다른 글꼴로 보일 수 있습니다.</span>
-      <FontImportButton className="btn small" label="글꼴 가져오기…" />
-      <button type="button" className="btn small" onClick={() => setHidden(sig)}>닫기</button>
+    <div role="status" className="font-missing-notice" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '6px 12px', background: ok ? '#edf7ed' : '#fff8d6', borderBottom: `1px solid ${ok ? '#a5d6a7' : '#e6d27a'}`, color: ok ? '#1e4620' : '#4d4200', fontSize: 13 }}>
+      {missing.length > 0 && <span>이 컴퓨터에 없는 글꼴이 있습니다: <b>{missing.slice(0, 4).join(', ')}{missing.length > 4 ? ` 외 ${missing.length - 4}개` : ''}</b>. 다른 글꼴로 보일 수 있습니다.</span>}
+      {busy ? <span>{busy}</span> : done && <span>{done}</span>}
+      {missing.length > 0 && <button type="button" className="btn small" disabled={!!busy} onClick={() => void fetchFonts(missing, true)}>인터넷에서 찾기</button>}
+      {missing.length > 0 && <FontImportButton className="btn small" label="글꼴 가져오기…" />}
+      <button type="button" className="btn small" onClick={() => setHidden(sig + done)}>닫기</button>
     </div>
   );
 }

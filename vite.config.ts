@@ -20,6 +20,8 @@ import { recognitionMiddleware } from './server/recognition.mjs';
 import { songPptMiddleware } from './server/songPpt.mjs';
 // @ts-expect-error plain ESM server modules
 import { songLyricsMiddleware } from './server/songLyrics.mjs';
+// @ts-expect-error plain ESM server modules
+import { fontFinderMiddleware } from './server/fontFinder.mjs';
 
 /** Dev server gets the same AI endpoints and remote relay as `npm start`. */
 function freecastServer(): Plugin {
@@ -30,6 +32,7 @@ function freecastServer(): Plugin {
       server.middlewares.use(recognitionMiddleware);
       server.middlewares.use(songPptMiddleware);
       server.middlewares.use(songLyricsMiddleware);
+      server.middlewares.use(fontFinderMiddleware);
       server.middlewares.use(dmxMiddleware);
       server.middlewares.use(x32Middleware);
       server.middlewares.use(cloudMiddleware);
