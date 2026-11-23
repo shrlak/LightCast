@@ -586,6 +586,35 @@ fn text_y(svg: &str, body: &str) -> Option<f64> {
     y.parse().ok()
 }
 
+/// Like [`text_y`], for a centred `<text>` only (a data label, not an axis label).
+fn data_label_y(svg: &str, body: &str) -> Option<f64> {
+    let mut rest = svg;
+    while let Some(end) = rest.find(&format!(">{body}</text>")) {
+        let start = rest[..end].rfind("<text")?;
+        let tag = &rest[start..end];
+        if tag.contains("text-anchor=\"middle\"") {
+            return tag.split(" y=\"").nth(1)?.split('"').next()?.parse().ok();
+        }
+        rest = &rest[end + 1..];
+    }
+    None
+}
+
+#[test]
+fn charts_are_laid_out_as_deckcraft_lays_them_out() {
+    // A bar chart's first category is at the bottom, as in PowerPoint.
+    let svg = svg_of(json!({"kind": "bar", "categories": ["첫째", "둘째"], "legend": false, "series": [{"name": "값", "values": [3, 5]}]}));
+    assert!(text_y(&svg, "첫째").unwrap() > text_y(&svg, "둘째").unwrap());
+    // The title is in regular weight, at the file's size when given.
+    let svg = svg_of(json!({"kind": "column", "title": "출석", "titleSize": 40, "categories": ["가"], "series": [{"name": "값", "values": [90]}]}));
+    let start = svg.find(">출석</text>").and_then(|e| svg[..e].rfind("<text")).unwrap();
+    let tag = &svg[start..svg.find(">출석</text>").unwrap()];
+    assert!(tag.contains("font-size=\"40\"") && !tag.contains("font-weight"), "{tag}");
+    // As many major units as fit: a wide, low chart gets fewer gridlines than a tall one.
+    let lines = |w: u32, h: u32| svg_of(json!({"kind": "column", "w": w, "h": h, "fontSize": 20, "categories": ["가"], "legend": false, "series": [{"name": "값", "values": [90]}]})).matches("<line").count();
+    assert!(lines(800, 200) < lines(800, 600), "{} vs {}", lines(800, 200), lines(800, 600));
+}
+
 #[test]
 fn line_series_label_each_point_with_its_own_value_above_it() {
     // A stacked line: each label shows the point's own value, not the running total (DeckCraft #2066).
@@ -594,8 +623,9 @@ fn line_series_label_each_point_with_its_own_value_above_it() {
     for v in ["7", "9", "11", "24", "26", "22"] {
         assert!(text_y(&svg, v).is_some(), "label {v} in {svg}");
     }
+    // (Data labels are centred over their point; the value axis' labels stand right-aligned beside it.)
     for total in ["31", "35", "33"] {
-        assert!(text_y(&svg, total).is_none(), "stacked total {total} shown");
+        assert!(data_label_y(&svg, total).is_none(), "stacked total {total} shown");
     }
     // The second series sits above the first, so its label does too.
     assert!(text_y(&svg, "24").unwrap() < text_y(&svg, "7").unwrap());

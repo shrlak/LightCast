@@ -281,7 +281,12 @@ export interface ElementParagraph {
   spaceBefore?: number;
   spaceAfter?: number;
   lineHeight?: number;
+  /** This paragraph's bullet look (imported a:buFont / a:buSzPct / a:buSzPts / a:buClr); unset: the box's. */
+  bulletStyle?: BulletStyle;
 }
+
+/** How a bullet is drawn, as PowerPoint sets it: its typeface, its size (a share of the text it leads, or canvas px) and colour. */
+export interface BulletStyle { font?: string; scale?: number; px?: number; color?: string }
 
 /** A free-positioned object on a slide (slide editor), in 1440×1080 canvas pixels. */
 /** An embedded OLE object of a .pptx, kept for the export (LightCast only draws its preview picture). */
@@ -356,6 +361,8 @@ export interface SlideElement {
   list?: ListStyle;
   bulletPicture?: string;
   indent?: number;
+  /** The box's bullet look (imported a:buFont / a:buSzPct / a:buClr). */
+  bulletStyle?: BulletStyle;
   columns?: number;
   /** Imported bodyPr@spcCol: the gap between columns in px (PowerPoint's default 0); unset = LightCast's 1.2em. */
   columnSpacing?: number;
@@ -467,8 +474,10 @@ export interface SlideElement {
   master?: boolean;
   /** Pictures: crop as fractions of the picture cut from each side (l, t, r, b). */
   crop?: [number, number, number, number];
-  /** Picture colour from an imported PowerPoint picture (a:grayscl, a:lum, a:biLevel) as a CSS filter on the picture itself. */
+  /** Picture colour from an imported PowerPoint picture (a:grayscl, a:lum, a:biLevel) as a CSS filter on the picture itself (v1.2.6 imports; newer ones use `pictureColor`). */
   pictureFilter?: string;
+  /** The picture's own colour changes (Picture Format › Color / Corrections), drawn as PowerPoint draws them. */
+  pictureColor?: import('./pictureColor').PictureColor;
   picture?: PictureAdjust;
   /** Picture Styles preset. */
   pictureStyle?: string;
@@ -988,6 +997,8 @@ export interface LiveState {
   nextText: string | null;
   /** The next slide's background and pictures (media ids, picture URLs), decoded ahead by the output so the next slide change does not wait for them. */
   nextAssets?: { ids: string[]; urls: string[] } | null;
+  /** The next slide as it will be drawn: the output lays it out unseen ahead of the click (fonts, text fitting, pictures). */
+  next?: { slide: Slide; theme: Theme; background: Background | null } | null;
   theme: Theme;
   transition: Transition;
   background: Background | null;

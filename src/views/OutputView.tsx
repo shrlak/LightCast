@@ -129,6 +129,8 @@ export function OutputView() {
   return (
     <div className="output-root" style={{ background: bg }}>
       <SlideCanvas {...liveCanvasProps(live, screen)} className="output-canvas" />
+      {/* The next slide, laid out unseen (fonts, text fitting, pictures), so the click shows it at once. */}
+      {live.next && <div aria-hidden style={{ position: 'fixed', left: -100000, top: 0, width: '100vw', visibility: 'hidden', pointerEvents: 'none' }}><SlideCanvas slide={live.next.slide} theme={live.next.theme} background={live.next.background} /></div>}
       <LaserDot point={laser} />
       <CaptionBand />
       {tip && <div className="output-tip" style={{ left: tip.x + 14, top: tip.y + 18 }}>{tip.text}</div>}

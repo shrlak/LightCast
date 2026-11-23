@@ -1,7 +1,7 @@
 import PptxGenJS from 'pptxgenjs';
 import { embedFontsPref, embedUsedFonts } from '../embeddedFonts';
 import type { Background, HAlign, Library, ListStyle, Playlist, Presentation, SlideElement, TextDirection, TextRun, Theme } from '../types';
-import { chartSvg, iconCatalog, layoutTable } from '../../engine';
+import { cellRuns, chartSvg, iconCatalog, layoutTable } from '../../engine';
 import { histogramColumns, pptxPlan } from '../chartTypes';
 import { lineRuns } from '../richText';
 import { pptxVert } from '../textFormat';
@@ -24,7 +24,7 @@ import { resolveBackground } from '../autoBackground';
 import { motionFlatColor } from '../motion';
 import JSZip from 'jszip';
 import { bulletMedia, bulletPictureOf, bulletPlaceholder, patchBulletXml } from '../pictureBullet';
-import { fillXml, lnXml, needsShapePatch, patchPptx, type ShapePatch } from './shapeXml';
+import { fillXml, lnXml, needsShapePatch, patchPictures, patchPptx, pictureColorFromFilter, pictureColorXml, type PicturePatch, type ShapePatch } from './shapeXml';
 import { scene3dXml } from '../shape3d';
 import { patchOleObjects, type OlePatch } from './oleObjects';
 import { mediaExtension, patchMediaClips, type MediaPatch } from './pptxMedia';
@@ -38,6 +38,8 @@ type Box = { x: number; y: number; w: number; h: number; rotate?: number };
 
 /** What each export still has to put into the shapes' XML (outline cap / join / compound, gradients, 3-D…; see shapeXml). */
 const shapePatches = new WeakMap<PptxGenJS, ShapePatch[]>();
+/** Pictures whose colour changes (Grayscale, Recolor …) are written into their a:blip after PptxGenJS (shapeXml). */
+const picturePatches = new WeakMap<PptxGenJS, PicturePatch[]>();
 let markerSeq = 0;
 /** OLE objects of an export: their preview pictures are turned back into the original objects when the file is written (oleObjects.ts). */
 const olePatches = new WeakMap<PptxGenJS, OlePatch[]>();
@@ -108,12 +110,17 @@ async function addShapeElement(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideEle
 
 function addTableElement(s: PptxGenJS.Slide, el: SlideElement, box: Box) {
   const t = el.table!;
-  const cells = layoutTable(t, el.w, el.h);
+  const cells = layoutTable(t, el.w, el.h, t.scheme);
   const look = new Map(cells.map((c) => [`${c.r}:${c.c}`, c]));
   const rows: PptxGenJS.TableRow[] = t.rows.map((row, r) => row.flatMap((cell, c) => {
     if (cell.hMerge || cell.vMerge) return [];
     const l = look.get(`${r}:${c}`);
-    return [{ text: cell.text, options: { colspan: cell.span && cell.span > 1 ? cell.span : undefined, rowspan: cell.rowSpan && cell.rowSpan > 1 ? cell.rowSpan : undefined, fill: l?.fill ? { color: hex(l.fill) } : undefined, color: hex(l?.color ?? el.color), bold: l?.bold, align: (cell.align as 'left') ?? 'left', valign: 'middle' as const, border: l?.border ? { type: 'solid' as const, pt: l.borderWidth * 0.5, color: hex(l.border) } : undefined } }];
+    // A cell that mixes formatting goes as its runs (bold words, a coloured word, another size).
+    const own = cellRuns(cell);
+    const text: string | PptxGenJS.TextProps[] = own
+      ? own.flatMap((line, li) => line.map((r, ri): PptxGenJS.TextProps => ({ text: r.text.replace(/\v/g, '\n'), options: { bold: r.bold ?? l?.bold, italic: r.italic, underline: r.underline ? { style: 'sng' } : undefined, strike: r.strike ? 'sngStrike' : undefined, color: r.color ? hex(r.color) : undefined, fontSize: r.fontSize ? r.fontSize * 0.5 : undefined, breakLine: ri === line.length - 1 && li < own.length - 1 } })))
+      : cell.text;
+    return [{ text, options: { colspan: cell.span && cell.span > 1 ? cell.span : undefined, rowspan: cell.rowSpan && cell.rowSpan > 1 ? cell.rowSpan : undefined, fill: l?.fill ? { color: hex(l.fill) } : undefined, color: hex(l?.color ?? el.color), bold: l?.bold, align: (cell.align as 'left') ?? 'left', valign: 'middle' as const, border: l?.border ? { type: 'solid' as const, pt: l.borderWidth * 0.5, color: hex(l.border) } : undefined } }];
   }));
   const sum = (v: number[]) => v.reduce((a, b) => a + b, 0) || 1;
   s.addTable(rows, { x: box.x, y: box.y, w: box.w, colW: t.cols.map((c) => (c / sum(t.cols)) * box.w), rowH: t.heights.map((h) => (h / sum(t.heights)) * box.h), fontSize: (el.fontSize ?? 32) * 0.5, fontFace: el.fontFamily ? pptxFont(el.fontFamily) : undefined });
@@ -443,7 +450,12 @@ async function addPresentation(pptx: PptxGenJS, lib: Library, p: Presentation) {
           s.addImage({ ...at, ...(el.fit === 'cover' ? { sizing: { type: 'cover' as const, w: at.w, h: at.h } } : {}), data: `data:image/svg+xml;base64,${btoa(unescape(encodeURIComponent(svgForPptx(svg, at.w, at.h))))}` });
         } else {
           const data = await dataUrl(el.mediaId);
-          if (data) s.addImage({ ...box, data, sizing: { type: el.fit === 'cover' ? 'cover' : 'contain', w: box.w, h: box.h } });
+          // The picture's own colour changes go into the file as PowerPoint writes them.
+          const pc = el.pictureColor ?? pictureColorFromFilter(el.pictureFilter);
+          const blip = pc ? pictureColorXml(pc) : '';
+          const marker = blip ? `lcp-${++markerSeq}` : undefined;
+          if (marker) picturePatches.set(pptx, [...(picturePatches.get(pptx) ?? []), { marker, name: el.name, blip }]);
+          if (data) s.addImage({ ...box, data, sizing: { type: el.fit === 'cover' ? 'cover' : 'contain', w: box.w, h: box.h }, ...(marker ? { objectName: marker } : {}) });
         }
       } else if ((el.kind === 'video' || el.kind === 'audio') && el.mediaId) {
         await addMediaElement(pptx, s, el, box);
@@ -520,7 +532,8 @@ function patchOnWrite(pptx: PptxGenJS) {
   const bullets = bulletPictures.get(pptx) ?? [];
   const oles = olePatches.get(pptx) ?? [];
   const media = mediaPatches.get(pptx) ?? [];
-  if (!patches.length && !bullets.length && !oles.length && !media.length && !scriptFaced.has(pptx)) return;
+  const pictures = picturePatches.get(pptx) ?? [];
+  if (!patches.length && !bullets.length && !oles.length && !media.length && !pictures.length && !scriptFaced.has(pptx)) return;
   const write = pptx.write.bind(pptx);
   const patched = async (props?: PptxGenJS.WriteProps) => {
     const type = typeof props === 'string' ? props : props?.outputType ?? 'blob';
@@ -531,6 +544,7 @@ function patchOnWrite(pptx: PptxGenJS) {
     await patchBulletPictures(zip, bullets);
     await patchOleObjects(zip, oles);
     await patchMediaClips(zip, media);
+    await patchPictures(zip, pictures);
     const asType = ({ nodebuffer: 'nodebuffer', arraybuffer: 'arraybuffer', uint8array: 'uint8array', base64: 'base64', binarystring: 'binarystring', blob: 'blob' } as const)[type as 'blob'] ?? 'blob';
     return zip.generateAsync({ type: asType as 'blob', compression: 'DEFLATE' });
   };

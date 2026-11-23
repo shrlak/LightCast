@@ -205,7 +205,12 @@ export interface CellBorders { t?: CellBorder | null; r?: CellBorder | null; b?:
  * A table cell. `anchor`: Table Layout › Alignment (vertical; middle when unset); `dir`: Text
  * Direction (horz, vert = rotate all text 90°, vert270, stacked).
  */
-export interface TableCell { text: string; span?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; fill?: string; color?: string; bold?: boolean; align?: string; borders?: CellBorders; anchor?: 'top' | 'middle' | 'bottom'; dir?: 'horz' | 'vert' | 'vert270' | 'stacked' }
+/** One stretch of a cell's text with its own formatting (sizes in canvas px). */
+export interface TableRun { text: string; bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; color?: string; fontSize?: number }
+/** A cell's runs while they still spell its text (an edit in LightCast leaves the plain text). */
+export const cellRuns = (cell: TableCell): TableRun[][] | null =>
+  cell.runs && cell.runs.map((l) => l.map((r) => r.text).join('')).join('\n') === cell.text ? cell.runs : null;
+export interface TableCell { text: string; /** The cell's lines as runs, when its text mixes formatting (bold words, a coloured word, another size). */ runs?: TableRun[][]; span?: number; rowSpan?: number; hMerge?: boolean; vMerge?: boolean; fill?: string; color?: string; bold?: boolean; align?: string; borders?: CellBorders; anchor?: 'top' | 'middle' | 'bottom'; dir?: 'horz' | 'vert' | 'vert270' | 'stacked' }
 export interface TableData {
   rows: TableCell[][];
   cols: number[];
@@ -216,6 +221,8 @@ export interface TableData {
   margins?: [number, number, number, number];
   /** Table Design › Effects › Cell Bevel. */
   cellBevel?: boolean;
+  /** An imported table's own theme colours (`custom:<name>|…`, as charts), which its table style is coloured from; unset: LightCast's. */
+  scheme?: string;
 }
 export interface TableCellBox { r: number; c: number; x: number; y: number; w: number; h: number; text: string; fill: string | null; color: string | null; bold: boolean; align: string | null; border: string | null; borderWidth: number }
 export type TableAction = 'insertRowAbove' | 'insertRowBelow' | 'insertColLeft' | 'insertColRight' | 'deleteRow' | 'deleteCol' | 'merge' | 'split' | 'distributeRows' | 'distributeCols';
@@ -261,6 +268,8 @@ export interface ChartData {
   scheme?: string;
   /** An imported chart's text size (c:txPr) in canvas pixels; unset: from the chart's height. */
   fontSize?: number;
+  /** An imported chart's title size (c:title) in canvas pixels; unset: 1.4 × the text size. */
+  titleSize?: number;
   /** Pie and doughnut labels show the value (c:showVal without c:showPercent) instead of the percentage. */
   labelValues?: boolean;
 }

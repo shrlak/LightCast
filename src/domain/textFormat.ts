@@ -1,7 +1,8 @@
 // PowerPoint's text commands (홈 → 글꼴 / 단락) as plain functions: bullets and numbering,
 // 대/소문자 바꾸기, font size steps and line spacing.
 import type { CSSProperties } from 'react';
-import type { ElementParagraph, HAlign, ListStyle, SlideElement, TextDirection, TextRun } from './types';
+import type { BulletStyle, ElementParagraph, HAlign, ListStyle, SlideElement, TextDirection, TextRun } from './types';
+import { drawnFamily } from './fonts';
 
 /** One indent level (단락 → 들여쓰기 늘리기), in canvas pixels. */
 export const INDENT_PX = 60;
@@ -246,3 +247,12 @@ export function alignCss(align: HAlign | undefined): Pick<CSSProperties, 'textAl
 
 /** What a soft line break (Shift+Enter, \v) draws as inside a pre-wrap box: a line break within the paragraph. */
 export const softToNewline = (text: string) => (text.includes('\u000b') ? text.replace(/\u000b/g, '\n') : text);
+
+/**
+ * A bullet as PowerPoint draws it: at the size of the text it leads (its first run, not the box's size) times its own
+ * share (a:buSzPct), in its own typeface (a:buFont) and colour (a:buClr).
+ */
+export function bulletCss(b: BulletStyle | undefined, lead: number): CSSProperties {
+  const size = b?.px ?? lead * (b?.scale ?? 1);
+  return { fontSize: size, ...(b?.font ? { fontFamily: drawnFamily(b.font) } : {}), ...(b?.color ? { color: b.color } : {}), fontWeight: 400, fontStyle: 'normal', textDecoration: 'none' };
+}

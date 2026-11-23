@@ -4,13 +4,14 @@
 // Positions are kept in physical units: 1 canvas px = 6350 EMU (the 4:3 slide is 10 in × 7.5 in at
 // 1440 × 1080 px), so 1 pt of type is 2 canvas px, as everywhere else in LightCast.
 import JSZip from 'jszip';
-import type { DashStyle, ElementParagraph, HAlign, ListStyle, SlideElement, TextRun } from '../types';
+import type { BulletStyle, DashStyle, ElementParagraph, HAlign, ListStyle, SlideElement, TextRun } from '../types';
 import { uid } from '../lyrics';
 import { normalizeRuns } from '../richText';
 import { hasComplexScript, hasEastAsian, officeFont } from '../fonts';
 import { splitWeightedFace, weightPatch } from '../fontWeight';
 import { fromPptxVert } from '../textFormat';
 import { child, find, kids, local, parseMarkup, path, type MNode } from './markup';
+import { pictureColorOf } from '../pictureColor';
 import { BEVELS, CAMERAS } from '../shapeEffects';
 import { LIGHTINGS, LIGHT_DIRS, MATERIALS, patch3d } from '../shape3d';
 import { shrinkBulletPicture } from '../pictureBullet';
@@ -238,7 +239,7 @@ function readRun(r: MNode, text: string, base: MNode | null, d: TextDefaults, th
 }
 
 export interface Para {
-  runs: Run[]; align?: HAlign; list?: ListStyle; bulletPicture?: string; lineHeight?: number; lineExactPx?: number; before?: number; after?: number; empty: Run;
+  runs: Run[]; align?: HAlign; list?: ListStyle; bulletPicture?: string; bullet?: BulletStyle; lineHeight?: number; lineExactPx?: number; before?: number; after?: number; empty: Run;
   /** Outline level (a:pPr@lvl). */
   level?: number;
   /** Left margin and first-line indent of the paragraph in canvas px (a:pPr@marL, @indent). */
@@ -283,7 +284,9 @@ function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme, ctx?: D
       const pts = path(pPr, k, 'spcPts')?.attrs.val;
       if (pts) return (Number(pts) / 100) * 2;
       const pct = path(pPr, k, 'spcPct')?.attrs.val;
-      return pct ? Math.round(((Number(pct) / 100000) * 1.2 * (empty.fontSize ?? d.size)) * 10) / 10 : undefined;
+      // A percentage is of the paragraph's lead text (its first run), one line being 1.2 × its size.
+      const lead = runs.find((r) => r.text && r.text !== '\v')?.fontSize ?? empty.fontSize ?? d.size;
+      return pct ? Math.round(((Number(pct) / 100000) * 1.2 * lead) * 10) / 10 : undefined;
     };
     const pct = path(pPr, 'lnSpc', 'spcPct')?.attrs.val;
     const lnPts = path(pPr, 'lnSpc', 'spcPts')?.attrs.val;
@@ -291,7 +294,16 @@ function readParagraphs(txBody: MNode, d: TextDefaults, theme: DmlTheme, ctx?: D
     const algn = pPr?.attrs.algn;
     const marL = pPr?.attrs.marL !== undefined ? px(pPr.attrs.marL) : undefined;
     const ind = pPr?.attrs.indent !== undefined ? px(pPr.attrs.indent) : undefined;
-    return { runs, align: algn ? ALIGN[algn] : undefined, list, bulletPicture: list === 'picture' ? picture : undefined, lineHeight: pct ? (Number(pct) / 100000) * 1.2 : undefined, lineExactPx: lnPts ? (Number(lnPts) / 100) * 2 : undefined, before: spc('spcBef'), after: spc('spcAft'), empty, level: lvl || undefined, marL, indentPx: ind };
+    // The bullet's own typeface, size and colour (a:buFont, a:buSzPct / a:buSzPts, a:buClr).
+    const buFace = child(pPr, 'buFont')?.attrs.typeface;
+    const buPct = child(pPr, 'buSzPct')?.attrs.val, buPts = child(pPr, 'buSzPts')?.attrs.val;
+    const buClr = colorIn(child(pPr, 'buClr'), theme)?.hex;
+    const bullet: BulletStyle = {
+      ...(buFace && !buFace.startsWith('+') ? { font: officeFont(buFace) } : {}),
+      ...(buPct ? { scale: Math.round((Number(buPct) / 100000) * 1000) / 1000 } : buPts ? { px: (Number(buPts) / 100) * 2 * scale } : {}),
+      ...(buClr ? { color: buClr } : {}),
+    };
+    return { runs, align: algn ? ALIGN[algn] : undefined, list, bulletPicture: list === 'picture' ? picture : undefined, ...(list && Object.keys(bullet).length ? { bullet } : {}), lineHeight: pct ? (Number(pct) / 100000) * 1.2 : undefined, lineExactPx: lnPts ? (Number(lnPts) / 100) * 2 : undefined, before: spc('spcBef'), after: spc('spcAft'), empty, level: lvl || undefined, marL, indentPx: ind };
   });
 }
 
@@ -344,6 +356,7 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
     // 텍스트 그림자: the box draws one shadow for all its text, so the shadow of its first text.
     ...((first as Run).shadow ? { shadow: true } : {}),
     ...(lp?.list === 'picture' && lp.bulletPicture ? { bulletPicture: lp.bulletPicture } : {}),
+    ...(lp?.bullet ? { bulletStyle: lp.bullet } : {}),
     lineHeight: lp?.lineHeight,
     ...(lp?.lineExactPx ? { lineExact: { mode: 'exact' as const, px: lp.lineExactPx } } : {}),
     spaceBefore: lp?.before,
@@ -357,6 +370,7 @@ export function textFields(paras: Para[], fallbackAlign: HAlign = 'left'): Parti
       ...(mixedPara ? {
         list: l.p.list ?? (lp.list ? 'none' : undefined), ...(lvl(l.p) ? { level: lvl(l.p) } : {}),
         ...(l.p.before ? { spaceBefore: l.p.before } : {}), ...(l.p.after ? { spaceAfter: l.p.after } : {}),
+        ...(l.p.bullet ? { bulletStyle: l.p.bullet } : {}),
         // Each paragraph says its own line spacing (an exact one as a multiple of its text size).
         lineHeight: l.p.lineHeight ?? (l.p.lineExactPx ? Math.round((l.p.lineExactPx / ((l.runs.find((r) => r.text)?.fontSize ?? l.p.empty.fontSize) || 36)) * 100) / 100 : 1.2),
       } : {}),
@@ -738,39 +752,19 @@ function pictureElement(pic: MNode, place: Map2, ctx: DmlContext, groupId?: stri
     ctx.note?.('approximated', '동영상 포스터 프레임');
     return [{ id: uid('el'), kind: 'image', mediaId: poster, fit: 'fill', ...geometry, name: '포스터 프레임', groupId: gid }, { ...clipEl, groupId: gid }];
   }
-  const pictureFilter = blipFilter(blip);
-  // Colour changes CSS cannot draw (a:duotone, a:clrChange, a:hsl, a:tint) are left out.
-  const tone = (blip?.children ?? []).find((c) => ['duotone', 'clrChange', 'hsl', 'tint'].includes(local(c)));
-  if (tone) ctx.note?.('approximated', '그림 색 변경');
+  const pictureColor = pictureColorOf(blip, ctx.theme);
+  // a:tint (recolour by hue) is the one colour change left out.
+  if ((blip?.children ?? []).some((c) => local(c) === 'tint')) ctx.note?.('approximated', '그림 색 변경');
   const alpha = Number(child(blip, 'alphaModFix')?.attrs.amt ?? 100000) / 100000;
   return {
     id: uid('el'), kind: 'image', mediaId, fit: 'fill', ...geometry,
     ...(crop.some((v) => v) ? { crop } : {}),
     ...(prst && prst !== 'rect' ? { maskShape: prst } : {}),
     ...(alpha < 1 ? { opacity: alpha } : {}),
-    ...(pictureFilter ? { pictureFilter } : {}),
+    ...(pictureColor ? { pictureColor } : {}),
     ...lineFields(spPr, child(pic, 'style'), ctx), ...effectFields(spPr, child(pic, 'style'), ctx),
     ...common, ...clickOf(child(pic, 'nvPicPr'), ctx),
   };
-}
-
-/**
- * The picture's own colour effects as a CSS filter, as PowerPoint draws them: Grayscale (a:grayscl), Black and
- * White (a:biLevel, a threshold, here at 50 %) and Brightness / Contrast (a:lum, both -100 %..100 %).
- */
-export function blipFilter(blip: MNode | null | undefined): string | undefined {
-  const out: string[] = [];
-  for (const c of blip?.children ?? []) {
-    const k = local(c);
-    if (k === 'grayscl') out.push('grayscale(1)');
-    else if (k === 'biLevel') out.push('grayscale(1)', 'contrast(100)');
-    else if (k === 'lum') {
-      const bright = Number(c.attrs.bright ?? 0) / 100000, contrast = Number(c.attrs.contrast ?? 0) / 100000;
-      if (bright) out.push(`brightness(${Math.round((1 + bright) * 1000) / 1000})`);
-      if (contrast) out.push(`contrast(${Math.round((contrast > 0 ? 1 / Math.max(0.01, 1 - contrast) : 1 + contrast) * 1000) / 1000})`);
-    }
-  }
-  return out.length ? out.join(' ') : undefined;
 }
 
 function walk(container: MNode, place: Map2, ctx: DmlContext, out: SlideElement[], groupId?: string) {

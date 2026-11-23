@@ -81,7 +81,8 @@ describe('fill transparency', () => {
     expect(grad).toContain('<a:gs pos="0"><a:srgbClr val="FF0000"><a:alpha val="50000"/>');
     expect(grad).toContain('<a:gs pos="40000"><a:srgbClr val="00FF00"/></a:gs>');
     expect(grad).toContain('<a:alpha val="0"/>');
-    expect(grad).toContain('<a:lin ang="2700000" scaled="0"/>');
+    // LightCast draws its own gradients' angle on the box squeezed to a square, which PowerPoint calls scaled="1".
+    expect(grad).toContain('<a:lin ang="2700000" scaled="1"/>');
     expect(fillXml(shape({ gradient: ['#ff0000', '#0000ff'], gradientType: 'radial' }))).toContain('<a:path path="circle">');
     expect(fillXml(shape({ pattern: { kind: 'dkHorz', fg: '#000000', bg: '#ffffff' }, fillTransparency: 0.5 }))).toContain('<a:pattFill prst="dkHorz"><a:fgClr><a:srgbClr val="000000"><a:alpha val="50000"/>');
     expect(fillXml(shape({ fillImage: 'm1', fillTransparency: 0.2 }), 'rId9')).toBe('<a:blipFill><a:blip r:embed="rId9"><a:alphaModFix amt="80000"/></a:blip><a:stretch><a:fillRect/></a:stretch></a:blipFill>');
