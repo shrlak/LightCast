@@ -1752,6 +1752,8 @@ body[data-view='mixer'] { background: #15171b; overflow: auto; }
 .ce-root .ce-box.slide-text.on { border: 1px solid #7a7a7a; box-shadow: none; }
 
 .para-spaced > div { margin-top: var(--sp-before); margin-bottom: var(--sp-after); }
+/* PowerPoint leaves out the space before a text box's first paragraph. */
+.para-spaced > div:first-child { margin-top: 0; }
 .audio-object { cursor: pointer; }
 .zoom-object { overflow: hidden; }
 

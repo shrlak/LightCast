@@ -11,7 +11,7 @@ import { FRAME_PLACEHOLDERS, PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
 import { bulletPictureOf } from '../domain/pictureBullet';
-import { INDENT_PX, alignCss, elementMarkers, lineHeightCss, listMarkers, paragraphIndent, writingCss } from '../domain/textFormat';
+import { INDENT_PX, alignCss, bulletCss, elementMarkers, lineHeightCss, listMarkers, paragraphIndent, writingCss } from '../domain/textFormat';
 import { stripChords } from '../domain/lyrics';
 import { CHURCH_LOGO_URL } from '../domain/defaults';
 import { qrDataUrl } from '../domain/io/qr';
@@ -19,6 +19,7 @@ import { formatClock, timerValue } from '../domain/timers';
 import { isDecoded, preloadImage, useMediaUrl, useNow, useReadyImage, useWidth } from './hooks';
 import { mediaUrl, peekMediaUrl } from '../domain/media';
 import { MotionLayer } from './MotionLayer';
+import { usePictureColor } from './pictureColor';
 import { AnimatedElements, FxTransition, ParagraphBuild } from './ShowEffects';
 import type { LiveBuild } from '../domain/animations';
 import { shapeGeometry } from '../engine';
@@ -258,10 +259,10 @@ const columnsAndDirection = (f: { columns?: number; vertical?: boolean; directio
 });
 
 /** A line with its bullet / number and its highlight. */
-function ListLine({ marker, highlight, picture, hang, children }: { marker: string | null; highlight?: string; picture?: string; /** Hanging indent (px): the marker takes this much room, so the text lines up with the wrapped lines. */ hang?: number; children: ReactNode }) {
+function ListLine({ marker, highlight, picture, hang, markerStyle, children }: { marker: string | null; highlight?: string; picture?: string; /** Hanging indent (px): the marker takes this much room, so the text lines up with the wrapped lines. */ hang?: number; /** The bullet's own typeface, size and colour (imported). */ markerStyle?: CSSProperties; children: ReactNode }) {
   if (marker && picture) return <><span className="list-marker list-picture" style={{ backgroundImage: `url("${picture}")` }} />{highlight ? <span style={{ background: highlight, boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }}>{children}</span> : children}</>;
   const body = highlight ? <span style={{ background: highlight, boxDecorationBreak: 'clone', WebkitBoxDecorationBreak: 'clone' }}>{children}</span> : children;
-  return marker ? <><span className="list-marker" style={hang ? { minWidth: hang, marginRight: 0, boxSizing: 'border-box', paddingRight: '.2em' } : undefined}>{marker}</span>{body}</> : <>{body}</>;
+  return marker ? <><span className="list-marker" style={hang || markerStyle ? { ...(hang ? { minWidth: hang, marginRight: 0, boxSizing: 'border-box', paddingRight: '.2em' } : {}), ...markerStyle } : undefined}>{marker}</span>{body}</> : <>{body}</>;
 }
 
 /** Lines wrapped in **…** render bold (prayer topic titles); bullets / numbering and highlight as the slide sets. */
@@ -407,7 +408,9 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
 
 /** One free-positioned object from the slide editor. */
 export function ElementView({ el }: { el: SlideElement }) {
-  const url = useMediaUrl(el.kind === 'image' ? el.mediaId : null);
+  const plainUrl = useMediaUrl(el.kind === 'image' ? el.mediaId : null);
+  // The picture's own colour changes (grayscale, recolour, transparent colour …), worked as PowerPoint draws them.
+  const url = usePictureColor(plainUrl, el.kind === 'image' ? el.pictureColor : undefined);
   const videoUrl = useMediaUrl(el.kind === 'video' ? el.mediaId : null);
   const box: CSSProperties = {
     position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1,
@@ -562,7 +565,7 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
   const tabbed = !!el.tabStops?.length && lines.some((l) => l.includes('\t'));
   const styled = !!(el.list || perPara || el.highlight || runs.some(Boolean) || tabbed) || byPara;
   const lineBody = (text: string, i: number) => (
-    <ListLine marker={markers[i]} picture={bulletPictureOf(el)} hang={hangOf(el, i)} highlight={text.trim() ? el.highlight : undefined}>
+    <ListLine marker={markers[i]} picture={bulletPictureOf(el)} hang={hangOf(el, i)} highlight={text.trim() ? el.highlight : undefined} markerStyle={markers[i] ? bulletCss(el.paragraphs?.[i]?.bulletStyle ?? el.bulletStyle, runs[i]?.find((r) => r.text)?.fontSize ?? el.paragraphs?.[i]?.fontSize ?? base) : undefined}>
       {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
         : runs[i] ? runs[i]!.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(text) ? <DynamicText text={text} /> : runText(text)}
     </ListLine>
@@ -585,11 +588,13 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
       {el.paragraphs
         ? el.paragraphs.map((p, i) => (
             <div key={i} data-para={i} style={{
-              fontSize: (p.fontSize ?? base), fontWeight: p.weight !== undefined ? Math.min(900, Math.max(100, Math.round(p.weight / 100) * 100)) : p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
+              // The line is as high as its own text (its first run's size), not the box's default size, as in PowerPoint.
+              fontSize: (p.fontSize ?? runs[i]?.find((r) => r.text)?.fontSize ?? base), fontWeight: p.weight !== undefined ? Math.min(900, Math.max(100, Math.round(p.weight / 100) * 100)) : p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined,
               color: p.color, ...alignCss(p.align), minHeight: '1.2em', flexShrink: 0,
               ...(p.marginLeft !== undefined || levels[i] ? { paddingLeft: paragraphIndent(p, levels[i]).left } : {}),
               ...(p.firstIndent !== undefined ? { textIndent: p.firstIndent } : {}),
-              ...(p.spaceBefore ? { marginTop: p.spaceBefore } : {}), ...(p.spaceAfter ? { marginBottom: p.spaceAfter } : {}),
+              // PowerPoint leaves out the space before the first paragraph of a text box.
+              ...(p.spaceBefore && i > 0 ? { marginTop: p.spaceBefore } : {}), ...(p.spaceAfter ? { marginBottom: p.spaceAfter } : {}),
               ...(p.lineHeight ? { lineHeight: p.lineHeight } : {}),
             }}>
               {lineBody(p.text, i)}
@@ -604,6 +609,9 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
 /** The theme with this slide's own formatting applied on top. */
 export const slideTheme = (theme: Theme, slide: Slide): Theme => (slide.style ? { ...theme, ...slide.style } : theme);
 
+/** Slide text already fitted, by its layout key (slide, theme, bounds, font epoch). */
+const fitCache = new Map<string, TextLayout>();
+
 function SlideBody({ slide, theme: base, build }: { slide: Slide; theme: Theme; build?: LiveBuild | null }) {
   const originalTheme = { ...slideTheme(base, slide), ...(!isFrontSlide(slide) && slide.preferredFontSize !== undefined ? { fontSize: slide.preferredFontSize } : {}), ...(isFrontSlide(slide) ? { autoFit: false } : {}) };
   const fontEpoch = useFontEpoch();
@@ -612,13 +620,18 @@ function SlideBody({ slide, theme: base, build }: { slide: Slide; theme: Theme; 
   const elements = useAutoTextBoxes(slide.elements ?? [], undefined, isFrontSlide(slide));
   const key = JSON.stringify([slide.id, slide.title, slide.text, slide.subtext, originalTheme, bounds, fontEpoch]);
   const [layout, setLayout] = useState<{ key: string; result: TextLayout } | null>(null);
-  const resolved = layout?.key === key ? layout.result : { box: baseBox, fontSize: originalTheme.fontSize, wrap: false };
+  // A slide laid out before (the output lays out the next slide unseen) is drawn fitted from its first frame.
+  const known = fitCache.get(key);
+  const resolved = layout?.key === key ? layout.result : known ?? { box: baseBox, fontSize: originalTheme.fontSize, wrap: false };
   const frame = resolved.box, noWrap = lyricLines && !resolved.wrap;
   const theme = { ...originalTheme, fontSize: resolved.fontSize };
   const inner = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
-    if (!inner.current || originalTheme.autoFit === false) return;
-    setLayout({ key, result: fitTextNode(inner.current, baseBox, bounds, originalTheme.align, originalTheme.vAlign, lyricLines) });
+    if (!inner.current || originalTheme.autoFit === false || fitCache.has(key)) return;
+    const result = fitTextNode(inner.current, baseBox, bounds, originalTheme.align, originalTheme.vAlign, lyricLines);
+    if (fitCache.size > 300) fitCache.clear();
+    fitCache.set(key, result);
+    setLayout({ key, result });
   }, [key]);
   const t = theme;
   return (

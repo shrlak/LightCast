@@ -177,19 +177,29 @@ export function readChartEx(xml: MNode, theme: DmlTheme): ChartResult | null {
   };
 }
 
+/** The deck's theme colours as the engine's custom colour scheme (`custom:Deck|dk1,lt1,dk2,lt2,accent1…6,hlink,folHlink`), for charts and table styles. */
+export function deckScheme(theme: DmlTheme): string | undefined {
+  const order = ['dk1', 'lt1', 'dk2', 'lt2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6', 'hlink', 'folHlink'];
+  const cols = order.map((k) => theme.colors[k]);
+  return cols.every((c) => /^#[0-9a-f]{6}$/i.test(c ?? '')) ? `custom:Deck|${cols.join(',')}` : undefined;
+}
+
 /**
  * What an imported chart takes from its file to look as it does in PowerPoint: the deck's theme colours (the
  * accents its series and points use in turn) and the chart's text size (c:chartSpace/c:txPr, in points), in canvas
  * pixels at `pxPerPt`.
  */
-export function chartLook(xml: MNode, theme: DmlTheme, pxPerPt: number): Pick<ChartData, 'scheme' | 'fontSize'> {
-  const order = ['dk1', 'lt1', 'dk2', 'lt2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6', 'hlink', 'folHlink'];
-  const cols = order.map((k) => theme.colors[k]);
+export function chartLook(xml: MNode, theme: DmlTheme, pxPerPt: number): Pick<ChartData, 'scheme' | 'fontSize' | 'titleSize'> {
+  const scheme = deckScheme(theme);
   const space = find(xml, 'chartSpace')[0] ?? xml;
   const sz = Number(path(child(space, 'txPr'), 'p', 'pPr', 'defRPr')?.attrs.sz ?? NaN);
+  // The title's own size: its runs' (a:rPr) or its paragraph default (a:defRPr).
+  const title = find(space, 'title')[0];
+  const titleSz = Number([...find(title ?? { name: '', attrs: {}, children: [] }, 'rPr'), ...find(title ?? { name: '', attrs: {}, children: [] }, 'defRPr')].map((n) => n.attrs.sz).find(Boolean) ?? NaN);
   return {
-    ...(cols.every((c) => /^#[0-9a-f]{6}$/i.test(c ?? '')) ? { scheme: `custom:Deck|${cols.join(',')}` } : {}),
+    ...(scheme ? { scheme } : {}),
     ...(sz > 0 ? { fontSize: Math.round((sz / 100) * pxPerPt * 10) / 10 } : {}),
+    ...(titleSz > 0 ? { titleSize: Math.round((titleSz / 100) * pxPerPt * 10) / 10 } : {}),
   };
 }
 

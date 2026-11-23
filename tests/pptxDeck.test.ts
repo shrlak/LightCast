@@ -94,8 +94,8 @@ describe('PPTX deck reader: shapes, pictures and backgrounds', () => {
     expect(slides[1].background).toEqual({ kind: 'gradient', value: 'linear-gradient(0deg, #0a1e50 0%, #5096dc 100%)' });
     expect(byText(slides[1], '3-D rotation')).toMatchObject({ rotate3d: { x: 30, y: 20 }, bevel: true, bevelKind: 'circle' });
     expect(item(report, '슬라이드 크기')[0].status).toBe('approximated');
-    // a:grayscl is drawn (a CSS filter on the picture), so nothing is reported.
-    expect(round.pictureFilter).toBe('grayscale(1)');
+    // a:grayscl is drawn (the picture's pixels recoloured as PowerPoint does), so nothing is reported.
+    expect(round.pictureColor).toEqual({ grayscale: true });
     expect(item(report, '그림 색 변경')).toHaveLength(0);
   });
 

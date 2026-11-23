@@ -5,7 +5,8 @@ import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { readPptxDeck } from '../src/domain/io/pptxDeck';
-import { blipFilter, colorOf, OFFICE_THEME } from '../src/domain/io/drawingml';
+import { colorOf, OFFICE_THEME } from '../src/domain/io/drawingml';
+import { applyPictureColor, pictureColorOf } from '../src/domain/pictureColor';
 import { parseMarkup } from '../src/domain/io/markup';
 import { powerPointRamp } from '../src/domain/shapeEffects';
 import { ShapeElement } from '../src/ui/EngineElements';
@@ -44,12 +45,28 @@ describe('colours as PowerPoint mixes them', () => {
 });
 
 describe('the fixtures read for drawing as PowerPoint does', () => {
-  it('pictures keep Grayscale, Brightness / Contrast and Black and White', () => {
+  it('pictures keep their colour changes (Grayscale, Brightness / Contrast, Black and White, Recolor, Set Transparent Color)', () => {
     const blip = (inner: string) => parseMarkup(`<a:blip xmlns:a="a">${inner}</a:blip>`).children[0];
-    expect(blipFilter(blip('<a:grayscl/>'))).toBe('grayscale(1)');
-    expect(blipFilter(blip('<a:lum bright="20000" contrast="-40000"/>'))).toBe('brightness(1.2) contrast(0.6)');
-    expect(blipFilter(blip('<a:biLevel thresh="50000"/>'))).toBe('grayscale(1) contrast(100)');
-    expect(blipFilter(blip(''))).toBeUndefined();
+    expect(pictureColorOf(blip('<a:grayscl/>'), OFFICE_THEME)).toEqual({ grayscale: true });
+    expect(pictureColorOf(blip('<a:lum bright="20000" contrast="-40000"/>'), OFFICE_THEME)).toEqual({ brightness: 0.2, contrast: -0.4 });
+    expect(pictureColorOf(blip('<a:biLevel thresh="25000"/>'), OFFICE_THEME)).toEqual({ bilevel: 0.25 });
+    expect(pictureColorOf(blip('<a:duotone><a:prstClr val="black"/><a:srgbClr val="FF8000"/></a:duotone>'), OFFICE_THEME)).toEqual({ duotone: ['#000000', '#ff8000'] });
+    expect(pictureColorOf(blip('<a:clrChange><a:clrFrom><a:srgbClr val="FFFFFF"/></a:clrFrom><a:clrTo><a:srgbClr val="FFFFFF"><a:alpha val="0"/></a:srgbClr></a:clrTo></a:clrChange>'), OFFICE_THEME)).toEqual({ clearColor: '#ffffff' });
+    expect(pictureColorOf(blip(''), OFFICE_THEME)).toBeUndefined();
+  });
+
+  it('works the pixels with the formulas measured on PowerPoint', () => {
+    const px = (r: number, g: number, b: number, a = 255) => new Uint8ClampedArray([r, g, b, a]);
+    // Grayscale: Rec. 709 on the stored values (pure red greys to 54, green to 182).
+    const red = px(255, 0, 0); applyPictureColor(red, { grayscale: true }); expect([...red]).toEqual([54, 54, 54, 255]);
+    const green = px(0, 255, 0); applyPictureColor(green, { grayscale: true }); expect(green[0]).toBe(182);
+    // +40 % brightness and +40 % contrast take black to about 54 (DeckCraft's formula gives 52).
+    const black = px(0, 0, 0); applyPictureColor(black, { brightness: 0.4, contrast: 0.4 }); expect(Math.abs(black[0] - 54)).toBeLessThanOrEqual(3);
+    // Duotone: luminance between the dark and the light colour.
+    const mid = px(128, 128, 128); applyPictureColor(mid, { duotone: ['#000000', '#ff0000'] }); expect([mid[0], mid[1], mid[2]]).toEqual([128, 0, 0]);
+    // Black and white at the threshold; a transparent colour within 8 of it.
+    const grey = px(100, 100, 100); applyPictureColor(grey, { bilevel: 0.5 }); expect(grey[0]).toBe(0);
+    const white = px(250, 252, 255); applyPictureColor(white, { clearColor: '#ffffff' }); expect(white[3]).toBe(0);
   });
 
   it('gradients keep lin@scaled and the path focus', async () => {
@@ -75,6 +92,8 @@ describe('the fixtures read for drawing as PowerPoint does', () => {
     const table = all(await read('tables-16x9.pptx')).find((e) => e.kind === 'table')!;
     expect(table.fontSize).toBe(27);
     expect(table.fontFamily).toMatch(/Calibri/);
+    // Its table style takes the deck's accents too.
+    expect(table.table!.scheme).toBe(pie.scheme);
   });
 });
 

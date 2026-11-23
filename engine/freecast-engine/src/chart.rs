@@ -73,6 +73,9 @@ pub struct ChartReq {
     /// Label text size in canvas pixels.
     #[serde(default)]
     pub font_size: f64,
+    /// Title text size in canvas pixels (the file's c:title size); 1.4 × the label size when unset.
+    #[serde(default)]
+    pub title_size: f64,
     /// Waterfall: the points that are totals (they stand on the axis and restart the running total).
     #[serde(default)]
     pub subtotals: Vec<usize>,
@@ -353,10 +356,14 @@ pub fn svg(r: ChartReq) -> Res {
     let ncat = r.categories.len().max(series.iter().map(|s| s.values.len()).max().unwrap_or(0)).min(500);
     let mut s = String::new();
     let _ = write!(s, r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {} {}" width="{}" height="{}" font-family="{}" font-size="{}" fill="{}">"#, n(w), n(h), n(w), n(h), ink.font, n(fs), ink.tc);
-    let mut top = fs * 0.6;
+    // As DeckCraft lays a chart out (render/src/chart.rs): a 4 % margin all round, the title in regular weight at
+    // the file's size or 1.4 × the labels, the plot below 1.7 title heights.
+    let (mx, my) = (w * 0.04, h * 0.04);
+    let mut top = my;
     if !r.title.is_empty() {
-        let _ = write!(s, r#"<text x="{}" y="{}" text-anchor="middle" font-size="{}" font-weight="600">{}</text>"#, n(w / 2.0), n(fs * 1.5), n(fs * 1.35), esc(&r.title));
-        top = fs * 2.6;
+        let ts = if r.title_size > 0.0 { r.title_size } else { fs * 1.4 };
+        let _ = write!(s, r#"<text x="{}" y="{}" text-anchor="middle" font-size="{}">{}</text>"#, n(w / 2.0), n(my + ts), n(ts), esc(&r.title));
+        top = my + ts * 1.7;
     }
     let pie_like = matches!(kind, Kind::Pie | Kind::Doughnut);
     // Legend: one row at the bottom (pies list categories, hierarchies their top groups, others series).
@@ -368,24 +375,24 @@ pub fn svg(r: ChartReq) -> Res {
         Kind::Pareto => vec![(series.first().map(|x| x.name.clone()).unwrap_or_default(), ink.color(0, &series.first().and_then(|x| x.color.clone()))), ("누적 %".to_string(), ink.palette(1))],
         _ => series.iter().enumerate().map(|(i, x)| (x.name.clone(), ink.color(i, &x.color))).collect(),
     };
-    let bottom_legend = if r.legend && !legend_items.is_empty() { fs * 2.0 } else { 0.0 };
+    let bottom_legend = if r.legend && !legend_items.is_empty() { fs * 2.0 + my } else { 0.0 };
     if bottom_legend > 0.0 {
         let item_w: Vec<f64> = legend_items.iter().map(|(l, _)| fs * 1.4 + tw(l, fs) + fs).collect();
         let total: f64 = item_w.iter().sum();
         let mut x = ((w - total) / 2.0).max(4.0);
-        let y = h - fs * 0.9;
+        let y = h - my - fs * 0.9;
         for ((l, c), iw) in legend_items.iter().zip(&item_w) {
             let _ = write!(s, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}"/><text x="{}" y="{}">{}</text>"#, n(x), n(y - fs * 0.75), n(fs * 0.8), n(fs * 0.8), esc(c), n(x + fs * 1.1), n(y), esc(l));
             x += iw;
         }
     }
-    let plot_bottom = h - bottom_legend - fs * 0.4;
+    let plot_bottom = h - bottom_legend.max(my) - fs * 0.4;
     if pie_like {
         draw_pie(&mut s, &r, kind, &ink, w, top, plot_bottom, &series, ncat);
         s.push_str("</svg>");
         return Ok(json!({ "svg": s }));
     }
-    let area = Area { x0: fs * 0.6, y0: top, x1: w - fs * 0.6, y1: plot_bottom };
+    let area = Area { x0: mx, y0: top, x1: w - mx, y1: plot_bottom };
     match kind {
         Kind::Funnel => chart_ex::funnel(&mut s, &r, &ink, area),
         Kind::Treemap => chart_ex::treemap(&mut s, &r, &ink, area),
@@ -660,16 +667,19 @@ fn draw_cart(s: &mut String, r: &ChartReq, ink: &Ink, area: Area, cart: Cart) {
             }
         }
     }
+    // As many major units as the value axis has room for labels (PowerPoint's automatic unit, as DeckCraft measures it).
+    let axis_len = if horizontal { area.w() - fs * 4.5 } else { area.h() - fs * 1.8 };
+    let ticks = (axis_len / if horizontal { fs * 6.0 } else { fs * 1.9 }).floor().clamp(2.0, 12.0) as usize;
     let (vmin, vmax, step) = if cart.pct {
         (0.0, 100.0, 20.0)
     } else if free_floor {
         let pad = (hi - lo).abs().max(1e-9) * 0.05;
-        nice_axis(lo - pad, hi + pad, 5)
+        nice_axis(lo - pad, hi + pad, ticks)
     } else {
-        nice_axis(lo, hi, 5)
+        nice_axis(lo, hi, ticks)
     };
     let has_sec = sers.iter().any(|x| x.secondary) && !horizontal;
-    let (vmin2, vmax2, step2) = if cart.pct2 { (0.0, 100.0, 20.0) } else { nice_axis(lo2, hi2, 5) };
+    let (vmin2, vmax2, step2) = if cart.pct2 { (0.0, 100.0, 20.0) } else { nice_axis(lo2, hi2, ticks) };
     let label_w = [vmin, vmax].iter().map(|v| fmt_axis(*v, cart.pct).chars().count()).max().unwrap_or(1) as f64 * fs * 0.62 + fs * 0.6;
     let label_w2 = if has_sec { [vmin2, vmax2].iter().map(|v| fmt_axis(*v, cart.pct2).chars().count()).max().unwrap_or(1) as f64 * fs * 0.62 + fs * 0.6 } else { 0.0 };
     let cat_label_w = cart.cats.iter().map(|c| tw(c, fs)).fold(1.0, f64::max) + fs * 0.6;
@@ -723,7 +733,8 @@ fn draw_cart(s: &mut String, r: &ChartReq, ink: &Ink, area: Area, cart: Cart) {
     };
     let ncat_f = ncat.max(1) as f64;
     let band = if horizontal { ph / ncat_f } else { pw / ncat_f };
-    let cat_center = |i: usize| -> f64 { if horizontal { ptop + band * (i as f64 + 0.5) } else { left + band * (i as f64 + 0.5) } };
+    // A bar chart's first category is at the bottom of its axis, as PowerPoint draws it (a column chart's at the left).
+    let cat_center = |i: usize| -> f64 { if horizontal { pbottom - band * (i as f64 + 0.5) } else { left + band * (i as f64 + 0.5) } };
     if let Some((mn, mx, st)) = x_scale {
         let mut v = mn;
         let mut guard = 0;
@@ -849,7 +860,9 @@ fn draw_cart(s: &mut String, r: &ChartReq, ink: &Ink, area: Area, cart: Cart) {
                 let (a, b) = (val_pos(x.secondary, from), val_pos(x.secondary, to));
                 let (lo_p, size) = (a.min(b), (a - b).abs());
                 let slot = if cart.stack_bars { inner } else { inner / nb };
-                let off = cat_center(i) - inner / 2.0 + if cart.stack_bars { 0.0 } else { slot * si as f64 };
+                // Within a category of a bar chart the first series is the lowest bar too.
+                let order = if horizontal { nb - 1.0 - si as f64 } else { si as f64 };
+                let off = cat_center(i) - inner / 2.0 + if cart.stack_bars { 0.0 } else { slot * order };
                 let c = esc(&x.color);
                 let stroke = if cart.gap == 0.0 { format!(r##" stroke="#ffffff" stroke-opacity="0.7" stroke-width="{}""##, n(fs * 0.06)) } else { String::new() };
                 let _ = if horizontal {

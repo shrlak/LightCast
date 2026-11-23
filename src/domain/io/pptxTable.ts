@@ -2,7 +2,7 @@
 // bold and borders that come from the table's style (ppt/tableStyles.xml) are written onto the cells,
 // so the table looks like PowerPoint's even where the engine has no such style; a built-in style that
 // the file does not spell out maps to the engine's style of the same name.
-import type { CellBorder, CellBorders, TableCell, TableData } from '../../engine';
+import type { CellBorder, CellBorders, TableCell, TableData, TableRun } from '../../engine';
 import { colorOf, EMU_PER_PX, type DmlTheme } from './drawingml';
 import { child, find, kids, local, path, textOf, type MNode } from './markup';
 import { MAX_TABLE_CELLS, maxTableRows } from '../drawTable';
@@ -111,8 +111,27 @@ export function readTable(tbl: MNode, w: number, h: number, theme: DmlTheme, sty
     const algn = child(paras[0] ?? null, 'pPr')?.attrs.algn;
     const anchor = tcPr?.attrs.anchor;
     const vert = tcPr?.attrs.vert;
+    // A cell whose text mixes formatting keeps each run's bold, italic, underline, strike, colour and size.
+    const lineRuns: TableRun[][] = paras.map((p) => p.children.filter((n) => ['r', 'fld', 'br'].includes(local(n))).map((n): TableRun => {
+      if (local(n) === 'br') return { text: '\v' };
+      const pr = child(n, 'rPr');
+      const col = colorIn(child(pr, 'solidFill'), theme)?.hex;
+      return {
+        text: textOf(child(n, 't') ?? n),
+        ...(pr?.attrs.b === '1' ? { bold: true } : pr?.attrs.b === '0' ? { bold: false } : {}),
+        ...(pr?.attrs.i === '1' ? { italic: true } : {}),
+        ...(pr?.attrs.u && pr.attrs.u !== 'none' ? { underline: true } : {}),
+        ...(pr?.attrs.strike && pr.attrs.strike !== 'noStrike' ? { strike: true } : {}),
+        ...(col ? { color: col } : {}),
+        ...(pr?.attrs.sz ? { fontSize: (Number(pr.attrs.sz) / 100) * 2 } : {}),
+      };
+    }));
+    const look1 = (x: TableRun) => JSON.stringify({ ...x, text: undefined });
+    const flat = lineRuns.flat().filter((x) => x.text && x.text !== '\v');
+    const mixed = flat.some((x) => look1(x) !== look1(flat[0]));
     const cell: TableCell = {
       text,
+      ...(mixed ? { runs: lineRuns } : {}),
       ...(Number(tc.attrs.gridSpan) > 1 ? { span: Number(tc.attrs.gridSpan) } : {}),
       ...(Number(tc.attrs.rowSpan) > 1 ? { rowSpan: Number(tc.attrs.rowSpan) } : {}),
       ...(tc.attrs.hMerge === '1' ? { hMerge: true } : {}), ...(tc.attrs.vMerge === '1' ? { vMerge: true } : {}),

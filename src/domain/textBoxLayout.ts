@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import type { SlideElement } from './types';
 import { textElementBounds, type TextBounds } from './textBox';
-import { INDENT_PX, isVerticalText, elementMarkers, paragraphIndent, lineHeightCss, softToNewline, writingCss } from './textFormat';
+import { INDENT_PX, bulletCss, isVerticalText, elementMarkers, paragraphIndent, lineHeightCss, softToNewline, writingCss } from './textFormat';
 import { fitTextNode } from './boundedTextLayout';
 import { uniformTextBoxFont } from './textBoxFonts';
 import { lineRuns } from './richText';
@@ -47,9 +47,9 @@ function measurementNode(el: SlideElement): HTMLDivElement {
   const { markers, levels } = elementMarkers(el), runs = lineRuns(el);
   lines.forEach((text, i) => {
     const line = document.createElement('div'), p = el.paragraphs?.[i];
-    if (p) applyStyle(line, { fontSize: p.fontSize ?? el.fontSize ?? 64, fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined, minHeight: '1.2em', paddingLeft: p.marginLeft !== undefined || levels[i] ? paragraphIndent(p, levels[i]).left : undefined, textIndent: p.firstIndent, marginTop: p.spaceBefore, marginBottom: p.spaceAfter, lineHeight: p.lineHeight });
+    if (p) applyStyle(line, { fontSize: p.fontSize ?? runs[i]?.find((r) => r.text)?.fontSize ?? el.fontSize ?? 64, fontWeight: p.bold ? 700 : undefined, fontStyle: p.italic ? 'italic' : undefined, minHeight: '1.2em', paddingLeft: p.marginLeft !== undefined || levels[i] ? paragraphIndent(p, levels[i]).left : undefined, textIndent: p.firstIndent, marginTop: i > 0 ? p.spaceBefore : undefined, marginBottom: p.spaceAfter, lineHeight: p.lineHeight });
     line.style.flexShrink = '0';
-    if (markers[i]) { const marker = document.createElement('span'); marker.className = el.list === 'picture' ? 'list-marker list-picture' : 'list-marker'; if (el.list !== 'picture') marker.textContent = markers[i]; const hang = Math.max(0, -(p?.firstIndent ?? el.firstIndent ?? 0)); if (hang) Object.assign(marker.style, { minWidth: `${hang}px`, marginRight: '0', boxSizing: 'border-box', paddingRight: '.2em' }); line.append(marker); }
+    if (markers[i]) { const marker = document.createElement('span'); marker.className = el.list === 'picture' ? 'list-marker list-picture' : 'list-marker'; if (el.list !== 'picture') marker.textContent = markers[i]; const hang = Math.max(0, -(p?.firstIndent ?? el.firstIndent ?? 0)); if (hang) Object.assign(marker.style, { minWidth: `${hang}px`, marginRight: '0', boxSizing: 'border-box', paddingRight: '.2em' }); applyStyle(marker, bulletCss(p?.bulletStyle ?? el.bulletStyle, runs[i]?.find((r) => r.text)?.fontSize ?? p?.fontSize ?? el.fontSize ?? 64)); line.append(marker); }
     // Runs with their own size or weight take the room they will be drawn in.
     if (runs[i]) for (const r of runs[i]!) {
       const span = document.createElement('span');

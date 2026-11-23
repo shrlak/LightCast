@@ -153,6 +153,7 @@ export function goLive<S extends NavState>(s: S, c: Cursor, now: number = Date.n
       title: p.title,
       nextText: nextSlide ? [nextSlide.title, nextSlide.text].filter(Boolean).join('\n') : null,
       nextAssets: nextSlide && next ? slidePictures(nextSlide, resolveBackground(nextSlide, findPres(s.library, next.presentationId) ?? p)) : null,
+      next: nextSlide && next ? { slide: nextSlide, theme: themeFor(s.library, findPres(s.library, next.presentationId) ?? p), background: resolveBackground(nextSlide, findPres(s.library, next.presentationId) ?? p) } : null,
       theme: themeFor(s.library, p),
       transition,
       background: resolveBackground(slide, p),

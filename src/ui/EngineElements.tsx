@@ -1,6 +1,6 @@
 // Slide objects whose drawing comes from the Rust engine: PowerPoint preset shapes (with text inside
 // them), tables, charts, icons and ink.
-import { useId, useSyncExternalStore, type CSSProperties } from 'react';
+import { Fragment, useId, useSyncExternalStore, type CSSProperties } from 'react';
 import type { SlideElement } from '../domain/types';
 import { drawnFamily } from '../domain/fonts';
 import { BOLD_WEIGHT, REGULAR_WEIGHT } from '../domain/fontWeight';
@@ -13,7 +13,7 @@ import { RunSpan } from './RunSpan';
 import { alignCss, lineHeightCss, writingCss } from '../domain/textFormat';
 import { useMediaUrl } from './hooks';
 import { patternPath } from '../domain/patterns';
-import { chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type CellBorder, type FillMode, type ShapeGeometry, type TableData } from '../engine';
+import { cellRuns, chartSvg, engineReady, iconCatalog, layoutTable, onEngineReady, shapeCatalog, shapeGeometry, type CellBorder, type FillMode, type ShapeGeometry, type TableData } from '../engine';
 import { penCss, penDash, sideOf } from '../domain/tableBorders';
 
 let epoch = 0;
@@ -224,7 +224,7 @@ export function TableElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
   const t = el.table;
   if (!t) return null;
-  const cells = layoutTable(t, el.w, el.h, undefined);
+  const cells = layoutTable(t, el.w, el.h, t.scheme);
   const fs = el.fontSize ?? 32;
   return (
     <div data-table style={{ position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), fontFamily: drawnFamily(el.fontFamily), fontSize: fs, filter: effects(el), ...effectCss(el) }}>
@@ -254,7 +254,10 @@ export function TableElement({ el }: { el: SlideElement }) {
               position: 'relative',
               ...(vertical ? { writingMode: 'vertical-rl', transform: dir === 'vert270' ? 'rotate(180deg)' : undefined } : {}),
               ...(dir === 'stacked' ? { wordBreak: 'break-all', width: '1.05em', alignSelf: across === 'center' ? 'center' : across } : {}),
-            }}>{c.text}</span>
+            }}>{own && cellRuns(own)
+              // A cell that mixes formatting: each run as it was set.
+              ? cellRuns(own)!.map((line, li) => <Fragment key={li}>{li > 0 && '\n'}{line.map((r, ri) => <RunSpan key={ri} r={r} />)}</Fragment>)
+              : c.text}</span>
           </div>
         );
       })}
