@@ -14,6 +14,7 @@ import { weightLabel } from '../../domain/fontWeight';
 import { FONT_OPTIONS } from '../../domain/fonts';
 import { usedFamilies } from '../../domain/io/pptxFonts';
 import { fetchMissingWebFonts, fetchWebFont, isWebSource, loadAutoWebFonts, saveAutoWebFonts, webFontSummary, webFontTried } from '../../domain/webFonts';
+import { familiesToShare, loadShareInstalledFonts, saveShareInstalledFonts, shareInstalledFonts } from '../../domain/installedFonts';
 
 /** The imported fonts of this window, re-rendering when they change. */
 export function useImportedFonts(): ImportedFont[] {
@@ -58,6 +59,7 @@ export function WebFontSearch({ onDone }: { onDone?: (message: string) => void }
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
   const [auto, setAuto] = useState(loadAutoWebFonts);
+  const [share, setShare] = useState(loadShareInstalledFonts);
   const run = async () => {
     const n = name.trim();
     if (!n || busy) return;
@@ -77,6 +79,7 @@ export function WebFontSearch({ onDone }: { onDone?: (message: string) => void }
         <button type="submit" className="btn small" disabled={busy || !name.trim()}>{busy ? '받는 중…' : '인터넷에서 찾아 받기'}</button>
       </form>
       <label style={{ display: 'block', marginTop: 4 }}><input type="checkbox" checked={auto} onChange={(e) => { setAuto(e.target.checked); saveAutoWebFonts(e.target.checked); }} /> 프레젠테이션에 없는 글꼴은 인터넷에서 자동으로 찾아 받기</label>
+      <label style={{ display: 'block', marginTop: 4 }}><input type="checkbox" checked={share} onChange={(e) => { setShare(e.target.checked); saveShareInstalledFonts(e.target.checked); }} /> 프레젠테이션이 쓰는 글꼴이 이 컴퓨터에 설치되어 있으면 다른 컴퓨터와 같은 글꼴로 보이도록 함께 동기화하기</label>
       <span className="muted">무료 글꼴(Google Fonts · Fontsource · Pretendard)만 받습니다. 받은 글꼴은 교회 서버와 동기화되어 다른 컴퓨터에서도 쓸 수 있습니다.</span>
       {msg && <div role="status" className="font-import-msg">{msg}</div>}
     </div>
@@ -189,6 +192,20 @@ export function MissingFontsNotice({ deck, deckKey }: { deck: unknown; deckKey?:
       if (results.length) setDone(webFontSummary(results));
     } finally { running.current = false; setBusy(''); }
   };
+  // The fonts this presentation uses that are installed here go to LightCast's own fonts (and the church cloud), so
+  // every other computer draws it in the same font files instead of its own stand-ins.
+  useEffect(() => {
+    if (!deck) return;
+    const t = setTimeout(() => {
+      const name = (deck as { title?: string }).title?.trim() || '프레젠테이션';
+      void shareInstalledFonts(familiesToShare(usedFamilies(deck)), name).then((added) => {
+        if (added.length) setDone(`이 컴퓨터의 글꼴 ${[...new Set(added.map((f) => f.family))].join(', ')}을(를) 다른 컴퓨터에서도 같은 글꼴로 보이도록 교회 서버와 동기화합니다.`);
+      });
+    }, 1500);
+    return () => clearTimeout(t);
+    // Once per opened presentation (its key).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deckKey]);
   useEffect(() => {
     if (!missing.length || !loadAutoWebFonts()) return;
     const fresh = missing.filter((m) => !webFontTried(m));

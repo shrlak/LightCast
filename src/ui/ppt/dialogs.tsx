@@ -158,7 +158,7 @@ function FontDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
             </div>
           </fieldset>
           <div className="dlg-preview" style={{
-            fontFamily: family || undefined, fontWeight: weight ?? (style.startsWith('bold') ? 800 : 400), fontStyle: style.toLowerCase().includes('italic') ? 'italic' : 'normal',
+            fontFamily: family || undefined, fontWeight: weight ?? (style.startsWith('bold') ? 700 : 400), fontStyle: style.toLowerCase().includes('italic') ? 'italic' : 'normal',
             textDecoration: [underline && 'underline', strike && 'line-through'].filter(Boolean).join(' ') || undefined, color,
             textTransform: caps === 'all' ? 'uppercase' : undefined, fontVariant: caps === 'small' ? 'small-caps' : undefined, letterSpacing: spacing,
           }}><span style={{ fontFamily: eaFamily || undefined }}>가나다</span> AaBbCc{baseline && <span style={{ verticalAlign: baseline, fontSize: '62%' }}>{baseline === 'super' ? '2' : '0'}</span>}</div>

@@ -4,6 +4,7 @@ import { stripChords } from './lyrics';
 import { fitTextNode, type TextLayout } from './boundedTextLayout';
 import { INDENT_PX, listMarkers, writingCss } from './textFormat';
 import { isFrontSlide } from './frontLayout';
+import { drawnFamily } from './fonts';
 
 export function slideTextFrame(slide: Slide, theme: Theme) {
   const qr = !!slide.qr?.length;
@@ -20,7 +21,7 @@ export function fitSlideText(slide: Slide, theme: Theme): TextLayout {
   const { box, bounds, noWrap } = slideTextFrame(slide, theme);
   if (isFrontSlide(slide) || typeof document === 'undefined' || theme.autoFit === false) return { box, fontSize: theme.fontSize, wrap: false };
   const node = document.createElement('div');
-  Object.assign(node.style, { position: 'fixed', left: '-100000px', top: '0', visibility: 'hidden', fontSize: `${theme.fontSize}px`, fontFamily: theme.fontFamily,
+  Object.assign(node.style, { position: 'fixed', left: '-100000px', top: '0', visibility: 'hidden', fontSize: `${theme.fontSize}px`, fontFamily: drawnFamily(theme.fontFamily) ?? '',
     fontWeight: String(theme.fontWeight), fontStyle: theme.italic ? 'italic' : 'normal', lineHeight: String(theme.lineHeight), letterSpacing: `${theme.letterSpacing ?? 0}px`,
     textTransform: theme.uppercase ? 'uppercase' : 'none', whiteSpace: theme.noWrap || theme.id === 'theme_tpl_lyrics' ? 'pre' : 'pre-wrap' });
   if (theme.indent) node.style.paddingLeft = `${theme.indent * INDENT_PX}px`;
