@@ -99,7 +99,7 @@ describe('runStyle', () => {
   it('draws a run with CSS font-weight 100-900', () => {
     expect(runStyle({ text: 'a', weight: 300 }).fontWeight).toBe(300);
     expect(runStyle({ text: 'a', weight: 900, bold: true }).fontWeight).toBe(900);
-    expect(runStyle({ text: 'a', bold: true }).fontWeight).toBe(800);
+    expect(runStyle({ text: 'a', bold: true }).fontWeight).toBe(700); // Bold as PowerPoint draws it, on every computer
     expect(runStyle({ text: 'a', bold: false }).fontWeight).toBe(400);
     expect(runStyle({ text: 'a' }).fontWeight).toBeUndefined();
   });

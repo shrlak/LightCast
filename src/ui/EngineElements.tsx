@@ -2,6 +2,8 @@
 // them), tables, charts, icons and ink.
 import { useId, useSyncExternalStore, type CSSProperties } from 'react';
 import type { SlideElement } from '../domain/types';
+import { drawnFamily } from '../domain/fonts';
+import { BOLD_WEIGHT, REGULAR_WEIGHT } from '../domain/fontWeight';
 import { ARROW_SCALE, arrowPath, capOf, compoundLayers, dashPattern, effectFilter, effectStyle, fillOpacityOf, gradientStopsOf, joinOf, powerPointRamp, transformOf } from '../domain/shapeEffects';
 import { extrusionOf, faceShading } from '../domain/shape3d';
 import { lineRuns } from '../domain/richText';
@@ -184,7 +186,7 @@ export function ShapeElement({ el }: { el: SlideElement }) {
           position: 'absolute', left: tx, top: ty, width: tw, height: th, display: 'flex', flexDirection: 'column', overflow: 'hidden',
           ...(el.margins ? { padding: `${el.margins[1]}px ${el.margins[2]}px ${el.margins[3]}px ${el.margins[0]}px`, boxSizing: 'border-box' as const } : {}),
           justifyContent: el.vAlign === 'top' ? 'flex-start' : el.vAlign === 'bottom' ? 'flex-end' : 'center', ...alignCss(el.align ?? 'center'), ...writingCss(el), ['--link-color' as string]: linkColorFor(el.color),
-          fontSize: el.fontSize ?? 40, fontFamily: el.fontFamily, color: el.color ?? '#ffffff', fontWeight: el.weight ?? (el.bold ? 800 : 500), fontStyle: el.italic ? 'italic' : undefined,
+          fontSize: el.fontSize ?? 40, fontFamily: drawnFamily(el.fontFamily), color: el.color ?? '#ffffff', fontWeight: el.weight ?? (el.bold ? BOLD_WEIGHT : REGULAR_WEIGHT), fontStyle: el.italic ? 'italic' : undefined,
           lineHeight: lineHeightCss(el, el.fontSize ?? 40, 1.2), whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', textDecoration: [el.underline && 'underline', el.strike && 'line-through'].filter(Boolean).join(' ') || undefined,
           textShadow: el.shadow ? '0 3px 12px rgba(0,0,0,.8)' : undefined, transform: [el.flipH ? 'scaleX(-1)' : '', el.flipV ? 'scaleY(-1)' : ''].join(' ') || undefined,
         }}>{(() => {
@@ -225,7 +227,7 @@ export function TableElement({ el }: { el: SlideElement }) {
   const cells = layoutTable(t, el.w, el.h, undefined);
   const fs = el.fontSize ?? 32;
   return (
-    <div data-table style={{ position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), fontFamily: el.fontFamily, fontSize: fs, filter: effects(el), ...effectCss(el) }}>
+    <div data-table style={{ position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), fontFamily: drawnFamily(el.fontFamily), fontSize: fs, filter: effects(el), ...effectCss(el) }}>
       {!engineReady() && <div style={{ position: 'absolute', inset: 0, outline: '2px solid #888' }} />}
       {cells.map((c) => {
         const own = t.rows[c.r]?.[c.c];
@@ -263,7 +265,7 @@ export function TableElement({ el }: { el: SlideElement }) {
 export function ChartElement({ el }: { el: SlideElement }) {
   useEngineEpoch();
   if (!el.chart) return null;
-  const svg = chartSvg({ ...el.chart, textColor: el.chart.textColor ?? el.color ?? '#ffffff' }, Math.round(el.w), Math.round(el.h), el.chart.scheme, el.fontFamily);
+  const svg = chartSvg({ ...el.chart, textColor: el.chart.textColor ?? el.color ?? '#ffffff' }, Math.round(el.w), Math.round(el.h), el.chart.scheme, drawnFamily(el.fontFamily));
   const box: CSSProperties = { position: 'absolute', left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity ?? 1, transform: elementTransform(el), background: el.fill, filter: effects(el), ...effectCss(el) };
   // The SVG is built by the engine, which escapes every label.
   return svg ? <div data-chart style={box} dangerouslySetInnerHTML={{ __html: svg }} /> : <div style={{ ...box, outline: '2px dashed #888' }} />;

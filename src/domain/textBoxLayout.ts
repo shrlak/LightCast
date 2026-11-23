@@ -5,6 +5,8 @@ import { INDENT_PX, isVerticalText, elementMarkers, paragraphIndent, lineHeightC
 import { fitTextNode } from './boundedTextLayout';
 import { uniformTextBoxFont } from './textBoxFonts';
 import { lineRuns } from './richText';
+import { drawnFamily } from './fonts';
+import { BOLD_WEIGHT, REGULAR_WEIGHT } from './fontWeight';
 import { autoFitMode, resizeToText, scaledText, shrinkScale } from './textFit';
 
 const cache = new Map<string, SlideElement>();
@@ -14,7 +16,7 @@ export const clearTextBoxLayoutCache = () => cache.clear();
 export function elementTextStyle(el: SlideElement): CSSProperties {
   return {
     display: 'flex', flexDirection: 'column', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', boxSizing: 'border-box',
-    fontSize: el.fontSize ?? 64, fontFamily: el.fontFamily, fontWeight: el.bold ? 800 : el.paragraphs ? 400 : 500,
+    fontSize: el.fontSize ?? 64, fontFamily: drawnFamily(el.fontFamily), fontWeight: el.bold ? BOLD_WEIGHT : REGULAR_WEIGHT,
     fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, el.fontSize ?? 64, el.paragraphs ? 1.2 : 1.25),
     letterSpacing: el.letterSpacing || undefined, paddingLeft: el.indent ? el.indent * INDENT_PX : undefined,
     // PowerPoint fills one column to the bottom of the box before the next (no balancing).
@@ -51,7 +53,7 @@ function measurementNode(el: SlideElement): HTMLDivElement {
     // Runs with their own size or weight take the room they will be drawn in.
     if (runs[i]) for (const r of runs[i]!) {
       const span = document.createElement('span');
-      applyStyle(span, { fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? 800 : 400, fontStyle: r.italic ? 'italic' : undefined });
+      applyStyle(span, { fontSize: r.fontSize, fontWeight: r.bold === undefined ? undefined : r.bold ? BOLD_WEIGHT : REGULAR_WEIGHT, fontStyle: r.italic ? 'italic' : undefined });
       span.textContent = softToNewline(r.text); line.append(span);
     }
     else line.append(document.createTextNode(softToNewline(text) || '\u00a0'));

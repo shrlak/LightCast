@@ -27,6 +27,15 @@ export const weightLabel = (weight: number): string => {
 /** A weight snapped to 100 … 900 in steps of 100. */
 export const nearestWeight = (w: number): number => Math.min(900, Math.max(100, Math.round((Number.isFinite(w) ? w : 400) / 100) * 100));
 
+/**
+ * The weights text is drawn at when it has no weight of its own: Bold is 700 and plain text 400, as PowerPoint draws
+ * them. (LightCast used to draw Bold at 800 and its own text boxes at 500; a family with ExtraBold / Medium faces —
+ * Apple SD Gothic Neo, 나눔고딕 ExtraBold, Noto Sans KR — then looked heavier than the same slide on a computer whose
+ * font has only Regular and Bold, such as 맑은 고딕.)
+ */
+export const BOLD_WEIGHT = 700;
+export const REGULAR_WEIGHT = 400;
+
 interface WeightSource { bold?: boolean; weight?: number }
 
 /** The weight text with this formatting is drawn at: its own weight, else Bold → 700, else 400. */

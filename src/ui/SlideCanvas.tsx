@@ -3,6 +3,8 @@ import { OLE_NOTE } from '../domain/io/oleObjects';
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextDirection, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
+import { drawnFamily } from '../domain/fonts';
+import { BOLD_WEIGHT, REGULAR_WEIGHT } from '../domain/fontWeight';
 import { morphFrame, smooth } from '../domain/morph';
 import { DEFAULT_TAB, decimalAt, layoutTabLine, splitRunsAtTabs } from '../domain/tabStops';
 import { FRAME_PLACEHOLDERS, PLACEHOLDER_PROMPT } from '../domain/master';
@@ -230,7 +232,7 @@ export function textStyle(theme: Theme): CSSProperties {
   }
   return {
     ...effects,
-    fontFamily: theme.fontFamily,
+    fontFamily: drawnFamily(theme.fontFamily),
     fontSize: theme.fontSize,
     fontWeight: theme.fontWeight,
     color: theme.color,
@@ -296,7 +298,7 @@ function FooterLayer({ slide, theme }: { slide: Slide; theme: Theme }) {
   // (the title slide is the first one, where a deck's title sits)
   if (f.hideOnTitle && n === 1) return null;
   const date = f.date === true ? (f.dateFormat ? formatDateField(f.dateFormat, new Date()) : new Date().toLocaleDateString('ko-KR')) : typeof f.date === 'string' ? f.date : '';
-  const style: CSSProperties = { position: 'absolute', bottom: 28, fontSize: 30, color: theme.color, opacity: 0.85, fontFamily: theme.fontFamily, whiteSpace: 'nowrap' };
+  const style: CSSProperties = { position: 'absolute', bottom: 28, fontSize: 30, color: theme.color, opacity: 0.85, fontFamily: drawnFamily(theme.fontFamily), whiteSpace: 'nowrap' };
   return (
     <div className="footer-layer">
       {date && <div style={{ ...style, left: 48 }}>{date}</div>}
@@ -470,7 +472,7 @@ import { RunChars, RunSpan } from './RunSpan';
 /** Home › Paragraph › Tabs: a line whose tabs go to the box's tab stops (domain/tabStops). */
 function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; size: number }) {
   const segs = splitRunsAtTabs(runs);
-  const font = (r?: TextRun) => `${(r?.italic ?? el.italic) ? 'italic ' : ''}${(r?.bold ?? el.bold) ? 800 : 500} ${r?.fontSize ?? size}px ${r?.fontFamily ?? el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif'}`;
+  const font = (r?: TextRun) => `${(r?.italic ?? el.italic) ? 'italic ' : ''}${(r?.bold ?? el.bold) ? BOLD_WEIGHT : REGULAR_WEIGHT} ${r?.fontSize ?? size}px ${drawnFamily(r?.fontFamily ?? el.fontFamily) ?? 'Inter, "Noto Sans KR", sans-serif'}`;
   const measured = segs.map((seg) => {
     const ws = seg.map((r) => glyphWidths([...r.text], font(r)).reduce((a, b) => a + b, 0));
     const text = seg.map((r) => r.text).join('');
@@ -503,8 +505,8 @@ function WarpText({ el, box }: { el: SlideElement; box: CSSProperties }) {
   const id = `warp-${el.id}`;
   const bands = warpGuides(warpPreset(el.warp!), el.w, el.h);
   const size = el.fontSize ?? 64;
-  const family = el.fontFamily ?? 'Inter, "Noto Sans KR", sans-serif';
-  const weight = el.weight ?? (el.bold ? 800 : 500);
+  const family = drawnFamily(el.fontFamily) ?? 'Inter, "Noto Sans KR", sans-serif';
+  const weight = el.weight ?? (el.bold ? BOLD_WEIGHT : REGULAR_WEIGHT);
   const font = `${el.italic ? 'italic ' : ''}${weight} ${size}px ${family}`;
   const lines = (el.text ?? '').split('\n').filter((l, _i, all) => l.length || all.length === 1);
   const paint = {
@@ -569,8 +571,8 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
     <div data-text-element={el.id} style={{
       ...box, left: el.x, top: el.y, width: el.w, height: el.h, ...elementTextStyle(el), display: 'flex', flexDirection: 'column', whiteSpace: 'pre-wrap',
       justifyContent: V_ALIGN[el.vAlign ?? 'middle'], ...alignCss(el.align ?? 'center'),
-      fontSize: base, fontFamily: el.fontFamily, color: el.color ?? '#fff', ['--link-color' as string]: linkColorFor(el.color), tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
-      fontWeight: el.weight ?? (el.bold ? 800 : el.paragraphs ? 400 : 500), fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, base, el.paragraphs ? 1.2 : 1.25),
+      fontSize: base, fontFamily: drawnFamily(el.fontFamily), color: el.color ?? '#fff', ['--link-color' as string]: linkColorFor(el.color), tabSize: `${el.defaultTab ?? DEFAULT_TAB}px`,
+      fontWeight: el.weight ?? (el.bold ? BOLD_WEIGHT : REGULAR_WEIGHT), fontStyle: el.italic ? 'italic' : undefined, lineHeight: lineHeightCss(el, base, el.paragraphs ? 1.2 : 1.25),
       textDecoration: decoration(el), letterSpacing: el.letterSpacing ? el.letterSpacing : undefined,
       paddingLeft: el.indent ? el.indent * INDENT_PX : undefined, ...columnsAndDirection(el),
       // A box that does not fit itself to its text (a font size set by hand, Front) lets the text show
@@ -644,7 +646,7 @@ function SlideBody({ slide, theme: base, build }: { slide: Slide; theme: Theme; 
             {slide.qr!.map((link) => <img key={link} src={qrDataUrl(link)} alt={link} />)}
           </div>
       )}
-      {slide.caption && <div className="slide-caption" style={{ fontFamily: theme.fontFamily, color: theme.color }}>{slide.caption}</div>}
+      {slide.caption && <div className="slide-caption" style={{ fontFamily: drawnFamily(theme.fontFamily), color: theme.color }}>{slide.caption}</div>}
       <FooterLayer slide={slide} theme={theme} />
     </>
   );

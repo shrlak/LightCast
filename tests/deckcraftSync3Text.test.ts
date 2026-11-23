@@ -43,7 +43,7 @@ describe('a run has a typeface per script (a:latin, a:ea, a:cs)', () => {
     expect(html).toContain('font-family:Arial');
     expect(html).toMatch(/Grace <span style="font-family:&quot;바탕&quot;, Batang">은혜<\/span>/);
     // Without one, the run is one piece as before.
-    expect(renderToStaticMarkup(createElement(RunSpan, { r: { text: '은혜', bold: true } }))).toBe('<span style="font-weight:800">은혜</span>');
+    expect(renderToStaticMarkup(createElement(RunSpan, { r: { text: '은혜', bold: true } }))).toBe('<span style="font-weight:700">은혜</span>');
   });
 
   it('PPTX import keeps a:latin, a:ea and a:cs apart', () => {

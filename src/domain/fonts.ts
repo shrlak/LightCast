@@ -43,6 +43,48 @@ const OFFICE_ALIAS: Record<string, string> = {
   Calibri: 'Calibri, Carlito', 'Calibri Light': '"Calibri Light", Calibri, Carlito', Arial: 'Arial, Arimo',
 };
 
+/** Names that are one and the same typeface (its Korean and English names), never a stand-in such as Carlito for Calibri. */
+const SAME_FONT: string[][] = [
+  ['맑은 고딕', 'Malgun Gothic'], ['굴림', 'Gulim'], ['굴림체', 'GulimChe'], ['돋움', 'Dotum'], ['돋움체', 'DotumChe'],
+  ['바탕', 'Batang'], ['바탕체', 'BatangChe'], ['궁서', 'Gungsuh'], ['궁서체', 'GungsuhChe'],
+  ['나눔고딕', 'Nanum Gothic', 'NanumGothic'], ['나눔명조', 'Nanum Myeongjo', 'NanumMyeongjo'], ['나눔바른고딕', 'NanumBarunGothic'],
+  ['애플 SD 산돌고딕 Neo', 'Apple SD Gothic Neo', 'AppleSDGothicNeo'], ['애플명조', 'AppleMyungjo'],
+];
+
+/** Every name a typeface goes by (맑은 고딕 = Malgun Gothic). */
+export function officeNames(name: string): string[] {
+  const face = name.replace(/^['"]|['"]$/g, '').trim();
+  const group = SAME_FONT.find((g) => g.some((n) => n.toLowerCase() === face.toLowerCase()));
+  return [...new Set([face, ...(group ?? [])])];
+}
+
+const drawn = new Map<string, string>();
+/**
+ * The font stack as it is drawn: wherever a stack falls back to a Korean system font, Malgun Gothic comes first. It is
+ * what PowerPoint for Windows falls back to, and a Mac has the same file once the church cloud has given it
+ * (installedFonts.ts), so Windows and Mac draw the same face instead of Malgun on one and Apple SD Gothic Neo on the
+ * other. The stored stack (and the font name a .pptx gets) is left as it is.
+ */
+export function drawnFamily(family: string | undefined): string | undefined {
+  if (!family) return family;
+  let hit = drawn.get(family);
+  if (hit !== undefined) return hit;
+  const parts = family.split(',').map((x) => x.trim()).filter(Boolean);
+  const key = (x: string) => x.replace(/["']/g, '').trim().toLowerCase();
+  const apple = parts.findIndex((x) => key(x) === 'apple sd gothic neo');
+  const malgun = parts.findIndex((x) => key(x) === 'malgun gothic' || key(x) === '맑은 고딕');
+  hit = family;
+  if (apple >= 0 && malgun > apple) {
+    const moved = parts.filter((x) => key(x) === 'malgun gothic' || key(x) === '맑은 고딕');
+    const rest = parts.filter((x) => !moved.includes(x));
+    rest.splice(rest.findIndex((x) => key(x) === 'apple sd gothic neo'), 0, ...moved);
+    hit = rest.join(', ');
+  }
+  if (drawn.size > 500) drawn.clear();
+  drawn.set(family, hit);
+  return hit;
+}
+
 /**
  * A typeface named by PowerPoint / Word / a web page → the CSS font stack LightCast stores: one of the
  * editor's own fonts when it is one of them, else that face with the Korean fallbacks after it.
