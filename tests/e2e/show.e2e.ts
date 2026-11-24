@@ -64,11 +64,30 @@ describe('slide show', () => {
   it('live captions: without speech recognition a notice explains why', async () => {
     const app = await openApp(base, { init: NO_SPEECH });
     const { page } = app;
+    // A LightCast with no AI server at all (no Worker, no keys).
+    await page.route('**/api/ai/speech-status', (r: any) => r.fulfill({ json: { configured: false, via: '', model: '' } }));
     await openDeck(page);
     await startShow(page);
     await page.getByRole('button', { name: /자막 켜기/ }).click();
     // Without browser speech recognition and without a cloud speech key the app says why captions cannot start.
     await see(page.getByText(/이 브라우저는 음성 인식을 지원하지 않고, 클라우드 음성 인식도 설정되어 있지 않습니다/));
+    await app.close();
+  });
+
+  it('live captions: without browser speech recognition the church AI server transcribes (stubbed)', async () => {
+    const app = await openApp(base, { init: NO_SPEECH });
+    const { page } = app;
+    let posted = 0;
+    await page.route('**/api/ai/speech-status', (r: any) => r.fulfill({ json: { configured: true, via: 'proxy', model: 'm' } }));
+    await page.route('**/api/ai/transcribe**', (r: any) => { posted++; return r.fulfill({ json: { text: '클라우드 자막 시험' } }); });
+    await openDeck(page);
+    const audience = await startShow(page);
+    await page.getByRole('button', { name: /자막 켜기/ }).click();
+    // The fake microphone's tone is loud enough to be sent; the stubbed answer reaches the audience window.
+    await see(audience.locator('.caption-band'), 25_000);
+    expect(await audience.locator('.caption-band').first().innerText()).toContain('클라우드 자막 시험');
+    expect(posted).toBeGreaterThan(0);
+    await page.getByRole('button', { name: /자막 끄기/ }).click();
     await app.close();
   });
 

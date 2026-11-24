@@ -5,9 +5,9 @@ export interface SpeechSettings { provider: ProviderPref; lang: SpeechLang }
 export const DEFAULT_SPEECH: SpeechSettings = { provider: 'auto', lang: 'ko-KR' };
 export const SPEECH_KEY = 'lightcast.speech';
 export const PROVIDER_CHOICES: { id: ProviderPref; label: string; hint: string }[] = [
-  { id: 'auto', label: '자동', hint: '데스크톱 앱은 클라우드(설정되어 있을 때), 브라우저는 브라우저 음성 인식을 씁니다.' },
+  { id: 'auto', label: '자동', hint: '데스크톱 앱은 클라우드, 브라우저는 브라우저 음성 인식을 씁니다. 브라우저 음성 인식이 서버에 닿지 못하면 클라우드로 바꿉니다.' },
   { id: 'browser', label: '브라우저', hint: '크롬·엣지·사파리의 음성 인식. 데스크톱 앱에는 들어 있지 않습니다.' },
-  { id: 'cloud', label: '클라우드', hint: '마이크 소리를 2~3초씩 잘라 음성 인식 서버로 보냅니다. API 키가 필요합니다.' },
+  { id: 'cloud', label: '클라우드', hint: '마이크 소리를 2~3초씩 잘라 음성 인식 서버로 보냅니다. 키를 넣지 않으면 교회 AI 서버(다른 AI 기능과 같은 곳)를 씁니다.' },
 ];
 
 export function parseSpeechSettings(raw: string | null | undefined): SpeechSettings {

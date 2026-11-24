@@ -10,6 +10,8 @@ export interface ServiceDeps {
   lang(): SpeechLang;
   /** Why nothing can run (shown when resolve() is null). */
   unavailable?(): SpeechError;
+  /** Another provider to switch to when `failed` stops with `err` (자동: the browser's engine cannot reach its server → the cloud). */
+  fallback?(failed: ProviderKind, err: SpeechError): ProviderKind | null;
   setTimeout?: (fn: () => void, ms: number) => unknown;
   clearTimeout?: (h: unknown) => void;
 }
@@ -26,6 +28,8 @@ export class SpeechService {
   /** Bumped on every start/stop so a stale provider's late callbacks are ignored. */
   private run = 0;
   private startedLang: SpeechLang | null = null;
+  /** A provider switched to after the chosen one failed (until the settings change or listening stops). */
+  private forced: ProviderKind | null = null;
   constructor(private deps: ServiceDeps) {}
 
   getStatus = (): SpeechStatus => this.status;
@@ -49,6 +53,7 @@ export class SpeechService {
     if (!this.listeners.size) return;
     const kind = this.deps.resolve();
     if (this.provider && kind === this.provider.kind && this.deps.lang() === this.startedLang) return;
+    this.forced = null;
     this.halt(true);
     this.begin();
   }
@@ -73,13 +78,14 @@ export class SpeechService {
     this.startedLang = null;
     try { p?.stop(); } catch { /* already stopped */ }
     if (restart) return;
+    this.forced = null;
     this.attempt = 0;
     const keep = this.status.state === 'error' && !!this.status.error && !this.status.error.retryable;
     this.set(keep ? { ...this.status, retryInMs: null } : IDLE);
   }
 
   private begin() {
-    const kind = this.deps.resolve();
+    const kind = this.forced ?? this.deps.resolve();
     if (!kind) {
       this.set({ state: 'error', provider: null, error: this.deps.unavailable?.() ?? new SpeechError('unsupported'), retryInMs: null });
       return;
@@ -109,6 +115,12 @@ export class SpeechService {
     this.run++;
     try { this.provider?.stop(); } catch { /* ignore */ }
     this.provider = null;
+    const alt = this.listeners.size ? this.deps.fallback?.(kind, err) ?? null : null;
+    if (alt && alt !== kind && this.forced !== alt) {
+      this.forced = alt;
+      this.begin();
+      return;
+    }
     if (!err.retryable || !this.listeners.size) {
       this.set({ state: 'error', provider: kind, error: err, retryInMs: null });
       return;
