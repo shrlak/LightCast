@@ -1,11 +1,11 @@
 # DeckCraft ↔ LightCast: feature comparison (2026-11-24)
 
-A full pass over DeckCraft (`storytold/deckcraft` at `9db2fa0c`) against LightCast 1.2.9: all 331 engine commands
+A full pass over DeckCraft (`storytold/deckcraft` at `9db2fa0c`) against LightCast 1.3.0: all 331 engine commands
 (`crates/engine/src/**`, `cmd!` / `CommandSpec`), every ribbon tab and contextual tab (`crates/ui-egui/src/ribbon/*`),
 the panes, dialogs, status bar, Quick Access Toolbar, backstage and slide show. The rule for this pass: apart from
 the 예배 tab and the KCCP slide generator, LightCast should have DeckCraft's features and look the same way.
 
-## Added or redesigned to match DeckCraft (v1.2.9)
+## Added or redesigned to match DeckCraft (v1.3.0)
 
 | DeckCraft | LightCast now | Where |
 |---|---|---|
@@ -20,7 +20,7 @@ the 예배 tab and the KCCP slide generator, LightCast should have DeckCraft's f
 | Font list › Rescan Installed Fonts (`font.rescan`) | **설치된 글꼴 다시 검색** at the end of the font list (adds every installed family where the browser can list them) | `FontPicker.tsx` |
 | Draw: Black / Red / Blue Pen, Pencil, Highlighter | Pens named 검은색 펜 · 빨간색 펜 · 파란색 펜 …, and **연필** (thin grey pen) | `tabsMain.tsx` (`DrawTab`) |
 | Status bar language (opens Language, shows the text's language) | The status bar shows the selected text's proofing language and opens **언어** | `PptLayout.tsx` |
-| #2069 WMF scale / offset mapping records | Already drawn correctly by LightCast's reader; regression test added | `tests/deckcraftParity.test.ts` |
+| #2069 WMF scale / offset mapping records | Ported in v1.2.9 (`metafile/gdi.ts`, `Gdi.pageXf`) | `tests/metafile.test.ts`, `tests/deckcraftParity.test.ts` |
 
 ## Already the same (checked, no change)
 

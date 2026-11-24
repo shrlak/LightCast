@@ -551,3 +551,74 @@ describe('text metrics', () => {
     expect(w).toBeGreaterThan(100); // 10 x 'W' at 16 px is about 151 px, not the 80 a flat half-em guess gives
   });
 });
+
+// ---- DeckCraft #2069 (craft-metafile aaa72308, 7585d2df, 8644532e): WMF scale and offset mapping records ----
+
+/** A WMF without a placeable header: the frame comes from its first window extent. */
+function wmfBare(...records: number[][]): Uint8Array {
+  const body = records.flat();
+  const b = new B();
+  b.u16(1, 9, 0x300).u32(9 + 3 + body.length / 2).u16(1).u32(10).u16(0);
+  b.u8(...body);
+  b.u32(3).u16(0);
+  return b.bytes;
+}
+/** Each drawn path's fill and the box through its points (an ellipse's control points lie on its box). */
+function pathBoxes(svg: string): { fill: string; box: [number, number, number, number] }[] {
+  return [...svg.matchAll(/<path\b[^>]*>/g)].map((m) => {
+    const tag = m[0];
+    const n = (tag.match(/\bd="([^"]*)"/)?.[1] ?? '').match(/-?\d+(?:\.\d+)?(?:e-?\d+)?/g)!.map(Number);
+    const xs = n.filter((_, i) => i % 2 === 0), ys = n.filter((_, i) => i % 2 === 1);
+    return { fill: tag.match(/\bfill="([^"]*)"/)?.[1] ?? '', box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] };
+  });
+}
+const expectBox = (got: number[], want: number[]) => want.forEach((v, i) => expect(got[i]).toBeCloseTo(v, 3));
+
+describe('WMF scale and offset mapping records (DeckCraft #2069)', () => {
+  it('draws each sub-picture into its part of the frame when it halves the viewport', () => {
+    const sub = (orgX: number, color: number) => [
+      wmfRec(0x001e), // SaveDC
+      wmfRec(0x0103, 8), // SetMapMode MM_ANISOTROPIC
+      wmfRec(0x0412, 1, 1, 2, 1), // ScaleViewportExt: y 1/1, x 1/2
+      wmfRec(0x020b, 0, orgX), // SetWindowOrg
+      wmfRec(0x020c, 400, 400), // SetWindowExt
+      wmfRec(0x02fc, 0, color & 0xffff, color >>> 16, 0), // CreateBrushIndirect
+      wmfRec(0x012d, 0), // SelectObject
+      wmfRec(0x0418, 380, 380, 20, 20), // Ellipse
+      wmfRec(0x0127, -1), // RestoreDC
+      wmfRec(0x01f0, 0), // DeleteObject
+    ];
+    const r = metafileToSvg(wmfBare(wmfRec(0x020b, 0, 0), wmfRec(0x020c, 400, 800), ...sub(0, RED), ...sub(-400, BLUE)));
+    expect(r).not.toBeNull();
+    expect(r!.svg).toContain('viewBox="0 0 800 400"');
+    const p = pathBoxes(r!.svg);
+    expect(p.map((x) => x.fill)).toEqual(['#ff0000', '#0000ff']);
+    expectBox(p[0].box, [20, 20, 380, 380]);
+    expectBox(p[1].box, [420, 20, 780, 380]);
+  });
+
+  const rect = () => wmfRec(0x041b, 20, 20, 10, 10); // Rectangle 10,10 – 20,20
+  const box = (...extra: number[][]) => {
+    const r = metafileToSvg(wmfBare(wmfRec(0x0103, 8), wmfRec(0x020b, 0, 0), wmfRec(0x020c, 100, 100), ...extra, rect()));
+    expect(r!.svg).toContain('viewBox="0 0 100 100"');
+    return pathBoxes(r!.svg)[0].box;
+  };
+
+  it('scales the window with SCALEWINDOWEXT and moves the origins with OFFSETWINDOWORG / OFFSETVIEWPORTORG', () => {
+    expectBox(box(wmfRec(0x0410, 2, 4, 1, 2)), [5, 5, 10, 10]); // window x 2/1, y 4/2: half size
+    expectBox(box(wmfRec(0x020f, 10, 5)), [5, 0, 15, 10]); // window origin moved by (5, 10)
+    expectBox(box(wmfRec(0x0211, -5, 30)), [40, 5, 50, 15]); // viewport origin moved by (30, -5)
+    expectBox(box(wmfRec(0x0412, 0, 1, 0, 1)), [10, 10, 20, 20]); // a zero denominator does nothing
+  });
+
+  it('keeps the frame when the viewport is scaled after drawing, and keeps a scale given before the first window', () => {
+    for (const num of [1, 4]) {
+      const r = metafileToSvg(wmfBare(wmfRec(0x0103, 8), wmfRec(0x020c, 100, 100), wmfRec(0x041b, 100, 100, 0, 0), wmfRec(0x0412, 1, 1, 2, num)));
+      expect(r!.svg).toContain('viewBox="0 0 100 100"');
+      expectBox(pathBoxes(r!.svg)[0].box, [0, 0, 100, 100]);
+    }
+    const r = metafileToSvg(wmfBare(wmfRec(0x0103, 8), wmfRec(0x0412, 1, 1, 2, 1), wmfRec(0x020c, 100, 100), wmfRec(0x041b, 100, 100, 0, 0)));
+    expect(r!.svg).toContain('viewBox="0 0 100 100"');
+    expectBox(pathBoxes(r!.svg)[0].box, [0, 0, 50, 100]);
+  });
+});

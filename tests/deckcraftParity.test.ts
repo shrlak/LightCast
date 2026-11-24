@@ -1,4 +1,4 @@
-// DeckCraft parity pass (v1.2.9): features DeckCraft has that LightCast lacked or drew differently —
+// DeckCraft parity pass (v1.3.0): features DeckCraft has that LightCast lacked or drew differently —
 // Quick Access Toolbar, the Animation Pane's advanced timeline, Dark Mode, Show Media Controls, the
 // Eyedropper, SmartArt Design's Convert to Text, Rescan Installed Fonts.
 import { readFileSync } from 'node:fs';

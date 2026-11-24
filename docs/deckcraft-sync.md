@@ -7,7 +7,7 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=9db2fa0c
+DECKCRAFT_SYNCED=9db2fa0ca994ad8ae8d9cc5032d860ae985477d5
 ```
 
 (`docs: bring ROADMAP.md current through 2026-11-15 (#2138)`.)
@@ -126,8 +126,18 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
     bounds and POTX / PPSX export parity (`b16257a8`, `0ccc68f6`: LightCast's notes and handout masters are print
     settings, not shape trees, and it exports `.pptx` / `.ppt` only); MCP transcript tests (`83d9383c`, automation
     only); the shared AGENTS.md (`3ffeffcd`, docs). No Rust changed, so the wasm was not rebuilt.
-- `0ccc68f..9db2fa0` (7 commits, 2026-11-20 to 2026-11-23): `921b4558` (#2069, WMF SCALEVIEWPORTEXT / SCALEWINDOWEXT /
-  OFFSETVIEWPORTORG / OFFSETWINDOWORG place sub-pictures) is already right in `src/domain/metafile/wmf.ts`; its test picture
-  was added to `tests/deckcraftParity.test.ts`. The rest is CI and docs. No Rust changed.
+- `0ccc68f..9db2fa0` (7 commits, 2026-11-20 to 2026-11-24):
+  - Ported: WMF scale and offset mapping records place sub-pictures (`921b4558`, #2069: the craft-metafile pin moved
+    to craft-libs `f428c3d3`, which brings `aaa72308`, `7585d2df` and `8644532e`). LightCast's reader already read
+    SCALEVIEWPORTEXT / SCALEWINDOWEXT / OFFSETVIEWPORTORG / OFFSETWINDOWORG, but in WMF mode its mapping ignored the
+    viewport and later window extents, so they did nothing. Now (`Gdi.pageXf` in `metafile/gdi.ts`, `offsetOrg`) a WMF
+    plays into its frame (first window extent, else the placeable box): the viewport is that frame, scaled by
+    SCALEVIEWPORTEXT (also when given before the first window) and moved by OFFSETVIEWPORTORG, and the current window
+    maps onto it, so SCALEWINDOWEXT and a later SETWINDOWEXT scale the drawing and the frame itself never changes. The
+    file's own SETVIEWPORTEXT / SETVIEWPORTORG are still not applied in a WMF. Tests: DeckCraft's two-halves render test
+    (which LightCast already drew right) and craft-metafile's mapping tests, in `tests/metafile.test.ts`.
+  - Not applicable: release workflow changes and the revert of one (`26620f59`, `14ff0938`, `2d031bb6`, CI), the
+    ROADMAP / parity docs (`9db2fa0c`), merge commits (`06c77015`, `7fbdc085`: their net change is `921b4558`). No Rust
+    changed, so the wasm was not rebuilt.
 - 2026-11-24, full feature comparison (not one commit at a time): every DeckCraft command, ribbon tab, pane and dialog
-  against LightCast. What was added, what stays different and why: `docs/deckcraft-parity.md` (v1.2.9).
+  against LightCast. What was added, what stays different and why: `docs/deckcraft-parity.md` (v1.3.0).
