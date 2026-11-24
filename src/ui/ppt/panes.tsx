@@ -1,5 +1,5 @@
 // Task panes on the right of the window: 애니메이션 창, 선택 창, 메모.
-import { useState, useSyncExternalStore } from 'react';
+import { useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Slide, SlideAnimation, SlideComment, SlideElement } from '../../domain/types';
 import { commentCount, initialsOf, neighbourComment, type CommentRef } from '../../domain/comments';
 import { uid } from '../../domain/lyrics';
@@ -10,6 +10,46 @@ import { moveInOrder, revealOnPick, selectionRows } from '../../domain/shapeOps'
 import { REPEAT_UNTIL_CLICK, animationClicks, slideTimeline, textParagraphs } from '../../domain/animations';
 import type { Ed } from './editor';
 import { ANIMATION, ANIMATION_START } from './ko';
+import { dragBar, timelineBars, timelineTicks, type TimelineBar } from '../../domain/animTimeline';
+import { useWidth } from '../hooks';
+
+/**
+ * 고급 타임라인: an effect's bar in its row, dragged to move its start (delay) or, by its right edge, to stretch its
+ * duration. The change is made when the drag ends (one undo step).
+ */
+function TimelineTrack({ a, bar, max, width, color, onSet }: { a: SlideAnimation; bar: TimelineBar; max: number; width: number; color: string; onSet: (patch: Partial<SlideAnimation>) => void }) {
+  const [dx, setDx] = useState<{ part: 'move' | 'end'; s: number } | null>(null);
+  const start = bar.start + (dx?.part === 'move' ? dx.s : 0);
+  const span = Math.max(0.05, bar.span + (dx?.part === 'end' ? dx.s : 0));
+  const k = width > 0 ? width / max : 0;
+  const begin = (part: 'move' | 'end') => (e: ReactPointerEvent<HTMLElement>) => {
+    if (!k) return;
+    e.stopPropagation();
+    e.preventDefault();
+    const x0 = e.clientX;
+    let last = 0;
+    const move = (ev: PointerEvent) => { last = (ev.clientX - x0) / k; setDx({ part, s: last }); };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      setDx(null);
+      const patch = dragBar(a, bar, part, last);
+      if (patch) onSet(patch);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  };
+  const tip = `시작 ${start.toFixed(2)}초 · 재생 시간 ${span.toFixed(2)}초 — 끌어서 지연을, 오른쪽 끝을 끌어서 재생 시간을 바꿉니다`;
+  return (
+    <span className="anim-track" onClick={(e) => e.stopPropagation()}>
+      <span className="anim-bar" title={tip} style={{ left: start * k, width: Math.max(4, span * k), background: color }} onPointerDown={begin('move')}>
+        <span className="anim-bar-end" onPointerDown={begin('end')} />
+      </span>
+    </span>
+  );
+}
 
 const KIND: Record<string, string> = { text: '텍스트 상자', image: '그림', shape: '도형', video: '동영상', camera: '카메라', qr: 'QR 코드', table: '표', chart: '차트', icon: '아이콘', ink: '잉크' };
 export const elementName = (el: SlideElement, i: number) => el.name || `${KIND[el.kind] ?? el.kind} ${i + 1}${el.text ? `: ${el.text.split('\n')[0].slice(0, 18)}` : ''}`;
@@ -26,6 +66,11 @@ export function AnimationPane({ ed, onPlay }: { ed: Ed; onPlay: () => void }) {
   const els = ed.elements;
   const set = (animations: SlideAnimation[]) => ed.updateSlide({ animations: animations.length ? animations : undefined });
   const [picked, setPicked] = useState<string | null>(null);
+  const [advanced, setAdvanced] = useState(false);
+  const [trackRef, trackW] = useWidth<HTMLDivElement>();
+  const bars = advanced ? timelineBars(list) : [];
+  const maxSec = Math.max(1, ...bars.map((b) => b.start + b.span)) * 1.1;
+  const patchAnim = (id: string, patch: Partial<SlideAnimation>) => set(list.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   // Click numbers from the timeline, so each paragraph of a 단락별로 build counts as its own click.
   const clicks = slide ? animationClicks(slide) : {};
   return (
@@ -37,7 +82,9 @@ export function AnimationPane({ ed, onPlay }: { ed: Ed; onPlay: () => void }) {
         <span className="grow" />
         <button type="button" disabled={!picked} title="앞으로" onClick={() => picked && set(moveAnimation(list, picked, -1))}>▲</button>
         <button type="button" disabled={!picked} title="뒤로" onClick={() => picked && set(moveAnimation(list, picked, 1))}>▼</button>
+        <button type="button" className={advanced ? 'on' : ''} disabled={!list.length} title="효과마다 시작과 재생 시간을 막대로 보여 줍니다 — 막대를 끌어 바꿉니다" aria-pressed={advanced} aria-label={advanced ? '고급 타임라인 숨기기' : '고급 타임라인 표시'} onClick={() => setAdvanced(!advanced)}>⏱</button>
       </div>
+      <div ref={trackRef} className="anim-track-measure" />
       {!list.length && <p className="task-empty">이 슬라이드에는 애니메이션이 없습니다. 개체를 고르고 <b>애니메이션</b> 탭에서 효과를 고르세요.</p>}
       <ol className="anim-list">
         {list.map((a) => {
@@ -54,6 +101,7 @@ export function AnimationPane({ ed, onPlay }: { ed: Ed; onPlay: () => void }) {
                 {(['click', 'with', 'after'] as const).map((s) => <option key={s} value={s}>{ANIMATION_START[s]}</option>)}
               </select>
               <button type="button" className="task-x" title="제거" onClick={(e) => { e.stopPropagation(); set(list.filter((x) => x.id !== a.id)); }}>✕</button>
+              {advanced && (() => { const bar = bars.find((b) => b.id === a.id); return bar ? <TimelineTrack a={a} bar={bar} max={maxSec} width={trackW} color={COLORS[a.class]} onSet={(patch) => ed.canEdit && patchAnim(a.id, patch)} /> : null; })()}
             </li>,
             // 단락별로: a line per paragraph step under the effect, with its own click number.
             ...(paras && c ? c.paragraphs.map((p, k) => (
@@ -66,6 +114,9 @@ export function AnimationPane({ ed, onPlay }: { ed: Ed; onPlay: () => void }) {
           ];
         })}
       </ol>
+      {advanced && trackW > 0 && (
+        <div className="anim-ticks" aria-hidden>{timelineTicks(maxSec, trackW / maxSec).map((s) => <span key={s} style={{ left: (s / maxSec) * trackW }}>{s}</span>)}<b>초</b></div>
+      )}
       {tl && <p className="task-foot">클릭 {tl.auto[0] ? tl.steps - 1 : tl.steps}번 · 총 {tl.total.toFixed(1)}초</p>}
     </div>
   );

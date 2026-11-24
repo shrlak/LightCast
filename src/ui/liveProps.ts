@@ -25,5 +25,6 @@ export function liveCanvasProps(live: LiveState, screen?: Screen): CanvasProps {
     build: live.build ?? null,
     number: live.number,
     animate: true,
+    mediaControls: live.mediaControls !== false,
   };
 }

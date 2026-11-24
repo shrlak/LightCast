@@ -37,6 +37,10 @@ export interface TextFormatValue {
   /** The selection mixes sizes / fonts: the size box and the font name show blank (PowerPoint, format.state). */
   sizeMixed?: boolean;
   fontMixed?: boolean;
+  /** 위 첨자 / 아래 첨자 of the characters being typed (character formatting only, as in the Font dialog). */
+  baseline?: 'super' | 'sub';
+  /** Characters are being typed or selected, so character-only formatting (위 첨자 / 아래 첨자) applies. */
+  charSel?: boolean;
 }
 
 const HIGHLIGHTS = ['#FFFF00', '#00FF00', '#00FFFF', '#FF00FF', '#0000FF', '#FF0000', '#000080', '#008080', '#008000', '#800080', '#800000', '#808000', '#808080', '#C0C0C0', '#000000'];
@@ -88,8 +92,8 @@ function Drop({ icon, title, active, onMain, children }: { icon: ReactNode; titl
   );
 }
 
-function Tog({ icon, title, on, onClick }: { icon: ReactNode; title: string; on?: boolean; onClick: () => void }) {
-  return <button type="button" className={`ppt-btn ${on ? 'on' : ''}`} title={title} aria-label={title} aria-pressed={on} onClick={onClick}>{icon}</button>;
+function Tog({ icon, title, on, onClick, disabled }: { icon: ReactNode; title: string; on?: boolean; onClick: () => void; disabled?: boolean }) {
+  return <button type="button" className={`ppt-btn ${on ? 'on' : ''}`} title={title} aria-label={title} aria-pressed={on} disabled={disabled} onClick={onClick}>{icon}</button>;
 }
 
 function Palette({ colors, value, onPick }: { colors: string[]; value?: string; onPick: (c: string) => void }) {
@@ -174,6 +178,8 @@ export function TextFormatPanel({ value: f, onChange, onChangeCase, onClear, onS
         <Tog icon={Icon.underline} title="밑줄 (Ctrl+U)" on={f.underline} onClick={() => onChange({ underline: !f.underline })} />
         <Tog icon={Icon.shadow} title="텍스트 그림자" on={f.shadow} onClick={() => onChange({ shadow: !f.shadow })} />
         <Tog icon={Icon.strike} title="취소선" on={f.strike} onClick={() => onChange({ strike: !f.strike })} />
+        <Tog icon={<span className="ppt-script">x<sup>2</sup></span>} title="위 첨자 (Ctrl+Shift+=)" on={f.baseline === 'super'} disabled={!f.charSel} onClick={() => onChange({ baseline: f.baseline === 'super' ? undefined : 'super' })} />
+        <Tog icon={<span className="ppt-script">x<sub>2</sub></span>} title="아래 첨자 (Ctrl+=)" on={f.baseline === 'sub'} disabled={!f.charSel} onClick={() => onChange({ baseline: f.baseline === 'sub' ? undefined : 'sub' })} />
         <Drop icon={Icon.spacing} title="문자 간격" active={!!f.letterSpacing}>
           {(close) => SPACINGS.map(([label, v]) => (
             <button key={label} type="button" className={`ppt-item ${f.letterSpacing === v ? 'on' : ''}`} onClick={() => { onChange({ letterSpacing: v }); close(); }}>

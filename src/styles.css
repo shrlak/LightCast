@@ -2206,3 +2206,30 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .cloud-file-bulk { align-items: center; margin: 6px 0; }
 .cloud-media-list td:first-child, .cloud-media-list th:first-child { text-align: center; width: 1%; }
 .cloud-media-list td:nth-child(2) { overflow-wrap: anywhere; }
+.smartart-menu { max-height: 60vh; overflow-y: auto; min-width: 220px; }
+.ppt-script { font: 600 12px/1 Georgia, serif; } .ppt-script sup, .ppt-script sub { font-size: 8px; }
+.pen-btn.pencil { filter: saturate(0) contrast(.8); }
+/* 슬라이드 쇼 › 미디어 컨트롤 표시: the play bar along a video's bottom edge, shown while pointed at. */
+.show-media-bar { position: absolute; z-index: 6; display: flex; align-items: center; gap: .5em; padding: 0 .6em; background: linear-gradient(transparent, rgba(0,0,0,.65)); color: #fff; opacity: 0; transition: opacity .15s; pointer-events: auto; }
+.show-media-bar:hover, .show-media-bar:focus-within { opacity: 1; }
+.show-media-bar button { background: transparent; border: none; color: #fff; padding: 0 .3em; font-size: 1em; }
+.show-media-bar input[type=range] { flex: 1; accent-color: #fde718; }
+.show-media-time { font-variant-numeric: tabular-nums; }
+/* 빠른 실행 도구 모음 */
+.qat-badge { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 3px; background: rgba(255,255,255,.25); font-size: 11px; font-weight: 700; }
+.qat-more { padding: 0 4px !important; opacity: .8; }
+.qat-menu { min-width: 220px; }
+.qat-check { display: inline-block; width: 16px; }
+.qat-hint { white-space: normal; max-width: 240px; font-size: 11px; }
+.pp-qat .qat-menu button { width: 100%; height: auto; padding: 5px 10px; font-size: 12px; color: #222 !important; text-align: left; border-radius: 0; }
+.pp-qat .qat-menu button:hover:not(:disabled) { background: #e9f7ef !important; }
+/* 애니메이션 창 › 고급 타임라인 */
+.anim-track-measure { height: 0; margin: 0 8px; }
+.anim-track { grid-column: 1 / -1; position: relative; height: 12px; background: repeating-linear-gradient(90deg, transparent 0 39px, #edebe9 39px 40px); border-radius: 2px; }
+.anim-bar { position: absolute; top: 2px; height: 8px; border-radius: 2px; cursor: grab; opacity: .85; touch-action: none; }
+.anim-bar:active { cursor: grabbing; opacity: 1; }
+.anim-bar-end { position: absolute; right: -3px; top: -2px; width: 7px; height: 12px; cursor: ew-resize; }
+.anim-ticks { position: relative; height: 16px; margin: 2px 8px 0; font-size: 10px; color: #605e5c; border-top: 1px solid #c8c6c4; }
+.anim-ticks span { position: absolute; top: 1px; transform: translateX(-50%); }
+.anim-ticks b { position: absolute; right: 0; top: 1px; font-weight: 400; }
+.ppt-menu.qat-menu { max-height: 80vh; }

@@ -408,6 +408,9 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
           )} />
         </Col>
       </Group>
+      <Group label="디자이너">
+        <Big icon={<span style={{ fontSize: 24 }}>✨</span>} label="디자인 아이디어" title="이 슬라이드의 제목 · 내용 · 그림을 여러 가지로 배치해 봅니다" active={ed.pane === 'designer'} disabled={!ed.slide} onClick={() => ed.setPane(ed.pane === 'designer' ? null : 'designer')} />
+      </Group>
     </>
   );
 }
@@ -588,6 +591,10 @@ export function InsertTab({ ed, onLink, onComment }: { ed: Ed; onLink: () => voi
 }
 
 const PENS = ['#000000', '#ffffff', '#e81123', '#0078d4', '#107c10', '#ffb900', '#8764b8'];
+/** Pen names as PowerPoint's Korean Draw tab gives them (DeckCraft: Black Pen, Red Pen, Blue Pen…). */
+const PEN_NAME: Record<string, string> = { '#000000': '검은색 펜', '#ffffff': '흰색 펜', '#e81123': '빨간색 펜', '#0078d4': '파란색 펜', '#107c10': '녹색 펜', '#ffb900': '노란색 펜', '#8764b8': '보라색 펜' };
+/** 연필: DeckCraft's Pencil, a thin grey pen (1 pt). */
+export const PENCIL = { color: '#5a5a5a', width: 2 } as const;
 const HIGHLIGHTERS = ['#ffff00', '#00ff00', '#00ffff', '#ff00ff', '#ff8c00'];
 
 export function DrawTab({ ed }: { ed: Ed }) {
@@ -624,7 +631,8 @@ export function DrawTab({ ed }: { ed: Ed }) {
         <Big icon={RI.lasso} label="그리기 선택" title="그리기를 멈추고 개체 선택" active={!ed.tool} onClick={() => ed.setTool(null)} />
         <Big icon={RI.eraser} label="지우개" title="잉크를 클릭해 지웁니다" active={ed.tool?.kind === 'eraser'} onClick={() => !blocked(ed) && ed.setTool({ kind: 'eraser' })} />
         <div className="pen-row">
-          {PENS.map((c) => <button key={c} type="button" className={`pen-btn ${pen && !pen.highlighter && pen.color === c ? 'on' : ''}`} title="펜" onClick={() => usePen(c, pen?.width && !pen.highlighter ? pen.width : 6)}>{RI.pen(c)}</button>)}
+          {PENS.map((c) => <button key={c} type="button" className={`pen-btn ${pen && !pen.highlighter && pen.color === c ? 'on' : ''}`} title={PEN_NAME[c] ?? '펜'} onClick={() => usePen(c, pen?.width && !pen.highlighter && !(pen.color === PENCIL.color && pen.width === PENCIL.width) ? pen.width : 6)}>{RI.pen(c)}</button>)}
+          <button type="button" className={`pen-btn pencil ${pen && !pen.highlighter && pen.color === PENCIL.color && pen.width === PENCIL.width ? 'on' : ''}`} title="연필" onClick={() => usePen(PENCIL.color, PENCIL.width)}>{RI.pen(PENCIL.color)}</button>
           {HIGHLIGHTERS.map((c) => <button key={c} type="button" className={`pen-btn ${pen?.highlighter && pen.color === c ? 'on' : ''}`} title="형광펜" onClick={() => usePen(c, 24, true)}>{RI.highlighter(c)}</button>)}
         </div>
         <DropButton icon={<span className="pen-width" />} label={`두께 ${pen ? pen.width / 2 : 3} pt`} disabled={!pen} render={(close) => <>{[2, 4, 6, 10, 16, 24, 36].map((w) => <MenuItem key={w} label={<span className="line-sample" style={{ borderTopWidth: Math.max(1, w / 3) }}>{w / 2} pt</span>} on={pen?.width === w} onClick={() => { if (pen) ed.setTool({ ...pen, width: w }); close(); }} />)}</>} />

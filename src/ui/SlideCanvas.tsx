@@ -1,6 +1,6 @@
 import { isFrontSlide } from '../domain/frontLayout';
 import { OLE_NOTE } from '../domain/io/oleObjects';
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject, type SyntheticEvent } from 'react';
 import type { Background, ListStyle, Prop, Screen, Slide, SlideElement, TextDirection, TextRun, Theme, Timer, Transition } from '../domain/types';
 import { lineRuns, slideLineRuns } from '../domain/richText';
 import { drawnFamily } from '../domain/fonts';
@@ -62,6 +62,8 @@ export interface CanvasProps {
   onVideoTime?: (t: number, duration: number) => void;
   /** Live rendering: play video/camera and run transitions. Off for thumbnails. */
   animate?: boolean;
+  /** 미디어 컨트롤 표시: in a show, pointing at the bottom of a video shows its play bar (DeckCraft's show media bar). */
+  mediaControls?: boolean;
   /** Where the slide's object animations are; without it every object is simply shown. */
   build?: LiveBuild | null;
   /** The slide's number, for Insert › Slide Number and the footer. */
@@ -288,6 +290,8 @@ const H_ALIGN = { left: 'flex-start', center: 'center', right: 'flex-end', justi
 
 /** Drawn for a slide show (output, reading view) rather than in the editor: media play by their settings. */
 export const ShowContext = createContext(false);
+/** Whether the show draws media controls on videos (슬라이드 쇼 › 미디어 컨트롤 표시). */
+export const MediaControlsContext = createContext(false);
 export const SlideNumberContext = createContext<number | undefined>(undefined);
 
 /** Insert › Header & Footer: date (left), footer text (centre), slide number (right). */
@@ -402,10 +406,38 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
     window.addEventListener('lightcast:media', on);
     return () => window.removeEventListener('lightcast:media', on);
   }, [el.id]);
+  const controls = useContext(MediaControlsContext) && live && !pb.fullScreen;
   // Output windows play without sound unless the video's sound is turned on (the room hears one copy).
-  return <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover', ...faded, ...full, ...hidden }} muted={live && pb.muted !== false} playsInline preload="metadata" />;
+  const video = <video ref={ref} src={url} style={{ ...style, objectFit: el.fit ?? 'cover', ...faded, ...full, ...hidden }} muted={live && pb.muted !== false} playsInline preload="metadata" />;
+  return controls ? <>{video}<MediaBar el={el} video={ref} playing={playing} /></> : video;
 }
 
+/** The show's media bar along the bottom of a video: play / pause, a seek bar and the time. Shown while pointed at. */
+function MediaBar({ el, video, playing }: { el: SlideElement; video: RefObject<HTMLVideoElement | null>; playing: boolean }) {
+  const [t, setT] = useState(0);
+  const [d, setD] = useState(0);
+  useEffect(() => {
+    const v = video.current;
+    if (!v) return;
+    const on = () => { setT(v.currentTime); setD(Number.isFinite(v.duration) ? v.duration : 0); };
+    on();
+    v.addEventListener('timeupdate', on);
+    v.addEventListener('loadedmetadata', on);
+    return () => { v.removeEventListener('timeupdate', on); v.removeEventListener('loadedmetadata', on); };
+  }, [video]);
+  const h = Math.min(64, Math.max(36, el.h * 0.12));
+  const stop = (e: SyntheticEvent) => e.stopPropagation();
+  return (
+    <div className="show-media-bar" style={{ left: el.x, top: el.y + el.h - h, width: el.w, height: h, fontSize: h * 0.42 }} onPointerDown={stop} onClick={stop} onDoubleClick={stop} data-media-bar>
+      <button type="button" aria-label={playing ? '일시 중지' : '재생'} onClick={() => { const v = video.current; if (v) { if (v.paused) v.play().catch(() => undefined); else v.pause(); } }}>{playing ? '❚❚' : '▶'}</button>
+      <input type="range" aria-label="재생 위치" min={0} max={d || 0} step={0.1} value={Math.min(t, d || 0)} onChange={(e) => { const v = video.current; if (v) v.currentTime = Number(e.target.value); }} />
+      <span className="show-media-time">{mediaClock(t)}</span>
+    </div>
+  );
+}
+
+/** m:ss of a play position. */
+export const mediaClock = (s: number) => { const n = Math.max(0, Math.floor(s)); return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`; };
 /** One free-positioned object from the slide editor. */
 export function ElementView({ el }: { el: SlideElement }) {
   const plainUrl = useMediaUrl(el.kind === 'image' ? el.mediaId : null);
@@ -877,6 +909,7 @@ export function SlideCanvas(p: CanvasProps) {
     <div ref={ref} className={`canvas-frame ${p.className ?? ''}`} style={{ background: fill }}>
       <TimersContext.Provider value={p.timers ?? []}>
       <ShowContext.Provider value={!!p.animate}>
+      <MediaControlsContext.Provider value={!!p.animate && !!p.mediaControls}>
       <SlideNumberContext.Provider value={p.number}>
       <div className={`canvas ${matte ? 'matte' : ''}`} style={{ transform: `scale(${width / CANVAS_W})`, width: CANVAS_W, height: CANVAS_H }}>
         {layers.background && !matte && (
@@ -906,6 +939,7 @@ export function SlideCanvas(p: CanvasProps) {
         {mask && <div className="layer screen-mask" style={mask} />}
       </div>
       </SlideNumberContext.Provider>
+      </MediaControlsContext.Provider>
       </ShowContext.Provider>
       </TimersContext.Provider>
     </div>

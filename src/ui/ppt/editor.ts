@@ -70,7 +70,7 @@ export const selectedEls = (els: SlideElement[], sel: string[]) => {
   return els.filter((e) => ids.includes(e.id));
 };
 
-const RUN_KEYS = new Set(['fontSize', 'bold', 'weight', 'italic', 'underline', 'color', 'strike', 'fontFamily', 'highlight']);
+const RUN_KEYS = new Set(['fontSize', 'bold', 'weight', 'italic', 'underline', 'color', 'strike', 'fontFamily', 'highlight', 'baseline']);
 
 /** A ribbon change as character formatting for the selected characters (false / empty clears it). */
 function runPatch(patch: Partial<TextFormatValue>): RunFormat {
@@ -136,7 +136,7 @@ export function textTarget(ed: Ed): TextTarget | null {
     const typing = !!editor;
     if (editor && typing) {
       const c = editor.current();
-      value = { ...base, fontSize: c.fontSize ?? base.fontSize, weight: c.weight ?? base.weight, bold: !!c.bold, italic: !!c.italic, underline: !!c.underline, strike: !!c.strike, color: (c.color ?? base.color).slice(0, 7) };
+      value = { ...base, fontSize: c.fontSize ?? base.fontSize, weight: c.weight ?? base.weight, bold: !!c.bold, italic: !!c.italic, underline: !!c.underline, strike: !!c.strike, color: (c.color ?? base.color).slice(0, 7), baseline: c.baseline, charSel: true };
     }
     // PowerPoint's mixed state: a blank size box / font name when the selection mixes them.
     const mixed = mixedState(editor && typing ? editor.spans().map((r) => ({ fontSize: r.fontSize, fontFamily: r.fontFamily })) : texty.flatMap((e) => textSpans(e, baseSize(e))));
@@ -198,7 +198,7 @@ export function textTarget(ed: Ed): TextTarget | null {
   const cur = runSel ? editor!.current() : null;
   return {
     label: '슬라이드 텍스트',
-    value: cur ? { ...slideValue, fontSize: cur.fontSize ?? slideValue.fontSize, weight: cur.weight ?? slideValue.weight, bold: !!cur.bold, italic: !!cur.italic, underline: !!cur.underline, strike: !!cur.strike, color: (cur.color ?? slideValue.color).slice(0, 7) } : slideValue,
+    value: cur ? { ...slideValue, fontSize: cur.fontSize ?? slideValue.fontSize, weight: cur.weight ?? slideValue.weight, bold: !!cur.bold, italic: !!cur.italic, underline: !!cur.underline, strike: !!cur.strike, color: (cur.color ?? slideValue.color).slice(0, 7), baseline: cur.baseline, charSel: true } : slideValue,
     onChange: (patch) => {
       if (runSel && editor && Object.keys(patch).every((k) => RUN_KEYS.has(k))) {
         editor.apply(runPatch(patch));

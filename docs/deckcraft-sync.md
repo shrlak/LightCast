@@ -139,3 +139,5 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
   - Not applicable: release workflow changes and the revert of one (`26620f59`, `14ff0938`, `2d031bb6`, CI), the
     ROADMAP / parity docs (`9db2fa0c`), merge commits (`06c77015`, `7fbdc085`: their net change is `921b4558`). No Rust
     changed, so the wasm was not rebuilt.
+- 2026-11-24, full feature comparison (not one commit at a time): every DeckCraft command, ribbon tab, pane and dialog
+  against LightCast. What was added, what stays different and why: `docs/deckcraft-parity.md` (v1.3.0).

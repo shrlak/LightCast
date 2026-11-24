@@ -728,7 +728,7 @@ export interface Presentation {
   /** View › Slide Master: objects shown on every slide (copied onto the slides with `master`). */
   master?: { elements: SlideElement[]; background?: Background; layouts?: MasterLayout[]; /** Master › Preserve: kept even when no slide uses it. */ preserve?: boolean };
   /** Slide Show › Set Up Slide Show. */
-  showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean; /** 녹음된 내레이션 재생 off. */ noNarration?: boolean };
+  showSetup?: { noAnimation?: boolean; manual?: boolean; noTransitions?: boolean; /** 녹음된 내레이션 재생 off. */ noNarration?: boolean; /** 미디어 컨트롤 표시 off (DeckCraft's show_media_controls, on by default). */ noMediaControls?: boolean };
   /** Slide Show › Custom Slide Show: named lists of slides. */
   customShows?: { id: string; name: string; slideIds: string[] }[];
   /** View › Guides the user placed (canvas pixels). */
@@ -1032,6 +1032,8 @@ export interface LiveState {
   number?: number;
   /** Where the live slide's animations are (click builds); absent when it has none. */
   build?: import('./animations').LiveBuild;
+  /** 슬라이드 쇼 › 미디어 컨트롤 표시: pointing at a video in the show shows its play bar. Off only when the deck turns it off. */
+  mediaControls?: boolean;
 }
 
 /** Handout and notes page placeholders (View › Handout / Notes Master). */
