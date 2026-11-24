@@ -1,4 +1,8 @@
 import { exportFontNotice } from '../domain/embeddedFonts';
+import { readShowSettings } from '../domain/io/pptxShow';
+import { Dialog } from '../ui/ppt/dialogs';
+import { SHOW_ALL_EVENT, screenAction, hasInk, keepShowInk, showKey, zoomStep, type ShowInk } from '../domain/showScreen';
+import { CANVAS_H, CANVAS_W } from '../domain/canvas';
 import { useFontFileDrop } from '../ui/ppt/FontImport';
 import { RecoveryNotice } from '../ui/RecoveryNotice';
 import { beginSession, noteSaveFailed } from '../domain/sessionRecovery';
@@ -152,6 +156,10 @@ export function OperatorView() {
   const setMixer = (next: X32Settings) => { setMixerState(next); saveX32Settings(next); };
   const [online, setOnline] = useState<{ status: 'loading' | 'ok' | 'error'; count: number; error?: string }>({ status: 'loading', count: 0 });
   const [view, setView] = useState<PptViewMode>('normal');
+  /** A slide number being typed in the show (number + Enter). */
+  const typedRef = useRef('');
+  /** "잉크 주석을 유지하시겠습니까?" after a show with ink. */
+  const [inkPrompt, setInkPrompt] = useState<ShowInk | null>(null);
   const [slideId, setSlideIdState] = useState<string | null>(null);
   const [slideSeq, setSlideSeq] = useState<number | null>(null);
   const setSlideId = (id: string | null, seq?: number) => { setSlideIdState(id); setSlideSeq(seq ?? null); };
@@ -349,8 +357,12 @@ export function OperatorView() {
     showHistory.list = noteVisit(showHistory.list, state.cursor?.seq);
   }, [state.cursor?.presentationId, state.cursor?.seq]);
   useLiveBroadcast(state.live, relay.send, (a) => {
-    if (a.kind === 'end') { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); return; }
+    if (a.kind === 'end') { if (viewRef.current === 'presenter') endShowRef.current(); else window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })); return; }
     const act = liveActionFor(showStateRef.current, a);
+    if (act) dispatch(act);
+  }, (a) => {
+    // 검정/흰색 화면, ink and 확대 from an audience window: only while a show is running.
+    const act = viewRef.current === 'presenter' ? screenAction(a) : null;
     if (act) dispatch(act);
   });
   useEffect(() => { relay.send({ type: 'rehearsal', active: !!rehearsalPreview, state: rehearsalPreview?.live, cursor: rehearsalPreview?.cursor }); }, [rehearsalPreview, relay.connected]);
@@ -464,6 +476,33 @@ export function OperatorView() {
         startShowRef.current(e.shiftKey);
         return;
       }
+      // A running slide show answers to PowerPoint's keys (also when they are pressed on the audience window).
+      if (viewRef.current === 'presenter') {
+        const st = stateRef.current;
+        const pres = st.cursor ? st.library.presentations.find((x) => x.id === st.cursor!.presentationId) : null;
+        const count = pres ? sequence(pres).length : 0;
+        const k = showKey(e.key, typedRef.current, { ended: st.live.ended, zoomed: !!st.live.zoom, count });
+        if (k) {
+          e.preventDefault();
+          typedRef.current = k.do === 'type' ? k.typed : '';
+          const go = (seq: number) => pres && dispatch({ type: 'live/go', presentationId: pres.id, seq: Math.max(0, Math.min(count - 1, seq)) });
+          switch (k.do) {
+            case 'next': dispatch({ type: 'live/next' }); break;
+            case 'prev': dispatch({ type: 'live/prev' }); break;
+            case 'go': go(k.seq); break;
+            case 'first': go(0); break;
+            case 'last': go(count - 1); break;
+            case 'black': dispatch({ type: 'live/toggleBlack' }); break;
+            case 'white': dispatch({ type: 'live/white' }); break;
+            case 'clearInk': dispatch({ type: 'live/ink', op: 'clear' }); break;
+            case 'end': endShowRef.current(); break;
+            case 'all': window.dispatchEvent(new Event(SHOW_ALL_EVENT)); break;
+            case 'zoom': dispatch({ type: 'live/zoom', zoom: zoomStep(st.live.zoom, k.dir, CANVAS_W / 2, CANVAS_H / 2) }); break;
+            case 'unzoom': dispatch({ type: 'live/zoom', zoom: null }); break;
+          }
+          return;
+        }
+      }
       if (viewRef.current !== 'presenter' && ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'PageDown', 'PageUp', ' '].includes(e.key)) return;
       const action = KEYS[e.key];
       if (!action) return;
@@ -485,6 +524,8 @@ export function OperatorView() {
     presentOutput();
   };
   const endShow = () => {
+    // Ink written in the show: PowerPoint asks whether to keep it on the slides.
+    if (hasInk(state.live.ink)) setInkPrompt(state.live.ink!);
     if (view === 'presenter') dispatch({ type: 'activity/record', entry: { id: crypto.randomUUID(), at: Date.now(), action: 'show/end', detail: activePlaylist(state)?.name ?? '발표', device: getDevice(), account: loadSession()?.username ?? null } });
     dispatch({ type: 'live/clearAll' });
     setView('normal');
@@ -545,10 +586,12 @@ export function OperatorView() {
           const existing = state.library.presentations.filter((p) => p.folder === 'Imported' && p.title === title);
           if (existing.some((p) => p.protected)) throw new Error(`${title}: ${PROTECTED_MESSAGE}`);
           const slides = await toSlides([f]);
+          // 쇼 설정 the file carries (반복, 내레이션, 애니메이션, 타이밍, 미디어 컨트롤).
+          const show = /\.(pptx|pptm|ppsx|ppsm|potx|potm)$/i.test(f.name) ? await readShowSettings(await f.arrayBuffer()) : {};
           if (existing.length > 1) throw new Error(`같은 이름의 PPT가 여러 개입니다: ${title}. 프레젠테이션 이름을 구분해 주세요.`);
           if (!slides.length) throw new Error(`${title}: 슬라이드를 읽지 못했습니다. 기존 PPT를 유지합니다.`);
           if (existing.length === 1) {
-            dispatch({ type: 'presentation/update', id: existing[0].id, patch: { slides } });
+            dispatch({ type: 'presentation/update', id: existing[0].id, patch: { slides, ...show } });
             dispatch({ type: 'select', id: existing[0].id });
             total += slides.length;
             continue;
@@ -556,7 +599,7 @@ export function OperatorView() {
           const id = uid('p');
           dispatch({
             type: 'presentation/createMany',
-            presentations: [{ id, title, slides, themeId: 'theme_classic', folder: 'Imported' }],
+            presentations: [{ id, title, slides, themeId: 'theme_classic', folder: 'Imported', ...show }],
             playlist: { id: uid('pl'), name: title, items: [{ id: uid('pli'), presentationId: id }] },
           });
           // Opening a file shows it: the new 재생목록's deck becomes the one on screen.
@@ -659,6 +702,23 @@ export function OperatorView() {
       {modal === 'templateMarket' && marketOn && <TemplateMarketModal library={state.library} dispatch={dispatch} notify={notify} onClose={() => setModal(null)} />}
       {followOn && <FollowDock state={state} dispatch={dispatch} onClose={() => setFollowOn(false)} />}
       <UpdateBanner />
+      {inkPrompt && (
+        <Dialog title="Microsoft PowerPoint" okLabel="유지" onClose={() => setInkPrompt(null)} onOk={() => {
+          // 유지: the show's ink becomes ink objects on the slides it was written on.
+          for (const p of state.library.presentations) {
+            if (p.protected) continue;
+            for (const [slideId, els] of keepShowInk(p, inkPrompt)) {
+              const slide = p.slides.find((x) => x.id === slideId);
+              if (slide) dispatch({ type: 'slide/update', presentationId: p.id, slideId, patch: { elements: [...(slide.elements ?? []), ...els] } });
+            }
+          }
+          dispatch({ type: 'live/ink', op: 'clearAll' });
+          setInkPrompt(null);
+        }}>
+          <p>잉크 주석을 유지하시겠습니까?</p>
+          <div className="dlg-row right"><button type="button" onClick={() => { dispatch({ type: 'live/ink', op: 'clearAll' }); setInkPrompt(null); }}>취소</button></div>
+        </Dialog>
+      )}
       <AudioPlayer state={state} dispatch={dispatch} />
       {toast && <div className="toast" onClick={() => setToast(null)}>{toast}</div>}
 

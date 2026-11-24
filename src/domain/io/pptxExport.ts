@@ -22,6 +22,7 @@ import { prepareAnnouncementSizing } from '../announcementSizing';
 import { isFrontPresentation, isFrontSlide } from '../frontLayout';
 import { resolveBackground } from '../autoBackground';
 import { motionFlatColor } from '../motion';
+import { writeShowPr } from './pptxShow';
 import JSZip from 'jszip';
 import { bulletMedia, bulletPictureOf, bulletPlaceholder, patchBulletXml } from '../pictureBullet';
 import { fillXml, lnXml, needsShapePatch, patchPictures, patchPptx, pictureColorFromFilter, pictureColorXml, type PicturePatch, type ShapePatch } from './shapeXml';
@@ -39,6 +40,8 @@ type Box = { x: number; y: number; w: number; h: number; rotate?: number };
 /** What each export still has to put into the shapes' XML (outline cap / join / compound, gradients, 3-D…; see shapeXml). */
 const shapePatches = new WeakMap<PptxGenJS, ShapePatch[]>();
 /** Pictures whose colour changes (Grayscale, Recolor …) are written into their a:blip after PptxGenJS (shapeXml). */
+/** 쇼 설정 written into presProps.xml (a single presentation's). */
+const showPatches = new WeakMap<PptxGenJS, Pick<Presentation, 'loop' | 'showSetup'>>();
 const picturePatches = new WeakMap<PptxGenJS, PicturePatch[]>();
 let markerSeq = 0;
 /** OLE objects of an export: their preview pictures are turned back into the original objects when the file is written (oleObjects.ts). */
@@ -522,6 +525,7 @@ export async function buildPptx(lib: Library, source: { playlist: Playlist } | {
     if (props.company) pptx.company = props.company;
   }
   for (const p of list) await addPresentation(pptx, lib, p);
+  if (list.length === 1) showPatches.set(pptx, { loop: list[0].loop, showSetup: list[0].showSetup });
   patchOnWrite(pptx);
   return pptx;
 }
@@ -533,7 +537,8 @@ function patchOnWrite(pptx: PptxGenJS) {
   const oles = olePatches.get(pptx) ?? [];
   const media = mediaPatches.get(pptx) ?? [];
   const pictures = picturePatches.get(pptx) ?? [];
-  if (!patches.length && !bullets.length && !oles.length && !media.length && !pictures.length && !scriptFaced.has(pptx)) return;
+  const show = showPatches.get(pptx);
+  if (!patches.length && !bullets.length && !oles.length && !media.length && !pictures.length && !scriptFaced.has(pptx) && !show) return;
   const write = pptx.write.bind(pptx);
   const patched = async (props?: PptxGenJS.WriteProps) => {
     const type = typeof props === 'string' ? props : props?.outputType ?? 'blob';
@@ -545,11 +550,16 @@ function patchOnWrite(pptx: PptxGenJS) {
     await patchOleObjects(zip, oles);
     await patchMediaClips(zip, media);
     await patchPictures(zip, pictures);
+    const presProps = show && await zip.file('ppt/presProps.xml')?.async('string');
+    if (show && presProps) zip.file('ppt/presProps.xml', writeShowPr(presProps, show));
     const asType = ({ nodebuffer: 'nodebuffer', arraybuffer: 'arraybuffer', uint8array: 'uint8array', base64: 'base64', binarystring: 'binarystring', blob: 'blob' } as const)[type as 'blob'] ?? 'blob';
     return zip.generateAsync({ type: asType as 'blob', compression: 'DEFLATE' });
   };
   pptx.write = patched as PptxGenJS['write'];
+  const writeFile = pptx.writeFile.bind(pptx);
   pptx.writeFile = async (props?: PptxGenJS.WriteFileProps) => {
+    // Outside a browser (Node) PptxGenJS writes the file itself.
+    if (typeof document === 'undefined') return writeFile(props);
     const fileName = (typeof props === 'string' ? props : props?.fileName) ?? 'Presentation.pptx';
     const blob = await patched({ outputType: 'blob' }) as Blob;
     const a = document.createElement('a');

@@ -1,4 +1,5 @@
 import { trashPresentation, trashSlides, restoreTrash, purgeTrash } from './trash';
+import { addStroke, clearSlideInk, eraseAt } from './showScreen';
 import { exclusivePresentationMedia } from './mediaCleanup';
 import { deletedServices, isServicePlaylist } from './sunday/cleanup';
 import { isLibrarySong } from './sunday/dedupe';
@@ -104,6 +105,12 @@ type DomainAction =
   | { type: 'live/clearBackground' }
   | { type: 'live/toggleBlack' }
   | { type: 'live/black'; on: boolean }
+  /** 화면 › 흰색 화면: on / off, or toggled. */
+  | { type: 'live/white'; on?: boolean }
+  /** Ink in the slide show: a stroke, the eraser at a point, or all of this slide's ink. */
+  | { type: 'live/ink'; op: 'add'; stroke: import('./showScreen').ShowStroke } | { type: 'live/ink'; op: 'erase'; x: number; y: number } | { type: 'live/ink'; op: 'clear' | 'clearAll' }
+  /** 슬라이드 확대. */
+  | { type: 'live/zoom'; zoom: import('./showScreen').ShowZoom | null }
   | { type: 'live/background'; background: Background | null }
   | { type: 'live/message'; message: string | null }
   | { type: 'live/outputTimer'; id: string | null }
@@ -551,9 +558,12 @@ function core(s: AppState, a: Action): AppState {
       const build = s.live.slide && !s.live.black && !s.live.logo ? advanceBuild(s.live.slide, s.live.build, a.now ?? Date.now()) : null;
       if (build) return { ...s, live: { ...s.live, build } };
       const n = nextCursor(s, s.cursor);
-      return n ? live(s, n, a.now) : s;
+      if (n) return live(s, n, a.now);
+      // After the last slide PowerPoint shows a black "end of slide show" screen; the next click ends the show.
+      return s.live.ended || !s.live.slide ? s : { ...s, live: { ...s.live, ended: true, zoom: null } };
     }
     case 'live/prev': {
+      if (s.live.ended) return { ...s, live: { ...s.live, ended: false } };
       const build = s.live.slide ? rewindBuild(s.live.slide, s.live.build, Date.now()) : null;
       if (build) return { ...s, live: { ...s.live, build } };
       const n = s.cursor && prevCursor(s, s.cursor);
@@ -562,14 +572,25 @@ function core(s: AppState, a: Action): AppState {
     case 'live/clearAll':
       return {
         ...s, cursor: null, announce: null,
-        live: { ...s.live, slide: null, nextText: null, background: null, message: null, black: false, logo: false, copyright: null, announcement: null },
+        live: { ...s.live, slide: null, nextText: null, background: null, message: null, black: false, logo: false, copyright: null, announcement: null, white: false, ended: false, ink: undefined, inkKey: null, zoom: null },
       };
     case 'live/clearText':
       return { ...s, cursor: null, live: { ...s.live, slide: null, nextText: null, copyright: null } };
     case 'live/clearBackground':
       return { ...s, live: { ...s.live, background: null } };
     case 'live/toggleBlack':
-      return { ...s, live: { ...s.live, black: !s.live.black } };
+      return { ...s, live: { ...s.live, black: !s.live.black, white: false } };
+    case 'live/white':
+      return { ...s, live: { ...s.live, white: a.on ?? !s.live.white, black: false } };
+    case 'live/ink': {
+      const key = s.live.inkKey;
+      if (a.op === 'clearAll') return { ...s, live: { ...s.live, ink: undefined } };
+      if (!key) return s;
+      const ink = a.op === 'add' ? addStroke(s.live.ink, key, a.stroke) : a.op === 'erase' ? eraseAt(s.live.ink, key, a.x, a.y) : clearSlideInk(s.live.ink, key);
+      return ink === s.live.ink ? s : { ...s, live: { ...s.live, ink } };
+    }
+    case 'live/zoom':
+      return { ...s, live: { ...s.live, zoom: a.zoom } };
     case 'live/black':
       return { ...s, live: { ...s.live, black: a.on } };
     case 'live/background':

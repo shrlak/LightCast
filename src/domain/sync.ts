@@ -7,6 +7,8 @@ export type LiveMessage =
   | { type: 'key'; key: string; shiftKey: boolean }
   /** An object with an action (Action Settings, slide zoom) was clicked on an output window. */
   | { type: 'show'; action: import('./showActions').ShowAction }
+  /** A slide show screen command from an audience window (검정/흰색 화면, ink, 확대). */
+  | { type: 'screen'; action: import('./showScreen').ScreenAction }
   /** Laser pointer position on the presenter's slide (0–1), or off. */
   | import('./laserPointer').LaserMessage
   /** Live caption text for the audience view. */

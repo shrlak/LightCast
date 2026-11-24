@@ -15,7 +15,7 @@ import { changeCase, clearTextFormat, mixedState, stepElementFont, stepFontSize,
 import { sizeOf, textValue } from './ElementFormat';
 import type { TextFormatValue } from './TextFormatPanel';
 
-export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'designer' | 'spelling' | 'revisions' | null;
+export type TaskPane = 'format' | 'animation' | 'selection' | 'comments' | 'designer' | 'spelling' | 'revisions' | 'smartart' | null;
 
 /** The dialog boxes (Font, Paragraph, Replace Fonts, Header & Footer, Set Up Show, …). */
 export type DialogKind = 'font' | 'paragraph' | 'replaceFonts' | 'headerFooter' | 'setupShow' | 'customShows' | 'smartArt' | 'photoAlbum' | 'action' | 'reuse' | 'outline' | 'guides' | 'thesaurus' | 'zoom' | 'audio' | 'master' | 'handoutMaster' | 'notesMaster' | 'inspect' | 'language' | 'compare' | 'albumEdit' | 'tabs' | 'autocorrect' | 'viewZoom' | 'sizePosition' | 'compress' | 'altText' | 'hyperlink' | 'dateTime' | 'equation' | 'insertTable' | 'themeColors' | 'themeFonts' | 'slideSize' | 'recordAudio' | 'screenCapture' | 'versionHistory' | 'clipboardFormats';
@@ -61,6 +61,8 @@ export interface Ed {
   /** The table cells picked in the Format pane (Table Layout acts on them). */
   cell: TableRange;
   setCell: (r: TableRange) => void;
+  /** 보기 › 마스터 보기: the master the editor shows instead of the slides, and how to open, pick and close it. */
+  master?: import('./masterMode').MasterApi;
 }
 
 export interface TableRange { r: number; c: number; r1: number; c1: number }

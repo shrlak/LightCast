@@ -31,6 +31,8 @@ import { canGroup, canUngroup, deleteSelection, groupSelection, orderSelection, 
 import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind } from './editor';
 import { AnimationPane, CommentsPane, SelectionPane } from './panes';
 import { DesignerPane } from './designTab';
+import { SmartArtTextPane } from './tabSmartArt';
+import { MasterThumbs, PageMasterStage, masterSlide, masterSlidePatch, type MasterMode } from './masterMode';
 import { Dialogs } from './dialogs';
 import { LANGUAGES, RevisionsPane, SpellingPane } from './reviewPanes';
 import { uid as newId } from '../../domain/lyrics';
@@ -38,7 +40,7 @@ import { pasteSlides } from './pasteSlides';
 import { snapshotDataTransfer, type ClipSnapshot } from '../clipboardSlides';
 
 /** A picture chosen from this computer, stored as media: its id (null when none was chosen). */
-function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
+export function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
   return new Promise((resolve) => {
     const inp = document.createElement('input');
     inp.type = 'file';
@@ -138,7 +140,11 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     if (x !== menu.x || y !== menu.y) setMenu({ ...menu, x, y });
   }, [menu]);
   const p = state.library.presentations.find((x) => x.id === state.selectedId) ?? null;
-  const slide = (p && cmd.slideSeq != null ? sequence(p)[cmd.slideSeq]?.slide : null) ?? p?.slides.find((s) => s.id === cmd.slideId) ?? p?.slides[0] ?? null;
+  // 보기 › 마스터 보기: the editor shows the master (or a layout) as its slide; edits go to the master.
+  const [masterMode, setMasterMode] = useState<MasterMode>(null);
+  useEffect(() => setMasterMode(null), [p?.id]);
+  const docSlide = (p && cmd.slideSeq != null ? sequence(p)[cmd.slideSeq]?.slide : null) ?? p?.slides.find((s) => s.id === cmd.slideId) ?? p?.slides[0] ?? null;
+  const slide = masterMode?.kind === 'slide' && p ? masterSlide(p, masterMode.at) : docSlide;
   const index = p && slide ? p.slides.indexOf(slide) : -1;
   const theme = (p && state.library.themes.find((t) => t.id === p.themeId)) || state.library.themes[0];
   const background = slide ? resolveBackground(slide, p) : null;
@@ -187,8 +193,15 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     cmd.setSlideId(left[next]?.slide.id ?? null, next >= 0 ? next : undefined);
     setMulti([]); setSel([]);
   };
-  const updateSlide = (patch: Partial<Slide>) => p && slide && dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch });
-  const editDispatch: Dispatch<Action> = (a) => dispatch(a.type === 'slide/update' && a.presentationId === p?.id && a.slideId === slide?.id ? { ...a, seq: selected?.seq, sequenceLength: p ? sequence(p).length : 0 } : a);
+  const updateSlide = (patch: Partial<Slide>) => {
+    if (!p || !slide) return;
+    if (masterMode?.kind === 'slide') { const mp = masterSlidePatch(p, masterMode.at, patch); if (mp) dispatch({ type: 'presentation/update', id: p.id, patch: mp }); return; }
+    dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch });
+  };
+  const editDispatch: Dispatch<Action> = (a) => {
+    if (a.type === 'slide/update' && a.presentationId === p?.id && a.slideId === slide?.id) return masterMode?.kind === 'slide' ? updateSlide(a.patch) : dispatch({ ...a, seq: selected?.seq, sequenceLength: p ? sequence(p).length : 0 });
+    dispatch(a);
+  };
   const makeSection = (ids: string[]) => {
     if (!p || !ids.length) return;
     setSectionRequest({ presentationId: p.id, ids, initialValue: slide?.label || '새 구역' });
@@ -223,7 +236,21 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
     tool, setTool, view, setView, pane, setPane, zoom, setZoom, notesOpen, setNotesOpen,
     makeSection: () => makeSection(picked().map((r) => r.slide.id)),
     cell, setCell,
+    master: {
+      mode: masterMode,
+      open: (kind) => { setSel([]); setMasterMode(kind === 'slide' ? { kind, at: null } : { kind }); },
+      close: () => { setSel([]); setMasterMode(null); },
+      select: (at) => { setSel([]); setMasterMode({ kind: 'slide', at }); },
+    },
   };
+  // Every way into a master view (보기 tab, 어떤 작업을 원하시나요?, 인쇄 › 유인물 마스터) opens it in the editor.
+  useEffect(() => {
+    if (dialog === 'master' || dialog === 'handoutMaster' || dialog === 'notesMaster') {
+      setDialog(null);
+      ed.master?.open(dialog === 'master' ? 'slide' : dialog === 'handoutMaster' ? 'handout' : 'notes');
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialog]);
 
   const addSlideAfter = () => {
     if (!p || !slide) return;
@@ -407,7 +434,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
 
   const statusBar = (
     <footer className="ppt-status pp-status">
-      <span>{p && index >= 0 ? `슬라이드 ${index + 1}/${p.slides.length}` : '프레젠테이션 없음'}</span>
+      <span>{masterMode?.kind === 'slide' ? '슬라이드 마스터' : masterMode?.kind === 'handout' ? '유인물 마스터' : masterMode?.kind === 'notes' ? '슬라이드 노트 마스터' : p && index >= 0 ? `슬라이드 ${index + 1}/${p.slides.length}` : '프레젠테이션 없음'}</span>
       {(() => {
         // The language of the selected text (else the slide's), as DeckCraft's status bar shows it; a click opens 언어.
         const sel = ed.selEls.find((e) => e.kind === 'text' || e.kind === 'shape' || e.kind === 'table');
@@ -442,10 +469,9 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
 
   if (cmd.view === 'presenter') {
     return (
-      <div className="ppt">
-        <Ribbon ed={ed} actions={actions} />
+      // 발표자 보기 is a window of its own in PowerPoint: no ribbon or status bar around it.
+      <div className="ppt ppt-presenting">
         <PresenterView state={state} dispatch={dispatch} cmd={cmd} />
-        {statusBar}
       </div>
     );
   }
@@ -472,6 +498,9 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
       <Ribbon ed={ed} actions={actions} />
       <MissingFontsNotice deck={p} deckKey={p?.id} />
       <div className="ppt-body">
+        {masterMode?.kind === 'slide' ? (
+          <aside className={`ppt-left master-left ${view.grayscale ? 'grayscale' : ''}`}><MasterThumbs ed={ed} /></aside>
+        ) : masterMode ? null : (
         <aside className={`ppt-left ${view.grayscale ? 'grayscale' : ''}`}>
           <div className="ppt-left-tabs">
             <button type="button" className={leftTab === 'slides' ? 'on' : ''} onClick={() => setLeftTab('slides')}>{cmd.view === 'outline' ? '개요' : '슬라이드'}</button>
@@ -492,10 +521,13 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
               onAdd={() => { if (!p) return; const n = { id: uid('s'), group: slide?.group ?? 'Slide', text: '' }; updateSlides([...p.slides, n]); cmd.setSlideId(n.id); }} />
           )}
         </aside>
+        )}
 
-        {cmd.view === 'sorter' ? (
+        {masterMode && masterMode.kind !== 'slide' ? (
+          <main className="ppt-center"><PageMasterStage ed={ed} kind={masterMode.kind} /></main>
+        ) : cmd.view === 'sorter' && !masterMode ? (
           <div className="ppt-sorter"><SlideSorter ed={ed} /></div>
-        ) : cmd.view === 'notesPage' ? (
+        ) : cmd.view === 'notesPage' && !masterMode ? (
           <main className="ppt-center"><NotesPageView ed={ed} grayscale={view.grayscale} onNotes={(notes) => p && slide && dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch: { notes } })} /></main>
         ) : (
           <main className="ppt-center">
@@ -503,11 +535,11 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
               {p && slide ? (
                 <div className={`ppt-canvas ${view.grayscale ? 'grayscale' : ''}`} style={zoom !== null ? { width: ACTUAL_W * zoom } : undefined}
                   onContextMenu={(e) => { if (!ed.selEls.length) return; e.preventDefault(); setObjMenu(new DOMRect(e.clientX, e.clientY, 0, 0)); }}>
-                  <CanvasEditor key={`${p.id}:${selected?.key}`} readOnly={p.protected} slide={slide} theme={theme} background={background} bgEffect={p.bgEffect}
+                  <CanvasEditor key={masterMode ? `${p.id}:master:${slide.id}` : `${p.id}:${selected?.key}`} readOnly={p.protected} slide={slide} theme={theme} background={background} bgEffect={p.bgEffect}
                     selected={sel} onSelect={setSel} tool={tool} onToolDone={() => setTool(null)} view={view} badges={badges} defaultShape={p.defaultShape} customGuides={view.guides ? p.guides : undefined} onGuidesChange={p.protected ? undefined : (g) => ed.updatePres({ guides: g.v.length || g.h.length ? g : undefined })}
                     pickPicture={() => pickPictureFile(dispatch)} onPasteSlides={async (snap) => { if (!canPasteSlides()) return true; return (await pasteDeck(snap, { preferShapes: true })) !== 'none'; }} motionPaths onAddMedia={(m) => dispatch({ type: 'media/add', media: m })}
                     onLockedDelete={cmd.locked && state.live.slide?.id === slide.id ? () => cmd.notify(LOCK_MSG) : undefined}
-                    onChange={(patch) => dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch })} />
+                    onChange={(patch) => updateSlide(patch)} />
                   {preview && <PlayPreview ed={ed} what={preview} onDone={() => setPreview(null)} />}
                 </div>
               ) : (
@@ -537,7 +569,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
                 </div>
               )}
             </div>
-            {p && slide && notesOpen && (
+            {p && slide && notesOpen && !masterMode && (
               <AutoTextarea disabled={p.protected} className="ppt-notes" placeholder="슬라이드 노트를 추가하려면 클릭하세요"
                 value={slide.notes ?? ''} onChange={(e) => dispatch({ type: 'slide/update', presentationId: p.id, slideId: slide.id, seq: selected?.seq, sequenceLength: sequence(p).length, patch: { notes: e.target.value || undefined } })} />
             )}
@@ -548,7 +580,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
           <aside className="ppt-format">
             {pane === 'format' && (
               <>
-                <div className="task-head"><span>{ed.selEls.length ? '개체 서식' : `서식 · 슬라이드 ${index + 1}`}</span><button type="button" className="task-x" onClick={() => setPane(null)}>✕</button></div>
+                <div className="task-head"><span>{ed.selEls.length ? '개체 서식' : masterMode ? '배경 서식 · 슬라이드 마스터' : `서식 · 슬라이드 ${index + 1}`}</span><button type="button" className="task-x" onClick={() => setPane(null)}>✕</button></div>
                 <SlideFormat state={state} dispatch={editDispatch} presentation={p} slide={slide} onDesign={() => undefined}
                   selectedId={ed.selEls.length === 1 ? ed.selEls[0].id : sel.includes(SLIDE_TEXT) ? null : null} onSelect={(id) => setSel(id ? [id] : [])} cell={cell} onCell={setCell} />
               </>
@@ -556,6 +588,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
             {pane === 'animation' && <AnimationPane ed={ed} onPlay={() => setPreview('animation')} />}
             {pane === 'selection' && <SelectionPane ed={ed} />}
             {pane === 'designer' && <DesignerPane ed={ed} />}
+            {pane === 'smartart' && <SmartArtTextPane ed={ed} />}
             {pane === 'spelling' && <SpellingPane ed={ed} />}
             {pane === 'revisions' && <RevisionsPane ed={ed} />}
             {pane === 'comments' && <CommentsPane ed={ed} draftOpen={commentDraft} onDraftDone={() => setCommentDraft(false)} />}

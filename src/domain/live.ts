@@ -1,4 +1,5 @@
 import type { Background, Library, LiveState, Playlist, Presentation, Slide, Theme } from './types';
+import { inkKey } from './showScreen';
 import { sequence } from './arrangement';
 import { resolveBackground } from './autoBackground';
 import { songKey, stageSettingsFor } from './chordChart';
@@ -162,6 +163,10 @@ export function goLive<S extends NavState>(s: S, c: Cursor, now: number = Date.n
       build: p.showSetup?.noAnimation ? undefined : initialBuild(slide, now, transitionHold(s.live.slide, slide, transition)),
       number: c.seq + 1,
       mediaControls: !p.showSetup?.noMediaControls,
+      inkKey: inkKey(p.id, c.seq),
+      white: false,
+      ended: false,
+      zoom: null,
       black: false,
       songKey: songKey(p),
       ...(entering ? songKeyOnStage(s, p) : {}),

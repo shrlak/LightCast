@@ -390,6 +390,11 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
         <DropButton big icon={RI.arrange} label="정렬" render={(close) => <ArrangeMenu ed={ed} close={close} />} />
         <ShapeStyleButtons ed={ed} big />
       </Group>
+      <Group label="그림">
+        <Big icon={RI.picture} label="그림" title="이 장치의 그림 삽입" disabled={!ed.slide || !ed.canEdit} onClick={() => void import('./PptLayout').then(({ pickPictureFile }) => pickPictureFile(ed.dispatch)).then((id) => {
+          if (id) ed.addElement({ id: uid('el'), kind: 'image', mediaId: id, fit: 'contain', x: 320, y: 240, w: 800, h: 600, name: '그림' });
+        })} />
+      </Group>
       <Group label="편집">
         <Col>
           <Small icon={RI.find} label="찾기" title="찾기 (Ctrl+F)" onClick={onFind} />
@@ -407,6 +412,7 @@ export function HomeTab({ ed, onFind, onReplace }: { ed: Ed; onFind: () => void;
             </>
           )} />
         </Col>
+        <Big icon={RI.selectionPane} label="선택 창" active={ed.pane === 'selection'} onClick={() => ed.setPane(ed.pane === 'selection' ? null : 'selection')} />
       </Group>
       <Group label="디자이너">
         <Big icon={<span style={{ fontSize: 24 }}>✨</span>} label="디자인 아이디어" title="이 슬라이드의 제목 · 내용 · 그림을 여러 가지로 배치해 봅니다" active={ed.pane === 'designer'} disabled={!ed.slide} onClick={() => ed.setPane(ed.pane === 'designer' ? null : 'designer')} />

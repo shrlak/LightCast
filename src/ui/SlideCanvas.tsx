@@ -30,6 +30,24 @@ import { ChartElement, IconElement, InkElement, ShapeElement, TableElement, effe
 
 export { CANVAS_W, CANVAS_H } from '../domain/canvas';
 import { CANVAS_W, CANVAS_H } from '../domain/canvas';
+import { END_OF_SHOW, strokePath, type ShowStroke, type ShowZoom } from '../domain/showScreen';
+
+/** 슬라이드 확대: the canvas scaled about the zoom point, kept inside the slide (after the canvas's own scale). */
+export function zoomTransform(z: ShowZoom | null | undefined): string {
+  if (!z || z.scale <= 1) return '';
+  const hw = CANVAS_W / (2 * z.scale), hh = CANVAS_H / (2 * z.scale);
+  const cx = Math.max(hw, Math.min(CANVAS_W - hw, z.x)), cy = Math.max(hh, Math.min(CANVAS_H - hh, z.y));
+  return ` translate(${CANVAS_W / 2}px, ${CANVAS_H / 2}px) scale(${z.scale}) translate(${-cx}px, ${-cy}px)`;
+}
+
+/** Ink written in the slide show (pen and highlighter strokes). */
+export function InkLayer({ strokes }: { strokes: ShowStroke[] }) {
+  return (
+    <svg className="layer show-ink" viewBox={`0 0 ${CANVAS_W} ${CANVAS_H}`} width={CANVAS_W} height={CANVAS_H} aria-hidden>
+      {strokes.map((s, i) => <path key={i} d={strokePath(s.points)} fill="none" stroke={s.color} strokeWidth={s.width} strokeLinecap={s.highlighter ? 'square' : 'round'} strokeLinejoin="round" opacity={s.highlighter ? 0.45 : 1} />)}
+    </svg>
+  );
+}
 import { pictureLookCss } from './pictureStyles';
 import { formatDateField } from '../domain/insertTools';
 import { patternPath } from '../domain/patterns';
@@ -45,6 +63,14 @@ export interface CanvasProps {
   theme: Theme;
   background: Background | null;
   black?: boolean;
+  /** 흰색 화면 (W), as PowerPoint's slide show. */
+  white?: boolean;
+  /** The black "슬라이드 쇼 마지막입니다" screen after the last slide. */
+  ended?: boolean;
+  /** Ink written on this slide in the show. */
+  ink?: ShowStroke[];
+  /** 슬라이드 확대: the part of the slide shown larger. */
+  zoom?: ShowZoom | null;
   message?: string | null;
   props?: Prop[];
   timers?: Timer[];
@@ -911,7 +937,7 @@ export function SlideCanvas(p: CanvasProps) {
       <ShowContext.Provider value={!!p.animate}>
       <MediaControlsContext.Provider value={!!p.animate && !!p.mediaControls}>
       <SlideNumberContext.Provider value={p.number}>
-      <div className={`canvas ${matte ? 'matte' : ''}`} style={{ transform: `scale(${width / CANVAS_W})`, width: CANVAS_W, height: CANVAS_H }}>
+      <div className={`canvas ${matte ? 'matte' : ''}`} style={{ transform: `scale(${width / CANVAS_W})${zoomTransform(p.zoom)}`, width: CANVAS_W, height: CANVAS_H }}>
         {layers.background && !matte && (
           <div className="layer bg-layer" style={fx?.blur ? { filter: `blur(${fx.blur}px)`, inset: -fx.blur * 2 } : undefined}>
             <BackgroundLayer background={frame.background} animate={!!p.animate} video={p.video} onTime={p.onVideoTime} />
@@ -935,7 +961,10 @@ export function SlideCanvas(p: CanvasProps) {
           <div className={`message-bar ${p.messageScroll ? 'ticker' : ''}`}>{p.messageScroll ? <span>{p.message}</span> : p.message}</div>
         )}
         {p.logo && <LogoLayer mediaId={p.logoMediaId ?? null} />}
+        {!!p.ink?.length && <InkLayer strokes={p.ink} />}
         {p.black && <div className="layer" style={{ background: '#000' }} />}
+        {p.white && <div className="layer" style={{ background: '#fff' }} />}
+        {p.ended && <div className="layer show-ended"><span>{END_OF_SHOW}</span></div>}
         {mask && <div className="layer screen-mask" style={mask} />}
       </div>
       </SlideNumberContext.Provider>

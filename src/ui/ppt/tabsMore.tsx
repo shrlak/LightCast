@@ -130,9 +130,9 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
         <Big icon={RI.readingView} label="읽기용 보기" onClick={onReading} />
       </Group>
       <Group label="마스터 보기">
-        <Big icon="▤" label="슬라이드 마스터" title="모든 슬라이드에 나오는 개체와 배경" disabled={!ed.p} onClick={() => ed.setDialog('master')} />
-        <Big icon="▥" label="유인물 마스터" title="유인물 인쇄: 페이지당 슬라이드 수, 머리글 · 바닥글" disabled={!ed.p} onClick={() => ed.setDialog('handoutMaster')} />
-        <Big icon="▦" label="슬라이드 노트 마스터" title="슬라이드 노트 페이지 인쇄 모양" disabled={!ed.p} onClick={() => ed.setDialog('notesMaster')} />
+        <Big icon="▤" label="슬라이드 마스터" title="모든 슬라이드에 나오는 개체 · 배경과 레이아웃을 편집합니다" disabled={!ed.p} active={ed.master?.mode?.kind === 'slide'} onClick={() => (ed.master?.mode?.kind === 'slide' ? ed.master.close() : ed.master?.open('slide'))} />
+        <Big icon="▥" label="유인물 마스터" title="유인물 인쇄: 페이지당 슬라이드 수, 머리글 · 바닥글" disabled={!ed.p} active={ed.master?.mode?.kind === 'handout'} onClick={() => (ed.master?.mode?.kind === 'handout' ? ed.master.close() : ed.master?.open('handout'))} />
+        <Big icon="▦" label="슬라이드 노트 마스터" title="슬라이드 노트 페이지 인쇄 모양" disabled={!ed.p} active={ed.master?.mode?.kind === 'notes'} onClick={() => (ed.master?.mode?.kind === 'notes' ? ed.master.close() : ed.master?.open('notes'))} />
       </Group>
       <Group label="표시">
         <Col>
