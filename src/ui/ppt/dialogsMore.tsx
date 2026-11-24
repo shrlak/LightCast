@@ -109,8 +109,9 @@ function SetupShowDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
   const [noTransitions, setNoTransitions] = useState(!!p?.showSetup?.noTransitions);
   const [manual, setManual] = useState(!!p?.showSetup?.manual);
   const [noNarration, setNoNarration] = useState(!!p?.showSetup?.noNarration);
+  const [noMediaControls, setNoMediaControls] = useState(!!p?.showSetup?.noMediaControls);
   const ok = () => {
-    const showSetup = { ...(noAnimation ? { noAnimation } : {}), ...(noTransitions ? { noTransitions } : {}), ...(manual ? { manual } : {}), ...(noNarration ? { noNarration } : {}) };
+    const showSetup = { ...(noAnimation ? { noAnimation } : {}), ...(noTransitions ? { noTransitions } : {}), ...(manual ? { manual } : {}), ...(noNarration ? { noNarration } : {}), ...(noMediaControls ? { noMediaControls } : {}) };
     ed.updatePres({ loop: loop || undefined, showSetup: Object.keys(showSetup).length ? showSetup : undefined });
     onClose();
   };
@@ -122,6 +123,7 @@ function SetupShowDialog({ ed, onClose }: { ed: Ed; onClose: () => void }) {
         <Check label="애니메이션 없이 보기" checked={noAnimation} onChange={setNoAnimation} />
         <Check label="화면 전환 없이 보기" checked={noTransitions} onChange={setNoTransitions} />
         <Check label="녹음된 내레이션 재생 (슬라이드 쇼 녹화)" checked={!noNarration} onChange={(v) => setNoNarration(!v)} />
+        <Check label="미디어 컨트롤 표시 (쇼에서 비디오를 가리키면 재생 막대)" checked={!noMediaControls} onChange={(v) => setNoMediaControls(!v)} />
       </fieldset>
       <fieldset className="dlg-set">
         <legend>화면 전환</legend>

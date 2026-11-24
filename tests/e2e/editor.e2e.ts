@@ -65,7 +65,7 @@ describe('editor features', () => {
       await page.mouse.up();
     };
     await page.getByRole('button', { name: '잉크를 셰이프로' }).click();
-    await page.getByRole('button', { name: '펜', exact: true }).first().click();
+    await page.getByRole('button', { name: '검은색 펜', exact: true }).click();
     await rectangle(0.55);
     await page.waitForTimeout(500);
     expect(await clear.isDisabled()).toBe(true); // converted: no ink left

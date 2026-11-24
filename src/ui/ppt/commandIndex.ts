@@ -3,7 +3,7 @@ import { commandId, commandLabel, dedupeCommands, menuCommands, menuItemLabel, n
 /** Buttons that are not commands of their own: a split button's arrow, a group's dialog launcher. */
 const SKIP = '.rb-launcher, .rb-caret, .rb-split-caret, .ppt-caret-btn, [data-tellme-skip]';
 
-const groupOf = (el: Element) => {
+export const groupOf = (el: Element) => {
   const g = el.closest('.rb-group')?.querySelector(':scope > .rb-group-label');
   const first = [...(g?.childNodes ?? [])].find((n) => n.nodeType === Node.TEXT_NODE);
   return first?.textContent?.trim() || undefined;

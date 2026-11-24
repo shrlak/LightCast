@@ -33,6 +33,22 @@ function installedFonts(): string[] {
   return installed;
 }
 
+/**
+ * 설치된 글꼴 다시 검색 (DeckCraft's font.rescan): fonts installed while LightCast runs. The candidates are
+ * measured again and, where the browser lets LightCast list the computer's fonts (queryLocalFonts), every
+ * installed family is added. Resolves to the number of fonts listed.
+ */
+export async function rescanInstalledFonts(query?: () => Promise<{ family: string }[]>): Promise<number> {
+  installed = null;
+  const found = new Set(installedFonts());
+  const q = query ?? (typeof window !== 'undefined' ? (window as unknown as { queryLocalFonts?: () => Promise<{ family: string }[]> }).queryLocalFonts?.bind(window) : undefined);
+  if (q) {
+    try { for (const f of await q()) if (f.family) found.add(f.family); } catch { /* permission refused: the measured candidates stay */ }
+  }
+  installed = [...found].sort((a, b) => a.localeCompare(b, 'ko'));
+  return installed.length;
+}
+
 export function FontPicker({ value, mixed, theme, onChange }: {
   /** The CSS font stack of the selection (undefined: the theme's font). */
   value?: string;
@@ -58,7 +74,8 @@ export function FontPicker({ value, mixed, theme, onChange }: {
   }, [open]);
   const imported = useImportedFonts();
   const importedList = useMemo(() => groupFamilies(imported).map((g): FontEntry => ({ label: g.family, family: officeFont(g.family) })), [imported]);
-  const all = useMemo(() => (open ? fontEntries(installedFonts()) : []), [open]);
+  const [scan, setScan] = useState(0);
+  const all = useMemo(() => (open ? fontEntries(installedFonts()) : []), [open, scan]);
   const q = typed ? text.trim().toLowerCase() : '';
   const list = q ? all.filter((f) => f.label.toLowerCase().includes(q)) : all;
   const importedShown = q ? importedList.filter((f) => f.label.toLowerCase().includes(q)) : importedList;
@@ -98,6 +115,7 @@ export function FontPicker({ value, mixed, theme, onChange }: {
             <button key={f.label} type="button" role="option" aria-selected={f.family === value} className={`ppt-item font-item ${f.family === value ? 'on' : ''}`} style={{ fontFamily: f.family }} onClick={() => pick(f)}>{f.label}</button>
           ))}
           {q && !list.length && !importedShown.length && <div className="ppt-item muted">Enter: “{text.trim()}” 글꼴 사용</div>}
+          <button type="button" className="ppt-item font-item font-import" title="LightCast를 켠 뒤 설치한 글꼴도 목록에 넣습니다" onClick={() => void rescanInstalledFonts().then(() => setScan((n) => n + 1))}>설치된 글꼴 다시 검색</button>
           <FontImportButton className="ppt-item font-item font-import" label="글꼴 가져오기…" />
         </div>
       )}

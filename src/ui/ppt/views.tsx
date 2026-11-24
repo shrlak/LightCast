@@ -342,14 +342,15 @@ export function PlayPreview({ ed, what, onDone }: { ed: Ed; what: 'transition' |
 }
 
 // ── File (backstage) ──────────────────────────────────────────────────────────────────────────
-type Page = 'home' | 'open' | 'info' | 'save' | 'print' | 'export';
+export type BackstagePage = 'home' | 'open' | 'info' | 'save' | 'print' | 'export';
+type Page = BackstagePage;
 
 function Card({ icon, title, text, onClick, disabled }: { icon: ReactNode; title: string; text?: string; onClick: () => void; disabled?: boolean }) {
   return <button type="button" className="bs-card" disabled={disabled} onClick={onClick}><span className="bs-card-icon">{icon}</span><b>{title}</b>{text && <small>{text}</small>}</button>;
 }
 
-export function Backstage({ ed, onClose }: { ed: Ed; onClose: () => void }) {
-  const [page, setPage] = useState<Page>('home');
+export function Backstage({ ed, onClose, initial = 'home' }: { ed: Ed; onClose: () => void; initial?: Page }) {
+  const [page, setPage] = useState<Page>(initial);
   const { cmd, p, state } = ed;
   const lib = state.library;
   const run = (fn: () => void) => { fn(); onClose(); };

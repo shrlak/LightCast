@@ -5,13 +5,15 @@ import { HomeTab, InsertTab, DrawTab } from './tabsMain';
 import { DesignTab, TransitionsTab, AnimationsTab } from './tabsShow';
 import { SlideShowTab, ReviewTab, ViewTab, WorshipTab, ToolsTab } from './tabsMore';
 import { TellMe } from './TellMe';
+import { QuickAccess, RibbonContextMenu, pressRibbonItem, ribbonItemAt, useQat } from './Qat';
+import type { QatCommand, QatItem } from '../../domain/qat';
 import { CONTEXT_LABEL, ContextTabBody, contextTabs, type ContextTab } from './tabsContext';
 
 const TABS = ['홈', '삽입', '그리기', '디자인', '전환', '애니메이션', '슬라이드 쇼', '검토', '보기', '예배', '도구'] as const;
 type Tab = (typeof TABS)[number] | ContextTab;
 
 export interface RibbonActions {
-  onBackstage: () => void;
+  onBackstage: (page?: import('./views').BackstagePage) => void;
   onFind: () => void;
   onReplace: () => void;
   onLink: () => void;
@@ -34,16 +36,32 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
   const busy = cmd.service.busy;
   const title = p ? `${p.title} - LightCast` : 'LightCast';
   const showBody = !collapsed || peek;
+  const [qat, setQat] = useQat();
+  const [rbMenu, setRbMenu] = useState<null | { x: number; y: number; item: Extract<QatItem, { kind: 'ribbon' }> }>(null);
+  const runQat = (id: QatCommand) => {
+    switch (id) {
+      case 'home': return actions.onBackstage('home');
+      case 'new': return cmd.open('new');
+      case 'open': return actions.onBackstage('open');
+      case 'save': return cmd.exportPlaylistPptx();
+      case 'print': return actions.onBackstage('print');
+      case 'undo': return dispatch({ type: 'undo' });
+      case 'redo': return dispatch({ type: 'redo' });
+      case 'fromStart': return cmd.startShow(false);
+      case 'find': return actions.onFind();
+      case 'spelling': return ed.setPane(ed.pane === 'spelling' ? null : 'spelling');
+      case 'export': return actions.onBackstage('export');
+    }
+  };
+  const qatEnabled = (id: QatCommand) => (id === 'undo' ? !!state.past.length : id === 'redo' ? !!state.future.length : id === 'fromStart' || id === 'save' ? !!p : true);
   return (
     <div className="ribbon pp" onMouseLeave={() => collapsed && setPeek(false)}>
       <div className="pp-title">
         <div className="pp-qat">
           <img className="pp-logo" src="/favicon.png" alt="" />
           <span className="pp-autosave" title="바꾸는 즉시 저장됩니다">자동 저장 <b className="on">켬</b></span>
-          <button type="button" title="저장 — PowerPoint 파일로 (재생목록)" onClick={cmd.exportPlaylistPptx}>💾</button>
-          <button type="button" title="실행 취소 (Ctrl+Z)" disabled={!state.past.length} onClick={() => dispatch({ type: 'undo' })}>↶</button>
-          <button type="button" title="다시 실행 (Ctrl+Y)" disabled={!state.future.length} onClick={() => dispatch({ type: 'redo' })}>↷</button>
-          <button type="button" title="처음부터 시작 (F5)" disabled={!p} onClick={() => cmd.startShow(false)}>▣</button>
+          <QuickAccess items={qat} setItems={setQat} run={runQat} enabled={qatEnabled}
+            press={(item) => { setTab(item.tab as Tab); if (collapsed) setPeek(true); pressRibbonItem(item, () => cmd.notify(`'${item.label}'은(는) 지금 사용할 수 없습니다 — 먼저 개체나 글을 선택하세요`)); }} />
         </div>
         <div className="pp-name" title={title}>{title}</div>
         <button type="button" className="pp-search" title="검색 — 가사 · 성경 · 광고 (Ctrl+K)" onClick={() => cmd.open('find')}>🔍 검색</button>
@@ -58,7 +76,7 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
         <button type="button" className="pp-pill pp-gear" onClick={() => cmd.open('settings')} title="옵션 — 업데이트 · 출력 화면 · 리모컨 · AI · 장비" aria-label="옵션">⚙</button>
       </div>
       <div className="pp-tabs" role="tablist">
-        <button type="button" className="pp-tab file" onClick={actions.onBackstage}>파일</button>
+        <button type="button" className="pp-tab file" onClick={() => actions.onBackstage()}>파일</button>
         {TABS.map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={`pp-tab ${tab === t ? 'on' : ''} ${t === '예배' || t === '도구' ? 'addin' : ''}`} onClick={() => pick(t)} onDoubleClick={() => { setCollapsed(!collapsed); setPeek(false); }}>{t}</button>
         ))}
@@ -72,7 +90,12 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
         <button type="button" className="pp-collapse" title={collapsed ? '리본 고정' : '리본 축소 (탭을 두 번 클릭)'} onClick={() => { setCollapsed(!collapsed); setPeek(false); }}>{collapsed ? '⌄' : '⌃'}</button>
       </div>
       {showBody && (
-        <div className={`rb-body ${collapsed ? 'floating' : ''}`}>
+        <div className={`rb-body ${collapsed ? 'floating' : ''}`} onContextMenu={(e) => {
+          const item = ribbonItemAt(e.target, tab);
+          if (!item) return;
+          e.preventDefault();
+          setRbMenu({ x: e.clientX, y: e.clientY, item });
+        }}>
           {tab === '홈' && <HomeTab ed={ed} onFind={actions.onFind} onReplace={actions.onReplace} />}
           {tab === '삽입' && <InsertTab ed={ed} onLink={actions.onLink} onComment={actions.onComment} />}
           {tab === '그리기' && <DrawTab ed={ed} />}
@@ -87,6 +110,7 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
           {ctx.includes(tab as ContextTab) && <ContextTabBody tab={tab as ContextTab} ed={ed} />}
         </div>
       )}
+      {rbMenu && <RibbonContextMenu at={rbMenu} item={rbMenu.item} items={qat} setItems={setQat} onClose={() => setRbMenu(null)} />}
     </div>
   );
 }

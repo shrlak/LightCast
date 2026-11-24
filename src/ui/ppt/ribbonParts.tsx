@@ -173,6 +173,29 @@ export const MenuHead = ({ children }: { children: ReactNode }) => <div classNam
 export const MenuSep = () => <div className="rb-ms" />;
 
 /** PowerPoint's colour picker: theme colours with their shades and the standard colours (from the engine). */
+/** The browser's eyedropper (Chromium / Electron): a click anywhere on screen names the colour under the pointer. */
+type EyeDropperApi = { open: () => Promise<{ sRGBHex: string }> };
+const eyeDropperCtor = (): (new () => EyeDropperApi) | undefined =>
+  typeof window === 'undefined' ? undefined : (window as unknown as { EyeDropper?: new () => EyeDropperApi }).EyeDropper;
+
+/** #rrggbb from what an eyedropper hands back (#rrggbb, or rgb(…) in some engines). */
+export function eyedropHex(v: string): string | null {
+  const s = v.trim().toLowerCase();
+  if (/^#[0-9a-f]{6}$/.test(s)) return s;
+  const m = s.match(/^rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/);
+  return m ? `#${m.slice(1, 4).map((n) => Math.min(255, Number(n)).toString(16).padStart(2, '0')).join('')}` : null;
+}
+
+/**
+ * 스포이트 (DeckCraft's Eyedropper in every colour menu): click the slide to take the colour drawn under the
+ * pointer; Esc cancels. Resolves to the colour, or null when cancelled or not available.
+ */
+export async function pickScreenColor(): Promise<string | null> {
+  const Ctor = eyeDropperCtor();
+  if (!Ctor) return null;
+  try { return eyedropHex((await new Ctor().open()).sRGBHex); } catch { return null; }
+}
+
 export function ColorGrid({ value, onPick, onNone, noneLabel = '없음', scheme }: { value?: string; onPick: (c: string) => void; onNone?: () => void; noneLabel?: string; scheme?: string }) {
   const pal = colorPalette(scheme);
   const input = useRef<HTMLInputElement>(null);
@@ -192,6 +215,7 @@ export function ColorGrid({ value, onPick, onNone, noneLabel = '없음', scheme 
         </>
       ) : <div className="rb-chip-row">{['#ffffff', '#000000', '#c00000', '#ff0000', '#ffc000', '#ffff00', '#92d050', '#00b050', '#0070c0', '#7030a0'].map((c) => chip(c, ''))}</div>}
       <MenuItem label="다른 색…" onClick={() => input.current?.click()} />
+      {eyeDropperCtor() && <MenuItem icon="💧" label="스포이트" hint="슬라이드를 클릭" onClick={() => void pickScreenColor().then((c) => c && onPick(c))} />}
       <input ref={input} type="color" hidden value={(value ?? '#000000').slice(0, 7)} onChange={(e) => onPick(e.target.value)} />
     </div>
   );

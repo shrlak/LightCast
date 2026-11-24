@@ -1,7 +1,9 @@
 import { isSvgzName } from '../../domain/svgPicture';
 import { activeTextEditor } from '../RichTextEditor';
 import { copyFormat, finishPainter, heldFormat, holdFormat } from '../../domain/formatPainter';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type Dispatch } from 'react';
+import { getAppearance, onAppearance } from '../../domain/appearance';
+import './dark.css';
 import type { Action, AppState } from '../../domain/reducer';
 import type { Slide, SlideElement } from '../../domain/types';
 import { blankSlide, uid } from '../../domain/lyrics';
@@ -30,7 +32,7 @@ import { selectedEls, type Ed, type TableRange, type TaskPane, type DialogKind }
 import { AnimationPane, CommentsPane, SelectionPane } from './panes';
 import { DesignerPane } from './designTab';
 import { Dialogs } from './dialogs';
-import { RevisionsPane, SpellingPane } from './reviewPanes';
+import { LANGUAGES, RevisionsPane, SpellingPane } from './reviewPanes';
 import { uid as newId } from '../../domain/lyrics';
 import { pasteSlides } from './pasteSlides';
 import { snapshotDataTransfer, type ClipSnapshot } from '../clipboardSlides';
@@ -51,7 +53,7 @@ function pickPictureFile(dispatch: Dispatch<Action>): Promise<string | null> {
   });
 }
 import { withMaster } from '../../domain/master';
-import { Backstage, FindReplaceDialog, NotesPageView, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
+import { Backstage, type BackstagePage, FindReplaceDialog, NotesPageView, OutlineView, PlayPreview, ReadingView, SlideSorter } from './views';
 import { zoomStep } from '../../domain/viewOptions';
 import { Menu, MenuItem, MenuSep } from './ribbonParts';
 import { isMetafileName } from '../../domain/metafile/image';
@@ -83,6 +85,13 @@ interface Props {
 
 /** The PowerPoint window: title bar and ribbon, slide thumbnails, the slide with its notes, task panes and the status bar. */
 export function PptLayout({ state, dispatch, cmd }: Props) {
+  // 보기 › 어두운 모드: the editor window's own look (its slides and the output screens stay as they are).
+  const appearance = useSyncExternalStore(onAppearance, getAppearance);
+  useEffect(() => {
+    const html = document.documentElement;
+    if (appearance === 'dark') html.dataset.appearance = 'dark'; else delete html.dataset.appearance;
+    return () => { delete html.dataset.appearance; };
+  }, [appearance]);
   const [sectionRequest, setSectionRequest] = useState<{ presentationId: string; ids: string[]; initialValue: string } | null>(null);
   const [leftTab, setLeftTab] = useState<'slides' | 'library' | 'media'>('slides');
   /** Objects selected on the slide. */
@@ -100,7 +109,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const [zoom, setZoom] = useState<number | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);
   const [cell, setCell] = useState<TableRange>({ r: 0, c: 0, r1: 0, c1: 0 });
-  const [backstage, setBackstage] = useState(false);
+  const [backstage, setBackstage] = useState<false | BackstagePage>(false);
   const [find, setFind] = useState<null | 'find' | 'replace'>(null);
   const [preview, setPreview] = useState<null | 'transition' | 'animation'>(null);
   const [reading, setReading] = useState<false | { ids?: string[]; rehearse?: boolean }>(false);
@@ -385,7 +394,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const shownZoom = zoom ?? (stageW ? stageW / ACTUAL_W : 1);
   const badges = useMemo(() => (slide?.animations?.length ? animationBadges(slide) : undefined), [slide]);
   const actions = {
-    onBackstage: () => setBackstage(true),
+    onBackstage: (page: BackstagePage = 'home') => setBackstage(page),
     onFind: () => setFind('find'),
     onReplace: () => setFind('replace'),
     onLink: () => setLinking(activeTextEditor()?.hasSelection() ? 'text' : 'object'),
@@ -399,7 +408,14 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
   const statusBar = (
     <footer className="ppt-status pp-status">
       <span>{p && index >= 0 ? `슬라이드 ${index + 1}/${p.slides.length}` : '프레젠테이션 없음'}</span>
-      <span className="pp-status-item">한국어</span>
+      {(() => {
+        // The language of the selected text (else the slide's), as DeckCraft's status bar shows it; a click opens 언어.
+        const sel = ed.selEls.find((e) => e.kind === 'text' || e.kind === 'shape' || e.kind === 'table');
+        const code = sel?.lang ?? slide?.lang ?? 'ko-KR';
+        const name = LANGUAGES.find(([v]) => v === code)?.[1] ?? code;
+        const off = sel?.noProof ?? slide?.noProof;
+        return <button type="button" className="pp-status-btn pp-status-lang" title="언어 — 교정 언어 설정" disabled={!p} onClick={() => setDialog('language')}>{name}{off ? ' (검사 안 함)' : ''}</button>;
+      })()}
       <span className="ppt-team" title="KCCP 빛주사랑 대학청년부 미디어팀"><img src="/media-team-logo.png" alt="" />KCCP 미디어팀</span>
       <span className="grow" />
       <button type="button" className={`ppt-lock ${cmd.locked ? 'on' : 'off'}`} onClick={() => cmd.setLocked(!cmd.locked)} aria-pressed={cmd.locked}
@@ -587,7 +603,7 @@ export function PptLayout({ state, dispatch, cmd }: Props) {
       {dialog && <Dialogs ed={ed} kind={dialog} onClose={() => setDialog(null)} />}
       {find && <FindReplaceDialog ed={ed} replace={find === 'replace'} onClose={() => setFind(null)} />}
       {reading && <ReadingView ed={ed} ids={reading.ids} rehearse={reading.rehearse} onClose={() => setReading(false)} />}
-      {backstage && <Backstage ed={ed} onClose={() => setBackstage(false)} />}
+      {backstage && <Backstage ed={ed} initial={backstage} onClose={() => setBackstage(false)} />}
     </div>
   );
 }

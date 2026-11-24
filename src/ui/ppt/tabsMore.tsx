@@ -1,6 +1,7 @@
 // 슬라이드 쇼 · 검토 · 보기 tabs, and LightCast's own 예배 · 도구 tabs (like an add-in's tabs).
 import { arrangeAllWindows, openNewWindow } from './windowCommands';
-import { useRef, useState, type MouseEvent } from 'react';
+import { getAppearance, onAppearance, setAppearance } from '../../domain/appearance';
+import { useRef, useState, useSyncExternalStore, type MouseEvent } from 'react';
 import { openOutput } from '../outputWindows';
 import { openMixerWindow } from '../MixerPanel';
 import { MaterialProtectionButton } from '../MaterialProtection';
@@ -40,6 +41,7 @@ export function SlideShowTab({ ed }: { ed: Ed }) {
           <label className="rb-check"><input type="checkbox" disabled={!p || !!p.protected} checked={!p?.showSetup?.manual} onChange={(e) => ed.updatePres({ showSetup: { ...p?.showSetup, manual: e.target.checked ? undefined : true } })} /> 타이밍 사용</label>
           <Small icon="▶" label="송출 없이 넘겨 보기" disabled={!p} onClick={() => cmd.open('rehearsal')} />
           <label className="rb-check" title="녹음된 내레이션을 쇼에서 재생합니다"><input type="checkbox" disabled={!p || !!p.protected} checked={!p?.showSetup?.noNarration} onChange={(e) => ed.updatePres({ showSetup: { ...p?.showSetup, noNarration: e.target.checked ? undefined : true } })} /> 내레이션 재생</label>
+          <label className="rb-check" title="슬라이드 쇼에서 비디오를 가리키면 재생 · 일시 중지 · 위치 막대가 나옵니다"><input type="checkbox" disabled={!p || !!p.protected} checked={!p?.showSetup?.noMediaControls} onChange={(e) => ed.updatePres({ showSetup: { ...p?.showSetup, noMediaControls: e.target.checked ? undefined : true } })} /> 미디어 컨트롤 표시</label>
           <Small icon="✕" label="타이밍 지우기" disabled={!p?.slides.some((s) => s.autoAdvance) || !ed.canEdit} onClick={() => p && ed.updatePres({ slides: p.slides.map((s) => ({ ...s, autoAdvance: undefined })) })} />
         </Col>
       </Group>
@@ -110,6 +112,12 @@ export function ReviewTab({ ed, onComment }: { ed: Ed; onComment: () => void }) 
 
 const ZOOMS = [400, 200, 150, 100, 75, 66, 50, 33];
 
+/** 보기 › 어두운 모드: the editor window dark or light (this computer). */
+function DarkModeButton() {
+  const dark = useSyncExternalStore(onAppearance, getAppearance) === 'dark';
+  return <Big icon="🌙" label="어두운 모드" title="편집 창을 어둡게 봅니다 (슬라이드와 출력 화면은 그대로)" active={dark} onClick={() => setAppearance(dark ? 'light' : 'dark')} />;
+}
+
 export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () => void; onReading: () => void }) {
   const { cmd } = ed;
   return (
@@ -144,6 +152,7 @@ export function ViewTab({ ed, onOutline, onReading }: { ed: Ed; onOutline: () =>
           <Small icon="🎨" label="컬러" active={!ed.view.grayscale && !ed.view.gray} onClick={() => ed.setView({ ...ed.view, grayscale: undefined, gray: undefined })} />
           <Small icon="◐" label="회색조" title="슬라이드를 회색조로 봅니다 — 편집 화면 · 미리보기 · 슬라이드 정렬 · 읽기 보기 · 인쇄 (슬라이드 자체는 바뀌지 않습니다)" active={!!ed.view.grayscale || !!ed.view.gray} onClick={() => ed.setView({ ...ed.view, grayscale: true, gray: true })} />
         </Col>
+        <DarkModeButton />
       </Group>
       <Group label="창">
         <Big icon="🗗" label="새 창" title="같은 프레젠테이션을 다른 창에서 엽니다 (두 창의 변경은 서로 합쳐집니다)" onClick={() => void openNewWindow(ed.p?.id, cmd.notify)} />

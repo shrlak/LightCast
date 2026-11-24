@@ -161,6 +161,7 @@ export function goLive<S extends NavState>(s: S, c: Cursor, now: number = Date.n
       // The slide's animations wait for its transition (DeckCraft #2089).
       build: p.showSetup?.noAnimation ? undefined : initialBuild(slide, now, transitionHold(s.live.slide, slide, transition)),
       number: c.seq + 1,
+      mediaControls: !p.showSetup?.noMediaControls,
       black: false,
       songKey: songKey(p),
       ...(entering ? songKeyOnStage(s, p) : {}),

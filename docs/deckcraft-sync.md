@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=0ccc68f61ce171393d53b30b1c6cc45ac40be738
+DECKCRAFT_SYNCED=9db2fa0c
 ```
 
-(`test(pptx): require named chart and edited series values in PPTX/POTX/PPSX parity test (#2295)`.)
+(`docs: bring ROADMAP.md current through 2026-11-15 (#2138)`.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -126,3 +126,8 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
     bounds and POTX / PPSX export parity (`b16257a8`, `0ccc68f6`: LightCast's notes and handout masters are print
     settings, not shape trees, and it exports `.pptx` / `.ppt` only); MCP transcript tests (`83d9383c`, automation
     only); the shared AGENTS.md (`3ffeffcd`, docs). No Rust changed, so the wasm was not rebuilt.
+- `0ccc68f..9db2fa0` (7 commits, 2026-11-20 to 2026-11-23): `921b4558` (#2069, WMF SCALEVIEWPORTEXT / SCALEWINDOWEXT /
+  OFFSETVIEWPORTORG / OFFSETWINDOWORG place sub-pictures) is already right in `src/domain/metafile/wmf.ts`; its test picture
+  was added to `tests/deckcraftParity.test.ts`. The rest is CI and docs. No Rust changed.
+- 2026-11-24, full feature comparison (not one commit at a time): every DeckCraft command, ribbon tab, pane and dialog
+  against LightCast. What was added, what stays different and why: `docs/deckcraft-parity.md` (v1.2.9).

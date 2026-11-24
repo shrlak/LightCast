@@ -17,20 +17,21 @@ import { ChartMenu } from './chartMenu';
 import { ChartKindOptions } from './ElementFormat';
 import type { Ed } from './editor';
 import { PlaybackTab } from './tabPlayback';
+import { SmartArtDesignTab } from './tabSmartArt';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
 import { orderSelection, rotateSelection, flipSelection, groupSelection, ungroupSelection, canGroup, canUngroup, canRegroup, regroupSelection, canMerge, mergeSelection, pathShapeOf } from '../../domain/editOps';
 import { shapeToPath, smoothCorners, warpCatalog, warpGuides } from '../../engine';
 import { WARP_LABEL, polyD, warpPreset } from '../../domain/textWarp';
-import { editSmartArt, smartArtOwner, type OutlineOp } from '../../domain/smartArt';
+import { smartArtOwner } from '../../domain/smartArt';
 import { aspectLocked, fromCm, sizeUnit, toCm, type SizeSpec } from '../../domain/shapeOps';
 import { applyBorders, CELL_MARGINS, editCells, setTrackSize, trackSizes, type BorderMode } from '../../domain/tableBorders';
 import type { CellBorder, TableCell } from '../../engine';
 import { layoutTable } from '../../engine';
 
-export type ContextTab = 'shape' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart' | 'playback';
-export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인', playback: '재생' };
+export type ContextTab = 'shape' | 'smartArt' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart' | 'playback';
+export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', smartArt: 'SmartArt 디자인', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인', playback: '재생' };
 
 /** The contextual tabs for what is selected. */
 export function contextTabs(ed: Ed): ContextTab[] {
@@ -41,10 +42,12 @@ export function contextTabs(ed: Ed): ContextTab[] {
   if (kinds.size === 1 && kinds.has('image')) return ['picture'];
   // Video / Audio: their 서식 (shape) and 재생 tabs.
   if ([...kinds].every((k) => k === 'audio' || k === 'video')) return ['shape', 'playback'];
+  // A SmartArt graphic: 도형 서식 and its own SmartArt 디자인 tab (DeckCraft's Diagram Design).
+  if (smartArtOwner(ed.elements, ed.selEls)) return ['shape', 'smartArt'];
   return ['shape'];
 }
 
-function ArrangeGroup({ ed }: { ed: Ed }) {
+export function ArrangeGroup({ ed }: { ed: Ed }) {
   const sel = ed.selEls.map((e) => e.id);
   const act = (fn: (els: SlideElement[]) => SlideElement[]) => ed.setElements(fn);
   return (
@@ -151,60 +154,6 @@ export function ShapeFormatTab({ ed }: { ed: Ed }) {
         )} />
         <Small icon="★" label="기본 도형으로 설정" title="새로 그리는 도형이 이 서식을 따릅니다" disabled={shapes.length !== 1} onClick={() => { const e = shapes[0]; ed.updatePres({ defaultShape: defaultLook(e) }); ed.cmd.notify('새 도형이 이 서식으로 그려집니다'); }} />
       </Group>
-      {smartArtOwner(ed.elements, ed.selEls) && (
-        <Group label="SmartArt">
-          <Big icon="⧉" label="텍스트 창 · 레이아웃" title="SmartArt의 텍스트, 레이아웃, 스타일, 색 바꾸기" onClick={() => ed.setDialog('smartArt')} />
-          {(() => {
-            const owner = smartArtOwner(ed.elements, ed.selEls);
-            const go = (op: OutlineOp) => {
-              if (!owner) return;
-              const r = editSmartArt(ed.elements, owner, ed.sel.find((id) => id !== owner.id) ?? ed.sel[0], op, ed.p?.colorScheme);
-              if (!r) return ed.cmd.notify('이 도형에는 적용할 수 없습니다');
-              ed.setElements(() => r.elements); ed.setSel(r.ids);
-            };
-            const off = !owner || !ed.canEdit;
-            return (
-              <>
-                <DropButton big icon="＋" label="도형 추가" disabled={off} render={(close) => (
-                  <>
-                    {([['after', '뒤에 도형 추가'], ['before', '앞에 도형 추가'], ['above', '위에 도형 추가'], ['below', '아래에 도형 추가'], ['assistant', '어시스턴트 추가']] as const).map(([position, l]) => (
-                      <MenuItem key={position} label={l} onClick={() => { go({ kind: 'add', position }); close(); }} />
-                    ))}
-                  </>
-                )} />
-                <Col>
-                  <Small icon="⇦" label="수준 올리기" disabled={off} onClick={() => go({ kind: 'promote' })} />
-                  <Small icon="⇨" label="수준 내리기" disabled={off} onClick={() => go({ kind: 'demote' })} />
-                  <Small icon="⇄" label="오른쪽에서 왼쪽" active={!!owner?.smartArt?.rtl} disabled={off} onClick={() => go({ kind: 'rtl' })} />
-                </Col>
-                <Col>
-                  <Small icon="▲" label="위로 이동" disabled={off} onClick={() => go({ kind: 'up' })} />
-                  <Small icon="▼" label="아래로 이동" disabled={off} onClick={() => go({ kind: 'down' })} />
-                  <Small icon="↺" label="그래픽 원래대로" disabled={off} onClick={() => go({ kind: 'reset' })} />
-                </Col>
-              </>
-            );
-          })()}
-          <Big icon="🖼" label="그림 삽입" title="선택한 SmartArt 도형을 그림으로 채웁니다 (그림 레이아웃의 그림 자리)" disabled={ed.sel.length !== 1}
-            onClick={() => { const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/*,.wmf,.emf,.svgz'; inp.onchange = () => { const f = inp.files?.[0]; if (!f) return; const id = uid('m'); void putMedia(id, f).then(() => { ed.dispatch({ type: 'media/add', media: { id, name: f.name, type: 'image', backgroundHidden: true } }); ed.setElements((els) => els.map((e) => (e.id === ed.sel[0] ? { ...e, fillImage: id, pattern: undefined, gradient: undefined } : e))); }); }; inp.click(); }} />
-          <DropButton big icon="⇄" label="변환" render={(close) => {
-            const owner = smartArtOwner(ed.elements, ed.selEls);
-            return (
-              <>
-                <MenuItem label="도형으로 변환" onClick={() => { if (owner) ed.setElements((els) => els.map((e) => (e.id === owner.id ? { ...e, smartArt: undefined } : e))); close(); }} />
-                <MenuItem label="텍스트로 변환" onClick={() => {
-                  if (!owner?.smartArt) return close();
-                  const g = owner.groupId, sa = owner.smartArt;
-                  const box: SlideElement = { id: uid('el'), kind: 'text', text: sa.nodes.map((n) => n.text).join('\n'), x: sa.box.x, y: sa.box.y, w: sa.box.w, h: sa.box.h, fontSize: 48, color: '#ffffff', align: 'left', list: 'bullet' };
-                  ed.setElements((els) => [...els.filter((e) => (g ? e.groupId !== g : e.id !== owner.id)), box]);
-                  ed.setSel([box.id]);
-                  close();
-                }} />
-              </>
-            );
-          }} />
-        </Group>
-      )}
       <Group label="도형 스타일" launcher={ed.selEls.length === 1 ? () => ed.setPane('format') : undefined}><ShapeStyleButtons ed={ed} big /></Group>
       <Group label="WordArt 스타일" launcher={text.length ? () => ed.setDialog('font') : undefined}>
         <Col>
@@ -661,6 +610,7 @@ export function ChartDesignTab({ ed }: { ed: Ed }) {
 
 export function ContextTabBody({ tab, ed }: { tab: ContextTab; ed: Ed }) {
   if (tab === 'shape') return <ShapeFormatTab ed={ed} />;
+  if (tab === 'smartArt') return <SmartArtDesignTab ed={ed} />;
   if (tab === 'picture') return <PictureFormatTab ed={ed} />;
   if (tab === 'playback') return <PlaybackTab ed={ed} />;
   if (tab === 'tableDesign') return <TableDesignTab ed={ed} />;
