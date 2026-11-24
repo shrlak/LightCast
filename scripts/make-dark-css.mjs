@@ -15,7 +15,7 @@ const file = `${root}src/ui/ppt/dark.css`;
 if (process.argv.includes('--check')) {
   let cur = '';
   try { cur = readFileSync(file, 'utf8'); } catch { /* missing */ }
-  if (cur !== out) { console.error('src/ui/ppt/dark.css is out of date: run node scripts/make-dark-css.mjs'); process.exit(1); }
+  if (cur.replace(/\r\n/g, '\n') !== out) { console.error('src/ui/ppt/dark.css is out of date: run node scripts/make-dark-css.mjs'); process.exit(1); }
 } else {
   writeFileSync(file, out);
   console.log(`wrote ${file} (${out.split('\n').length} lines)`);

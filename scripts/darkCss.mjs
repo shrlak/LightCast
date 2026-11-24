@@ -72,7 +72,9 @@ function rules(css) {
 /** Where the editor's (light) rules start in styles.css: the app around it is dark already. */
 const EDITOR = '/* ================= PowerPoint-style layout ================= */';
 
-export function darkCss(css) {
+export function darkCss(input) {
+  // A Windows checkout has CRLF line endings: the output is the same either way.
+  const css = input.replace(/\r\n/g, '\n');
   const at = css.indexOf(EDITOR);
   const editor = at < 0 ? css : css.slice(at);
   const lines = [
