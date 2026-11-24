@@ -1,7 +1,7 @@
 // Windows metafile pictures (.wmf, .emf, EMF+ inside .emf) → SVG, in TypeScript.
 //
 // Supported
-//   WMF: placeable and plain headers; window / viewport origin and extent, SaveDC / RestoreDC; pens,
+//   WMF: placeable and plain headers; window / viewport origin and extent (played into the frame; scale and offset records), SaveDC / RestoreDC; pens,
 //     brushes (solid, hatched, DIB pattern), fonts; Rectangle, RoundRect, Ellipse, Arc, Pie, Chord,
 //     Polygon, Polyline, PolyPolygon, LineTo / MoveTo, SetPixel; TextOut / ExtTextOut (8-bit code
 //     pages incl. Korean, dx arrays, rotation); DIB bitmaps (StretchDIBits, DibStretchBlt, DibBitBlt,
