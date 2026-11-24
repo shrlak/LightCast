@@ -33,7 +33,7 @@ export const stopNarrationRecording = () => recordingOn.set(false);
 // ── Laser pointer ───────────────────────────────────────────────────────────────────────────────
 let channel: ReturnType<typeof openLiveChannel> | null = null;
 let lastSent = false;
-function sendLaser(p: LaserPoint | null) {
+export function sendLaser(p: LaserPoint | null) {
   if (!p && !lastSent) return;
   lastSent = !!p;
   try { (channel ??= openLiveChannel(() => undefined)).post(laserMessage(p)); } catch { /* no channel: no audience window to point on */ }

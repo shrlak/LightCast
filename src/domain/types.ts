@@ -1034,12 +1034,22 @@ export interface LiveState {
   build?: import('./animations').LiveBuild;
   /** 슬라이드 쇼 › 미디어 컨트롤 표시: pointing at a video in the show shows its play bar. Off only when the deck turns it off. */
   mediaControls?: boolean;
+  /** 화면 › 흰색 화면 (W or ,), as PowerPoint's slide show. */
+  white?: boolean;
+  /** After the last slide: the black "슬라이드 쇼 마지막입니다" screen; the next click ends the show. */
+  ended?: boolean;
+  /** Ink written on slides during the show (펜 · 형광펜), by `inkKey`. */
+  ink?: import('./showScreen').ShowInk;
+  /** The live slide's ink key (its presentation and place in the show). */
+  inkKey?: string | null;
+  /** 슬라이드 확대: the part of the slide shown larger. */
+  zoom?: import('./showScreen').ShowZoom | null;
 }
 
 /** Handout and notes page placeholders (View › Handout / Notes Master). */
 export interface PagePlaceholders { header?: string; footer?: string; date?: boolean; pageNumber?: boolean }
 export interface HandoutMaster extends PagePlaceholders { perPage: 1 | 2 | 3 | 4 | 6 | 9; landscape?: boolean }
-export interface NotesMaster extends PagePlaceholders { landscape?: boolean }
+export interface NotesMaster extends PagePlaceholders { landscape?: boolean; /** 슬라이드 노트 마스터 › 슬라이드 이미지 off. */ noSlideImage?: boolean; /** 슬라이드 노트 마스터 › 본문 off. */ noBody?: boolean }
 export interface DocProperties { title?: string; subject?: string; author?: string; manager?: string; company?: string; category?: string; keywords?: string; comments?: string }
 
 /** View › Slide Master › Insert Layout: a named set of placeholders new slides can start from. */

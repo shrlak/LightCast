@@ -46,18 +46,19 @@ comments pane, format pane, status bar zoom and views, and the engine commands b
 - **Not applicable** (as in `docs/deckcraft-sync.md`): 16:9 slide sizes, desktop file dialogs, automation-only commands
   (`*.list`, `*.inspect`, `text.compose`, `file.openBytes` …), DeckCraft's own CI, About/Credits for DeckCraft.
 
-## Still different — needs a decision or a larger change
+## Second pass (v1.3.2)
 
-1. **Check Accessibility (접근성 검사)**: DeckCraft has it (Review › Accessibility); LightCast removed it on purpose in
-   v0.9.4. Left out until you say to bring it back.
-2. **Slide Master / Handout Master / Notes Master as ribbon tabs**: DeckCraft edits masters on the main canvas with
-   contextual 슬라이드 마스터 / 유인물 마스터 / 슬라이드 노트 마스터 tabs (Insert Layout, Delete, Rename, Preserve, Title,
-   Footers, Insert Placeholder, Themes, Background Styles, Close Master View; per-placeholder check boxes). LightCast opens
-   the slide master in its own window-sized view with the same commands, and its handout / notes masters are print
-   settings. Same functions, different design; moving them into the ribbon is a larger rewrite of `MasterView.tsx`.
-3. **Backstage (파일)**: DeckCraft has New (template gallery), Open with Recent / Recover Unsaved, Save As, Close,
-   Info › Properties / Revert / Appearance, About. LightCast saves automatically into its library and syncs, so it has
-   no Save As / Close / Revert; it has 복원 지점, 휴지통, 문서 검사 and 속성 instead. The appearance switch is on the View tab.
-4. **SmartArt Text Pane** is a docked pane in DeckCraft; LightCast opens it as the 텍스트 창 dialog (same editing).
-5. **PPTX `presProps` › `p:showPr`** (loop, narration, media controls) is neither read nor written by LightCast's PPTX
-   reader/writer; the show settings stay in LightCast's own file and library.
+| DeckCraft / PowerPoint | LightCast now | Where |
+|---|---|---|
+| Slide Master / Handout Master / Notes Master tabs (`ribbon/masters.rs`) edited in the main window | **보기 › 슬라이드 마스터 · 유인물 마스터 · 슬라이드 노트 마스터** open in the editor: their tab sits left of 홈, the slide list shows the master and its layouts, and 홈 / 삽입 / 서식 창 edit the master like a slide (레이아웃 삽입 · 삭제 · 이름 바꾸기 · 복제 · 유지 · 마스터 레이아웃 · 개체 틀 삽입 · 제목 · 바닥글 · 테마 · 배경 스타일 · 슬라이드 크기 · 마스터 보기 닫기; 유인물: 방향 · 페이지당 슬라이드 수 · 머리글 · 날짜 · 바닥글 · 페이지 번호; 노트: 방향 · 머리글 · 슬라이드 이미지 · 바닥글 · 날짜 · 본문 · 페이지 번호). The old master window is gone | `src/ui/ppt/masterMode.tsx`, `PptLayout.tsx` |
+| SmartArt Text Pane as a docked pane (`panels/smartart.rs`) | **텍스트 창** is a pane on the right: one line per shape, typing changes the graphic, Enter / Tab / Shift+Tab / Backspace as PowerPoint | `tabSmartArt.tsx` (`SmartArtTextPane`) |
+| Presenter window (`show/presenter.rs`) | **발표자 보기** laid out as DeckCraft's: time · clock · 슬라이드 n/N with 이전 · 다음 · 쇼 마침, then 일시 중지 · 다시 설정 · 검정 화면 · 흰색 화면 · 모든 슬라이드 · 확대, the current slide on the left and 다음 + 노트 (A− size A+) on the right. LightCast's 펜 · 레이저, 자막, 슬라이드 편집, 청중 화면 열기 and 설교 시간 follow | `PresenterView.tsx` |
+| The slide show screen (PowerPoint's) | The audience window: the faint toolbar at the bottom left (이전 · 다음 · 펜 및 레이저 포인터 도구 · 모든 슬라이드 보기 · 슬라이드 확대 · ⋯), the right-click menu (다음, 이전, 마지막으로 본 슬라이드, 모든 슬라이드 보기, 확대, 사용자 지정 쇼, 발표자 보기 표시, 화면 › 검정/흰색, 포인터 옵션, 도움말, 쇼 마침), pen / highlighter / eraser ink shared with the presenter view and kept on the slides when you answer 유지 to "잉크 주석을 유지하시겠습니까?", 검정 / 흰색 화면 (B . W ,), the black "슬라이드 쇼 마지막입니다" screen, number + Enter, Home / End, G / −, + / −, Ctrl+L/P/I/E/A/H, F1 help, a click or the wheel moves on, the arrow hides after 3 s | `src/ui/ppt/showScreen.tsx`, `src/domain/showScreen.ts`, `OutputView.tsx` |
+| 쇼 설정 in the file (`p:showPr`, `p14:showMediaCtrls`) | Read on import and written on export: 반복, 내레이션 재생, 애니메이션 없이, 타이밍 사용, 미디어 컨트롤 표시 | `src/domain/io/pptxShow.ts` |
+| Home › Picture, Home › Selection Pane | 홈 › 그림 and a 선택 창 button in 편집 | `tabsMain.tsx` |
+
+## Different on purpose (decided)
+
+- **Check Accessibility (접근성 검사)** stays out (removed in v0.9.4; confirmed 2026-11-24).
+- **File menu**: no 다른 이름으로 저장 / 닫기 / 정보 (confirmed 2026-11-24): LightCast saves into its library as you go.
+- The 예배 tab and the KCCP generator, as above.

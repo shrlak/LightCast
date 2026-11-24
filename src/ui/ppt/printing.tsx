@@ -2,7 +2,7 @@
 // Handout Master and Notes Master (DeckCraft view.handoutMaster / view.notesMaster and their
 // placeholders). Pages are drawn by the app itself and printed with the browser's print dialog,
 // so they look like the slides on screen. Also File › Info › Properties and Inspect Document.
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import type { HandoutMaster, NotesMaster, PagePlaceholders, Presentation, Slide } from '../../domain/types';
 import { resolveBackground } from '../../domain/autoBackground';
@@ -10,7 +10,7 @@ import { colorFilter, printPages, type PrintOptions } from '../../domain/filePri
 import { SlideCanvas } from '../SlideCanvas';
 import { desktop } from '../../domain/desktop';
 import { pdfFileName } from '../../domain/io/pdfName';
-import { Check, Dialog, Field } from './dialogs';
+import { Dialog } from './dialogs';
 import type { Ed } from './editor';
 
 function saveBlob(name: string, blob: Blob) {
@@ -63,8 +63,8 @@ export function PrintPages({ ed, mode, handout, notes, o, limit }: { ed: Ed; mod
     const m = { ...DEFAULT_NOTES, ...notes };
     return <>{pages.map((x, i) => (
       <PageChrome key={x.slide.id} m={m} page={i + 1}>
-        <div className="notes-slide"><SlideBox ed={ed} p={p} s={x.slide} o={o} /></div>
-        <div className="notes-text">{x.slide.notes || ''}</div>
+        {!m.noSlideImage && <div className="notes-slide"><SlideBox ed={ed} p={p} s={x.slide} o={o} /></div>}
+        {!m.noBody && <div className="notes-text">{x.slide.notes || ''}</div>}
       </PageChrome>
     ))}</>;
   }
@@ -106,54 +106,6 @@ export function PrintRun({ ed, mode, onDone, o, pdf }: { ed: Ed; mode: PrintMode
       <PrintPages ed={ed} mode={mode} handout={ed.p?.handoutMaster} notes={ed.p?.notesMaster} o={o} />
     </div>,
     document.body,
-  );
-}
-
-function Placeholders({ m, set }: { m: PagePlaceholders; set: (p: Partial<PagePlaceholders>) => void }) {
-  return (
-    <fieldset className="dlg-set">
-      <legend>개체 틀</legend>
-      <div className="dlg-cols">
-        <div>
-          <Check label="머리글" checked={m.header !== undefined} onChange={(on) => set({ header: on ? m.header ?? '' : undefined })} />
-          {m.header !== undefined && <input value={m.header} placeholder="머리글" onChange={(e) => set({ header: e.target.value })} />}
-          <Check label="날짜" checked={!!m.date} onChange={(on) => set({ date: on || undefined })} />
-        </div>
-        <div>
-          <Check label="바닥글" checked={m.footer !== undefined} onChange={(on) => set({ footer: on ? m.footer ?? '' : undefined })} />
-          {m.footer !== undefined && <input value={m.footer} placeholder="바닥글" onChange={(e) => set({ footer: e.target.value })} />}
-          <Check label="페이지 번호" checked={!!m.pageNumber} onChange={(on) => set({ pageNumber: on || undefined })} />
-        </div>
-      </div>
-    </fieldset>
-  );
-}
-
-/** View › Handout Master / Notes Master: the page set-up, its placeholders, a preview and Print. */
-export function PageMasterDialog({ ed, kind, onClose }: { ed: Ed; kind: 'handout' | 'notes'; onClose: () => void }) {
-  const p = ed.p;
-  const [printing, setPrinting] = useState(false);
-  if (!p) return null;
-  const handout = { ...DEFAULT_HANDOUT, ...p.handoutMaster };
-  const notes = { ...DEFAULT_NOTES, ...p.notesMaster };
-  const set = (patch: Partial<HandoutMaster & NotesMaster>) => ed.updatePres(kind === 'handout' ? { handoutMaster: { ...handout, ...patch } } : { notesMaster: { ...notes, ...patch } });
-  const m = kind === 'handout' ? handout : notes;
-  return (
-    <Dialog title={kind === 'handout' ? '유인물 마스터' : '슬라이드 노트 마스터'} onClose={onClose} onOk={() => setPrinting(true)} okLabel="인쇄…" wide>
-      <div className="dlg-grid3">
-        {kind === 'handout' && (
-          <Field label="페이지당 슬라이드 수">
-            <select value={handout.perPage} onChange={(e) => set({ perPage: Number(e.target.value) as HandoutMaster['perPage'] })}>{[1, 2, 3, 4, 6, 9].map((n) => <option key={n} value={n}>{n}{n === 3 ? ' (메모 줄 포함)' : ''}</option>)}</select>
-          </Field>
-        )}
-        <Field label="방향"><select value={m.landscape ? 'l' : 'p'} onChange={(e) => set({ landscape: e.target.value === 'l' || undefined })}><option value="p">세로</option><option value="l">가로</option></select></Field>
-      </div>
-      <Placeholders m={m} set={set} />
-      <div className={`page-preview ${m.landscape ? 'landscape' : ''}`}>
-        <div className="page-preview-inner"><PrintPages ed={{ ...ed, p: { ...p, slides: p.slides.slice(0, kind === 'handout' ? handout.perPage : 1) } }} mode={kind} handout={handout} notes={notes} /></div>
-      </div>
-      {printing && <PrintRun ed={ed} mode={kind} onDone={() => setPrinting(false)} />}
-    </Dialog>
   );
 }
 

@@ -28,7 +28,7 @@ const update = (patch: Partial<Settings>) => {
   try { localStorage.setItem(KEY, JSON.stringify({ lang: settings.lang, size: settings.size, lines: settings.lines, trLang: settings.trLang, trOnly: settings.trOnly })); } catch { /* not saved */ }
   subs.forEach((f) => f());
 };
-const useSettings = () => useSyncExternalStore((f) => { subs.add(f); return () => subs.delete(f); }, () => settings);
+export const useCaptionSettings = () => useSyncExternalStore((f) => { subs.add(f); return () => subs.delete(f); }, () => settings);
 
 /** Turn captions on or off. When speech recognition is missing it says why instead of switching on. */
 export function toggleCaptions(notify: (msg: string) => void) {
@@ -50,7 +50,7 @@ export function CaptionHost() {
 }
 
 function CaptionListener() {
-  const s = useSettings();
+  const s = useCaptionSettings();
   const state = useRef<CaptionState>(emptyCaption());
   const sentOff = useRef(true);
   const cfg = useRef(s);
@@ -107,7 +107,7 @@ function CaptionListener() {
 const mark = (on: boolean, label: string) => `${on ? '✓ ' : '  '}${label}`;
 
 function CaptionMenu({ close }: { close: () => void }) {
-  const s = useSettings();
+  const s = useCaptionSettings();
   const sp = useSpeechSettings();
   const status = useSpeechStatus();
   useCloudInfo();
@@ -129,7 +129,7 @@ function CaptionMenu({ close }: { close: () => void }) {
 
 /** 슬라이드 쇼 ribbon group. */
 export function CaptionsGroup({ notify }: { notify: (msg: string) => void }) {
-  const s = useSettings();
+  const s = useCaptionSettings();
   return (
     <Group label="자막">
       <DropButton big icon="💬" label={s.on ? '자막 끄기' : '자막 켜기'} title="말하는 내용을 글자로 바꿔 청중 화면 아래에 보여 줍니다 (마이크 필요)" active={s.on} render={(close) => (
@@ -145,7 +145,7 @@ export function CaptionsGroup({ notify }: { notify: (msg: string) => void }) {
 
 /** Button for the presenter's top bar, like the laser toggle. */
 export function CaptionToggle({ notify }: { notify: (msg: string) => void }) {
-  const s = useSettings();
+  const s = useCaptionSettings();
   return <button type="button" className={s.on ? 'on' : ''} aria-pressed={s.on} title="말하는 내용을 청중 화면 아래에 자막으로 보여 줍니다 (마이크 필요)" onClick={() => toggleCaptions(notify)}>💬 자막 {s.on ? '끄기' : '켜기'}</button>;
 }
 

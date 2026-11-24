@@ -38,7 +38,7 @@ describe('slide show', () => {
     await openDeck(page, '쇼 시작 시험');
     const audience = await startShow(page);
     await see(audience.getByText('쇼 시작 시험'));
-    await see(page.getByText('다음 슬라이드', { exact: true }).first());
+    await see(page.locator('.pv-next-label', { hasText: '다음' }));
     await page.keyboard.press('ArrowRight');
     await see(audience.getByText('두 번째 슬라이드'));
     await page.getByRole('button', { name: /쇼 마침/ }).click();
@@ -51,7 +51,7 @@ describe('slide show', () => {
     const { page } = app;
     await openDeck(page);
     const audience = await startShow(page);
-    const area = page.locator('.laser-area').first();
+    const area = page.locator('.pv-current .pointer-surface').first();
     await see(area);
     const box = await area.boundingBox();
     await page.keyboard.down('Control');

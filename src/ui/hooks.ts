@@ -197,7 +197,9 @@ export function useRelay(hello: Record<string, unknown> | null, onMessage: (m: R
 }
 
 /** Operator side: publish live state to output/stage windows (same computer) and the relay (other devices). */
-export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => void, onShowAction?: (a: ShowAction) => void) {
+export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => void, onShowAction?: (a: ShowAction) => void, onScreen?: (a: unknown) => void) {
+  const onScreenRef = useRef(onScreen);
+  onScreenRef.current = onScreen;
   const latest = useRef(live);
   const onShow = useRef(onShowAction);
   onShow.current = onShowAction;
@@ -221,6 +223,7 @@ export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => voi
       // A slide show covering this very screen still answers to the arrow keys, Space and Esc.
       if (m.type === 'key') window.dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: m.shiftKey, cancelable: true }));
       if (m.type === 'show') onShow.current?.(m.action);
+      if (m.type === 'screen') onScreenRef.current?.(m.action);
     });
     return () => channel.current?.close();
   }, []);

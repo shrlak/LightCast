@@ -30,6 +30,10 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
   const [collapsed, setCollapsed] = useState(false);
   const [peek, setPeek] = useState(false);
   const ctx = contextTabs(ed);
+  // A master view's tab (슬라이드 마스터 …) sits left of 홈 and is picked when the view opens.
+  const masterTab = ctx.find((t) => t === 'slideMaster' || t === 'handoutMaster' || t === 'notesMaster');
+  const objTabs = ctx.filter((t) => t !== masterTab);
+  useEffect(() => { if (masterTab) setTab(masterTab); }, [masterTab]);
   // A contextual tab goes when its object is no longer selected.
   useEffect(() => { if (!(TABS as readonly string[]).includes(tab) && !ctx.includes(tab as ContextTab)) setTab('홈'); }, [ctx.join(), tab]);
   const pick = (t: Tab) => { if (collapsed) setPeek(t !== tab || !peek); setTab(t); };
@@ -77,10 +81,11 @@ export function Ribbon({ ed, actions }: { ed: Ed; actions: RibbonActions }) {
       </div>
       <div className="pp-tabs" role="tablist">
         <button type="button" className="pp-tab file" onClick={() => actions.onBackstage()}>파일</button>
+        {masterTab && <button type="button" role="tab" aria-selected={tab === masterTab} className={`pp-tab master ${tab === masterTab ? 'on' : ''}`} onClick={() => pick(masterTab)}>{CONTEXT_LABEL[masterTab]}</button>}
         {TABS.map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={`pp-tab ${tab === t ? 'on' : ''} ${t === '예배' || t === '도구' ? 'addin' : ''}`} onClick={() => pick(t)} onDoubleClick={() => { setCollapsed(!collapsed); setPeek(false); }}>{t}</button>
         ))}
-        {ctx.map((t) => (
+        {objTabs.map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={`pp-tab ctx ${tab === t ? 'on' : ''}`} onClick={() => pick(t)}>{CONTEXT_LABEL[t]}</button>
         ))}
         <TellMe ed={ed} actions={actions} tabs={[...TABS, ...ctx]} ctx={ctx} go={(t) => { setTab(t as Tab); if (collapsed) setPeek(true); }} />

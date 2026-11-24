@@ -18,6 +18,7 @@ import { ChartKindOptions } from './ElementFormat';
 import type { Ed } from './editor';
 import { PlaybackTab } from './tabPlayback';
 import { SmartArtDesignTab } from './tabSmartArt';
+import { HandoutMasterTab, NotesMasterTab, SlideMasterTab } from './masterMode';
 import { ArrangeMenu, ShapeStyleButtons, AlignItems } from './tabsMain';
 import { ShapeGallery, ShapeThumb } from './galleries';
 import { Big, Col, ColorButton, ColorGrid, DropButton, Gallery, Group, MenuHead, MenuItem, MenuSep, RI, Small } from './ribbonParts';
@@ -30,11 +31,19 @@ import { applyBorders, CELL_MARGINS, editCells, setTrackSize, trackSizes, type B
 import type { CellBorder, TableCell } from '../../engine';
 import { layoutTable } from '../../engine';
 
-export type ContextTab = 'shape' | 'smartArt' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart' | 'playback';
-export const CONTEXT_LABEL: Record<ContextTab, string> = { shape: '도형 서식', smartArt: 'SmartArt 디자인', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인', playback: '재생' };
+export type ContextTab = 'slideMaster' | 'handoutMaster' | 'notesMaster' | 'shape' | 'smartArt' | 'picture' | 'tableDesign' | 'tableLayout' | 'chart' | 'playback';
+export const CONTEXT_LABEL: Record<ContextTab, string> = { slideMaster: '슬라이드 마스터', handoutMaster: '유인물 마스터', notesMaster: '슬라이드 노트 마스터', shape: '도형 서식', smartArt: 'SmartArt 디자인', picture: '그림 서식', tableDesign: '테이블 디자인', tableLayout: '레이아웃', chart: '차트 디자인', playback: '재생' };
 
 /** The contextual tabs for what is selected. */
 export function contextTabs(ed: Ed): ContextTab[] {
+  // In a master view its tab comes first (it sits left of 홈); the handout and notes masters have no objects to select.
+  const m = ed.master?.mode;
+  if (m?.kind === 'handout') return ['handoutMaster'];
+  if (m?.kind === 'notes') return ['notesMaster'];
+  return m?.kind === 'slide' ? ['slideMaster', ...objectTabs(ed)] : objectTabs(ed);
+}
+
+function objectTabs(ed: Ed): ContextTab[] {
   const kinds = new Set(ed.selEls.map((e) => e.kind));
   if (!kinds.size) return [];
   if (kinds.size === 1 && kinds.has('table')) return ['tableDesign', 'tableLayout'];
@@ -609,6 +618,9 @@ export function ChartDesignTab({ ed }: { ed: Ed }) {
 }
 
 export function ContextTabBody({ tab, ed }: { tab: ContextTab; ed: Ed }) {
+  if (tab === 'slideMaster') return <SlideMasterTab ed={ed} />;
+  if (tab === 'handoutMaster') return <HandoutMasterTab ed={ed} />;
+  if (tab === 'notesMaster') return <NotesMasterTab ed={ed} />;
   if (tab === 'shape') return <ShapeFormatTab ed={ed} />;
   if (tab === 'smartArt') return <SmartArtDesignTab ed={ed} />;
   if (tab === 'picture') return <PictureFormatTab ed={ed} />;

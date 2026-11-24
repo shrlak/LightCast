@@ -1,10 +1,12 @@
 // SmartArt 디자인 — the contextual tab PowerPoint (and DeckCraft's ribbon/smartart.rs, "Diagram Design") adds while
 // a SmartArt graphic is selected: 그래픽 만들기 (텍스트 창, 도형 추가, 수준 올리기/내리기, 그림 삽입), 레이아웃,
 // SmartArt 스타일 (색 변경, 스타일), 원래대로 (그래픽 원래대로, 변환) and 정렬.
+import { useEffect, useRef, useState } from 'react';
 import type { SlideElement } from '../../domain/types';
+import type { SmartArtNode } from '../../engine';
 import { putMedia } from '../../domain/media';
 import { uid } from '../../domain/lyrics';
-import { editSmartArt, relayoutSmartArt, smartArtOwner, type OutlineOp, type SmartArtSpec } from '../../domain/smartArt';
+import { editSmartArt, normalizeNodes, relayoutSmartArt, smartArtOwner, syncTypedText, type OutlineOp, type SmartArtSpec } from '../../domain/smartArt';
 import { smartArtCatalog } from '../../engine';
 import type { Ed } from './editor';
 import { Big, Col, DropButton, Group, MenuHead, MenuItem, MenuSep, Small } from './ribbonParts';
@@ -65,7 +67,7 @@ export function SmartArtDesignTab({ ed }: { ed: Ed }) {
   return (
     <>
       <Group label="그래픽 만들기">
-        <Big icon="⧉" label="텍스트 창" title="SmartArt의 텍스트를 입력하고 정리합니다" disabled={!owner} onClick={() => ed.setDialog('smartArt')} />
+        <Big icon="⧉" label="텍스트 창" title="SmartArt의 텍스트를 입력하고 정리합니다 (오른쪽 창)" active={ed.pane === 'smartart'} disabled={!owner} onClick={() => ed.setPane(ed.pane === 'smartart' ? null : 'smartart')} />
         <Col>
           <DropButton icon="＋" label="도형 추가" disabled={off} render={(close) => (
             <>{ADD_SHAPE.map(([position, l]) => <MenuItem key={position} label={l} onClick={() => { go({ kind: 'add', position }); close(); }} />)}</>
@@ -124,5 +126,63 @@ export function SmartArtDesignTab({ ed }: { ed: Ed }) {
       </Group>
       <ArrangeGroup ed={ed} />
     </>
+  );
+}
+
+/**
+ * SmartArt 디자인 › 텍스트 창 as a side pane (DeckCraft's panels/smartart.rs, PowerPoint's "여기에 텍스트 입력"): the
+ * graphic's outline, one line per shape. Typing changes the graphic at once; Enter adds a shape after, Tab moves a line
+ * a level down and Shift+Tab up, Backspace on an empty line takes the shape out.
+ */
+export function SmartArtTextPane({ ed }: { ed: Ed }) {
+  const owner = smartArtOwner(ed.elements, ed.selEls);
+  const scheme = ed.p?.colorScheme;
+  const synced = owner ? syncTypedText(ed.elements, owner, scheme) ?? owner.smartArt : undefined;
+  // Text typed into the shapes comes back trimmed: where it is the stored text bar its spaces, the stored text
+  // (with the space just typed) is kept.
+  const stored = owner?.smartArt?.nodes ?? [];
+  const spec = synced && { ...synced, nodes: synced.nodes.map((n, i) => (stored[i] && stored[i].text.trim() === n.text ? { ...n, text: stored[i].text } : n)) };
+  const nodes = spec?.nodes ?? [];
+  const [focus, setFocus] = useState<number | null>(null);
+  const inputs = useRef<(HTMLInputElement | null)[]>([]);
+  useEffect(() => { if (focus !== null) { inputs.current[focus]?.focus(); setFocus(null); } }, [focus, nodes.length]);
+  const apply = (next: SmartArtNode[], at?: number) => {
+    if (!owner || !ed.canEdit) return;
+    const r = relayoutSmartArt(ed.elements, owner.id, { nodes: normalizeNodes(next.length ? next : [{ text: '', level: 0 }]) }, scheme);
+    if (!r) return;
+    ed.setElements(() => r.elements);
+    ed.setSel(r.ids);
+    if (at !== undefined) setFocus(at);
+  };
+  const layoutName = spec ? SMARTART_LAYOUT[spec.kind]?.[0] ?? spec.kind : '';
+  return (
+    <div className="task-pane smartart-pane">
+      <div className="task-head"><span>텍스트 창</span><button type="button" className="task-x" title="닫기" onClick={() => ed.setPane(null)}>✕</button></div>
+      {!owner || !spec ? <p className="task-empty">SmartArt 그래픽을 선택하면 여기에서 텍스트를 입력하고 정리합니다.</p> : (
+        <>
+          <div className="smartart-pane-hint">여기에 텍스트 입력</div>
+          <ul className="smartart-lines">
+            {nodes.map((n, i) => (
+              <li key={i} style={{ paddingLeft: 8 + n.level * 18 }}>
+                <span className="smartart-bullet">{n.level ? '–' : '•'}</span>
+                <input ref={(el) => { inputs.current[i] = el; }} value={n.text} aria-label={`도형 ${i + 1} 텍스트`} disabled={!ed.canEdit}
+                  onChange={(e) => apply(nodes.map((x, k) => (k === i ? { ...x, text: e.target.value } : x)))}
+                  onKeyDown={(e) => {
+                    if (e.nativeEvent.isComposing) return;
+                    if (e.key === 'Enter') { e.preventDefault(); apply([...nodes.slice(0, i + 1), { text: '', level: n.level }, ...nodes.slice(i + 1)], i + 1); }
+                    else if (e.key === 'Tab') { e.preventDefault(); apply(nodes.map((x, k) => (k === i ? { ...x, level: Math.max(0, x.level + (e.shiftKey ? -1 : 1)) } : x)), i); }
+                    else if (e.key === 'Backspace' && !n.text && nodes.length > 1) { e.preventDefault(); apply(nodes.filter((_, k) => k !== i), Math.max(0, i - 1)); }
+                    else if (e.key === 'ArrowDown' && i < nodes.length - 1) { e.preventDefault(); inputs.current[i + 1]?.focus(); }
+                    else if (e.key === 'ArrowUp' && i > 0) { e.preventDefault(); inputs.current[i - 1]?.focus(); }
+                  }} />
+                <button type="button" className="task-x" title="도형 제거" aria-label={`도형 ${i + 1} 제거`} disabled={!ed.canEdit || nodes.length < 2} onClick={() => apply(nodes.filter((_, k) => k !== i))}>✕</button>
+              </li>
+            ))}
+          </ul>
+          <button type="button" className="smartart-add" disabled={!ed.canEdit} onClick={() => apply([...nodes, { text: '', level: 0 }], nodes.length)}>＋ 도형 추가</button>
+          <p className="task-foot">{layoutName} — Enter: 새 도형 · Tab / Shift+Tab: 수준 내리기 / 올리기</p>
+        </>
+      )}
+    </div>
   );
 }
