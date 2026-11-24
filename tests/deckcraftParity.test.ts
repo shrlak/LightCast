@@ -114,7 +114,7 @@ describe('View › Dark Mode (어두운 모드)', () => {
   it('the committed dark stylesheet is up to date with styles.css (node scripts/make-dark-css.mjs)', () => {
     const root = new URL('../', import.meta.url);
     const src = readFileSync(new URL('src/styles.css', root), 'utf8') + '\n' + readFileSync(new URL('src/ui/ppt/backgroundRemoval.css', root), 'utf8');
-    expect(readFileSync(new URL('src/ui/ppt/dark.css', root), 'utf8')).toBe(darkCss(src));
+    expect(readFileSync(new URL('src/ui/ppt/dark.css', root), 'utf8').replace(/\r\n/g, '\n')).toBe(darkCss(src));
   });
 });
 
