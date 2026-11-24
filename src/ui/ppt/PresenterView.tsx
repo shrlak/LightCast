@@ -6,10 +6,8 @@ import { sendLaser } from './showTools';
 import { openOutput } from '../outputWindows';
 import { toggleCaptions, useCaptionSettings } from './captionTools';
 import type { Action, AppState } from '../../domain/reducer';
-import type { Presentation } from '../../domain/types';
 import { sequence } from '../../domain/arrangement';
-import { activePlaylist, slideAt, nextCursor } from '../../domain/live';
-import { groupColor } from '../../domain/lyrics';
+import { slideAt, nextCursor } from '../../domain/live';
 import { SlideCanvas } from '../SlideCanvas';
 import { liveCanvasProps } from '../liveProps';
 import { SlideDesigner } from '../SlideDesigner';
@@ -19,58 +17,12 @@ import { CanvasEditor } from './CanvasEditor';
 import type { Commands } from './commands';
 import { resolveBackground } from '../../domain/autoBackground';
 import { CaptionHost } from './captionTools';
-import { PacingBar } from './pacingTools';
 import { NarrationHost } from './showTools';
 
 interface Props {
   state: AppState;
   dispatch: Dispatch<Action>;
   cmd: Commands;
-}
-
-/** Every slide of the service (playlist), or of the current presentation, as clickable thumbnails. */
-function AllSlides({ state, dispatch, onEdit }: { state: AppState; dispatch: Dispatch<Action>; onEdit: (presId: string, slideId: string, seq: number) => void }) {
-  const lib = state.library;
-  const items = activePlaylist(state)?.items ?? [];
-  const inPlaylist = !!state.cursor && items.some((i) => i.kind !== 'header' && i.presentationId === state.cursor!.presentationId);
-  const sections: { index: number | null; header?: string; p?: Presentation }[] = inPlaylist
-    ? items.map((i, index) => (i.kind === 'header' ? { index, header: i.title } : { index, p: lib.presentations.find((x) => x.id === i.presentationId) }))
-    : state.cursor || state.selectedId
-      ? [{ index: null, p: lib.presentations.find((x) => x.id === (state.cursor?.presentationId ?? state.selectedId)) }]
-      : [];
-  return (
-    <div className="all-slides">
-      {sections.map((sec, k) => {
-        if (sec.header) return <div key={k} className="all-header">{sec.header}</div>;
-        const p = sec.p;
-        if (!p) return null;
-        const theme = lib.themes.find((t) => t.id === p.themeId) ?? lib.themes[0];
-        return (
-          <div key={k} className="all-pres">
-            <div className="all-title">{p.title}</div>
-            <div className="all-grid">
-              {sequence(p).map(({ slide }, seq) => {
-                const live = state.cursor?.presentationId === p.id && state.cursor.seq === seq && (sec.index == null || state.cursor.playlistIndex === sec.index || state.playlistIndex === sec.index);
-                return (
-                  <button key={`${slide.id}-${seq}`} className={`all-thumb ${live ? 'live' : ''} ${slide.disabled ? 'skip' : ''}`}
-                    title="클릭: 화면에 표시 · 오른쪽 클릭: 편집"
-                    onClick={() => {
-                      if (sec.index != null) dispatch({ type: 'playlist/select', index: sec.index });
-                      dispatch({ type: 'live/go', presentationId: p.id, seq });
-                    }}
-                    onContextMenu={(e) => { e.preventDefault(); onEdit(p.id, slide.id, seq); }}>
-                    <SlideCanvas slide={slide} theme={theme} background={resolveBackground(slide, p)} bgEffect={p.bgEffect} />
-                    <span className="all-label" style={{ background: groupColor(slide.group) }}>{seq + 1} {slide.label || slide.group}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-      {!sections.length && <p className="muted">재생목록이나 프레젠테이션을 선택하세요.</p>}
-    </div>
-  );
 }
 
 const NOTES_KEY = 'lightcast.presenterNotesSize';
@@ -178,16 +130,15 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
         <button type="button" className={`pv-btn ${caps.on ? 'on' : ''}`} aria-label={caps.on ? '자막 끄기' : '자막 켜기'} aria-pressed={caps.on} onClick={() => toggleCaptions(cmd.notify)}>{caps.on ? '자막 끄기' : '자막 켜기'}</button>
         <button type="button" className={`pv-btn ${editing ? 'on' : ''}`} title="쇼를 진행하면서 슬라이드를 고칩니다" aria-pressed={editing} onClick={() => setEditing(!editing)}>슬라이드 편집</button>
         <button type="button" className="pv-btn" onClick={() => openOutput('output')}>청중 화면 열기</button>
-        <PacingBar presentationId={cursor?.presentationId ?? null} slideIndex={cursor ? cursor.seq : null} total={seqLen} />
       </div>
-      <div className="pv-body">
+      <div className={`pv-body ${editing ? 'editing' : ''}`}>
         {mode === 'all' && p ? (
           <section className="pv-left pv-all">
             <AllSlidesGrid p={p} theme={theme} current={cursor?.seq ?? null} onPick={c.go} onClose={() => setMode('slides')} />
-            <details className="pv-service"><summary>예배 순서 전체</summary><AllSlides state={state} dispatch={dispatch} onEdit={(presId, slideId, seq) => { setEdit({ presId, slideId, seq }); setFollow(false); setEditing(true); }} /></details>
           </section>
         ) : (
           <section className="pv-left">
+            {editing && <div className="pv-pane-label">청중 화면</div>}
             <div className="pv-current">
               <PointerSurface ps={ps} c={c} zoom={live.zoom ?? null} onLaser={(pt) => sendLaser(pt)}>
                 <SlideCanvas {...liveCanvasProps(live)} />
@@ -196,7 +147,7 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
             {ps.zoomArm && <p className="pv-hint">미리 보기에서 확대할 곳을 클릭하세요.</p>}
           </section>
         )}
-        <section className="pv-right">
+        {!editing && <section className="pv-right">
           <div className="pv-next-label">다음</div>
           <div className="pv-next">
             {nextSlide && nextPres ? (
@@ -212,18 +163,19 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
             <button type="button" className="pv-btn small" title="텍스트 크게" aria-label="텍스트 크게" onClick={() => setNotesSize(Math.min(60, notesSize + 2))}>A+</button>
           </div>
           <div className="pv-notes" style={{ fontSize: notesSize }}>{live.slide?.notes || <span className="pv-muted">노트 없음</span>}</div>
-        </section>
+        </section>}
         {editing && (
           <section className="presenter-edit pv-edit">
             <div className="presenter-top">
               <strong>슬라이드 편집</strong>
               {editSlide && <span className={`edit-badge ${editingLive ? 'live' : ''}`}>{editingLive ? '● 화면에 표시 중 — 바로 반영됩니다' : '다음에 표시할 때 반영'}</span>}
-              <label className="check small"><input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> 현재 슬라이드 따라가기</label>
+              <label className="check small"><input type="checkbox" checked={follow} onChange={(e) => { if (!e.target.checked) setEdit(liveTarget); setFollow(e.target.checked); }} /> 현재 슬라이드 따라가기</label>
               <button type="button" className="task-x" aria-label="닫기" onClick={() => setEditing(false)}>✕</button>
             </div>
             {editPres && editSlide ? (
               <div className="presenter-edit-body">
                 <div className="presenter-edit-canvas">
+                  <div className="pv-pane-label">LightCast 편집 화면</div>
                   <CanvasEditor key={`${editPres.id}:${target?.seq}`} readOnly={editPres.protected} slide={editSlide} theme={editTheme} background={resolveBackground(editSlide, editPres)} bgEffect={editPres.bgEffect}
                     selected={selEl ? [selEl] : []} onSelect={(ids) => setSelEl(ids[ids.length - 1] ?? null)}
                     onLockedDelete={cmd.locked && editingLive ? () => cmd.notify('🔒 화면에 표시 중이라 삭제가 잠겨 있습니다 — 상태 표시줄의 🔒를 눌러 해제하세요') : undefined}
@@ -231,6 +183,7 @@ export function PresenterView({ state, dispatch, cmd }: Props) {
                   <div className="muted small">{editPres.title} · {editSlide.group}</div>
                 </div>
                 <div className="presenter-format">
+                  <div className="pv-pane-label">슬라이드 조정</div>
                   <SlideFormat state={state} dispatch={editDispatch} presentation={editPres} slide={editSlide} onDesign={() => setDesigning(true)} selectedId={selEl} onSelect={setSelEl} />
                 </div>
               </div>

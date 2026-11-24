@@ -47,7 +47,13 @@ export function useCloudInfo(): CloudInfo | null {
   return info;
 }
 
-const env = (): Env => ({ browser: browserRecognitionCtor() !== null, cloud: cloud ? cloud.configured : null, desktopApp: !!desktop });
+// The desktop app's Chromium has the Web Speech API but no speech server behind it (it always fails with "network"),
+// so there only the cloud provider counts.
+const env = (): Env => ({ browser: !desktop && browserRecognitionCtor() !== null, cloud: cloud ? cloud.configured : null, desktopApp: !!desktop });
+
+/** 자동: when the browser's engine cannot reach its speech server, LightCast's own (cloud) recognition takes over. */
+export const speechFallback = (failed: ProviderKind, err: SpeechError, pref = settings.provider, info = cloud): ProviderKind | null =>
+  failed === 'browser' && pref === 'auto' && (err.kind === 'network' || err.kind === 'unsupported') && info?.configured !== false ? 'cloud' : null;
 
 /** Which provider would run now, or null. */
 export const currentProvider = (): ProviderKind | null => resolveProvider(settings.provider, env());
@@ -115,6 +121,7 @@ export const speechService = new SpeechService({
   resolve: currentProvider,
   lang: () => settings.lang,
   unavailable: () => unavailableError(settings.provider, env()) ?? new SpeechError('unsupported'),
+  fallback: (failed, err) => speechFallback(failed, err),
   create: (kind) => (kind === 'cloud' ? new CloudSpeechProvider({ openMic, transcribe }) : new BrowserSpeechProvider()),
 });
 

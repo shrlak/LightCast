@@ -2295,8 +2295,6 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .pv-left { flex: 0 0 62%; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .pv-left.pv-all { position: relative; }
 .pv-left.pv-all .show-all { position: absolute; }
-.pv-service { position: absolute; right: 18px; top: 14px; z-index: 61; color: #ddd; font-size: 13px; max-width: 60%; }
-.pv-service[open] { background: #1f1f1f; max-height: 80%; overflow: auto; padding: 6px; border: 1px solid #444; }
 .pv-current { height: 80%; min-height: 0; container-type: size; }
 .pv-current .pointer-surface { aspect-ratio: 4 / 3; width: min(100cqw, 100cqh * 4 / 3); height: auto; }
 .pv-hint { margin: 0; color: #c8c8c8; font-size: 13px; }
@@ -2309,7 +2307,15 @@ body.gray-view .canvas-frame { filter: grayscale(1); }
 .pv-notes-px { color: #c8c8c8; font-variant-numeric: tabular-nums; }
 .pv-notes { flex: 1; min-height: 0; overflow: auto; white-space: pre-wrap; line-height: 1.45; color: #fff; }
 .pv-muted { color: #888; }
-.pv-edit { flex: 1.4; min-width: 0; background: #fff; color: #222; overflow: auto; }
+.pv-edit { flex: 1; min-width: 0; background: #fff; color: #222; overflow: auto; display: flex; flex-direction: column; }
+/* 슬라이드 편집: 청중 화면 | LightCast 편집 화면 | 슬라이드 조정, side by side */
+.pv-body.editing .pv-left { flex: 0 0 26%; }
+.pv-body.editing .pv-current { height: auto; aspect-ratio: 4 / 3; }
+.pv-pane-label { font-size: 13px; color: #aaa; margin-bottom: 4px; }
+.pv-edit .pv-pane-label { color: #605e5c; }
+.pv-edit .presenter-edit-body { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 8px; }
+.pv-edit .presenter-edit-canvas { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pv-edit .presenter-format { flex: 0 0 340px; min-width: 0; overflow: auto; border-left: 1px solid #e1dfdd; padding-left: 10px; }
 /* SmartArt 텍스트 창 (side pane) */
 .smartart-pane-hint { padding: 6px 12px 2px; font-weight: 600; color: #444; }
 .smartart-lines { list-style: none; margin: 0; padding: 4px 6px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
