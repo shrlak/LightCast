@@ -144,7 +144,18 @@ export class Gdi {
   private pageXf(): Xf {
     const { winOrg: [wx, wy], winExt: [ex, ey], vpOrg: [vx, vy], vpExt: [px, py] } = this.dc;
     let sx = 1, sy = 1;
-    if (this.wmf) { sx = ex < 0 ? -1 : 1; sy = ey < 0 ? -1 : 1; return [sx, 0, 0, sy, -wx * sx, -wy * sy]; }
+    if (this.wmf) {
+      // A WMF is played into its frame (the first window extent, else the placeable box): the player's
+      // viewport is the frame, scaled by SCALEVIEWPORTEXT and moved by OFFSETVIEWPORTORG, and the current
+      // window maps onto it, so a sub-picture that halves the viewport lands in its half (deckcraft#2069).
+      // The file's own SETVIEWPORTEXT / SETVIEWPORTORG are not applied (`vpExt` starts as the factor 1, 1).
+      const f = this.frameHint();
+      const tw = f ? f[2] : Math.abs(ex), th = f ? f[3] : Math.abs(ey);
+      sx = ex ? (tw * px) / ex : 1; sy = ey ? (th * py) / ey : 1;
+      if (!Number.isFinite(sx) || !sx) sx = ex < 0 ? -1 : 1;
+      if (!Number.isFinite(sy) || !sy) sy = ey < 0 ? -1 : 1;
+      return [sx, 0, 0, sy, vx - wx * sx, vy - wy * sy];
+    }
     const m = this.dc.mapMode;
     if (m >= 2 && m <= 6) {
       // LOMETRIC, HIMETRIC, LOENGLISH, HIENGLISH, TWIPS in millimetres per logical unit; y points up.
@@ -163,8 +174,13 @@ export class Gdi {
     if (this.wmf || this.dc.mapMode >= 7) this.dc.winExt = [x, y];
   }
   setWindowOrg(x: number, y: number) { this.winSeen.org ??= [x, y]; this.dc.winOrg = [x, y]; }
-  setViewportExt(x: number, y: number) { if (this.dc.mapMode >= 7) this.dc.vpExt = [x, y]; }
-  setViewportOrg(x: number, y: number) { this.dc.vpOrg = [x, y]; }
+  setViewportExt(x: number, y: number) { if (!this.wmf && this.dc.mapMode >= 7) this.dc.vpExt = [x, y]; }
+  setViewportOrg(x: number, y: number) { if (!this.wmf) this.dc.vpOrg = [x, y]; }
+  /** OFFSETWINDOWORG / OFFSETVIEWPORTORG (WMF): the origin moved by (dx, dy). */
+  offsetOrg(window: boolean, dx: number, dy: number) {
+    const o = window ? this.dc.winOrg : this.dc.vpOrg;
+    if (window) this.dc.winOrg = [o[0] + dx, o[1] + dy]; else this.dc.vpOrg = [o[0] + dx, o[1] + dy];
+  }
   scaleWindowExt(a: number, b: number, c: number, d: number) { if (b && d) this.dc.winExt = [(this.dc.winExt[0] * a) / b, (this.dc.winExt[1] * c) / d]; }
   scaleViewportExt(a: number, b: number, c: number, d: number) { if (b && d) this.dc.vpExt = [(this.dc.vpExt[0] * a) / b, (this.dc.vpExt[1] * c) / d]; }
   setMapMode(m: number) { if (m >= 1 && m <= 8) this.dc.mapMode = m; }

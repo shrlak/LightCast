@@ -84,8 +84,10 @@ function record(g: Gdi, fn: number, r: Bytes): void {
     case 0x020c: g.setWindowExt(s(1), s(0)); break;
     case 0x020d: g.setViewportOrg(s(1), s(0)); break;
     case 0x020e: g.setViewportExt(s(1), s(0)); break;
-    case 0x020f: g.setWindowOrg(d.winOrg[0] + s(1), d.winOrg[1] + s(0)); break;
-    case 0x0211: g.setViewportOrg(d.vpOrg[0] + s(1), d.vpOrg[1] + s(0)); break;
+    // OFFSETWINDOWORG / OFFSETVIEWPORTORG: yOffset, xOffset, added to the origin.
+    case 0x020f: g.offsetOrg(true, s(1), s(0)); break;
+    case 0x0211: g.offsetOrg(false, s(1), s(0)); break;
+    // SCALEWINDOWEXT / SCALEVIEWPORTEXT: yDenom, yNum, xDenom, xNum ([MS-WMF] 2.3.5); a zero denominator does nothing.
     case 0x0410: g.scaleWindowExt(s(3), s(2), s(1), s(0)); break;
     case 0x0412: g.scaleViewportExt(s(3), s(2), s(1), s(0)); break;
     case 0x012d: g.select(u(0)); break;
