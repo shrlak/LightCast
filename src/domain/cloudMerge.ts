@@ -1,4 +1,4 @@
-import type { Library, Presentation, Slide, UsageEntry } from './types';
+import type { Library, Presentation, Slide, TrashEntry, UsageEntry } from './types';
 import { mergeActivity, mergeDevices, newestModification } from './activity';
 import { clearTransitions } from './persistence';
 import { mergePrefs } from './fontPrefs';
@@ -274,7 +274,8 @@ function mergePresentation(b: Presentation | undefined, l: Presentation, r: Pres
       const editedAt = Math.max(slideStamp(edited, side === 'local' ? l : r), ...[...(edited.elements ?? []), ...(edited.comments ?? [])].map(itemStamp));
       if (at == null) return true;
       if (at <= editedAt) return withSlideCopies(edited, l.id, deleted, side === 'local' ? l : r, [l, r]);
-      deleted.local.laterDeletedSlides.set(key, edited);
+      const kept = deleted.local.laterDeletedSlides.get(key);
+      deleted.local.laterDeletedSlides.set(key, kept ? mergeSlideByStamps(kept, edited) : edited);
       beaten.set(edited.id, edited);
       return false;
     },
@@ -285,7 +286,8 @@ function mergePresentation(b: Presentation | undefined, l: Presentation, r: Pres
       const editedAt = Math.max(slideStamp(slide, side === 'local' ? l : r), ...[...(slide.elements ?? []), ...(slide.comments ?? [])].map(itemStamp));
       if (at == null) return true;
       if (at <= editedAt) return withSlideCopies(slide, l.id, deleted, side === 'local' ? l : r, [l, r]);
-      deleted.local.laterDeletedSlides.set(key, slide);
+      const kept = deleted.local.laterDeletedSlides.get(key);
+      deleted.local.laterDeletedSlides.set(key, kept ? mergeSlideByStamps(kept, slide) : slide);
       beaten.set(slide.id, slide);
       return false;
     });
@@ -337,8 +339,12 @@ function mergeByStamps(l: Presentation, r: Presentation, deleted: { local: Delet
     const a = ls.get(id), b = rs.get(id);
     const slide = a && b ? mergeSlideByStamps(a, b, tie) : (a ?? b)!;
     // Removed on some device (trash, or the removed-slides record: deleted, or replaced when lyrics were laid out anew)
-    // later than it was last edited: gone. Otherwise kept, whichever version has it.
-    if (deletedAt(id) > lastEdit(slide)) continue;
+    // later than it was last edited: gone — its edits go into its trash copy, so they can still come back.
+    if (deletedAt(id) > lastEdit(slide)) {
+      const key = `${l.id}/${id}`, kept = deleted.local.laterDeletedSlides.get(key);
+      deleted.local.laterDeletedSlides.set(key, kept ? mergeSlideByStamps(kept, slide) : slide);
+      continue;
+    }
     slides.push(deletedAt(id) > -Infinity ? withSlideCopies(slide, l.id, deleted, undefined, [l, r]) : slide);
   }
   const listAt = Math.max(fieldStamp(l, 'slides', 0), fieldStamp(r, 'slides', 0));
@@ -348,6 +354,14 @@ function mergeByStamps(l: Presentation, r: Presentation, deleted: { local: Delet
   const removed = mergeRemoved(l.removedSlides, r.removedSlides, t);
   const copies = mergeRemovedCopies(l.removedCopies, r.removedCopies, removed, t);
   return { ...out, id: l.id, slides, ...(removed ? { removedSlides: removed } : {}), ...(copies ? { removedCopies: copies } : {}), ...(t ? { updatedAt: t } : {}) } as Presentation;
+}
+
+/** Two versions of one trash entry (each device may have kept a newer edit in it): every part by its stamps. */
+function mergeTrashEntry(l: TrashEntry, r: TrashEntry, deleted: { local: Deletions; remote: Deletions }): TrashEntry {
+  const presentation = mergeByStamps(l.presentation, r.presentation, deleted, 'remote');
+  const slides = l.slides || r.slides ? mergeById(undefined, (l.slides ?? []).map((x) => ({ ...x, id: x.slide.id })), (r.slides ?? []).map((x) => ({ ...x, id: x.slide.id })),
+    (a, b) => ({ ...b, slide: mergeSlideByStamps(a.slide, b.slide) })).map(({ id: _id, ...x }) => x) : undefined;
+  return { ...r, deletedAt: Math.max(l.deletedAt, r.deletedAt), expiresAt: Math.max(l.expiresAt, r.expiresAt), presentation, ...(slides ? { slides } : {}) };
 }
 
 /** A library-wide setting both devices changed: the later edit (setting by setting for 주일예배 설정). */
@@ -430,7 +444,8 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
   const fonts = mergeById(base?.fonts, local.fonts ?? [], remote.fonts ?? [], (l, r) => (base ? l : r));
   const fontTrash = mergeById(base?.fontTrash, local.fontTrash ?? [], remote.fontTrash ?? []);
   const fontPrefs = mergePrefs(local.fontPrefs, remote.fontPrefs);
-  let trash = mergeById(base?.trash, local.trash ?? [], remote.trash ?? []);
+  // One trash entry changed on both devices (each put a newer edit into it): both kept, part by part by stamps.
+  let trash = mergeById(base?.trash, local.trash ?? [], remote.trash ?? [], (l, r) => mergeTrashEntry(l, r, deleted));
   if (laterDeleted.size) {
     trash = trash.map((e) => {
       const edited = e.kind === 'presentation' ? laterDeleted.get(e.presentation.id) : undefined;

@@ -56,6 +56,7 @@ export async function syncSession(r: Rng, o: SessionOptions = {}): Promise<{ wor
   // The shared starting point: a few presentations made on the first device.
   const decks = Array.from({ length: r.int(2, 4) }, (_, i) => `p_s${i}`);
   for (const id of decks) a.dispatch({ type: 'presentation/create', presentation: { ...pres(id, `제목 ${id}`, ['가', '나', '다']), ...(o.elements ? { slides: pres(id, '', ['가', '나', '다']).slides.map((s) => ({ ...s, elements: [0, 1, 2].map((k) => ({ id: `${s.id}_e${k}`, kind: 'text', text: `상자${k}`, x: 10 * k, y: 0, w: 100, h: 50 })) })) } as never : {}) } });
+  const created = a.serverNow();
   await converge(clients, 10);
   // What each field should end as: every edit and deletion with its server time.
   const titles = new Map<string, Event[]>();
@@ -66,6 +67,11 @@ export async function syncSession(r: Rng, o: SessionOptions = {}): Promise<{ wor
   const prayer: Event[] = [];
   const confession: Event[] = [];
   const add = (m: Map<string, Event[]>, k: string, e: Event) => { const list = m.get(k) ?? []; list.push(e); m.set(k, list); };
+  // The starting decks were made by the first device (their creation is an edit, at its stamp).
+  for (const id of decks) {
+    add(presEvents, id, { at: created, kind: 'edit' });
+    for (const slide of a.presentation(id)?.slides ?? []) add(slideEvents, `${id}/${slide.id}`, { at: (slide as { editedAt?: number }).editedAt ?? created, kind: 'edit' });
+  }
   let made = 0;
   let inHook = false;
   const value = (c: SimClient) => `${c.name}${++made}`;
