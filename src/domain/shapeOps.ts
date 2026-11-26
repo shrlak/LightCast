@@ -202,11 +202,8 @@ const onSlide = (els: SlideElement[]) => els.filter((e) => !e.hidden && !e.maste
 /** Select All (Ctrl+A): every object shown, except locked ones (DeckCraft's edit.selectAll). */
 export const selectAllIds = (els: SlideElement[]) => onSlide(els).filter((e) => !e.locked).map((e) => e.id);
 
-/**
- * Tab / Shift+Tab: the next (previous) object in drawing order, a group counting once; with nothing
- * selected the first (last) one (DeckCraft's cycle_selection).
- */
-export function cycleSelection(els: SlideElement[], sel: string[], forward: boolean): string | null {
+/** The objects Tab steps through, in drawing order: a group counts once (its members, in order). */
+function tabUnits(els: SlideElement[]): string[][] {
   const units: { id: string; members: string[] }[] = [];
   for (const e of onSlide(els)) {
     if (e.groupId) {
@@ -214,11 +211,33 @@ export function cycleSelection(els: SlideElement[], sel: string[], forward: bool
       units.push({ id: `g:${e.groupId}`, members: onSlide(els).filter((x) => x.groupId === e.groupId).map((x) => x.id) });
     } else units.push({ id: e.id, members: [e.id] });
   }
+  return units.map((u) => u.members);
+}
+
+/**
+ * Tab / Shift+Tab: the next (previous) object in drawing order, a group counting once; with nothing
+ * selected the first (last) one (DeckCraft's cycle_selection).
+ */
+export function cycleSelection(els: SlideElement[], sel: string[], forward: boolean): string | null {
+  const units = tabUnits(els);
   if (!units.length) return null;
-  const cur = units.findIndex((u) => u.members.includes(sel[0]));
+  const cur = units.findIndex((u) => u.includes(sel[0]));
   const n = units.length;
   const next = cur < 0 ? (forward ? 0 : n - 1) : (cur + (forward ? 1 : n - 1)) % n;
-  return units[next].members[0];
+  return units[next][0];
+}
+
+/**
+ * Whether Tab (Shift+Tab with `forward` false) has an object left to select on the slide (DeckCraft's
+ * tab_has_work): there is one after (before) the selected one, or nothing is selected and the slide has
+ * one. Past the last (first) object the slide has nothing left for it, so the canvas lets Tab move the
+ * keyboard on to the next control instead of trapping it.
+ */
+export function tabHasWork(els: SlideElement[], sel: string[], forward: boolean): boolean {
+  const units = tabUnits(els);
+  if (!units.length) return false;
+  const cur = units.findIndex((u) => u.includes(sel[0]));
+  return cur < 0 || (forward ? cur < units.length - 1 : cur > 0);
 }
 
 /** The ids an edit that moves, sizes or turns objects may change: a locked object (or a group with one) stays put. */

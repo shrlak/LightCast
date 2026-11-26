@@ -87,3 +87,18 @@ export function moveQat(items: QatItem[], item: QatItem, dir: -1 | 1): QatItem[]
 function safeStorage(): Storage | undefined {
   try { return typeof localStorage === 'undefined' ? undefined : localStorage; } catch { return undefined; }
 }
+
+/**
+ * Alt+1 to Alt+9 on Windows and Linux: the toolbar's first to ninth button, as in PowerPoint (DeckCraft's
+ * `menus::ui_shortcut`, claimed on the document canvas in 0d8d4b75). The key's position (`code`) counts,
+ * so it works on any keyboard layout; on macOS Option+digit types a character and is left alone. Returns
+ * the button's index, or null.
+ */
+export function qatShortcut(e: { altKey: boolean; ctrlKey: boolean; metaKey: boolean; shiftKey: boolean; code: string }, mac: boolean): number | null {
+  if (mac || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return null;
+  const m = /^Digit([1-9])$/.exec(e.code);
+  return m ? Number(m[1]) - 1 : null;
+}
+
+/** The shortcut a toolbar button's tooltip names (`Alt+3`), or nothing past the ninth or on macOS. */
+export const qatShortcutLabel = (index: number, mac: boolean): string => (mac || index < 0 || index > 8 ? '' : `Alt+${index + 1}`);
