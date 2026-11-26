@@ -18,20 +18,23 @@ describe('sync stress: real time', () => {
   it('the server clock estimate is within half a round trip (+½ s) of the true offset, and never runs backwards', () =>
     scenario('server clock', (r) => {
       let local = 1_700_000_000_000 + r.int(0, 1e9);
+      // A clock that only runs forward (performance.now): the computer's own clock can be set, this one cannot.
+      let mono = 0;
       let truth = r.int(-86_400_000, 86_400_000);
-      const clock = createServerClock(() => local);
+      const clock = createServerClock(() => local, null, () => mono);
       let minWidth = Infinity;
       let lastNow = -Infinity;
       const samples = r.int(1, 30);
       for (let i = 0; i < samples; i++) {
         // This computer's clock was changed (or it slept and NTP fixed it): the estimate must follow.
-        if (i > 0 && r.chance(0.05)) { const jump = r.int(-3_600_000, 3_600_000); local += jump; truth -= jump; minWidth = Infinity; lastNow = -Infinity; }
-        local += r.int(0, 20_000);
+        if (i > 0 && r.chance(0.05)) { const jump = r.pick([r.int(-3_600_000, 3_600_000), r.int(-2000, 2000)]); local += jump; truth -= jump; lastNow = -Infinity; }
+        const wait = r.int(0, 20_000);
+        local += wait; mono += wait;
         const up = r.int(2, 1500), down = r.int(2, 1500);
         const sent = local;
         const serverAt = sent + up + truth;
         const date = Math.floor(serverAt / 1000) * 1000;
-        local = sent + up + down;
+        local = sent + up + down; mono += up + down;
         clock.observe(sent, local, date);
         minWidth = Math.min(minWidth, up + down + 1000);
         const err = Math.abs(clock.offset() - truth);
@@ -119,7 +122,7 @@ async function speedSession(r: Rng) {
     await wait(r.int(0, 3000));
     while (!stop) {
       await c.sync('pull');
-      if (c.laterPending) { c.laterPending = false; await wait(PUSH_DELAY); await c.sync('push'); }
+      if (c.laterPending) { c.laterPending = false; await c.sync('push'); }
       await wait(pollDelay({ failures: c.ctl.failures, hidden: false, focused: true, now: Date.now(), activeAt: c.ctl.activeAt ?? 0 }));
     }
   });
@@ -150,9 +153,10 @@ async function speedSession(r: Rng) {
   const last = pending.at(-1)!;
   check(last.seen.size === clients.length - 1, `the last edit reached ${last.seen.size} of ${clients.length - 1} devices within 8 s`);
   const worst = Math.max(...delays);
-  // Sent after PUSH_DELAY, one write (a round trip), the other device's next ask (every second while editing, two
-  // seconds otherwise), one read; plus a write race now and then.
-  check(worst <= PUSH_DELAY + POLL.visible + 4 * 250 + 500, `an edit took ${worst} ms to reach another device`);
+  // Sent after PUSH_DELAY (or right after a round already under way), one write (a round trip), the other device's
+  // next ask (every second while editing, two seconds otherwise), one read — and now and then a write race (one more
+  // round trip) or the change landing just after the other device asked.
+  check(worst <= PUSH_DELAY + POLL.visible + 6 * 250 + 500, `an edit took ${worst} ms to reach another device`);
   const minutes = (Date.now() - new Date('2026-11-29T05:00:00Z').getTime()) / 60_000;
   const perDeviceMinute = (worker.requests.length - before) / clients.length / minutes;
   check(perDeviceMinute <= 75, `${perDeviceMinute.toFixed(0)} requests per device per minute`);

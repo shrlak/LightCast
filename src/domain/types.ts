@@ -721,6 +721,10 @@ export interface Presentation {
   updatedAt?: number;
   /** When each of its own fields (title, theme, background …) was last edited, in the church server's time (editStamps.ts). */
   fieldsEditedAt?: Record<string, number>;
+  /** Slides a person removed (by id), with the server time, kept 30 days: so cloud sync can tell a removed slide from a new one. */
+  removedSlides?: Record<string, number>;
+  /** The slides themselves for a day after they were removed: a device that edits one meanwhile brings back its newest parts. */
+  removedCopies?: Record<string, Slide>;
   /** Dim / blur applied to the background while this presentation is live. */
   bgEffect?: BackgroundEffect;
   /** Built by the 수련회 builder: its background follows the retreat's moving background setting. */

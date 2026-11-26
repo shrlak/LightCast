@@ -23,7 +23,31 @@ export type StampedField = typeof STAMPED_FIELDS[number];
 export type FieldsEditedAt = Record<string, number>;
 
 /** Keys that are stamps, not content. */
-export const STAMP_KEYS = new Set(['editedAt', 'updatedAt', 'fieldsEditedAt']);
+export const STAMP_KEYS = new Set(['editedAt', 'updatedAt', 'fieldsEditedAt', 'removedSlides', 'removedCopies']);
+/** How long a removed slide is remembered (as long as the trash keeps things). */
+export const REMOVED_FOR = 30 * 86_400_000;
+/** How long the removed slide itself is kept (enough for a device that was offline to come back and sync). */
+export const REMOVED_COPY_FOR = 86_400_000;
+
+/** Copies of removed slides, the newest record of each, those removed within REMOVED_COPY_FOR of `now`. */
+export function mergeRemovedCopies(a: Record<string, Slide> | undefined, b: Record<string, Slide> | undefined, removed: Record<string, number> | undefined, now: number): Record<string, Slide> | undefined {
+  const out: Record<string, Slide> = {};
+  for (const src of [a, b]) for (const [id, slide] of Object.entries(src ?? {})) {
+    const at = removed?.[id];
+    if (at == null || at < now - REMOVED_COPY_FOR || !slide) continue;
+    const old = out[id];
+    out[id] = old ? (itemStamp(slide) >= itemStamp(old) ? slide : old) : slide;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** The slides removed from a presentation, by id, with the time (the later of two records of one slide). */
+export function mergeRemoved(a: Record<string, number> | undefined, b: Record<string, number> | undefined, now = 0): Record<string, number> | undefined {
+  if (!a && !b) return undefined;
+  const out: Record<string, number> = {};
+  for (const src of [a, b]) for (const [id, t] of Object.entries(src ?? {})) if (typeof t === 'number' && Number.isFinite(t) && t >= now - REMOVED_FOR && t > (out[id] ?? -Infinity)) out[id] = t;
+  return Object.keys(out).length ? out : undefined;
+}
 /** The parts of a slide with their own stamps; everything else on it is its body (one piece, stamped `editedAt`). */
 export const SLIDE_PARTS = new Set(['elements', 'comments']);
 
@@ -83,8 +107,16 @@ function stampSlide(old: Slide | undefined, s: Slide, at: number): Slide {
 function stampPresentation(old: Presentation | undefined, p: Presentation, at: number): Presentation {
   const slidesBefore = new Map((old?.slides ?? []).map((s) => [s.id, s]));
   const slides = p.slides === old?.slides ? p.slides : p.slides.map((s) => (slidesBefore.get(s.id) === s ? s : stampSlide(slidesBefore.get(s.id), s, at)));
-  const fields = stampFields(old, p, at);
-  return { ...p, updatedAt: at, slides, ...(fields ? { fieldsEditedAt: fields } : {}) };
+  let fields = stampFields(old, p, at, new Set(['slides']));
+  // The slide list's own stamp: only when slides are added, removed or reordered (an edit inside a slide is the slide's).
+  const order = (list: { id: string }[] | undefined) => (list ?? []).map((s) => s.id).join('\u0000');
+  if (old && order(old.slides) !== order(p.slides)) fields = { ...fields, slides: at };
+  // Slides removed by this edit (deleted, or replaced when lyrics were laid out anew) are remembered with the time.
+  const now = new Set(p.slides.map((s) => s.id));
+  const gone = (old?.slides ?? []).filter((s) => !now.has(s.id)).map((s) => s.id);
+  const removed = gone.length ? mergeRemoved(p.removedSlides ?? old?.removedSlides, Object.fromEntries(gone.map((id) => [id, at])), at) : p.removedSlides;
+  const copies = gone.length ? mergeRemovedCopies(p.removedCopies ?? old?.removedCopies, Object.fromEntries(gone.map((id) => [id, slidesBefore.get(id)!])), removed, at) : p.removedCopies;
+  return { ...p, updatedAt: at, slides, ...(fields ? { fieldsEditedAt: fields } : {}), ...(removed ? { removedSlides: removed } : {}), ...(copies ? { removedCopies: copies } : {}) };
 }
 
 function stampList<T extends { id: string }>(before: T[] | undefined, after: T[] | undefined, at: number): T[] | undefined {

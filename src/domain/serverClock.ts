@@ -29,11 +29,27 @@ export interface ServerClock {
   reset(): void;
 }
 
-export function createServerClock(local: () => number = () => Date.now(), storage: Pick<Storage, 'getItem' | 'setItem'> | null = null): ServerClock {
+export function createServerClock(local: () => number = () => Date.now(), storage: Pick<Storage, 'getItem' | 'setItem'> | null = null, mono?: () => number): ServerClock {
   let samples: Sample[] = [];
   let est = 0;
   let spread = Infinity;
   let last = -Infinity;
+  // This computer's clock set forward or back (by the person, or by an NTP correction): seen against a clock that only
+  // runs forward, and the offsets already learnt are moved by as much, instead of being wrong until they expire.
+  let anchor: { local: number; mono: number } | null = null;
+  const follow = () => {
+    if (!mono) return;
+    const now = { local: local(), mono: mono() };
+    if (anchor) {
+      const jump = (now.local - anchor.local) - (now.mono - anchor.mono);
+      if (Math.abs(jump) > 50) {
+        samples = samples.map((x) => ({ lo: x.lo - jump, hi: x.hi - jump, at: x.at + jump }));
+        est -= jump;
+        last = -Infinity;
+      }
+    }
+    anchor = now;
+  };
   try {
     const saved = JSON.parse(storage?.getItem(KEY) ?? 'null') as { offset?: unknown } | null;
     if (saved && typeof saved.offset === 'number' && Number.isFinite(saved.offset) && Math.abs(saved.offset) < 366 * 86_400_000) est = saved.offset;
@@ -53,6 +69,7 @@ export function createServerClock(local: () => number = () => Date.now(), storag
   return {
     observe(sentAt, receivedAt, serverDate) {
       if (![sentAt, receivedAt, serverDate].every(Number.isFinite) || receivedAt < sentAt || receivedAt - sentAt > 60_000) return;
+      follow();
       const now = local();
       samples = [...samples.filter((s) => now - s.at < SAMPLE_LIFE), { lo: serverDate - receivedAt, hi: serverDate + 1000 - sentAt, at: now }].slice(-MAX_SAMPLES);
       recompute();
@@ -60,6 +77,7 @@ export function createServerClock(local: () => number = () => Date.now(), storag
     offset: () => est,
     uncertainty: () => spread,
     now() {
+      follow();
       const t = Math.round(local() + est);
       // Never backwards for small corrections (two edits in a row keep their order); a big correction is taken at once.
       if (t >= last || last - t > 2000) last = t;
@@ -74,7 +92,7 @@ const browserStorage = (): Pick<Storage, 'getItem' | 'setItem'> | null => {
 };
 
 /** This window's clock of the church server. */
-export const serverClock = createServerClock(() => Date.now(), browserStorage());
+export const serverClock = createServerClock(() => Date.now(), browserStorage(), typeof performance !== 'undefined' ? () => performance.now() : undefined);
 
 /** The church server's time now (ms): what every edit is stamped with. */
 export const serverNow = (): number => serverClock.now();

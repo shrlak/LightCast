@@ -36,7 +36,8 @@ function relay() {
     ws.say({ type: 'hello', role, ...extra });
     return ws;
   };
-  return { wss, connect, done: () => wss.close() };
+  // As startServer's close: connections first (the relay's own close, which stops its heartbeat, waits for them).
+  return { wss, connect, done: () => { for (const c of [...wss.clients]) c.terminate(); wss.close(); } };
 }
 
 const stateMsg = (n: number) => ({ type: 'state', state: { slide: { id: `s${n}`, text: `슬라이드 ${n}` }, n }, seq: n, epoch: 'run' });

@@ -75,7 +75,7 @@ export async function syncSession(r: Rng, o: SessionOptions = {}): Promise<{ wor
     const mine = c.lib.presentations.filter((p) => !p.online && p.id.startsWith('p_s'));
     const p = mine.length ? r.pick(mine) : null;
     const t = c.serverNow();
-    const kinds = ['text', 'text', 'text', 'title', ...(o.deletes ? ['deleteSlide', 'addSlide', 'deletePres', 'addPres'] : ['addSlide']), ...(o.elements ? ['element', 'element'] : []), ...(o.settings ? ['prayer', 'confession'] : []), ...(o.media ? ['media'] : []), ...(o.fonts ? ['font'] : [])];
+    const kinds = ['text', 'text', 'text', 'title', ...(o.deletes ? ['deleteSlide', 'addSlide', 'deletePres', 'addPres', 'relayout'] : ['addSlide']), ...(o.elements ? ['element', 'element'] : []), ...(o.settings ? ['prayer', 'confession'] : []), ...(o.media ? ['media'] : []), ...(o.fonts ? ['font'] : [])];
     const kind = r.pick(kinds);
     if (kind === 'media') { const id = `m_${c.name}${++made}`; trace(`  ${c.name} adds media ${id}`); c.addMedia(id, `bytes-${made}`); return; }
     if (kind === 'font') { if (c.fonts.length && r.chance(0.3)) c.fonts = c.fonts.slice(1); else c.importFont(`글꼴${c.name}${++made}`, `FONT-${made}`); return; }
@@ -98,6 +98,16 @@ export async function syncSession(r: Rng, o: SessionOptions = {}): Promise<{ wor
       trace(`  ${c.name} delete pres ${p.id} @${t}`);
       c.dispatch({ type: 'presentation/delete', id: p.id });
       add(presEvents, p.id, { at: t, kind: 'delete' });
+      return;
+    }
+    if (kind === 'relayout') {
+      // Lyrics laid out anew (SongEditor): every slide replaced by new ones, without the trash.
+      const fresh = [0, 1].map((k) => ({ id: `${p.id}_r${c.name}${++made}_${k}`, group: 'V', text: `새 배치 ${k}` }));
+      trace(`  ${c.name} relayout ${p.id} → ${fresh.map((x) => x.id).join(',')} @${t}`);
+      c.dispatch({ type: 'presentation/update', id: p.id, patch: { slides: fresh } });
+      add(presEvents, p.id, { at: t, kind: 'edit' });
+      for (const old of p.slides) add(slideEvents, `${p.id}/${old.id}`, { at: t, kind: 'delete' });
+      for (const x of fresh) { add(slideEvents, `${p.id}/${x.id}`, { at: t, kind: 'edit' }); add(texts, `${p.id}/${x.id}`, { at: t, kind: 'edit', value: x.text }); }
       return;
     }
     if (kind === 'addSlide') {
@@ -153,8 +163,8 @@ export async function syncSession(r: Rng, o: SessionOptions = {}): Promise<{ wor
     const c = r.pick(clients);
     const roll = r.next();
     if (roll < 0.5) edit(c);
-    else if (roll < 0.8) { const how = r.chance(0.5) ? 'push' : 'pull'; await c.sync(how).catch(() => undefined); trace(`  ${c.name} sync ${how} → ${c.status.state} v${c.session?.version}`); }
-    else { await c.settle().catch(() => undefined); trace(`  ${c.name} settle → ${c.status.state} v${c.session?.version}`); }
+    else if (roll < 0.8) { const how = r.chance(0.5) ? 'push' : 'pull'; await c.sync(how).catch(() => undefined); trace(`  ${c.name} sync ${how} → ${c.status.state} v${c.session?.version}${c.status.state === 'error' ? ` (${c.status.message})` : ''}`); }
+    else { await c.settle().catch(() => undefined); trace(`  ${c.name} settle → ${c.status.state} v${c.session?.version}${c.status.state === 'error' ? ` (${c.status.message})` : ''}`); }
     if (TRACE) trace('    ' + clients.map((x) => `${x.name}:[${x.lib.presentations.filter((p) => p.id.startsWith('p_s')).map((p) => `${p.id}(${p.slides.map((s) => (TRACE === '2' ? `${s.id.split('_').pop()}:${s.text}@${((s as { editedAt?: number }).editedAt ?? 0) % 100000}` : s.text)).join(',')})`).join(' ')}]`).join(' | '));
   }
 

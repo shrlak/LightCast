@@ -3,7 +3,7 @@ import { mergeActivity, mergeDevices, newestModification } from './activity';
 import { clearTransitions } from './persistence';
 import { mergePrefs } from './fontPrefs';
 import { keepProtectedMaterials, protectionWinners, mergeProtectionChanges } from './materialProtection';
-import { fieldStamp, itemStamp, mergeFieldStamps, presentationStamp, SLIDE_PARTS, slideStamp, STAMP_KEYS, type StampedField } from './editStamps';
+import { fieldStamp, itemStamp, mergeFieldStamps, mergeRemoved, mergeRemovedCopies, presentationStamp, SLIDE_PARTS, slideStamp, STAMP_KEYS, type StampedField } from './editStamps';
 
 /** The part of the library that is shared through the cloud (online songs come from GitHub instead). */
 export function syncable(lib: Library): Library {
@@ -80,6 +80,8 @@ export function mergeById<T extends { id: string }>(
   remote: T[],
   both: (l: T, r: T, b: T | undefined) => T = (l, r) => (later(l, r, itemStamp(l), itemStamp(r)) === 'local' ? l : r),
   keepEdited: (edited: T, side: Side, b: T) => boolean | T = () => true,
+  /** An item only one side has and the last synced copy lacks (new there, or brought back there): kept unless this says no. */
+  keepNew: (item: T, side: Side) => boolean | T = () => true,
 ): T[] {
   const b = new Map((base ?? []).map((x) => [x.id, x]));
   const l = new Map(local.map((x) => [x.id, x]));
@@ -108,10 +110,10 @@ export function mergeById<T extends { id: string }>(
       else out.push(both(lv, rv, bv));
     } else if (lv) {
       // New here, or edited here while it was deleted on another device (kept as it is, or as `keepEdited` returns it).
-      const keep = !bv || (lChanged && keepEdited(lv, 'local', bv));
+      const keep = !bv ? keepNew(lv, 'local') : lChanged && keepEdited(lv, 'local', bv);
       if (keep) out.push(keep === true ? lv : keep);
     } else if (rv) {
-      const keep = !bv || (rChanged && keepEdited(rv, 'remote', bv));
+      const keep = !bv ? keepNew(rv, 'remote') : rChanged && keepEdited(rv, 'remote', bv);
       if (keep) out.push(keep === true ? rv : keep);
     }
   }
@@ -177,7 +179,7 @@ function mergeItem<T extends { id: string }>(l: T, r: T, b: T | undefined): T {
 interface Deletions {
   presentations: Map<string, number>; slides: Map<string, number>;
   /** The presentation / slide as it was when deleted (every deletion: several devices may have deleted it). */
-  copies: Map<string, Presentation[]>; slideCopies: Map<string, Slide[]>;
+  copies: Map<string, { at: number; p: Presentation }[]>; slideCopies: Map<string, { at: number; slide: Slide }[]>;
   /** Slides this merge found deleted later than another device edited them: that edit goes into their trash copy. */
   laterDeletedSlides: Map<string, Slide>;
 }
@@ -185,24 +187,39 @@ function deletionsOf(lib: Library | null): Deletions {
   const out: Deletions = { presentations: new Map(), slides: new Map(), copies: new Map(), slideCopies: new Map(), laterDeletedSlides: new Map() };
   for (const e of lib?.trash ?? []) {
     if (e.kind === 'presentation') {
-      out.copies.set(e.presentation.id, [...(out.copies.get(e.presentation.id) ?? []), e.presentation]);
+      out.copies.set(e.presentation.id, [...(out.copies.get(e.presentation.id) ?? []), { at: e.deletedAt, p: e.presentation }]);
       out.presentations.set(e.presentation.id, Math.max(out.presentations.get(e.presentation.id) ?? 0, e.deletedAt));
     }
     else for (const s of e.slides ?? []) {
       const key = `${e.presentation.id}/${s.slide.id}`;
-      out.slideCopies.set(key, [...(out.slideCopies.get(key) ?? []), s.slide]);
+      out.slideCopies.set(key, [...(out.slideCopies.get(key) ?? []), { at: e.deletedAt, slide: s.slide }]);
       out.slides.set(key, Math.max(out.slides.get(key) ?? 0, e.deletedAt));
     }
   }
   return out;
 }
 
+/** When a slide (its body, text boxes, comments) was last edited. */
+const slideLastEdit = (x: Slide, owner?: Presentation): number => Math.max(slideStamp(x, owner), ...(x.elements ?? []).map(itemStamp), ...(x.comments ?? []).map(itemStamp));
+/**
+ * A slide that is here although a device deleted it earlier (edited later, so it came back): what that device had on it
+ * when it deleted (its trash copy) is folded back in, part by part — its newer text survives with this edit.
+ */
+function withSlideCopies(slide: Slide, pid: string, deleted: { local: Deletions; remote: Deletions }, owner?: Presentation, versions: (Presentation | undefined)[] = []): Slide {
+  const key = `${pid}/${slide.id}`;
+  const at = slideLastEdit(slide, owner);
+  const copies = [...(deleted.local.slideCopies.get(key) ?? []), ...(deleted.remote.slideCopies.get(key) ?? [])].filter((c) => c.at <= at).map((c) => c.slide);
+  // Removed without the trash (lyrics laid out anew): the copy kept with the removal record.
+  for (const v of versions) { const c = v?.removedCopies?.[slide.id]; if (c && (v!.removedSlides?.[slide.id] ?? Infinity) <= at) copies.push(c); }
+  return copies.length ? copies.reduce((acc, c) => mergeSlideByStamps(acc, c, 'local'), slide) : slide;
+}
+
 /** Two versions of one slide without a common ancestor (one from a trash copy): every part by its own stamp. */
-function mergeSlideByStamps(a: Slide, b: Slide): Slide {
+function mergeSlideByStamps(a: Slide, b: Slide, tie: Side = 'remote'): Slide {
   if (same(a, b)) return a;
-  const as = itemStamp(a), bs = itemStamp(b);
-  const body = later(a, b, as, bs) === 'local' ? a : b;
-  const pick = <T extends { id: string }>(x: T, y: T) => (later(x, y, itemStamp(x), itemStamp(y)) === 'local' ? x : y);
+  const by = <T>(x: T, y: T, xs: number, ys: number): T => (xs !== ys ? (xs > ys ? x : y) : tie === 'local' ? x : y);
+  const body = by(a, b, itemStamp(a), itemStamp(b));
+  const pick = <T extends { id: string }>(x: T, y: T) => (same(x, y) ? x : by(x, y, itemStamp(x), itemStamp(y)));
   const elements = mergeById(undefined, a.elements ?? [], b.elements ?? [], pick);
   const comments = mergeById(undefined, a.comments ?? [], b.comments ?? [], pick);
   return { ...body, ...(elements.length || a.elements || b.elements ? { elements } : {}), ...(comments.length ? { comments } : {}) };
@@ -214,7 +231,7 @@ function mergeSlideByStamps(a: Slide, b: Slide): Slide {
  * taken from its later edit.
  */
 function mergeSlide(b: Slide | undefined, l: Slide, r: Slide, lt: number, rt: number): Slide {
-  if (!b) return later(l, r, lt, rt) === 'local' ? l : r;
+  if (!b) return mergeSlideByStamps(l, r);
   const rest = (x: Slide) => Object.fromEntries(Object.entries(x).filter(([k]) => !SLIDE_PARTS.has(k) && !STAMP_KEYS.has(k)));
   const body = mergeField(rest(b), rest(l), rest(r), lt, rt);
   const out: Rec = { ...(body.v as Rec), id: l.id };
@@ -240,8 +257,11 @@ function mergeSlide(b: Slide | undefined, l: Slide, r: Slide, lt: number, rt: nu
  */
 function mergePresentation(b: Presentation | undefined, l: Presentation, r: Presentation, deleted: { local: Deletions; remote: Deletions }): Presentation {
   const lt = presentationStamp(l), rt = presentationStamp(r);
-  if (!b) return lt > rt ? l : r;
+  // No common ancestor (both devices brought it back, or a first sign-in): every part by its own stamp.
+  if (!b) return mergeByStamps(l, r, deleted);
   const fields = mergeRecord(b, l, r, lt, rt, new Set(['slides']));
+  /** Edits to slides that a later removal beat: kept with the removal record (or the trash copy) for restoring. */
+  const beaten = new Map<string, Slide>();
   const slides = mergeById<Slide>(b.slides, l.slides, r.slides,
     (ls, rs, bs) => mergeSlide(bs, ls, rs, slideStamp(ls, l), slideStamp(rs, r)),
     // A slide edited on one device and deleted on the other: deleted only when the deletion is the later of the two.
@@ -250,24 +270,46 @@ function mergePresentation(b: Presentation | undefined, l: Presentation, r: Pres
     (edited, side) => {
       const key = `${l.id}/${edited.id}`;
       const other = deleted[side === 'local' ? 'remote' : 'local'];
-      const at = other.slides.get(key);
+      const at = removedAt(other.slides.get(key), (side === 'local' ? r : l).removedSlides?.[edited.id]);
       const editedAt = Math.max(slideStamp(edited, side === 'local' ? l : r), ...[...(edited.elements ?? []), ...(edited.comments ?? [])].map(itemStamp));
       if (at == null) return true;
-      const copies = other.slideCopies.get(key) ?? [];
-      if (at <= editedAt) return copies.length ? copies.reduce(mergeSlideByStamps, edited) : true;
+      if (at <= editedAt) return withSlideCopies(edited, l.id, deleted, side === 'local' ? l : r, [l, r]);
       deleted.local.laterDeletedSlides.set(key, edited);
+      beaten.set(edited.id, edited);
+      return false;
+    },
+    // New on one side (or brought back there) while the other side deleted it later: deleted.
+    (slide, side) => {
+      const key = `${l.id}/${slide.id}`;
+      const at = removedAt(deleted[side === 'local' ? 'remote' : 'local'].slides.get(key), (side === 'local' ? r : l).removedSlides?.[slide.id]);
+      const editedAt = Math.max(slideStamp(slide, side === 'local' ? l : r), ...[...(slide.elements ?? []), ...(slide.comments ?? [])].map(itemStamp));
+      if (at == null) return true;
+      if (at <= editedAt) return withSlideCopies(slide, l.id, deleted, side === 'local' ? l : r, [l, r]);
+      deleted.local.laterDeletedSlides.set(key, slide);
+      beaten.set(slide.id, slide);
       return false;
     });
   const t = Math.max(lt, rt);
-  return { ...fields, id: l.id, slides, ...(t ? { updatedAt: t } : {}) } as Presentation;
+  const listAt = Math.max(fieldStamp(l, 'slides', 0), fieldStamp(r, 'slides', 0));
+  const stamps = listAt ? { ...fields.fieldsEditedAt, slides: listAt } : fields.fieldsEditedAt;
+  const removed = mergeRemoved(l.removedSlides, r.removedSlides, t);
+  let copies = mergeRemovedCopies(l.removedCopies, r.removedCopies, removed, t);
+  for (const [id, edited] of beaten) if (removed?.[id] != null) copies = mergeRemovedCopies(copies, { [id]: copies?.[id] ? mergeSlideByStamps(copies[id], edited, 'remote') : edited }, removed, t);
+  return { ...fields, id: l.id, slides, ...(stamps ? { fieldsEditedAt: stamps } : {}), ...(removed ? { removedSlides: removed } : {}), ...(copies ? { removedCopies: copies } : {}), ...(t ? { updatedAt: t } : {}) } as Presentation;
 }
+
+/** The later of two removal times of a slide (trash, tombstone), or undefined when it was never removed. */
+const removedAt = (...times: (number | undefined)[]): number | undefined => {
+  const known = times.filter((t): t is number => typeof t === 'number');
+  return known.length ? Math.max(...known) : undefined;
+};
 
 /**
  * Two versions of one presentation without a common ancestor (a trash copy from whichever version the deleting device
  * had): every part goes by its stamps alone — each field, each slide's body, each text box its later edit. A slide or
  * text box only one version has stays, unless that version's device deleted it later than it was last edited.
  */
-function mergeByStamps(l: Presentation, r: Presentation, deleted: { local: Deletions; remote: Deletions }): Presentation {
+function mergeByStamps(l: Presentation, r: Presentation, deleted: { local: Deletions; remote: Deletions }, tie: Side = 'remote'): Presentation {
   const lt = presentationStamp(l), rt = presentationStamp(r);
   const out: Rec = {};
   const stamps: Rec = {};
@@ -277,7 +319,8 @@ function mergeByStamps(l: Presentation, r: Presentation, deleted: { local: Delet
     // Without a common ancestor a field counts only by its own stamp: one never edited is older than any edit
     // (the object's newest stamp would make an untouched original look new).
     const ls = fieldStamp(l, k, 0), rs = fieldStamp(r, k, 0);
-    const side = same(lv, rv) ? 'local' : later(lv, rv, ls, rs);
+    // Equal stamps (neither side edited it, or an older app's edit): the cloud's version, as on a first sign-in.
+    const side: Side = same(lv, rv) ? 'local' : ls !== rs ? (ls > rs ? 'local' : 'remote') : tie;
     const v = side === 'local' ? lv : rv;
     if (v !== undefined) out[k] = v;
     const t = side === 'local' ? fieldStamp(l, k, 0) : fieldStamp(r, k, 0);
@@ -287,17 +330,24 @@ function mergeByStamps(l: Presentation, r: Presentation, deleted: { local: Delet
   const ls = byId(l.slides), rs = byId(r.slides);
   const order = [...l.slides.map((x) => x.id), ...r.slides.map((x) => x.id).filter((id) => !ls.has(id))];
   // The latest deletion of a slide on any device (its trash): the slide stays only when it was edited after that.
-  const deletedAt = (id: string) => Math.max(deleted.local.slides.get(`${l.id}/${id}`) ?? -Infinity, deleted.remote.slides.get(`${l.id}/${id}`) ?? -Infinity);
+  const deletedAt = (id: string) => Math.max(deleted.local.slides.get(`${l.id}/${id}`) ?? -Infinity, deleted.remote.slides.get(`${l.id}/${id}`) ?? -Infinity, l.removedSlides?.[id] ?? -Infinity, r.removedSlides?.[id] ?? -Infinity);
   const lastEdit = (x: Slide) => Math.max(itemStamp(x), ...(x.elements ?? []).map(itemStamp), ...(x.comments ?? []).map(itemStamp));
   const slides: Slide[] = [];
   for (const id of order) {
     const a = ls.get(id), b = rs.get(id);
-    const slide = a && b ? mergeSlideByStamps(a, b) : (a ?? b)!;
-    if (deletedAt(id) <= lastEdit(slide)) slides.push(slide);
+    const slide = a && b ? mergeSlideByStamps(a, b, tie) : (a ?? b)!;
+    // Removed on some device (trash, or the removed-slides record: deleted, or replaced when lyrics were laid out anew)
+    // later than it was last edited: gone. Otherwise kept, whichever version has it.
+    if (deletedAt(id) > lastEdit(slide)) continue;
+    slides.push(deletedAt(id) > -Infinity ? withSlideCopies(slide, l.id, deleted, undefined, [l, r]) : slide);
   }
+  const listAt = Math.max(fieldStamp(l, 'slides', 0), fieldStamp(r, 'slides', 0));
+  if (listAt) stamps.slides = listAt;
   if (Object.keys(stamps).length) out.fieldsEditedAt = stamps;
   const t = Math.max(lt, rt);
-  return { ...out, id: l.id, slides, ...(t ? { updatedAt: t } : {}) } as Presentation;
+  const removed = mergeRemoved(l.removedSlides, r.removedSlides, t);
+  const copies = mergeRemovedCopies(l.removedCopies, r.removedCopies, removed, t);
+  return { ...out, id: l.id, slides, ...(removed ? { removedSlides: removed } : {}), ...(copies ? { removedCopies: copies } : {}), ...(t ? { updatedAt: t } : {}) } as Presentation;
 }
 
 /** A library-wide setting both devices changed: the later edit (setting by setting for 주일예배 설정). */
@@ -340,11 +390,7 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
   const deleted = { local: deletionsOf(local), remote: deletionsOf(remote) };
   /** Presentations deleted later than another device edited them: that edit goes into the trash copy (restorable). */
   const laterDeleted = new Map<string, Presentation>();
-  /**
-   * Presentations edited later than another device deleted them: they stay, with the deleting device's own changes
-   * made before it deleted (slides it removed or edited) merged in — as if it had not deleted.
-   */
-  const revived = new Map<string, Presentation>();
+
   const presentations = mergeById<Presentation>(base?.presentations, local.presentations, remote.presentations, (l, r, b) => {
     if (locked.has(l.id)) return locked.get(l.id)!;
     if ((l.protectionChangedAt ?? 0) !== (r.protectionChangedAt ?? 0)) return (l.protectionChangedAt ?? 0) > (r.protectionChangedAt ?? 0) ? l : r;
@@ -353,17 +399,26 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
     if (locked.has(edited.id)) return true;
     const other = deleted[side === 'local' ? 'remote' : 'local'];
     const at = other.presentations.get(edited.id);
-    if (at == null || at <= presentationStamp(edited)) {
-      // The deleting device's own changes from before it deleted are kept too, each part by its stamps (its trash copy
-      // can come from any version, so there is no common ancestor to compare with).
-      const copies = at != null ? other.copies.get(edited.id) ?? [] : [];
-      if (copies.length) revived.set(edited.id, copies.reduce((acc, copy) => (side === 'local' ? mergeByStamps(acc, copy, deleted) : mergeByStamps(copy, acc, deleted)), edited));
-      return true;
-    }
+    if (at == null || at <= presentationStamp(edited)) return true;
     laterDeleted.set(edited.id, edited);
     return false;
+  }, (item, side) => {
+    // New on one side — or brought back there by an edit later than an earlier deletion — while the other side
+    // deleted it later still: deleted (its edits go into the trash copy).
+    if (locked.has(item.id)) return true;
+    const at = deleted[side === 'local' ? 'remote' : 'local'].presentations.get(item.id);
+    if (at == null || at <= presentationStamp(item)) return true;
+    laterDeleted.set(item.id, item);
+    return false;
   });
-  const presentationsOut = revived.size ? presentations.map((p) => revived.get(p.id) ?? p) : presentations;
+  // A presentation that is here although a device deleted it earlier (edited later, so it came back): what that device
+  // had in it when it deleted — its own edits, kept in its trash copy — is folded back in, each part by its stamps
+  // (the copy can come from any version, so there is no common ancestor to compare with). Every device folds the same
+  // copies the same way, so they all end alike, however late each one hears of the deletion.
+  const presentationsOut = presentations.map((p) => {
+    const copies = [...(deleted.local.copies.get(p.id) ?? []), ...(deleted.remote.copies.get(p.id) ?? [])].filter((c) => c.at <= presentationStamp(p));
+    return copies.length ? copies.reduce((acc, c) => mergeByStamps(acc, c.p, deleted, 'local'), p) : p;
+  });
   const retreat = mergeSetting('retreat', base, local, remote) ?? local.retreat ?? remote.retreat;
   const usageKey = (u: UsageEntry) => `${u.at}:${u.presentationId}:${u.device?.id ?? ''}`;
   const usage = [...local.usage];
@@ -380,13 +435,13 @@ export function mergeLibrary(base0: Library | null, local0: Library, remote0: Li
     trash = trash.map((e) => {
       const edited = e.kind === 'presentation' ? laterDeleted.get(e.presentation.id) : undefined;
       if (!edited) return e;
-      return { ...e, presentation: mergeByStamps(e.presentation, edited, deleted) };
+      return { ...e, presentation: mergeByStamps(e.presentation, edited, deleted, 'remote') };
     });
   }
   if (deleted.local.laterDeletedSlides.size) {
-    const later = deleted.local.laterDeletedSlides;
-    trash = trash.map((e) => (e.kind !== 'slides' || !e.slides?.some((x) => later.has(`${e.presentation.id}/${x.slide.id}`)) ? e
-      : { ...e, slides: e.slides.map((x) => { const edited = later.get(`${e.presentation.id}/${x.slide.id}`); return edited ? { ...x, slide: mergeSlideByStamps(x.slide, edited) } : x; }) }));
+    const laterSlides = deleted.local.laterDeletedSlides;
+    trash = trash.map((e) => (e.kind !== 'slides' || !e.slides?.some((x) => laterSlides.has(`${e.presentation.id}/${x.slide.id}`)) ? e
+      : { ...e, slides: e.slides.map((x) => { const edited = laterSlides.get(`${e.presentation.id}/${x.slide.id}`); return edited ? { ...x, slide: mergeSlideByStamps(x.slide, edited) } : x; }) }));
   }
   const fieldsEditedAt = mergeFieldStamps(local.fieldsEditedAt, remote.fieldsEditedAt);
   return {

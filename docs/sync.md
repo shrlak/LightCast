@@ -12,9 +12,12 @@
   `fieldsEditedAt['sunday.<setting>' | 'logoMediaId' | 'retreat']`. Sync merges and automatic refreshes are not stamped.
 - **Merge** (`src/domain/cloudMerge.ts`): three-way against the last synced copy. What only one side changed is taken from
   it; a part both changed takes its later stamp. Different slides, different text boxes, different fields all survive.
-  Deleted on one device and edited on another: the later of the two wins (deletion times come from the trash). A revived
-  presentation or slide also gets the deleting device's own changes (its trash copies, part by part); a deletion that
-  wins keeps the newer edit in the trash copy. Nothing is ever kept twice and nothing is asked.
+  Deleted on one device and edited on another: the later of the two wins. Deletion times come from the trash and from
+  each presentation's `removedSlides` (a tombstone per slide a person removed — also when lyrics are laid out anew —
+  kept 30 days). Whenever a presentation or slide exists although some device deleted it earlier, every trash copy of
+  it is folded back in part by part, so the deleting device's own edits survive; a deletion that wins keeps the newer
+  edit in the trash copy. Without a common ancestor (both brought it back, a first sign-in) every part goes by its own
+  stamp, the cloud's version winning exact ties. Nothing is ever kept twice and nothing is asked.
 - **Typing during a round**: `library/merge` carries `from` (the library the merge was worked out from); edits made in the
   meantime are merged in by the reducer instead of being overwritten.
 

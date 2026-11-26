@@ -36,6 +36,14 @@ describe('server clock', () => {
     expect(Math.abs(clock.offset() - 90_000)).toBeLessThanOrEqual(600);
     expect(createServerClock(() => local, storage).offset()).toBe(clock.offset());
   });
+  it('follows this computer\'s clock being set (an NTP correction) at once, instead of keeping the old offset', () => {
+    let local = 5_000_000, mono = 0;
+    const clock = createServerClock(() => local, null, () => mono);
+    for (let i = 0; i < 6; i++) { const sent = local; local += 40; mono += 40; clock.observe(sent, local, Math.floor((sent + 20 + 30_000) / 1000) * 1000); local += 1000; mono += 1000; }
+    const before = clock.now() - local;
+    local += 1_500; // the clock was set 1.5 s forward; server time did not move
+    expect(Math.abs(clock.now() - local - (before - 1_500))).toBeLessThanOrEqual(1);
+  });
   it('reads the header the local server passes on, and ignores answers without it', () => {
     const clock = createServerClock(() => 0);
     learnServerTime({ headers: { get: () => null } }, 0, 10, clock);
@@ -102,6 +110,24 @@ describe('the later edit wins, part by part', () => {
     const a = edit(base, { type: 'slide/update', presentationId: 'p', slideId: 'p_1', patch: { text: 'A가 나중에 고침' } }, 3000);
     const merged = mergeLibrary(syncable(base.library), syncable(a.library), syncable(b.library)).library;
     expect(merged.presentations.find((x) => x.id === 'p')?.slides.map((x) => x.text)).toEqual(['B가 먼저 고침', 'A가 나중에 고침']);
+  });
+  it('slides laid out anew on one device do not come back from another device\'s older deleted copy', () => {
+    const base = start();
+    const b = edit(base, { type: 'presentation/delete', id: 'p' }, 1000);
+    // Lyrics laid out again (new slides, the old ones removed without the trash), later than the deletion.
+    const a = edit(base, { type: 'presentation/update', id: 'p', patch: { slides: [{ id: 'p_new', group: 'V', text: '새 배치' }] } }, 2000);
+    const merged = mergeLibrary(syncable(base.library), syncable(b.library), syncable(a.library)).library;
+    expect(merged.presentations.find((x) => x.id === 'p')?.slides.map((x) => x.id)).toEqual(['p_new']);
+  });
+  it('a slide added on a device that then deleted the presentation comes back with it when another device edits it later', () => {
+    const base = start();
+    const b1 = edit(base, { type: 'presentation/update', id: 'p', patch: { slides: [...base.library.presentations[0].slides, { id: 'p_added', group: 'V', text: '추가' }] } }, 1000);
+    const b = edit(b1, { type: 'presentation/delete', id: 'p' }, 2000);
+    const a = edit(base, { type: 'presentation/update', id: 'p', patch: { title: '나중에 고친 제목' } }, 3000);
+    const merged = mergeLibrary(syncable(base.library), syncable(a.library), syncable(b.library)).library;
+    const p = merged.presentations.find((x) => x.id === 'p')!;
+    expect(p.title).toBe('나중에 고친 제목');
+    expect(p.slides.map((x) => x.id)).toEqual(['p_0', 'p_1', 'p_added']);
   });
   it('typing while a sync round was in flight is never lost: the merge is redone against it', () => {
     const base = start();
