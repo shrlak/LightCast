@@ -13,6 +13,7 @@ export function getDevice(): DeviceIdentity {
     name: typeof saved.name === 'string' && saved.name.trim() ? saved.name : `${platform} 기기`,
     userName: typeof saved.userName === 'string' ? saved.userName : '',
     platform, appVersion: typeof saved.appVersion === 'string' ? saved.appVersion : undefined,
+    ...(typeof saved.church === 'boolean' ? { church: saved.church } : {}),
   };
   try { localStorage.setItem(KEY, JSON.stringify(cached)); } catch { /* Identity lasts for this session. */ }
   return { ...cached };
@@ -42,6 +43,13 @@ export function saveDeviceProfile(name: string, userName: string): DeviceIdentit
   const next = { ...getDevice(), name: name.trim(), userName: userName.trim() };
   localStorage.setItem(KEY, JSON.stringify(next));
   try { localStorage.setItem(PROFILE_KEY, '1'); } catch { /* storage blocked */ }
+  cached = next;
+  return { ...next };
+}
+/** Mark this computer as the church computer (or not): it makes the Sunday 1:55 PM copy (sundayBackup.ts). */
+export function saveChurchDevice(on: boolean): DeviceIdentity {
+  const next = { ...getDevice(), church: on };
+  try { localStorage.setItem(KEY, JSON.stringify(next)); } catch { /* this session only */ }
   cached = next;
   return { ...next };
 }

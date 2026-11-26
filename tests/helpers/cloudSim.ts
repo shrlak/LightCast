@@ -8,7 +8,7 @@ import { createInitialState, reducer, type Action, type AppState } from '../../s
 import { baseOwnerChanges, type CloudSession, type MediaStore } from '../../src/domain/cloud';
 import { syncOnce, runSyncRound, type SyncControl, type SyncEnv } from '../../src/domain/cloudSyncRound';
 import type { SyncState } from '../../src/domain/syncStatus';
-import { addConflicts, type ConflictRecord } from '../../src/domain/syncStatus';
+import { getDevice } from '../../src/domain/device';
 import type { Library, MediaMeta, Presentation, Slide } from '../../src/domain/types';
 import { libraryKey, syncable } from '../../src/domain/cloudMerge';
 import { runFontSync, type CloudFont, type FontStoreApi, DEFAULT_FONT_SYNC } from '../../src/domain/fontSync';
@@ -16,7 +16,10 @@ import type { ImportedFont } from '../../src/domain/importedFonts';
 import { normalizeLibrary } from '../../src/domain/persistence';
 
 const clone = <T>(v: T): T => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
-const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+/** The church server's clock (the real Worker's Date header, passed on by server/cloud.mjs). */
+export const serverTime = { offset: 0, now: () => Date.now() + serverTime.offset };
+const dated = (headers: Record<string, string> = {}) => ({ ...headers, 'x-lightcast-server-date': new Date(serverTime.now()).toUTCString() });
+const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: dated({ 'content-type': 'application/json' }) });
 
 interface Account {
   password: string;
@@ -99,7 +102,7 @@ export class FakeWorker {
     if (path === 'logout') { this.tokens.delete(req.token!); return json({ ok: true }); }
     if (path === 'library' && method === 'GET') {
       const known = query.get('known');
-      if (known != null && Number(known) === acct.library.version) return new Response(null, { status: 204 });
+      if (known != null && Number(known) === acct.library.version) return new Response(null, { status: 204, headers: dated() });
       return json(clone(acct.library));
     }
     if (path === 'library' && method === 'PUT') {
@@ -124,9 +127,9 @@ export class FakeWorker {
       }
       if (method === 'GET') {
         const m = acct.media.get(id);
-        return m ? new Response(m.bytes.slice(), { status: 200, headers: { 'content-type': m.type } }) : json({ error: 'media not found' }, 404);
+        return m ? new Response(m.bytes.slice(), { status: 200, headers: dated({ 'content-type': m.type }) }) : json({ error: 'media not found' }, 404);
       }
-      if (method === 'DELETE') { acct.media.delete(id); return new Response(null, { status: 204 }); }
+      if (method === 'DELETE') { acct.media.delete(id); return new Response(null, { status: 204, headers: dated() }); }
     }
     if (path === 'storage') return json({ error: 'not found' }, 404);
     return json({ error: 'not found' }, 404);
@@ -150,7 +153,11 @@ export const pres = (id: string, title: string, texts: string[] = ['one', 'two']
 export const bytesOf = (s: string) => new Blob([s], { type: 'image/png' });
 export const textOf = (b: Blob | undefined) => b?.text();
 
-export interface ClientOptions { skewMs?: number; library?: Library }
+export interface ClientOptions {
+  /** How far this device's estimate of the server's time is off (ms): what its edits are stamped with is off by as much. */
+  skewMs?: number;
+  library?: Library;
+}
 
 export class SimClient {
   state: AppState;
@@ -162,24 +169,33 @@ export class SimClient {
   session: CloudSession | null = null;
   status: { state: SyncState; message: string | null } = { state: 'off', message: null };
   notices: string[] = [];
-  conflicts: ConflictRecord[] = [];
   online = true;
   restorePoints = 0;
   laterPending = false;
   signedOut = false;
-  ctl: SyncControl = { busy: false, requested: false, failures: 0, paused: false, lastPushed: '' };
+  ctl: SyncControl = { busy: false, requested: false, failures: 0, paused: false, lastPushed: '', extrasDue: true };
   /** Rounds started by `settle`, a guard against endless follow-up pushes. */
   rounds = 0;
   private owner = new Map<string, string>();
   ownerStorage = { getItem: (k: string) => this.owner.get(k) ?? null, setItem: (k: string, v: string) => { this.owner.set(k, v); } };
   failMedia: ((id: string, dir: 'put' | 'get') => boolean) | null = null;
 
+  skewMs: number;
   constructor(public name: string, public worker: FakeWorker, opts: ClientOptions = {}) {
     this.state = createInitialState(opts.library ?? createSeedLibrary());
+    this.skewMs = opts.skewMs ?? 0;
   }
 
   get lib(): Library { return this.state.library; }
-  dispatch(a: Action) { this.state = reducer(this.state, a); }
+  /** The server's time as this device stamps it. */
+  serverNow() { return serverTime.now() + this.skewMs; }
+  private seq = 0;
+  /** An edit made by a person on this device: stamped with (its estimate of) the server's time, as OperatorView's dispatch does. */
+  dispatch(a: Action) {
+    this.state = reducer(this.state, { ...a, actor: { ...getDevice(), id: `dev-${this.name}`, name: this.name }, account: this.session?.username ?? null, eventId: `${this.name}-${++this.seq}`, occurredAt: this.serverNow() } as Action);
+  }
+  /** What the app does by itself (sync merges): not an edit. */
+  apply(a: Action) { this.state = reducer(this.state, a); }
   presentation(id: string) { return this.lib.presentations.find((p) => p.id === id); }
   titles() { return this.lib.presentations.filter((p) => !p.online).map((p) => p.title).sort(); }
 
@@ -222,9 +238,8 @@ export class SimClient {
     session: () => this.session,
     setSession: (s) => { this.session = s; },
     local: () => this.lib,
-    merge: (library) => this.dispatch({ type: 'library/merge', library }),
-    cloudReset: (library) => { this.dispatch({ type: 'library/cloudReset', library }); this.ctl.failures = 0; this.conflicts = []; },
-    addConflicts: (pairs) => { this.conflicts = addConflicts(this.conflicts, pairs, Date.now()); },
+    merge: (library, from) => this.apply({ type: 'library/merge', library, from }),
+    cloudReset: (library) => { this.apply({ type: 'library/cloudReset', library }); this.ctl.failures = 0; },
     notify: (m) => { this.notices.push(m); },
     progress: () => undefined,
     loadBase: async () => (this.base ? normalizeLibrary(clone(this.base)) : null),
@@ -255,7 +270,7 @@ export class SimClient {
         const fonts = out.manifest ?? oldFonts;
         const fontTrash = out.trash ?? oldTrash;
         const fontPrefs = out.prefs ?? oldPrefs;
-        this.dispatch({ type: 'library/merge', library: { ...rest, ...(fonts?.length ? { fonts } : {}), ...(fontTrash?.length ? { fontTrash } : {}), ...(fontPrefs ? { fontPrefs } : {}) } });
+        this.apply({ type: 'library/merge', library: { ...rest, ...(fonts?.length ? { fonts } : {}), ...(fontTrash?.length ? { fontTrash } : {}), ...(fontPrefs ? { fontPrefs } : {}) } });
       }
       return out.report.failed.length ? `글꼴 ${out.report.failed.length}개` : null;
     },
@@ -271,11 +286,15 @@ export class SimClient {
     this.signedOut = false;
   }
 
+  private fontSig = '';
   /** One sync round with the real bookkeeping. */
   sync(reason: 'pull' | 'push' = 'pull') {
+    // A font imported or removed here makes fonts due at the next round (the app hears it from importedFonts.ts).
+    const sig = this.fonts.map((f) => f.id).join('|');
+    if (sig !== this.fontSig) { this.fontSig = sig; this.ctl.extrasDue = true; }
     return syncOnce(this.ctl, this.env, {
       online: () => this.online,
-      status: (p) => { this.status = { state: p.state, message: p.message }; },
+      status: (p) => { this.status = { state: p.state, message: p.message === undefined ? this.status.message : p.message }; },
       later: () => { this.laterPending = true; },
       signedOut: () => { this.session = null; this.signedOut = true; this.notices.push('클라우드 로그인이 만료되었습니다. 다시 로그인하세요.'); },
       done: () => undefined,

@@ -1,4 +1,5 @@
 import { mergeActivity, mergeDevices, newestModification } from './activity';
+import { mergeLibrary, syncable } from './cloudMerge';
 import { isProtected, keepProtectedMaterials, protectionWinners, mergeProtectionChanges } from './materialProtection';
 // Actions for looks, stage layouts, playback markers, timelines and playlist templates.
 // Kept apart from reducer.ts so each file stays small.
@@ -15,7 +16,8 @@ export type ExtraAction =
   | { type: 'timeline/set'; presentationId: string; timeline: Timeline | undefined }
   | { type: 'playlist/duplicate'; id: string; newId: string; name: string }
   | { type: 'live/videoClock'; endsAt: number | null }
-  | { type: 'library/merge'; library: Library }
+  /** `from`: the library the merge was worked out from; edits made here since then are merged in too, never dropped. */
+  | { type: 'library/merge'; library: Library; from?: Library }
   /** Replace (or add) a playlist; the selected item stays selected when items move. */
   | { type: 'playlist/set'; playlist: Playlist; activate?: boolean }
   /** Replace several presentations at once (one undo step); online songs stay online (not saved). */
@@ -69,11 +71,13 @@ export function extraReducer(s: AppState, a: ExtraAction): AppState {
       return { ...next, playlistIndex: index >= 0 ? index : null };
     }
     case 'library/merge': {
-      // Cloud sync: take the merged library but keep online songs, selection and what's live.
-      const incoming = new Set(a.library.presentations.map((p) => p.id));
+      // Cloud sync: take the merged library but keep online songs, selection and what's live. When this window was
+      // edited while the merge was being worked out (typing during a sync round), those edits are merged in as well.
+      const merged = a.from && a.from !== lib ? mergeLibrary(syncable(a.from), syncable(lib), a.library).library : a.library;
+      const incoming = new Set(merged.presentations.map((p) => p.id));
       const online = lib.presentations.filter((p) => p.online && !incoming.has(p.id));
-      const incomingLibrary = { ...a.library, protectionChanges: mergeProtectionChanges(lib, a.library), activity: mergeActivity(lib.activity, a.library.activity), devices: mergeDevices(lib.devices, a.library.devices), lastModified: newestModification(lib.lastModified, a.library.lastModified), presentations: [...a.library.presentations, ...online] };
-      return { ...s, library: keepProtectedMaterials(incomingLibrary, protectionWinners(lib, a.library), [lib, a.library]) };
+      const incomingLibrary = { ...merged, protectionChanges: mergeProtectionChanges(lib, merged), activity: mergeActivity(lib.activity, merged.activity), devices: mergeDevices(lib.devices, merged.devices), lastModified: newestModification(lib.lastModified, merged.lastModified), presentations: [...merged.presentations, ...online] };
+      return { ...s, library: keepProtectedMaterials(incomingLibrary, protectionWinners(lib, merged), [lib, merged]) };
     }
     case 'live/videoClock':
       return { ...s, live: { ...s.live, video: { ...s.live.video, endsAt: a.endsAt } } };

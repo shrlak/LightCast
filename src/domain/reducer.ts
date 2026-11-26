@@ -9,7 +9,8 @@ import type {
   Presentation, Prop, RetreatLook, Schedule, Screen, Slide, SlideAction, SundaySettings, Theme, Timer, DeviceIdentity, DeviceRegistration, ActivityEntry,
 } from './types';
 import { retreatBackground } from './motion';
-import { attributeChange, mergeActivity } from './activity';
+import { attributeChange, isPersonalEdit, mergeActivity } from './activity';
+import { stampEdits } from './editStamps';
 import { sequence } from './arrangement';
 import { deleteSlides, deleteSlidesAt, editSlide, editSlideAt } from './slideEditing';
 import { centerAddedLyricSlides, centerSongLyrics } from './songCentering';
@@ -731,5 +732,8 @@ function reduceState(s: AppState, a: Action): AppState {
 }
 
 export function reducer(s: AppState, a: Action): AppState {
-  return attributeChange(s, reduceState(s, a), a);
+  const next = reduceState(s, a);
+  // What a person changed is stamped with the (server) time of the edit, so the later edit wins in cloud sync.
+  const stamped = isPersonalEdit(s, next, a) ? { ...next, library: stampEdits(s.library, next.library, a.occurredAt!) } : next;
+  return attributeChange(s, stamped, a);
 }

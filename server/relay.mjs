@@ -9,6 +9,17 @@ import { isPublicHost } from './tunnel.mjs';
 /** The least time between two laser dots from one phone (ms). */
 const LASER_MIN_MS = 25;
 const TIMER_MIN_MS = 500;
+/** How often every connection is checked; one that did not answer the previous check is closed (a phone that left Wi-Fi). */
+export const HEARTBEAT_MS = 15_000;
+/**
+ * A connection with this much still waiting to go out is slow (a phone on weak Wi-Fi, a tunnel): it gets only the
+ * newest live state / position / timer instead of every one in between, so it catches up at once instead of replaying
+ * a backlog, and the relay's memory does not grow with it.
+ */
+export const SLOW_BYTES = 256 * 1024;
+const FLUSH_MS = 40;
+/** Kinds of message where only the newest matters. */
+const LATEST_ONLY = new Set(['state', 'info-position', 'timer', 'laser', 'caption', 'remotes', 'host-status', 'remote-control', 'rehearsal', 'team-requests']);
 const PIN = process.env.FREECAST_REMOTE_PIN || '';
 const COMMANDS = new Set([
   'live/next', 'live/prev', 'live/clearAll', 'live/clearText', 'live/clearBackground', 'live/toggleBlack',
@@ -75,14 +86,60 @@ export function attachRelay(httpServer, { publicOpen = () => false, teamKey = ()
   };
 
   const broadcast = (data, filter) => {
-    for (const c of wss.clients) if (c.readyState === 1 && filter(c)) c.send(data);
+    let kind = null;
+    for (const c of wss.clients) {
+      if (c.readyState !== 1 || !filter(c)) continue;
+      kind ??= kindOf(data);
+      deliver(c, data, kind);
+    }
   };
+
+  /** The message type, read from the front of the text without parsing all of it. */
+  const kindOf = (data) => /^\{"type":"([\w-]+)"/.exec(data)?.[1] ?? null;
+  /** Send now, or — to a slow connection — keep only the newest message of its kind and send it once the line has room. */
+  const deliver = (c, data, kind) => {
+    if (kind && LATEST_ONLY.has(kind) && (c.bufferedAmount > SLOW_BYTES || c.waiting?.size)) {
+      // A laser dot that cannot go now is simply dropped (the next one follows in 25 ms).
+      if (kind === 'laser') return;
+      (c.waiting ??= new Map()).delete(kind);
+      c.waiting.set(kind, data);
+      c.flushTimer ??= setTimeout(() => flush(c), FLUSH_MS);
+      return;
+    }
+    // Anything else keeps its place after what was held back (a catalog never overtakes an older position).
+    if (c.waiting?.size) { clearTimeout(c.flushTimer); c.flushTimer = null; for (const held of c.waiting.values()) c.send(held); c.waiting.clear(); }
+    c.send(data);
+  };
+  const flush = (c) => {
+    c.flushTimer = null;
+    if (c.readyState !== 1 || !c.waiting?.size) { c.waiting?.clear(); return; }
+    if (c.bufferedAmount > SLOW_BYTES) { c.flushTimer = setTimeout(() => flush(c), FLUSH_MS); return; }
+    const pending = [...c.waiting.values()];
+    c.waiting.clear();
+    for (const data of pending) c.send(data);
+  };
+
+  // Dead connections (a phone that walked out of Wi-Fi keeps its socket "open") are found and closed, so they stop
+  // holding the controls, stop being counted as connected, and stop collecting messages nobody will read.
+  const heartbeat = setInterval(() => {
+    for (const c of wss.clients) {
+      if (c.alive === false) { c.terminate(); continue; }
+      c.alive = false;
+      try { c.ping(); } catch { c.terminate(); }
+    }
+  }, HEARTBEAT_MS);
+  heartbeat.unref?.();
+  wss.on('close', () => clearInterval(heartbeat));
 
   const tellRemotes = () => broadcast(JSON.stringify({ type: 'host-status', connected: [...wss.clients].some((c) => c.readyState === 1 && c.role === 'host') }), (c) => c.role === 'remote' || c.role === 'team');
 
   wss.on('connection', (ws) => {
     ws.role = null;
+    ws.alive = true;
+    ws.on('pong', () => { ws.alive = true; });
+    ws.on('close', () => { clearTimeout(ws.flushTimer); ws.waiting?.clear(); });
     ws.on('message', (raw) => {
+      ws.alive = true;
       let msg;
       try {
         msg = JSON.parse(String(raw));

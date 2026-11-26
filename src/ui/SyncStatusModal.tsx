@@ -1,46 +1,20 @@
-import { useEffect, useState, type Dispatch } from 'react';
-import type { Action } from '../domain/reducer';
-import type { Library, MediaMeta, Presentation } from '../domain/types';
-import { describePending, conflictActions, type ConflictChoice, type ConflictRecord } from '../domain/syncStatus';
+import { useEffect, useState } from 'react';
+import type { Library, MediaMeta } from '../domain/types';
+import { describePending } from '../domain/syncStatus';
 import { missingLocalMedia } from '../domain/offlineMedia';
-import { stripChords } from '../domain/lyrics';
 import { describeFontReport, SKIP_LABEL } from '../domain/fontSync';
 import type { CloudSync } from './useCloudSync';
 
 const STATE_LABEL = { off: '로그인 안 됨', syncing: '동기화 중…', synced: '동기화됨', error: '동기화 오류', offline: '오프라인' } as const;
 const STATE_ICON = { off: '○', syncing: '⟳', synced: '✓', error: '⚠', offline: '⏸' } as const;
 
-const preview = (p: Presentation | undefined) => {
-  if (!p) return '(없음)';
-  const first = p.slides.map((s) => stripChords(s.text).trim()).find(Boolean) ?? '';
-  return `슬라이드 ${p.slides.length}장${first ? ` · ${first.split('\n')[0].slice(0, 40)}` : ''}`;
-};
-
-function ConflictCard({ c, library, onChoose }: { c: ConflictRecord; library: Library; onChoose: (choice: ConflictChoice) => void }) {
-  const mine = library.presentations.find((p) => p.id === c.localId);
-  const theirs = library.presentations.find((p) => p.id === c.copyId);
-  return (
-    <article className="card sync-conflict">
-      <strong>{c.title}</strong>
-      <div className="sync-versions">
-        <div><span className="muted small">이 컴퓨터</span><div>{preview(mine)}</div></div>
-        <div><span className="muted small">다른 기기</span><div>{preview(theirs)}</div></div>
-      </div>
-      <div className="row gap-xs wrap">
-        <button className="primary" onClick={() => onChoose('mine')}>내 것 유지</button>
-        <button onClick={() => onChoose('theirs')}>다른 기기 것으로 바꾸기</button>
-        <button onClick={() => onChoose('both')}>둘 다 유지</button>
-      </div>
-    </article>
-  );
-}
-
 /**
  * ☁ 동기화 상태: whether this computer is in step with the church server, what is waiting while offline,
- * which media still has to be downloaded to work without internet, and presentations two computers changed at once.
+ * and which media still has to be downloaded to work without internet. What two devices changed at once needs no
+ * choice here: the later edit (by the server's clock) is kept on every device by itself.
  */
-export function SyncStatusModal({ cloud, library, dispatch, onClose, onAccount, notify }: {
-  cloud: CloudSync; library: Library; dispatch: Dispatch<Action>; onClose: () => void; onAccount: () => void; notify: (m: string) => void;
+export function SyncStatusModal({ cloud, library, onClose, onAccount }: {
+  cloud: CloudSync; library: Library; onClose: () => void; onAccount: () => void;
 }) {
   const { status } = cloud;
   const [missing, setMissing] = useState<MediaMeta[] | null>(null);
@@ -49,12 +23,6 @@ export function SyncStatusModal({ cloud, library, dispatch, onClose, onAccount, 
     void missingLocalMedia(library).then((m) => alive && setMissing(m)).catch(() => alive && setMissing(null));
     return () => { alive = false; };
   }, [library.media, status.lastSync]);
-
-  const choose = (c: ConflictRecord, choice: ConflictChoice) => {
-    for (const action of conflictActions(c, library, choice)) dispatch(action);
-    cloud.dismissConflict(c.id);
-    notify(choice === 'mine' ? `“${c.title}”: 이 컴퓨터의 것을 남겼습니다` : choice === 'theirs' ? `“${c.title}”: 다른 기기의 것으로 바꿨습니다 (실행 취소 가능)` : `“${c.title}”: 둘 다 남겼습니다`);
-  };
 
   const state = status.session ? status.state : 'off';
   return (
@@ -110,11 +78,10 @@ export function SyncStatusModal({ cloud, library, dispatch, onClose, onAccount, 
             </section>
           )}
 
-          {cloud.conflicts.length > 0 && (
-            <section className="stack">
-              <h3>두 기기에서 동시에 고친 프레젠테이션 ({cloud.conflicts.length})</h3>
-              <p className="hint">둘 다 남겨 두었습니다. 어느 쪽을 쓸지 고르세요. 다른 기기 것으로 바꾸어도 실행 취소(⌘Z)로 되돌릴 수 있습니다.</p>
-              {cloud.conflicts.map((c) => <ConflictCard key={c.id} c={c} library={library} onChoose={(choice) => choose(c, choice)} />)}
+          {status.session && (
+            <section className="card">
+              <h3>여러 기기에서 동시에 고친 경우</h3>
+              <p>같은 자료를 두 기기에서 고치면, 교회 서버 시각으로 <b>나중에 고친 내용</b>이 모든 기기에 자동으로 반영됩니다. 서로 다른 슬라이드나 텍스트 상자를 고쳤다면 둘 다 그대로 남습니다.</p>
             </section>
           )}
         </div>

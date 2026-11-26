@@ -1,17 +1,44 @@
 // Offline-first sync: the library always lives on this computer and is saved there first. These are the
-// pieces that make being offline an ordinary state: when to retry, what is still waiting to be sent, and
-// what to do with a presentation that two computers changed at once.
-import type { Library, Presentation } from './types';
-import type { Action } from './reducer';
+// pieces that make being offline an ordinary state: when to ask the server again, when to retry, and what is still
+// waiting to be sent.
+import type { Library } from './types';
 
 export type SyncState = 'off' | 'syncing' | 'synced' | 'error' | 'offline';
 
-const BASE_DELAY = 20_000;
-const MAX_DELAY = 5 * 60_000;
+const RETRY_DELAY = 2_500;
+const MAX_DELAY = 3 * 60_000;
 
-/** How long to wait before asking the server again: every 20 s, then slower after each failure (at most 5 min). */
+/** After failed rounds: 5 s, 10 s, 20 s … at most 3 min (the connection returning asks at once). */
 export function retryDelay(failures: number): number {
-  return Math.min(MAX_DELAY, BASE_DELAY * 2 ** Math.max(0, Math.min(failures, 8)));
+  return Math.min(MAX_DELAY, RETRY_DELAY * 2 ** Math.max(0, Math.min(failures, 8)));
+}
+
+/** How often to ask the server for other devices' edits. A quiet ask is one small request (answered 204). */
+export const POLL = {
+  /** Someone is editing (here or on another device, within the last three minutes). */
+  live: 1_000,
+  /** This window is on screen and in use. */
+  visible: 2_000,
+  /** On screen but not the active window (e.g. behind the slide show). */
+  background: 4_000,
+  /** On screen, nobody edited anything for ten minutes. */
+  idle: 8_000,
+  /** Minimised or hidden. */
+  hidden: 30_000,
+} as const;
+const LIVE_FOR = 3 * 60_000;
+const IDLE_AFTER = 10 * 60_000;
+
+export interface PollContext { failures: number; hidden: boolean; focused: boolean; now: number; /** Last edit here or change from another device. */ activeAt: number }
+
+/** When to ask the server next (ms). */
+export function pollDelay(c: PollContext): number {
+  if (c.failures > 0) return retryDelay(c.failures);
+  if (c.hidden) return POLL.hidden;
+  const since = c.now - c.activeAt;
+  if (since < LIVE_FOR) return POLL.live;
+  if (since > IDLE_AFTER) return POLL.idle;
+  return c.focused ? POLL.visible : POLL.background;
 }
 
 /** Errors that mean "the server cannot be reached" (no internet, church server down), not "the server said no". */
@@ -58,65 +85,10 @@ export function describePending(p: PendingChanges): string {
   return [p.presentations && `프레젠테이션 ${p.presentations}`, p.playlists && `재생목록 ${p.playlists}`, p.other && `기타 ${p.other}`].filter(Boolean).join(' · ');
 }
 
-// ---------- the same presentation changed on two computers
-export interface ConflictRecord {
-  id: string;
-  title: string;
-  /** This computer's version (kept under its own id). */
-  localId: string;
-  /** The other computer's version, saved beside it as "(다른 기기)". */
-  copyId: string;
-  at: number;
-}
-
-export const COPY_SUFFIX = ' (다른 기기)';
-export type ConflictChoice = 'mine' | 'theirs' | 'both';
-
-const KEY = 'freecast.sync.conflicts';
-const MAX_CONFLICTS = 50;
-
-const isRecord = (v: unknown): v is ConflictRecord => {
-  const c = v as ConflictRecord | null;
-  return !!c && typeof c.id === 'string' && typeof c.title === 'string' && typeof c.localId === 'string' && typeof c.copyId === 'string' && Number.isFinite(c.at);
-};
-
-export function loadConflicts(): ConflictRecord[] {
-  try {
-    const list = JSON.parse(localStorage.getItem(KEY) ?? '[]');
-    return Array.isArray(list) ? list.filter(isRecord).slice(-MAX_CONFLICTS) : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveConflicts(list: ConflictRecord[]) {
-  try { localStorage.setItem(KEY, JSON.stringify(list.slice(-MAX_CONFLICTS))); } catch { /* the list is kept for this session only */ }
-}
-
-/** Add new conflicts, once each (the same copy is never listed twice). */
-export function addConflicts(list: ConflictRecord[], found: Omit<ConflictRecord, 'id' | 'at'>[], at: number): ConflictRecord[] {
-  const known = new Set(list.map((c) => c.copyId));
-  const added = found.filter((f) => !known.has(f.copyId)).map((f) => ({ ...f, id: `${f.copyId}`, at }));
-  return [...list, ...added].slice(-MAX_CONFLICTS);
-}
-
-/** Conflicts whose two versions both still exist; the others were already dealt with (deleted, merged by hand). */
-export function openConflicts(list: ConflictRecord[], lib: Library): ConflictRecord[] {
-  const ids = new Set(lib.presentations.map((p) => p.id));
-  return list.filter((c) => ids.has(c.localId) && ids.has(c.copyId));
-}
-
-const withoutSuffix = (title: string) => (title.endsWith(COPY_SUFFIX) ? title.slice(0, -COPY_SUFFIX.length) : title);
-
 /**
- * The actions for each choice: keep mine (drop the other computer's copy), use theirs (this presentation
- * becomes the other computer's version, under its own name and place), or keep both (nothing changes).
+ * Older versions kept a presentation two computers changed at once twice and asked which to keep. Sync now takes the
+ * later edit by itself (cloudMerge.ts), so the saved list of those questions is cleared once.
  */
-export function conflictActions(c: ConflictRecord, lib: Library, choice: ConflictChoice): Action[] {
-  const copy = lib.presentations.find((p) => p.id === c.copyId);
-  if (choice === 'both') return [];
-  if (choice === 'mine' || !copy) return [{ type: 'presentation/delete', id: c.copyId }];
-  const { id: _id, ...rest } = copy;
-  const patch: Partial<Omit<Presentation, 'id'>> = { ...rest, title: withoutSuffix(copy.title), protected: undefined, protectionChangedAt: undefined };
-  return [{ type: 'presentation/update', id: c.localId, patch }, { type: 'presentation/delete', id: c.copyId }];
+export function forgetOldConflicts(storage: Pick<Storage, 'removeItem'> | null = typeof localStorage !== 'undefined' ? localStorage : null): void {
+  try { storage?.removeItem('freecast.sync.conflicts'); } catch { /* nothing kept */ }
 }

@@ -1,7 +1,8 @@
 import type { LiveState } from './types';
 
 export type LiveMessage =
-  | { type: 'state'; state: LiveState }
+  /** `seq` counts the console's changes (in its run `epoch`): a copy that arrives after a newer one is ignored. */
+  | { type: 'state'; state: LiveState; seq?: number; epoch?: string }
   | { type: 'hello' }
   /** A key pressed on a fullscreen output window — the console handles it as if pressed there. */
   | { type: 'key'; key: string; shiftKey: boolean }
@@ -25,5 +26,18 @@ export function openLiveChannel(onMessage: (m: LiveMessage) => void) {
   return {
     post: (m: LiveMessage) => ch.postMessage(m),
     close: () => ch.close(),
+  };
+}
+
+/** Which of the live states that arrive (by two ways, local channel and network relay) to show: never an older one after a newer one. */
+export function liveOrder() {
+  let epoch: string | undefined;
+  let seq = -1;
+  return (m: { seq?: unknown; epoch?: unknown }): boolean => {
+    if (typeof m.seq !== 'number' || typeof m.epoch !== 'string') return true;
+    if (m.epoch !== epoch) { epoch = m.epoch; seq = m.seq; return true; }
+    if (m.seq <= seq) return false;
+    seq = m.seq;
+    return true;
   };
 }

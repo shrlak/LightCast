@@ -199,6 +199,9 @@ const webPreferences = {
   contextIsolation: true,
   nodeIntegration: false,
   sandbox: true,
+  // The console is often covered by the slide show (or minimised) while it still runs the show: phones' commands,
+  // the projector's updates, cloud sync and timers must not be slowed down to once a second then.
+  backgroundThrottling: false,
 };
 
 function displayList() {
@@ -427,6 +430,22 @@ ipcMain.handle('desktop:copyRemoteCode', (e) => {
 ipcMain.handle('desktop:copyTeamLink', (e) => {
   if (!fromMain(e) || !settings.teamLinkId) return false;
   clipboard.writeText(teamPairingAddress(REMOTE_PROXY, settings.teamLinkId)); return true;
+});
+// The automatic Sunday copy (src/domain/sundayBackup.ts): written straight into Downloads/LightCast, no save dialog
+// (nobody is at the computer to answer one). Only a plain file name, only .pptx, never outside that folder.
+ipcMain.handle('desktop:saveDownload', async (e, name, bytes) => {
+  if (!fromMain(e) || typeof name !== 'string' || !(bytes instanceof Uint8Array) || bytes.length > 500 * 1024 * 1024) return null;
+  const safe = path.basename(name).replace(/[\u0000-\u001f<>:"/\\|?*]+/g, '_').trim();
+  if (!/\.pptx$/i.test(safe) || safe.length > 200) return null;
+  try {
+    const dir = path.join(app.getPath('downloads'), 'LightCast');
+    await fs.promises.mkdir(dir, { recursive: true });
+    const stem = safe.slice(0, -5);
+    let file = path.join(dir, safe);
+    for (let n = 2; fs.existsSync(file) && n < 1000; n++) file = path.join(dir, `${stem} (${n}).pptx`);
+    await fs.promises.writeFile(file, bytes);
+    return file;
+  } catch { return null; }
 });
 ipcMain.handle('desktop:pptxToPdf', (e, bytes) => (fromMain(e) && bytes instanceof Uint8Array ? pptxToPdf(bytes) : null));
 // File › Export › PDF: the print pages the console has laid out (body.printing + #print-root), written as a

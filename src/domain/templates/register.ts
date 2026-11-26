@@ -14,6 +14,7 @@ import { parsePrayerTopics } from '../sunday/prayer';
 import { applyConfessionSong, findConfessionSong, songChunks } from './confession';
 import type { ServiceTemplates } from './serviceTemplates';
 import { withStableIds } from '../stableIds';
+import { withoutStamps } from '../editStamps';
 
 const PLACEHOLDER_SLIDES = { front: 'front_prayer', back: 'back_confession' } as const;
 
@@ -53,7 +54,7 @@ export function templateDeckUpdates(lib: Library, tpl: ServiceTemplates, now = n
     // (Pages keep their ids; a Front remade the same way on two computers differs only in the new
     // pages' ids, which cloud sync treats as the same change — see mergeById.)
     const slides = refreshFront(front.slides, tpl, date, remake ? parsePrayerTopics(prayer) : undefined);
-    if (front.templateKey === frontKey && JSON.stringify(front.slides) === JSON.stringify(slides)) continue;
+    if (front.templateKey === frontKey && withoutStamps(front.slides) === withoutStamps(slides)) continue;
     if (front.id !== lib.sunday.frontId || isPlaceholder(front, 'front') || fromTemplates(front, 'front'))
       out.push({ id: front.id, patch: { ...base, templateKey: frontKey, slides } });
   }

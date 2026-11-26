@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('freecastDesktop', {
   copyTeamLink: () => ipcRenderer.invoke('desktop:copyTeamLink'),
   copyRemoteCode: () => ipcRenderer.invoke('desktop:copyRemoteCode'),
   pptxToPdf: (bytes) => ipcRenderer.invoke('desktop:pptxToPdf', bytes),
+  saveDownload: (name, bytes) => ipcRenderer.invoke('desktop:saveDownload', name, bytes),
   printToPdf: () => ipcRenderer.invoke('desktop:printToPdf'),
   pptToPptx: (bytes) => ipcRenderer.invoke('desktop:pptToPptx', bytes),
   pptxToPpt: (bytes) => ipcRenderer.invoke('desktop:pptxToPpt', bytes),

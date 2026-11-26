@@ -113,7 +113,7 @@ describe('protection across device synchronization', () => {
     const local = lock().library, old = library(); old.presentations[0].slides[0].text = '다른 기기의 오래된 내용';
     for (const base of [null, local]) {
       const result = mergeLibrary(base, local, old);
-      expect(result.library.presentations[0]).toEqual(local.presentations[0]); expect(result.conflicts).toEqual([]);
+      expect(result.library.presentations[0]).toEqual(local.presentations[0]); expect(result.library.presentations).toHaveLength(local.presentations.length);
     }
     old.presentations = []; old.media = [];
     const result = mergeLibrary(local, local, old).library;

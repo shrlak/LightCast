@@ -3,7 +3,7 @@ import { connectionQuality } from '../domain/connectionQuality';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { LiveState } from '../domain/types';
 import { mediaUrl, peekMediaUrl } from '../domain/media';
-import { openLiveChannel } from '../domain/sync';
+import { liveOrder, openLiveChannel } from '../domain/sync';
 import { loadLive, saveLive } from '../domain/persistence';
 import { laserDue, parseLaserMessage } from '../domain/laserPointer';
 import { parseCaptionMessage } from '../domain/captions';
@@ -106,7 +106,8 @@ export function useRelay(hello: Record<string, unknown> | null, onMessage: (m: R
     const connect = () => {
       if (closed) return;
       clearTimeout(retry);
-      if (!navigator.onLine) { setConnected(false); setStatus('offline'); return; }
+      // Tried even when the browser says it is offline: the relay is often this very computer or the church LAN,
+      // reachable without internet (navigator.onLine is false with Wi-Fi up but no internet on some systems).
       setConnected(false);
       setStatus(navigator.onLine ? (attempted ? 'reconnecting' : 'connecting') : 'offline');
       attempted = true;
@@ -167,11 +168,13 @@ export function useRelay(hello: Record<string, unknown> | null, onMessage: (m: R
         setConnected(false);
         setQuality(connectionQuality([], false, Date.now()));
         setStatus(navigator.onLine ? 'reconnecting' : 'offline');
-        // Retry quickly on a brief drop, then back off to avoid busy-looping on a prolonged outage.
-        if (navigator.onLine) retry = setTimeout(connect, Math.min(4000, 500 * 2 ** Math.min(failures++, 3)));
+        // Retry at once on the first drop, then back off to avoid busy-looping on a prolonged outage.
+        retry = setTimeout(connect, failures === 0 ? 150 : Math.min(4000, 500 * 2 ** Math.min(failures - 1, 3)));
+        failures++;
       };
     };
-    const offline = () => { setConnected(false); setStatus('offline'); setQuality(connectionQuality([], false, Date.now())); socket.current?.close(); };
+    // Losing the internet does not close a connection to this computer or the church LAN; the heartbeat finds a dead one.
+    const offline = () => { if (socket.current?.readyState !== WebSocket.OPEN) { setConnected(false); setStatus('offline'); } };
     const online = () => {
       if (closed) return;
       // Network switching (Wi-Fi / mobile data) may leave the old socket in a stale state.
@@ -190,14 +193,14 @@ export function useRelay(hello: Record<string, unknown> | null, onMessage: (m: R
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [helloKey, address]);
-  const send = (m: unknown) => {
-    if (navigator.onLine && socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(m));
-  };
+  const send = useCallback((m: unknown) => {
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(m));
+  }, []);
   return { send, connected, status, quality };
 }
 
 /** Operator side: publish live state to output/stage windows (same computer) and the relay (other devices). */
-export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => void, onShowAction?: (a: ShowAction) => void, onScreen?: (a: unknown) => void) {
+export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => void, onShowAction?: (a: ShowAction) => void, onScreen?: (a: unknown) => void, relayConnected = false) {
   const onScreenRef = useRef(onScreen);
   onScreenRef.current = onScreen;
   const latest = useRef(live);
@@ -207,6 +210,9 @@ export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => voi
   const relayRef = useRef(relaySend);
   relayRef.current = relaySend;
   const laserSentAt = useRef(0);
+  // Every change is numbered, so a screen that hears it twice (channel and relay) never steps back to an older one.
+  const seq = useRef(0);
+  const [epoch] = useState(() => Math.random().toString(36).slice(2, 10));
   useEffect(() => {
     channel.current = openLiveChannel((m) => {
       // The presenter's laser dot also goes to audience devices on the relay (a few dozen a second at most).
@@ -219,7 +225,7 @@ export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => voi
       if (m.type === 'caption') { const msg = parseCaptionMessage(m); if (msg) relayRef.current(msg); }
       // The sermon timer goes to phones on the relay (the presenter already limits how often it sends).
       if (m.type === 'timer') { const msg = parseTimerMessage(m); if (msg) relayRef.current(msg); }
-      if (m.type === 'hello') channel.current?.post({ type: 'state', state: latest.current });
+      if (m.type === 'hello') channel.current?.post({ type: 'state', state: latest.current, seq: seq.current, epoch });
       // A slide show covering this very screen still answers to the arrow keys, Space and Esc.
       if (m.type === 'key') window.dispatchEvent(new KeyboardEvent('keydown', { key: m.key, shiftKey: m.shiftKey, cancelable: true }));
       if (m.type === 'show') onShow.current?.(m.action);
@@ -227,13 +233,30 @@ export function useLiveBroadcast(live: LiveState, relaySend: (m: unknown) => voi
     });
     return () => channel.current?.close();
   }, []);
+  // Kept on this computer for windows that open later (and a restart), a moment after the changes stop: writing the
+  // whole live state to storage on every change held up the very slide change it records.
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    const flush = () => { clearTimeout(saveTimer.current); saveTimer.current = undefined; saveLive(latest.current); };
+    window.addEventListener('pagehide', flush);
+    return () => { window.removeEventListener('pagehide', flush); if (saveTimer.current) flush(); };
+  }, []);
   useEffect(() => {
     latest.current = live;
-    saveLive(live);
-    channel.current?.post({ type: 'state', state: live });
-    relaySend({ type: 'state', state: live });
+    seq.current++;
+    // The screens first: the projector and phones get the change before anything else is done.
+    channel.current?.post({ type: 'state', state: live, seq: seq.current, epoch });
+    relaySend({ type: 'state', state: live, seq: seq.current, epoch });
+    clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => { saveTimer.current = undefined; saveLive(latest.current); }, 250);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [live]);
+  // A relay that (re)connected — the app's server restarted, the network came back — gets what is live now at once,
+  // not only at the next slide change (phones and stage displays would show the old slide until then).
+  useEffect(() => {
+    if (relayConnected) relaySend({ type: 'state', state: latest.current, seq: seq.current, epoch });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [relayConnected]);
 }
 
 /** Output side: receive live state locally (BroadcastChannel) or over the network (relay). */
@@ -241,20 +264,24 @@ export function useLiveFeed(opts?: { stage?: boolean }): LiveState | null {
   const [live, setLive] = useState<LiveState | null>(() => loadLive());
   // The computer sends every change twice (same-computer channel and network relay): the repeat is ignored.
   const lastJson = useRef('');
-  const apply = (state: LiveState) => {
+  const [inOrder] = useState(liveOrder);
+  const apply = (state: LiveState, m: { seq?: unknown; epoch?: unknown }) => {
+    // An older change arriving late (the relay's copy after the channel's newer one) would flash the previous slide.
+    if (!inOrder(m)) return;
     const json = JSON.stringify(state);
     if (json === lastJson.current) return;
     lastJson.current = json;
     setLive(state);
   };
   useEffect(() => {
-    const ch = openLiveChannel((m) => m.type === 'state' && apply(m.state));
+    const ch = openLiveChannel((m) => m.type === 'state' && apply(m.state, m));
     ch.post({ type: 'hello' });
     return () => ch.close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useRelay({ type: 'hello', role: 'viewer', ...(opts?.stage ? { stage: true } : {}) }, (m) => {
     if (m.type === 'timer') window.dispatchEvent(new CustomEvent('lightcast:timer', { detail: m }));
-    if (m.type === 'state' && m.state) apply(m.state as LiveState);
+    if (m.type === 'state' && m.state) apply(m.state as LiveState, m);
     // The presenter's laser dot, for the audience view to draw (see useLaserDot).
     if (m.type === 'laser') window.dispatchEvent(new CustomEvent('lightcast:laser', { detail: m }));
     if (m.type === 'caption') window.dispatchEvent(new CustomEvent('lightcast:caption', { detail: m }));

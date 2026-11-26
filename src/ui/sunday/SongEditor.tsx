@@ -11,6 +11,7 @@ import { ProtectedMaterialNotice } from '../MaterialProtection';
 import { AutoTextarea } from '../AutoTextarea';
 import type { WebLyricsOption } from '../../domain/recognition/conti';
 import { readScorePhotos, searchSongLyrics, type LyricsOption } from '../../domain/sunday/songLookup';
+import { serverNow } from '../../domain/serverClock';
 
 interface Part { id: string; label: string; text: string }
 
@@ -119,7 +120,7 @@ export function SongEditor({ library, dispatch, song, onClose, notify, reloadOnl
     const withSource = { ...p, songSource: { sections: e.sections, order: e.order.length ? e.order : undefined } };
     const local = localId.current ?? findSong(library.presentations.filter((x) => !x.online), e.title)?.id ?? null;
     const { id: newId, ...patch } = withSource;
-    const stamped = { ...patch, updatedAt: Date.now(), templateKey: undefined, slidesEdited: undefined };
+    const stamped = { ...patch, updatedAt: serverNow(), templateKey: undefined, slidesEdited: undefined };
     if (local) dispatch({ type: 'presentation/update', id: local, patch: stamped });
     else dispatch({ type: 'presentation/createMany', presentations: [{ ...withSource, updatedAt: stamped.updatedAt }] });
     // The edited copy is now the library's entry for this title; the older copies go.

@@ -28,7 +28,10 @@ export async function cloudMiddleware(req, res, next) {
       duplex: hasBody ? 'half' : undefined,
       signal: AbortSignal.timeout(120_000),
     });
-    const out = { 'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream' };
+    const out = { 'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream', 'cache-control': 'no-store' };
+    // The church server's own clock (its Date header): every computer stamps edits in server time (src/domain/serverClock.ts).
+    const date = upstream.headers.get('date');
+    if (date) out['x-lightcast-server-date'] = date;
     res.writeHead(upstream.status, out);
     if (upstream.status === 204 || !upstream.body) return res.end();
     for await (const chunk of upstream.body) res.write(chunk);
