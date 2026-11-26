@@ -2,8 +2,10 @@
 // Customize menu's checkboxes, a right-click on any ribbon button to add it, a right-click on a toolbar button
 // to remove or move it, and 기본값으로 다시 설정.
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { QAT_COMMANDS, QAT_DEFAULTS, addQat, loadQat, moveQat, qatKey, qatLabel, removeQat, saveQat, sameItem, toggleQat, type QatCommand, type QatItem } from '../../domain/qat';
+import { QAT_COMMANDS, QAT_DEFAULTS, addQat, loadQat, moveQat, qatKey, qatLabel, qatShortcut, qatShortcutLabel, removeQat, saveQat, sameItem, toggleQat, type QatCommand, type QatItem } from '../../domain/qat';
 import { buttonLabel, findButton, groupOf } from './commandIndex';
+
+const MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** The buttons a right-click in the ribbon cannot add: split arrows and dialog launchers. */
 const SKIP = '.rb-launcher, .rb-caret, .rb-split-caret, .ppt-caret-btn, [data-tellme-skip]';
@@ -40,13 +42,31 @@ export function QuickAccess({ items, setItems, run, enabled, press }: {
 }) {
   const [menu, setMenu] = useState<null | { x: number; y: number; item?: QatItem }>(null);
   const open = (e: ReactMouseEvent, item?: QatItem) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, item }); };
+  // Alt+1..9 presses the toolbar's buttons (not while a modal dialog is up).
+  const latest = useRef({ items, run, enabled, press });
+  latest.current = { items, run, enabled, press };
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const i = qatShortcut(e, MAC);
+      if (i === null || e.defaultPrevented || e.isComposing || document.querySelector('.modal-backdrop')) return;
+      const { items: list, run: doRun, enabled: on, press: doPress } = latest.current;
+      const it = list[i];
+      if (!it) return;
+      e.preventDefault();
+      if (it.kind === 'command') { if (on(it.id)) doRun(it.id); } else doPress(it);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
   return (
     <>
-      {items.map((it) => {
+      {items.map((it, i) => {
         const cmd = it.kind === 'command' ? QAT_COMMANDS.find((c) => c.id === it.id) : null;
         const label = qatLabel(it);
+        const keys = qatShortcutLabel(i, MAC);
+        const title = it.kind === 'ribbon' ? `${label} (${it.tab}${it.group ? ` › ${it.group}` : ''})` : label;
         return (
-          <button key={qatKey(it)} type="button" className="qat-btn" title={it.kind === 'ribbon' ? `${label} (${it.tab}${it.group ? ` › ${it.group}` : ''})` : label} aria-label={label}
+          <button key={qatKey(it)} type="button" className="qat-btn" title={keys ? `${title} (${keys})` : title} aria-label={label} aria-keyshortcuts={keys || undefined}
             disabled={it.kind === 'command' && !enabled(it.id)} onClick={() => (it.kind === 'command' ? run(it.id) : press(it))} onContextMenu={(e) => open(e, it)}>
             {cmd ? cmd.icon : <span className="qat-badge">{label.slice(0, 1)}</span>}
           </button>

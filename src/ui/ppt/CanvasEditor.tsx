@@ -24,11 +24,12 @@ import {
 import { anchors, bounds as pathBounds, closePath, deletePoint, deleteSegment, insertPoint, moveAnchor, nearestOnPath, setHandle, openPath, parsePath, setPointType, setSegmentType, shiftPath, writePath, type Seg } from '../../domain/pathEdit';
 import { DEFAULT_GRID_PX, dragGuidePos, dropGuide, gridStep, guideAt, guideCount, guideLabel, type GuideAxis } from '../../domain/guides';
 import { boundsOf, hitBox, marqueeIds, resizeBox, rotateBoxes, rotateTo, shapeAdjust, shapeSites, snapBox, type EBox, type Handle } from '../../engine';
-import { aspectLocked, clickBox, constrain45, cycleSelection, drawBox, duplicateOffset, FINE_NUDGE, freeformPath, lineEnds, moveLineEnd, movableIds, NUDGE, resizeFlip, scribbleCloses, selectAllIds, type LastDuplicate, type Pt } from '../../domain/shapeOps';
+import { aspectLocked, clickBox, constrain45, cycleSelection, drawBox, tabHasWork, duplicateOffset, FINE_NUDGE, freeformPath, lineEnds, moveLineEnd, movableIds, NUDGE, resizeFlip, scribbleCloses, selectAllIds, type LastDuplicate, type Pt } from '../../domain/shapeOps';
 import { adjOf, geometryOf, isLinePreset, isLineShape, presetOf } from '../EngineElements';
 import { drawTableLine, eraseTableLine } from '../../domain/drawTable';
 import { RichTextEditor, type EditStart, type EditorControl } from '../RichTextEditor';
 import { Ruler } from './Ruler';
+import { useCanvasKeyboard } from './canvasFocus';
 import { clipboardToElements, copyObjectsToClipboard, lastCopiedObjects, sourceOf } from './pasteObjects';
 import { decodePayload, payloadFromHtml } from '../../domain/clipboard';
 import { deckFilesOf, snapshotDataTransfer } from '../clipboardSlides';
@@ -982,7 +983,8 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     // Select All leaves hidden and locked objects out (DeckCraft's edit.selectAll).
     if (mod && key === 'a' && !e.shiftKey) { leaveGroups(); onSelect(selectAllIds(elements)); return handled(); }
     // Tab / Shift+Tab: the next / previous object, a group once; from nothing, the first / last.
-    if (key === 'tab' && !mod) { const next = cycleSelection(elements, sel, !e.shiftKey); if (next) onSelect([next]); return handled(); }
+    // Past the last (first) object Tab has nothing left on the slide and moves the keyboard on (DeckCraft's tab_has_work).
+    if (key === 'tab' && !mod) { if (!tabHasWork(elements, sel, !e.shiftKey)) return; const next = cycleSelection(elements, sel, !e.shiftKey); if (next) onSelect([next]); return handled(); }
     if (!sel.length) {
       if (key === 'escape' && tool) { onToolDone?.(); return handled(); }
       return;
@@ -1011,6 +1013,13 @@ export function CanvasEditor({ slide, theme: baseTheme, background, bgEffect, se
     if (key === 'enter' || key === 'f2') { if (sel.length === 1) startEditing(sel[0]); return handled(); }
     if (key === 'escape') { onSelect([]); return handled(); }
   };
+  // The canvas keeps the keyboard through toolbar presses and closed dialogs (canvasFocus.ts).
+  useCanvasKeyboard(ref, focusRoot, (forward) => {
+    if (editing || !tabHasWork(elements, sel, forward)) return false;
+    const next = cycleSelection(elements, sel, forward);
+    if (next) onSelect([next]);
+    return true;
+  }, !readOnly && !isPdfSlide(slide));
   const onCopy = (e: RClipboardEvent, cut = false) => {
     if (editing || !sel.length) return;
     const chosen = elements.filter((el) => sel.includes(el.id));

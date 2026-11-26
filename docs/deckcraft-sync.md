@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=9db2fa0ca994ad8ae8d9cc5032d860ae985477d5
+DECKCRAFT_SYNCED=5b7b22dc5128eb329ca647d920797e37cb255224
 ```
 
-(`docs: bring ROADMAP.md current through 2026-11-15 (#2138)`.)
+(DeckCraft `origin/main` on 2026-11-26; its last non-merge commit is `a3386f3f`, supervised nightlies.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -141,3 +141,26 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
     changed, so the wasm was not rebuilt.
 - 2026-11-24, full feature comparison (not one commit at a time): every DeckCraft command, ribbon tab, pane and dialog
   against LightCast. What was added, what stays different and why: `docs/deckcraft-parity.md` (v1.3.0).
+- `9db2fa0..5b7b22d` (22 non-merge commits, 2026-11-24 to 2026-11-26), v1.3.4:
+  - Ported: the slide canvas as one real Tab stop that keeps the keyboard (`44c80663`, `c74671d7`, `d532ff66`,
+    `24bdb62f`), redesigned for the browser in `src/ui/ppt/canvasFocus.ts` (`useCanvasKeyboard`, used by
+    `CanvasEditor`): Tab / Shift+Tab step through the objects only while one is left (`tabHasWork` in
+    `domain/shapeOps.ts`, DeckCraft's `tab_has_work`; LightCast's is direction-aware), and past the last (first) one
+    the browser moves the keyboard on instead of the canvas trapping it; a pointer press on a ribbon or QAT button that
+    opens no field, dialog or menu leaves the keyboard with the slide; when a dialog, menu or popup closes, or the focus
+    leaves the canvas, a toolbar or an overlay for nothing, the canvas takes it back, as does a newly shown slide when
+    nothing has it; Tab with nothing focused goes to the slide. Text fields, open dialogs and menus keep their keys, and
+    on a touch screen the focus is not moved by itself (it would raise the on-screen keyboard). Alt+1..9 for the Quick
+    Access Toolbar (`0d8d4b75`: DeckCraft already had the shortcut and claimed it on its canvas; LightCast lacked it):
+    `qatShortcut` in `domain/qat.ts`, handled in `Qat.tsx`, by key position, off on macOS, named in each button's
+    tooltip. Excel's `?` placeholders show a space for a missing digit (`3791ce11`, from the craft-numfmt repin): the
+    vendored `deckcraft/model/src/numfmt.rs` (`fixed`) and its chart tests; the wasm was rebuilt. LightCast's PPTX
+    chart reader does not read axis or label formats yet, so this shows only once it does. Tests:
+    `tests/deckcraftSync5.test.ts`, `tests/e2e/canvasFocus.e2e.ts`.
+  - Not applicable: craft-libs / egui repins and Cargo.lock (`c57f6347`, `93567cf2`, `57a22b94`, `96a244dc`,
+    `b5a0f61c`, `9fb14fa6`, `65df3159`, `49fb5cf7` (two craft-pptx chart fields DeckCraft leaves at their defaults),
+    `20500569`, `8a41a44b` (egui API renames)); the craft-ui runtime hosting (`1afbb0ec`: its window Escape and dialog
+    host are egui plumbing, LightCast's dialogs already close on Escape); egui-only fixes in `c74671d7` (Enter and Space
+    as fake clicks of the focused canvas in the context menu and the Eyedropper; browsers do not do that); clippy
+    (`53e994b4`); update-dialog test timing (`bfdca1ce`); nightly packaging, signing and CI (`02f7fcdf`, `08ba5072`,
+    `a3386f3f`).

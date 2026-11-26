@@ -288,7 +288,18 @@ fn fixed(toks: &[Tok], first: usize, last: usize, v: f64, sep: char, dec: char) 
     }
     let ip = ip.trim_start_matches('0');
     let ip = if ip.len() < min_int { format!("{}{ip}", "0".repeat(min_int - ip.len())) } else { ip.to_string() };
-    let mut num = if grouping { group(&ip, sep) } else { ip };
+    let mut num = if grouping { group(&ip, sep) } else { ip.clone() };
+    // A `?` with no digit to show is a space, as in Excel (`"-"??` for zero is a dash and two spaces), so labels line
+    // up at the decimal mark; a `#` shows nothing.
+    let int_slots = int_part.iter().filter(|t| matches!(t, Tok::Digit('0' | '?'))).count();
+    if ip.len() < int_slots {
+        num.insert_str(0, &" ".repeat(int_slots - ip.len()));
+    }
+    for c in frac_digits.iter().skip(fp.len()) {
+        if *c == '?' {
+            fp.push(' ');
+        }
+    }
     if !fp.is_empty() {
         num.push(dec);
         num.push_str(&fp);
@@ -323,7 +334,8 @@ mod tests {
         assert_eq!(format(RUB, 800_000.0, Some("ru-RU")), "800\u{a0}000 ₽");
         assert_eq!(format(RUB, 1_234_567.0, Some("ru-RU")), "1\u{a0}234\u{a0}567 ₽");
         assert_eq!(format(RUB, -5_000.0, Some("ru-RU")), "-5\u{a0}000 ₽");
-        assert_eq!(format(RUB, 0.0, Some("ru-RU")), "- ₽");
+        // Each `?` of the zero section is a space.
+        assert_eq!(format(RUB, 0.0, Some("ru-RU")), "-   ₽");
     }
 
     #[test]
@@ -348,6 +360,16 @@ mod tests {
         assert_eq!(format("0;0", -3.0, None), "3");
         assert_eq!(format("0", -3.0, None), "-3");
         assert_eq!(format("\"x\"0", 5.0, None), "x5");
+    }
+
+    #[test]
+    fn question_marks_are_spaces() {
+        assert_eq!(format("\"-\"??\" ₽\"", 0.0, None), "-   ₽");
+        assert_eq!(format("\"[\"??0\"]\"", 7.0, None), "[  7]");
+        assert_eq!(format("\"[\"#0.0?\"]\"", 1.5, None), "[1.5 ]");
+        assert_eq!(format("\"[\"0.??\"]\"", 1.0, None), "[1.  ]");
+        assert_eq!(format("\"[\"#,??0\"]\"", 1234.0, None), "[1,234]");
+        assert_eq!(format("\"[\"#0\"]\"", 7.0, None), "[7]");
     }
 
     #[test]
