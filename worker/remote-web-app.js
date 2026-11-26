@@ -6,6 +6,7 @@ const ID = /^[A-Za-z0-9_-]{8,64}$/;
 const TUNNEL = /^https:\/\/[a-z0-9][a-z0-9-]*\.trycloudflare\.com$/;
 const COOKIE = '__Host-freecast-remote';
 const iconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><image width="512" height="512" href="data:image/png;base64,' + REMOTE_ICON + '"/></svg>';
+const HASHED_ASSET = /^\/assets\/[^/]+-[A-Za-z0-9_-]{8,}\.[a-z0-9]+$/;
 const headers = { 'cache-control': 'no-store', 'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff' };
 const reply = (body, type, status = 200, extra = {}) => new Response(body, { status, headers: { ...headers, 'content-type': type, ...extra } });
 const json = (data, status = 200, extra = {}) => reply(JSON.stringify(data), 'application/json', status, extra);
@@ -334,13 +335,16 @@ export async function handleRemoteWebApp(request, env, fetchFn = fetch) {
   if (!validRecord(record)) return app ? reply(variant(offline('not-registered')), 'text/html; charset=utf-8', 503) : json({ error: 'computer unavailable' }, 503);
   const target = app ? record.url + '/?view=' + view : record.url + localPath + url.search;
   const forward = new Headers();
-  for (const key of ['accept', 'range', 'upgrade', 'connection', 'sec-websocket-key', 'sec-websocket-version', 'sec-websocket-protocol', 'sec-websocket-extensions']) if (request.headers.has(key)) forward.set(key, request.headers.get(key));
+  for (const key of ['accept', 'range', 'if-none-match', 'upgrade', 'connection', 'sec-websocket-key', 'sec-websocket-version', 'sec-websocket-protocol', 'sec-websocket-extensions']) if (request.headers.has(key)) forward.set(key, request.headers.get(key));
   if (team && relay) forward.set('x-freecast-team-key', record.hash);
   try {
     const response = await fetchFn(target, { method: 'GET', headers: forward, redirect: 'manual', ...(app ? { signal: AbortSignal.timeout(10000) } : {}) });
     if (response.status === 101) return response;
     if (app && !response.ok) return reply(variant(offline('unreachable', `컴퓨터 연결 응답: HTTP ${response.status}`)), 'text/html; charset=utf-8', 503);
-    const out = new Headers(response.headers); out.delete('set-cookie'); out.set('cache-control', 'private, no-store'); out.set('referrer-policy', 'no-referrer');
+    const out = new Headers(response.headers); out.delete('set-cookie'); out.set('referrer-policy', 'no-referrer');
+    // Built files carry a content hash in their name and never change: the phone keeps them, so opening the remote
+    // again does not download the whole app through the tunnel again. Everything else is fetched fresh.
+    out.set('cache-control', asset && response.ok && HASHED_ASSET.test(localPath) ? 'private, max-age=31536000, immutable' : 'private, no-store');
     if (team && asset && localPath.endsWith('.css')) {
       const stylesheet = (await response.text()).replace(/url\(([\"']?)\/(assets|backgrounds|templates)\//g, `url($1${TEAM_ROOT}$2/`);
       out.delete('content-length'); out.delete('content-encoding');

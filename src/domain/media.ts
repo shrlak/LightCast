@@ -34,6 +34,8 @@ export const putMedia = async (id: string, blob: Blob) => {
 };
 export const deleteMedia = (id: string) => tx('readwrite', (s) => s.delete(id)).then(() => undefined);
 export const getMedia = (id: string) => tx<Blob | undefined>('readonly', (s) => s.get(id));
+/** The ids of every stored file, without reading the files (one request instead of one per file). */
+export const mediaKeys = () => tx<IDBValidKey[]>('readonly', (s) => s.getAllKeys()).then((keys) => new Set(keys.map(String)));
 
 const urlCache = new Map<string, Promise<string | null>>();
 /** Object URLs already made, so a slide that needs the same picture again can draw it in its first frame. */

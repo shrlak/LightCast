@@ -38,6 +38,8 @@ export interface DesktopBridge {
   info(): Promise<DesktopInfo>;
   copyRemoteCode(): Promise<boolean>;
   copyTeamLink(): Promise<boolean>;
+  /** Save a .pptx into Downloads/LightCast without asking (the automatic Sunday copy); its path, or null. Older apps lack it. */
+  saveDownload?(name: string, bytes: Uint8Array): Promise<string | null>;
   /** A .pptx drawn by PowerPoint / LibreOffice on this computer, as a PDF; null when neither can. */
   pptxToPdf(bytes: Uint8Array): Promise<Uint8Array | null>;
   /** The pages being printed (body.printing) as a PDF with real text; null when it cannot. Older apps lack it. */

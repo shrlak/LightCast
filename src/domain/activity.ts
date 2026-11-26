@@ -27,16 +27,24 @@ export function newestModification(a?: ActivityEntry, b?: ActivityEntry): Activi
   if (!b) return a;
   return a.at > b.at || (a.at === b.at && a.id > b.id) ? a : b;
 }
+/**
+ * An edit a person made on this computer (stamped, attributed): not sync, not an automatic refresh that every
+ * computer makes by itself (template refresh, generated theme, hidden background, weekly cleanup).
+ */
+export function isPersonalEdit(before: AppState, after: AppState, a: Action): boolean {
+  if (!a.actor || !a.eventId || a.occurredAt == null || after.library === before.library || SKIP.has(a.type)) return false;
+  return !(a.type === 'presentation/replaceMany' || (a.type === 'presentation/update' && 'templateKey' in a.patch) || (a.type === 'theme/upsert' && a.theme.generated) || (a.type === 'media/add' && a.media.backgroundHidden));
+}
+
 /** Apply attribution after the pure reducer; sync and automated template refreshes never become local edits. */
 export function attributeChange(before: AppState, after: AppState, a: Action): AppState {
-  if (!a.actor || !a.eventId || a.occurredAt == null || after.library === before.library || SKIP.has(a.type)) return after;
-  if (a.type === 'presentation/replaceMany' || (a.type === 'presentation/update' && 'templateKey' in a.patch) || (a.type === 'theme/upsert' && a.theme.generated) || (a.type === 'media/add' && a.media.backgroundHidden)) return after;
+  if (!isPersonalEdit(before, after, a)) return after;
   const usageOnly = a.type.startsWith('live/');
   if (usageOnly && after.library.usage === before.library.usage) return after;
   const target = 'presentationId' in a ? a.presentationId : 'id' in a ? a.id : undefined;
   const p = before.library.presentations.find((p) => p.id === target) ?? after.library.presentations.find((p) => p.id === target) ?? before.library.trash?.find((e) => e.id === target)?.presentation;
   const detail = (usageOnly ? after.library.usage.at(-1)?.title : undefined) ?? p?.title ?? ('presentation' in a ? a.presentation.title : 'media' in a ? a.media.name : 'playlist' in a && a.playlist ? a.playlist.name : 'name' in a ? String(a.name) : actionLabel(a.type));
-  const entry: ActivityEntry = { id: a.eventId, at: a.occurredAt, action: a.type, detail, device: a.actor, account: a.account ?? null };
+  const entry: ActivityEntry = { id: a.eventId!, at: a.occurredAt!, action: a.type, detail, device: a.actor!, account: a.account ?? null };
   const history = mergeActivity(before.library.activity, after.library.activity);
   const last = history.at(-1);
   // Coalesce repeated text edits without flooding the activity list on every keystroke.
@@ -45,7 +53,7 @@ export function attributeChange(before: AppState, after: AppState, a: Action): A
     ? mergeActivity(history.filter((e) => e.id !== last.id), [entry]) : mergeActivity(history, [entry]);
   const library: Library = { ...after.library, activity, ...(usageOnly ? {} : { lastModified: entry }) };
   if (a.type === 'undo' || a.type === 'redo' || a.type === 'library/replace') library.devices = before.library.devices;
-  if (usageOnly) library.usage = after.library.usage.map((u) => before.library.usage.includes(u) ? u : { ...u, device: a.actor, account: a.account });
+  if (usageOnly) library.usage = after.library.usage.map((u) => before.library.usage.includes(u) ? u : { ...u, device: a.actor!, account: a.account });
   return { ...after, library };
 }
 

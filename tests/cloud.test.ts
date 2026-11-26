@@ -20,15 +20,14 @@ describe('mergeById', () => {
 });
 
 describe('mergeLibrary', () => {
-  it('keeps both versions when two devices edited the same presentation', () => {
+  it('takes the later edit (server time) when two devices edited the same presentation, never a copy', () => {
     const base = lib([pres('p1', '원본')]);
-    const { library, conflicts } = mergeLibrary(base, lib([pres('p1', '이 기기')]), lib([pres('p1', '저 기기')]));
-    expect(conflicts).toEqual(['이 기기']);
-    expect(library.presentations.map((p) => p.title)).toEqual(['이 기기', '저 기기 (다른 기기)']);
+    const here = { ...pres('p1', '이 기기'), updatedAt: 5000 }, there = { ...pres('p1', '저 기기'), updatedAt: 9000 };
+    expect(mergeLibrary(base, lib([here]), lib([there])).library.presentations.map((p) => p.title)).toEqual(['저 기기']);
+    expect(mergeLibrary(base, lib([there]), lib([here])).library.presentations.map((p) => p.title)).toEqual(['저 기기']);
   });
   it('on a first sync the cloud wins for shared items and local-only items are added', () => {
-    const { library, conflicts } = mergeLibrary(null, lib([pres('p1', '로컬'), pres('p2', '로컬만')]), lib([pres('p1', '클라우드')]));
-    expect(conflicts).toEqual([]);
+    const { library } = mergeLibrary(null, lib([pres('p1', '로컬'), pres('p2', '로컬만')]), lib([pres('p1', '클라우드')]));
     expect(library.presentations.map((p) => p.title)).toEqual(['클라우드', '로컬만']);
   });
   it('never syncs online songs', () => {

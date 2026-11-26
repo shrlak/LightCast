@@ -569,6 +569,10 @@ export type SlideAction = MacroStep | { type: 'runMacro'; macroId: string };
 export interface NarrationCue { startSec: number; endSec: number }
 
 export interface Slide {
+  /** When this slide's text / formatting / background … was last edited, in the church server's time (editStamps.ts). */
+  editedAt?: number;
+  /** When its text boxes / pictures (elements) and comments lists last changed, in server time. */
+  fieldsEditedAt?: Record<string, number>;
   /** Front template: preserve original fonts/paragraph sizes/geometry; only its date is refreshed. */
   preserveTextLayout?: boolean;
   /** Legacy maximum-fit request; automatic layout no longer enlarges fonts. */
@@ -715,6 +719,12 @@ export interface Presentation {
   online?: boolean;
   /** When a library song was last saved (ms); the newest copy of a song title is the one kept. */
   updatedAt?: number;
+  /** When each of its own fields (title, theme, background …) was last edited, in the church server's time (editStamps.ts). */
+  fieldsEditedAt?: Record<string, number>;
+  /** Slides a person removed (by id), with the server time, kept 30 days: so cloud sync can tell a removed slide from a new one. */
+  removedSlides?: Record<string, number>;
+  /** The slides themselves for a day after they were removed: a device that edits one meanwhile brings back its newest parts. */
+  removedCopies?: Record<string, Slide>;
   /** Dim / blur applied to the background while this presentation is live. */
   bgEffect?: BackgroundEffect;
   /** Built by the 수련회 builder: its background follows the retreat's moving background setting. */
@@ -908,6 +918,8 @@ export interface DeviceIdentity {
   platform: string;
   computerName?: string;
   appVersion?: string;
+  /** 교회 컴퓨터: makes the Sunday 1:55 PM copy when it is open (sundayBackup.ts). Unset: told by its name. */
+  church?: boolean;
 }
 export interface DeviceRegistration extends DeviceIdentity { lastSeen: number; account: string | null }
 export interface ActivityEntry {
@@ -957,6 +969,8 @@ export interface Library {
   version: 1;
   devices?: DeviceRegistration[];
   activity?: ActivityEntry[];
+  /** When the library-wide settings (주일예배 설정, logo, retreat look) were last edited, in server time (editStamps.ts). */
+  fieldsEditedAt?: import('./editStamps').FieldsEditedAt;
   lastModified?: ActivityEntry;
   trash?: TrashEntry[];
   /** '4:3' once slides use the 1440×1080 canvas (libraries without it were laid out at 1920×1080). */

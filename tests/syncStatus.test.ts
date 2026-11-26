@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  COPY_SUFFIX, addConflicts, conflictActions, describePending, isOfflineError, loadConflicts, openConflicts, pendingChanges, retryDelay, saveConflicts,
-  type ConflictRecord,
-} from '../src/domain/syncStatus';
+import { describePending, forgetOldConflicts, isOfflineError, pendingChanges, pollDelay, POLL, retryDelay } from '../src/domain/syncStatus';
 import { mergeLibrary } from '../src/domain/cloudMerge';
 import { createInitialState, reducer, type Action, type AppState } from '../src/domain/reducer';
 import { createSeedLibrary } from '../src/domain/defaults';
@@ -13,9 +10,18 @@ const lib = (presentations: Presentation[]): Library => ({ ...createSeedLibrary(
 const run = (s: AppState, ...actions: Action[]) => actions.reduce(reducer, s);
 
 describe('retry timing', () => {
-  it('asks every 20 s, then slows down after each failure, up to five minutes', () => {
-    expect([0, 1, 2, 3, 4, 5, 20].map(retryDelay)).toEqual([20_000, 40_000, 80_000, 160_000, 300_000, 300_000, 300_000]);
-    expect(retryDelay(-3)).toBe(20_000);
+  it('retries after 5 s, then slows down after each failure, up to three minutes', () => {
+    expect([1, 2, 3, 4, 5, 6, 7, 20].map(retryDelay)).toEqual([5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 180_000, 180_000]);
+    expect(retryDelay(-3)).toBe(2_500);
+  });
+  it('asks every second while someone edits, every two seconds on screen, and rarely when hidden', () => {
+    const at = { failures: 0, hidden: false, focused: true, now: 1_000_000 };
+    expect(pollDelay({ ...at, activeAt: at.now - 10_000 })).toBe(POLL.live);
+    expect(pollDelay({ ...at, activeAt: at.now - 5 * 60_000 })).toBe(POLL.visible);
+    expect(pollDelay({ ...at, focused: false, activeAt: at.now - 5 * 60_000 })).toBe(POLL.background);
+    expect(pollDelay({ ...at, activeAt: 0 })).toBe(POLL.idle);
+    expect(pollDelay({ ...at, hidden: true, activeAt: at.now })).toBe(POLL.hidden);
+    expect(pollDelay({ ...at, failures: 2, activeAt: at.now })).toBe(retryDelay(2));
   });
   it('tells a missing connection from a refusal', () => {
     expect(isOfflineError(Object.assign(new Error('x'), { network: true }))).toBe(true);
@@ -55,63 +61,19 @@ describe('edits waiting to be sent', () => {
 });
 
 describe('two computers changed the same presentation', () => {
-  const merged = () => {
+  it('keeps one presentation: the later edit, with nothing to choose', () => {
     const base = lib([pres('p1', '원본', '원본 본문')]);
-    const result = mergeLibrary(base, lib([pres('p1', '이 기기', '내 본문')]), lib([pres('p1', '저 기기', '저쪽 본문')]));
-    return result;
-  };
-  it('reports which two versions it kept', () => {
-    const { conflictPairs, library } = merged();
-    expect(conflictPairs).toHaveLength(1);
-    const copy = library.presentations.find((p) => p.id === conflictPairs[0].copyId)!;
-    expect(conflictPairs[0]).toMatchObject({ title: '이 기기', localId: 'p1' });
-    expect(copy.title).toBe(`저 기기${COPY_SUFFIX}`);
+    const here = { ...pres('p1', '이 기기', '내 본문'), updatedAt: 2000 };
+    const there = { ...pres('p1', '저 기기', '저쪽 본문'), updatedAt: 1000 };
+    const { library } = mergeLibrary(base, lib([here]), lib([there]));
+    expect(library.presentations.map((p) => p.id)).toEqual(['p1']);
+    expect(library.presentations[0]).toMatchObject({ title: '이 기기', updatedAt: 2000 });
+    expect(library.presentations[0].slides[0].text).toBe('내 본문');
+    void createInitialState; void run;
   });
-  const state = () => {
-    const { library, conflictPairs } = merged();
-    const [pair] = addConflicts([], conflictPairs, 1000);
-    return { s: createInitialState(library), c: pair };
-  };
-  it('keep mine: the other copy goes away, mine is untouched', () => {
-    const { s, c } = state();
-    const next = run(s, ...conflictActions(c, s.library, 'mine'));
-    expect(next.library.presentations.map((p) => p.id)).toEqual(['p1']);
-    expect(next.library.presentations[0].slides[0].text).toBe('내 본문');
-  });
-  it('use theirs: mine becomes their version under its own name, and the copy goes away', () => {
-    const { s, c } = state();
-    const next = run(s, ...conflictActions(c, s.library, 'theirs'));
-    expect(next.library.presentations.map((p) => p.id)).toEqual(['p1']);
-    expect(next.library.presentations[0]).toMatchObject({ id: 'p1', title: '저 기기' });
-    expect(next.library.presentations[0].slides[0].text).toBe('저쪽 본문');
-  });
-  it('keep both: nothing changes', () => {
-    const { s, c } = state();
-    expect(conflictActions(c, s.library, 'both')).toEqual([]);
-  });
-  it('a copy that is already gone only needs the record dropped', () => {
-    const { s, c } = state();
-    const gone = run(s, { type: 'presentation/delete', id: c.copyId });
-    expect(openConflicts([c], gone.library)).toEqual([]);
-    expect(openConflicts([c], s.library)).toEqual([c]);
-  });
-  it('lists each copy once', () => {
-    const { c } = state();
-    expect(addConflicts([c], [{ title: c.title, localId: c.localId, copyId: c.copyId }], 2000)).toEqual([c]);
-  });
-});
-
-describe('remembering conflicts', () => {
-  it('keeps them between runs and ignores junk', () => {
-    const store = new Map<string, string>();
-    (globalThis as { localStorage?: unknown }).localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) };
-    const c: ConflictRecord = { id: 'x', title: 't', localId: 'a', copyId: 'x', at: 5 };
-    saveConflicts([c]);
-    expect(loadConflicts()).toEqual([c]);
-    store.set('freecast.sync.conflicts', JSON.stringify([c, { id: 1 }, null]));
-    expect(loadConflicts()).toEqual([c]);
-    store.set('freecast.sync.conflicts', '{bad');
-    expect(loadConflicts()).toEqual([]);
-    delete (globalThis as { localStorage?: unknown }).localStorage;
+  it('forgets the questions older versions saved', () => {
+    const store = new Map<string, string>([['freecast.sync.conflicts', '[{"id":"x"}]']]);
+    forgetOldConflicts({ removeItem: (k: string) => { store.delete(k); } });
+    expect(store.has('freecast.sync.conflicts')).toBe(false);
   });
 });

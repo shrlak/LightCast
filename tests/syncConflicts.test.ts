@@ -15,31 +15,32 @@ describe('cloud sync: the same automatic change on two computers', () => {
     // Both computers moved the Front to the next Sunday by themselves, each with its own new ids.
     const here = lib([deck([page('x1', '11/01/2026', 'x2')])]);
     const there = lib([deck([page('y1', '11/01/2026', 'y2')])]);
-    const { library, conflicts } = mergeLibrary(base, here, there);
-    expect(conflicts).toEqual([]);
+    const { library } = mergeLibrary(base, here, there);
     expect(library.presentations).toEqual(there.presentations); // every computer ends up with the cloud's copy
   });
 
   it('keeps a real edit made here when the cloud only renumbered the ids', () => {
     const here = lib([deck([page('a', '11/01/2026 · 이 기기에서 고침', 'a1')])]);
     const there = lib([deck([page('z1', '10/25/2026', 'z2')])]);
-    const { library, conflicts } = mergeLibrary(base, here, there);
-    expect(conflicts).toEqual([]);
+    const { library } = mergeLibrary(base, here, there);
     expect(library.presentations).toEqual(here.presentations);
   });
 
   it('takes the cloud’s real edit when this computer only renumbered the ids', () => {
     const here = lib([deck([page('z1', '10/25/2026', 'z2')])]);
     const there = lib([deck([page('a', '다른 기기에서 고침', 'a1')])]);
-    const { library, conflicts } = mergeLibrary(base, here, there);
-    expect(conflicts).toEqual([]);
+    const { library } = mergeLibrary(base, here, there);
     expect(library.presentations).toEqual(there.presentations);
   });
 
-  it('still keeps both when the two computers really changed it differently', () => {
-    const here = lib([deck([page('a', '이 기기', 'a1')])]);
-    const there = lib([deck([page('a', '저 기기', 'a1')])]);
-    expect(mergeLibrary(base, here, there).conflicts).toEqual(['1101 Front']);
+  it('takes the later edit when the two computers really changed it differently (no copy)', () => {
+    const at = (p: Presentation, t: number): Presentation => ({ ...p, updatedAt: t, slides: p.slides.map((s) => ({ ...s, editedAt: t })) });
+    const here = lib([at(deck([page('a', '이 기기', 'a1')]), 2000)]);
+    const there = lib([at(deck([page('a', '저 기기', 'a1')]), 1000)]);
+    const merged = mergeLibrary(base, here, there).library.presentations;
+    expect(merged).toHaveLength(1);
+    expect(merged[0].slides[0].text).toBe('이 기기');
+    expect(mergeLibrary(base, there, here).library.presentations[0].slides[0].text).toBe('이 기기');
   });
 
   it('converts an older slide’s QR codes the same way on every computer', () => {

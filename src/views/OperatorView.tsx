@@ -1,4 +1,7 @@
 import { exportFontNotice } from '../domain/embeddedFonts';
+import { serverNow } from '../domain/serverClock';
+import { useSundayBackup } from '../ui/useSundayBackup';
+import { useLibraryFonts } from '../ui/useLibraryFonts';
 import { readShowSettings } from '../domain/io/pptxShow';
 import { Dialog } from '../ui/ppt/dialogs';
 import { SHOW_ALL_EVENT, screenAction, hasInk, keepShowInk, showKey, zoomStep, type ShowInk } from '../domain/showScreen';
@@ -180,7 +183,7 @@ export function OperatorView() {
     const macroId = a.type === 'macro/run' ? a.id : a.type === 'schedule/ran' ? schedulesRef.current.find((x) => x.id === a.id)?.macroId : undefined;
     const macro = macroId ? macrosRef.current.find((m) => m.id === macroId) : undefined;
     macro?.steps.forEach(runExternal);
-    dispatchRaw({ ...a, actor: getDevice(), account: loadSession()?.username ?? null, eventId: crypto.randomUUID(), occurredAt: Date.now() });
+    dispatchRaw({ ...a, actor: getDevice(), account: loadSession()?.username ?? null, eventId: crypto.randomUUID(), occurredAt: serverNow() });
   }, []);
   const notifyRef = useRef<(m: string) => void>(() => undefined);
   const notify = (msg: string) => {
@@ -193,6 +196,8 @@ export function OperatorView() {
   useEffect(() => beginSession((r) => setRecovery({ saveFailed: r.saveFailed })), []);
   const lastFailedSnap = useRef(0);
   useEffect(() => {
+    // Another window saved meanwhile: its save is merged in first (this effect runs again for the merged library).
+    if (beforeSave()) return;
     const ok = saveLibrary(state.library);
     noteSaveFailed(!ok);
     // The copy on this computer could not be written: keep one in IndexedDB instead (at most once a minute).
@@ -225,7 +230,11 @@ export function OperatorView() {
     return () => { clearTimeout(first); clearInterval(t); };
   }, []);
   const cloud = useCloudSync(state.library, dispatch, (m) => notifyRef.current(m));
-  useWindowSync(state.library, dispatch);
+  // Sunday 1:55 PM: a .pptx copy of this Sunday's service when it is not playing yet (church computer, or the newest open device).
+  useSundayBackup({ library: state.library, dispatch, showing: view === 'presenter', notify: (m) => notifyRef.current(m) });
+  // Fonts the whole library uses: shared from this computer, or downloaded when free, then synced to every computer.
+  useLibraryFonts(state.library, (m) => notifyRef.current(m));
+  const beforeSave = useWindowSync(state.library, dispatch);
   // The first login on this computer (or a logged-in computer never named): register its name and user right away.
   const [deviceSetup, setDeviceSetup] = useState(false);
   useEffect(() => {
@@ -364,7 +373,7 @@ export function OperatorView() {
     // 검정/흰색 화면, ink and 확대 from an audience window: only while a show is running.
     const act = viewRef.current === 'presenter' ? screenAction(a) : null;
     if (act) dispatch(act);
-  });
+  }, relay.connected);
   useEffect(() => { relay.send({ type: 'rehearsal', active: !!rehearsalPreview, state: rehearsalPreview?.live, cursor: rehearsalPreview?.cursor }); }, [rehearsalPreview, relay.connected]);
 
   // Share the complete running order and the upcoming slides with remotes.
@@ -517,7 +526,7 @@ export function OperatorView() {
     const pres = state.library.presentations.find((x) => x.id === state.selectedId);
     if (!pres) return notify('먼저 프레젠테이션을 선택하세요');
     void saveRestorePoint(state.library, 'show', Date.now(), activePlaylist(state)?.name ?? pres.title).catch(() => notify('발표는 시작했지만 복원 지점을 저장하지 못했습니다. 저장 공간을 확인하세요.'));
-    dispatch({ type: 'activity/record', entry: { id: crypto.randomUUID(), at: Date.now(), action: 'show/start', detail: activePlaylist(state)?.name ?? pres.title, device: getDevice(), account: loadSession()?.username ?? null } });
+    dispatch({ type: 'activity/record', entry: { id: crypto.randomUUID(), at: serverNow(), action: 'show/start', detail: activePlaylist(state)?.name ?? pres.title, device: getDevice(), account: loadSession()?.username ?? null } });
     const seq = fromCurrent && slideId ? slideSeq ?? Math.max(0, sequence(pres).findIndex((x) => x.slide.id === slideId)) : 0;
     dispatch({ type: 'live/go', presentationId: pres.id, seq });
     setView('presenter');
@@ -526,7 +535,7 @@ export function OperatorView() {
   const endShow = () => {
     // Ink written in the show: PowerPoint asks whether to keep it on the slides.
     if (hasInk(state.live.ink)) setInkPrompt(state.live.ink!);
-    if (view === 'presenter') dispatch({ type: 'activity/record', entry: { id: crypto.randomUUID(), at: Date.now(), action: 'show/end', detail: activePlaylist(state)?.name ?? '발표', device: getDevice(), account: loadSession()?.username ?? null } });
+    if (view === 'presenter') dispatch({ type: 'activity/record', entry: { id: crypto.randomUUID(), at: serverNow(), action: 'show/end', detail: activePlaylist(state)?.name ?? '발표', device: getDevice(), account: loadSession()?.username ?? null } });
     dispatch({ type: 'live/clearAll' });
     setView('normal');
     desktop?.endShow();
@@ -761,7 +770,7 @@ export function OperatorView() {
       {modal === 'retreat' && <RetreatWizard state={state} dispatch={dispatch} onClose={() => setModal(null)} notify={notify} />}
       {modal === 'chords' && <ChordSheetModal state={state} dispatch={dispatch} onClose={() => setModal(null)} notify={notify} />}
       {modal === 'retreatBg' && <RetreatBackgroundModal library={state.library} dispatch={dispatch} onClose={() => setModal(null)} notify={notify} />}
-      {modal === 'sync' && <SyncStatusModal cloud={cloud} library={state.library} dispatch={dispatch} notify={notify} onClose={() => setModal(null)} onAccount={() => setModal('account')} />}
+      {modal === 'sync' && <SyncStatusModal cloud={cloud} library={state.library} onClose={() => setModal(null)} onAccount={() => setModal('account')} />}
       {modal === 'account' && <AccountModal cloud={cloud} library={state.library} dispatch={dispatch} onClose={() => setModal(null)} onActivity={() => setModal('activity')} onSync={() => setModal('sync')} />}
       {deviceSetup && <DeviceSetupDialog cloud={cloud} onClose={() => setDeviceSetup(false)} />}
       {(modal === 'song' || modal === 'songNew') && (

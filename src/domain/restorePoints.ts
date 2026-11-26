@@ -43,11 +43,18 @@ function run<T>(mode: IDBTransactionMode, f: (s: IDBObjectStore) => IDBRequest<T
   }));
 }
 
-/** Which snapshots survive: the newest `max`, but a manual or safety snapshot outlives autos. */
+/** Sync snapshots kept at most (they come often while several devices edit; they must not push out the others). */
+export const MAX_SYNC_POINTS = 8;
+/** At most one sync snapshot this often (ms): while devices edit together, changes arrive every few seconds. */
+export const SYNC_INTERVAL = 2 * 60_000;
+
+/** Which snapshots survive: the newest `max`, but a manual or safety snapshot outlives autos, and sync snapshots are capped. */
 export function pruneIds(points: Pick<RestorePoint, 'id' | 'at' | 'kind'>[], max = MAX_POINTS): number[] {
   const newest = [...points].sort((a, b) => b.at - a.at);
   const keep = new Set<number>();
-  for (const p of newest) if (p.kind !== 'auto' && keep.size < max) keep.add(p.id);
+  let syncs = 0;
+  for (const p of newest) if (p.kind !== 'auto' && p.kind !== 'sync' && keep.size < max) keep.add(p.id);
+  for (const p of newest) if (p.kind === 'sync' && syncs < MAX_SYNC_POINTS && keep.size < max) { keep.add(p.id); syncs++; }
   for (const p of newest) if (p.kind === 'auto' && keep.size < max) keep.add(p.id);
   return newest.filter((p) => !keep.has(p.id)).map((p) => p.id);
 }
@@ -113,7 +120,11 @@ export const libraryOf = (p: RestorePoint): Library | null => {
 let syncSnapshotQueue: Promise<void> = Promise.resolve();
 /** The library of the last sync snapshot (undefined until read once): checks that change nothing stay in memory. */
 let lastSyncJson: string | null | undefined;
-export function saveSyncRestorePoint(lib: Library): Promise<void> {
+let lastSyncAt = 0;
+export function saveSyncRestorePoint(lib: Library, now = Date.now()): Promise<void> {
+  // While devices edit together a change arrives every few seconds; one snapshot every couple of minutes is enough
+  // (and each one holds the whole library).
+  if (now - lastSyncAt < SYNC_INTERVAL) return syncSnapshotQueue;
   const json = serialize(lib);
   const job = syncSnapshotQueue.then(async () => {
     if (lastSyncJson === undefined) {
@@ -123,6 +134,7 @@ export function saveSyncRestorePoint(lib: Library): Promise<void> {
     if (lastSyncJson === json) return;
     await saveRestorePoint(lib, 'sync', Date.now(), '수정 후 동기화 시작');
     lastSyncJson = json;
+    lastSyncAt = now;
   });
   syncSnapshotQueue = job.catch(() => undefined);
   return job;

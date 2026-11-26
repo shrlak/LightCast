@@ -5,6 +5,7 @@ import { CANVAS_W, LEGACY_CANVAS_W } from './canvas';
 import { centerSongLyrics } from './songCentering';
 import { prepareAnnouncementSizing } from './announcementSizing';
 import { normalizeRetreatLook } from './motion';
+import { normalizeFieldStamps } from './editStamps';
 
 const LIBRARY_KEY = 'freecast.library.v1';
 const LIVE_KEY = 'freecast.live.v2';
@@ -46,6 +47,21 @@ function withoutRetiredActions(list: Library['presentations']): Library['present
     : p));
 }
 
+/**
+ * A presentation in the form every read gives it (lyrics centred, announcement sizes), remembered per object: library
+ * objects never change once made, and cloud sync reads the whole library this way every round.
+ */
+const normalized = new WeakMap<object, Library['presentations'][number]>();
+function normalizedPresentation(p: Library['presentations'][number]): Library['presentations'][number] {
+  let out = normalized.get(p);
+  if (!out) {
+    out = prepareAnnouncementSizing(centerSongLyrics(p));
+    normalized.set(p, out);
+    normalized.set(out, out);
+  }
+  return out;
+}
+
 export function normalizeLibrary(value: unknown): Library | null {
   if (!isObj(value) || value.version !== 1) return null;
   const { presentations, themes } = value;
@@ -76,7 +92,8 @@ export function normalizeLibrary(value: unknown): Library | null {
     devices: arr<DeviceRegistration>(value.devices, []).filter((d) => isDeviceIdentity(d) && Number.isFinite(d.lastSeen) && (d.account === null || typeof d.account === 'string')),
     activity: arr<unknown>(value.activity, []).filter(isActivityEntry).slice(-2000),
     lastModified: isActivityEntry(value.lastModified) ? value.lastModified : undefined,
-    presentations: [...own.map((p) => prepareAnnouncementSizing(centerSongLyrics(p))), ...templates],
+    ...(normalizeFieldStamps(value.fieldsEditedAt) ? { fieldsEditedAt: normalizeFieldStamps(value.fieldsEditedAt) } : {}),
+    presentations: [...own.map(normalizedPresentation), ...templates],
     // Themes added in later versions (광고, scripture) are appended if missing.
     themes: [...(themes as Library['themes']), ...DEFAULT_THEMES.filter((t) => !themes.some((x) => isObj(x) && x.id === t.id))],
     playlists,
@@ -154,13 +171,42 @@ function write(key: string, value: unknown): boolean {
   }
 }
 
+/** The stored library text this window last wrote or read (undefined: not yet), to tell another window's save. */
+let seenRaw: string | null | undefined;
+const readRaw = (): string | null => { try { return localStorage.getItem(LIBRARY_KEY); } catch { return null; } };
+const parse = (raw: string | null): unknown => { try { return raw ? JSON.parse(raw) : null; } catch { return null; } };
+
 export function loadLibrary(): Library {
-  return normalizeLibrary(read(LIBRARY_KEY)) ?? createSeedLibrary();
+  const raw = readRaw();
+  seenRaw = raw;
+  return normalizeLibrary(parse(raw)) ?? createSeedLibrary();
 }
 
 /** Online songs are never written to this computer — only the user's own presentations. */
 /** False when the library could not be written (storage full or blocked). */
-export const saveLibrary = (lib: Library): boolean => write(LIBRARY_KEY, { ...lib, presentations: lib.presentations.filter((p) => !p.online) });
+export const saveLibrary = (lib: Library): boolean => {
+  try {
+    const raw = JSON.stringify({ ...lib, presentations: lib.presentations.filter((p) => !p.online) });
+    localStorage.setItem(LIBRARY_KEY, raw);
+    seenRaw = raw;
+    return true;
+  } catch {
+    // Storage full or blocked; the app keeps working in memory.
+    return false;
+  }
+};
+
+/**
+ * What another window of this app saved since this window last read or wrote the library (null when nothing). Read
+ * just before saving, so a window never writes over another window's save it has not merged yet (View › New Window).
+ */
+export function libraryChangedElsewhere(): Library | null {
+  if (seenRaw === undefined) return null;
+  const raw = readRaw();
+  if (raw === null || raw === seenRaw) return null;
+  seenRaw = raw;
+  return normalizeLibrary(parse(raw));
+}
 export const saveLive = (live: LiveState) => write(LIVE_KEY, live);
 export const loadLive = (): LiveState | null => {
   const v = read(LIVE_KEY);

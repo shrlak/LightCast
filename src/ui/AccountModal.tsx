@@ -64,7 +64,7 @@ export function AccountModal({ cloud, library, dispatch, onClose, onActivity, on
               <p className="hint">이 컴퓨터의 프레젠테이션·재생목록·테마·미디어가 교회 서버(Cloudflare Worker)에 저장되고, 같은 계정으로 로그인한 모든 기기에서 열립니다. 두 기기에서 같은 프레젠테이션을 동시에 고치면 둘 다 남깁니다.</p>
               <div className="row gap-s">
                 <button onClick={onActivity}>사용기록 보기</button>
-                <button onClick={onSync} title="오프라인·보내지 못한 변경·충돌·미디어 준비 확인">⇅ 동기화 상태{cloud.conflicts.length > 0 ? ` · 충돌 ${cloud.conflicts.length}건` : ''}</button>
+                <button onClick={onSync} title="오프라인·보내지 못한 변경·미디어 준비 확인">⇅ 동기화 상태</button>
                 <button className="primary" onClick={cloud.syncNow} disabled={status.state === 'syncing'}>지금 동기화</button>
                 <button className="danger" onClick={async () => { await cloud.logout(); onClose(); }}>로그아웃</button>
               </div>

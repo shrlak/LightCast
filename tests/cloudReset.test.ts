@@ -17,7 +17,7 @@ describe('server reset generation', () => {
     const old = createSeedLibrary(); old.presentations[0].protected = true;
     old.media = [{ id: 'old', name: 'old', type: 'image' }];
     const empty = reset();
-    expect(mergeLibrary(old, old, empty)).toEqual({ library: empty, conflicts: [], conflictPairs: [] });
+    expect(mergeLibrary(old, old, empty)).toEqual({ library: empty });
     expect(mergeLibrary(null, old, empty).library.presentations).toEqual([]);
   });
   it('preserves the generation on reload without recreating deleted Front/template material', () => {

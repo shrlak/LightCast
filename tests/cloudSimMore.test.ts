@@ -132,6 +132,10 @@ describe('media and fonts across computers', () => {
     expect(a.status.state).toBe('synced');
     expect(a.status.message).toContain('미디어 1개');
     fail = false;
+    // The app asks again after a short back-off (cloudSyncRound.mediaRetry).
+    vi.setSystemTime(Date.now() + 10_000);
+    await converge([a, b]);
+    vi.setSystemTime(Date.now() + 10_000);
     await converge([a, b]);
     expect(b.media.has('m_big')).toBe(true);
     expect(a.status.message).toBeNull();
@@ -155,6 +159,9 @@ describe('media and fonts across computers', () => {
     expect(a.status.state).toBe('synced');
     expect(a.status.message).toContain('미디어 1개');
     worker.quotaBytes = Infinity;
+    vi.setSystemTime(Date.now() + 10_000);
+    await converge([a, b]);
+    vi.setSystemTime(Date.now() + 10_000);
     await converge([a, b]);
     expect(b.media.has('m_q')).toBe(true);
   });
