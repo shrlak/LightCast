@@ -85,14 +85,38 @@ export const clampDefaultTab = (px: number) => (Number.isFinite(px) ? Math.min(3
 export interface TabSegment { w: number; dec: number }
 
 /**
+ * The line a tab is measured on (DeckCraft `tab_advance`'s `hang` and `right`, from `87af3184` /
+ * `5a6add63` and their review fixes), all in px from the text area's left:
+ * - `hang`: a hanging first line (it starts left of the paragraph's margin, LTR only) treats the
+ *   margin as an implicit left stop for its first tab, as PowerPoint does. The nearer of it and the
+ *   regular stops wins; an explicit stop within half a point of it keeps its own alignment.
+ * - `right`: the line's right edge. A stop set past it acts as one at the edge, so right-aligned text
+ *   after it ends at the margin.
+ */
+export interface TabLine { hang?: number; right?: number }
+
+/** Half a point on the 1440-pixel canvas (2 px per point). */
+const HALF_PT = 1;
+
+/**
  * How far a tab at `x` advances: to the next stop past x, placing the text after it (`seg`) as the
  * stop aligns it but never moving back; past the last stop, to the next default stop.
  */
-export function tabAdvance(x: number, stops: readonly TabStop[], defaultTab: number, seg: TabSegment): number {
+export function tabAdvance(x: number, stops: readonly TabStop[], defaultTab: number, seg: TabSegment, line: TabLine = {}): number {
   const sorted = [...stops].sort((a, b) => a.pos - b.pos);
   const next = Number.isNaN(x) ? undefined : sorted.find((s) => s.pos > x + 1);
+  const { hang, right } = line;
+  const atEdge = (pos: number) => (right !== undefined && Number.isFinite(right) && right > 0 ? Math.min(pos, right) : pos);
+  const d = defaultTab > 1 ? defaultTab : DEFAULT_TAB;
+  if (!Number.isNaN(x) && hang !== undefined && Number.isFinite(hang) && x < hang - HALF_PT) {
+    // A stop past the edge is compared where it takes effect, at the edge.
+    const explicitWins = next
+      ? atEdge(next.pos) < hang - HALF_PT || Math.abs(atEdge(next.pos) - hang) <= HALF_PT
+      : hang >= (Math.floor(x / d) + 1) * d - HALF_PT;
+    if (!explicitWins) return Math.max(1, hang - x);
+  }
   if (next) {
-    const to = next.pos - x;
+    const to = Math.max(0, atEdge(next.pos) - x);
     switch (next.align) {
       case 'right': return Math.max(0, to - seg.w);
       case 'center': return Math.max(0, to - seg.w / 2);
@@ -100,21 +124,21 @@ export function tabAdvance(x: number, stops: readonly TabStop[], defaultTab: num
       default: return to;
     }
   }
-  const d = defaultTab > 1 ? defaultTab : DEFAULT_TAB;
   const at = Number.isFinite(x) ? x : 0;
   return Math.max(1, (Math.floor(at / d) + 1) * d - at);
 }
 
 /**
  * A line split at its tabs, laid out from `start` (where the line begins in the text area): the x of
- * each segment and the width each tab takes.
+ * each segment and the width each tab takes. `line.hang` applies to this line, so pass it for a
+ * paragraph's first line only.
  */
-export function layoutTabLine(start: number, segs: readonly TabSegment[], stops: readonly TabStop[], defaultTab: number): { x: number[]; gaps: number[] } {
+export function layoutTabLine(start: number, segs: readonly TabSegment[], stops: readonly TabStop[], defaultTab: number, line: TabLine = {}): { x: number[]; gaps: number[] } {
   const x: number[] = [], gaps: number[] = [];
   let cur = start;
   segs.forEach((s, i) => {
     if (i > 0) {
-      const gap = tabAdvance(cur, stops, defaultTab, s);
+      const gap = tabAdvance(cur, stops, defaultTab, s, line);
       gaps.push(gap);
       cur += gap;
     }
@@ -122,6 +146,28 @@ export function layoutTabLine(start: number, segs: readonly TabSegment[], stops:
     cur += s.w;
   });
   return { x, gaps };
+}
+
+/**
+ * Where paragraph `i`'s first line starts in a text box and the line it is measured on: the start
+ * (box indent, paragraph margin and first-line indent; with a bullet, the bullet fills a hanging
+ * indent so the text starts at the margin), the implicit hanging-indent stop (no bullet, LTR, a
+ * first line starting more than half a point left of the margin) and the right edge of the text
+ * area (the box width less its left and right margins).
+ */
+export function firstLineTabs(
+  el: Pick<SlideElement, 'w' | 'margins' | 'indent' | 'firstIndent' | 'rtl' | 'paragraphs'>,
+  i: number, marker: boolean, level = 0,
+): { start: number } & TabLine {
+  const p = el.paragraphs?.[i];
+  const outer = el.margins ? 0 : (el.indent ?? 0) * INDENT_PX;
+  const margin = outer + (p ? p.marginLeft ?? level * INDENT_PX : 0);
+  // The box's first-line indent is inherited by a paragraph that sets none (CSS text-indent).
+  const first = p?.firstIndent ?? el.firstIndent ?? 0;
+  const start = marker && first < 0 ? margin : margin + first;
+  const right = Math.max(0, el.w - (el.margins ? el.margins[0] + el.margins[2] : 0));
+  const hang = !marker && !el.rtl && margin - start > HALF_PT && Number.isFinite(margin) ? margin : undefined;
+  return { start, right: right || undefined, ...(hang !== undefined ? { hang } : {}) };
 }
 
 /** Where the text before the first '.' ends in a segment (its whole length when it has none). */

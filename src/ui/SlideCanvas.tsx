@@ -6,7 +6,7 @@ import { lineRuns, slideLineRuns } from '../domain/richText';
 import { drawnFamily } from '../domain/fonts';
 import { BOLD_WEIGHT, REGULAR_WEIGHT } from '../domain/fontWeight';
 import { morphFrame, smooth } from '../domain/morph';
-import { DEFAULT_TAB, decimalAt, layoutTabLine, splitRunsAtTabs } from '../domain/tabStops';
+import { DEFAULT_TAB, decimalAt, firstLineTabs, layoutTabLine, splitRunsAtTabs } from '../domain/tabStops';
 import { FRAME_PLACEHOLDERS, PLACEHOLDER_PROMPT } from '../domain/master';
 import { warpGuides } from '../engine';
 import { bandOfLine, fillGlyphs, polyD, warpPreset } from '../domain/textWarp';
@@ -51,7 +51,7 @@ export function InkLayer({ strokes }: { strokes: ShowStroke[] }) {
 import { pictureLookCss } from './pictureStyles';
 import { formatDateField } from '../domain/insertTools';
 import { patternPath } from '../domain/patterns';
-import { atEnd, fadeGain, playStart, playVolume } from '../domain/mediaPlayback';
+import { atEnd, fadeGain, hiddenDuringShow, playStart, playVolume } from '../domain/mediaPlayback';
 import { useAutoTextBoxes, useFontEpoch } from './textBoxLayout';
 import { autoFitMode, drawnText } from '../domain/textFit';
 import { elementTextStyle } from '../domain/textBoxLayout';
@@ -420,7 +420,7 @@ function VideoObject({ el, url, style, live }: { el: SlideElement; url: string; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, el.id, pb.start, pb.end, pb.loop, pb.rewind, pb.fadeIn, pb.fadeOut, pb.volume, pb.muted, pb.poster]);
   const full = live && playing && pb.fullScreen ? { left: 0, top: 0, width: CANVAS_W, height: CANVAS_H, transform: 'none', zIndex: 5, background: '#000' } : {};
-  const hidden = live && !playing && pb.hideDuringShow ? { visibility: 'hidden' as const } : {};
+  const hidden = live && hiddenDuringShow('video', pb, playing) ? { visibility: 'hidden' as const } : {};
   const faded = gain < 1 ? { opacity: ((style.opacity as number | undefined) ?? 1) * gain } : {};
   // Insert › Action › Play Media: a click (or pointing) at the object in the output window starts and pauses it.
   useEffect(() => {
@@ -509,7 +509,8 @@ export function ElementView({ el }: { el: SlideElement }) {
     );
   }
   if (el.kind === 'video') return videoUrl ? <VideoObject el={el} url={videoUrl} style={box} live={show} /> : <div style={{ ...box, outline: '2px dashed #555' }} />;
-  if (el.kind === 'audio') return show && el.playback?.hideDuringShow ? null : <div style={box} className="audio-object" title={el.name ?? '오디오'}><svg viewBox="0 0 48 48" width="100%" height="100%"><circle cx="24" cy="24" r="22" fill="rgba(0,0,0,.45)" stroke="#fff" strokeWidth="2" /><path d="M12 19h7l9-8v26l-9-8h-7z" fill="#fff" /><path d="M32 17c3 3 3 11 0 14M35 13c5 5 5 17 0 22" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" /></svg></div>;
+  // An audio icon set to hide stays hidden while it plays (its sound comes from the show's player).
+  if (el.kind === 'audio') return show && hiddenDuringShow('audio', el.playback, true) ? null : <div style={box} className="audio-object" title={el.name ?? '오디오'}><svg viewBox="0 0 48 48" width="100%" height="100%"><circle cx="24" cy="24" r="22" fill="rgba(0,0,0,.45)" stroke="#fff" strokeWidth="2" /><path d="M12 19h7l9-8v26l-9-8h-7z" fill="#fff" /><path d="M32 17c3 3 3 11 0 14M35 13c5 5 5 17 0 22" fill="none" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" /></svg></div>;
   if (el.kind === 'zoom') return el.zoomOf ? <div style={{ ...box, outline: '2px solid rgba(255,255,255,.6)' }} className="zoom-object"><SlideCanvas slide={el.zoomOf.slide} theme={el.zoomOf.theme} background={el.zoomOf.background} /></div> : <div style={{ ...box, outline: '2px dashed #888' }} />;
   if (el.kind === 'camera') return <div style={box}><CameraBg deviceId={el.deviceId ?? ''} label="Camera" animate /></div>;
   if (el.kind === 'qr') return el.link ? <img className="qr-object" src={qrDataUrl(el.link)} alt={el.link} title={el.link} style={box} /> : <div className="qr-object empty" style={box}>QR</div>;
@@ -531,7 +532,7 @@ import { runStyle, runText, linkColorFor } from './runStyle';
 import { RunChars, RunSpan } from './RunSpan';
 
 /** Home › Paragraph › Tabs: a line whose tabs go to the box's tab stops (domain/tabStops). */
-function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; size: number }) {
+function TabbedLine({ el, runs, size, line }: { el: SlideElement; runs: TextRun[]; size: number; line: ReturnType<typeof firstLineTabs> }) {
   const segs = splitRunsAtTabs(runs);
   const font = (r?: TextRun) => `${(r?.italic ?? el.italic) ? 'italic ' : ''}${(r?.bold ?? el.bold) ? BOLD_WEIGHT : REGULAR_WEIGHT} ${r?.fontSize ?? size}px ${drawnFamily(r?.fontFamily ?? el.fontFamily) ?? 'Inter, "Noto Sans KR", sans-serif'}`;
   const measured = segs.map((seg) => {
@@ -542,7 +543,8 @@ function TabbedLine({ el, runs, size }: { el: SlideElement; runs: TextRun[]; siz
     seg.forEach((r, k) => { const take = Math.max(0, Math.min(r.text.length, dot - n)); dec += take === r.text.length ? ws[k] : glyphWidths([...r.text.slice(0, take)], font(r)).reduce((a, b) => a + b, 0); n += r.text.length; });
     return { w: ws.reduce((a, b) => a + b, 0), dec };
   });
-  const { gaps } = layoutTabLine(0, measured, el.tabStops ?? [], el.defaultTab ?? DEFAULT_TAB);
+  // Measured from where the first line starts, with its hanging-indent stop and the right edge.
+  const { gaps } = layoutTabLine(line.start, measured, el.tabStops ?? [], el.defaultTab ?? DEFAULT_TAB, line);
   return <>{segs.map((seg, i) => (
     <span key={i}>
       {i > 0 && <span style={{ display: 'inline-block', width: gaps[i - 1] }} />}
@@ -620,11 +622,15 @@ function TextElement({ el: stored, box }: { el: SlideElement; box: CSSProperties
   const { markers, levels } = elementMarkers(el);
   const perPara = !!el.paragraphs?.some((p) => p.list !== undefined || p.level || p.marginLeft !== undefined || p.firstIndent !== undefined || p.spaceBefore || p.spaceAfter || p.lineHeight);
   const runs = lineRuns(el);
-  const tabbed = !!el.tabStops?.length && lines.some((l) => l.includes('\t'));
+  // A line with tabs is laid out by tabStops.ts when the box has stops of its own or the line is a
+  // hanging first line (its first tab goes to the margin, DeckCraft 87af3184); otherwise CSS tab-size.
+  const tabLine = (text: string, i: number) => (text.includes('\t') ? firstLineTabs(el, i, !!markers[i], levels[i] ?? 0) : null);
+  const tabbedAt = (text: string, i: number) => { const t = tabLine(text, i); return !!t && (!!el.tabStops?.length || t.hang !== undefined); };
+  const tabbed = lines.some((l, i) => tabbedAt(l, i));
   const styled = !!(el.list || perPara || el.highlight || runs.some(Boolean) || tabbed) || byPara;
   const lineBody = (text: string, i: number) => (
     <ListLine marker={markers[i]} picture={bulletPictureOf(el)} hang={hangOf(el, i)} highlight={text.trim() ? el.highlight : undefined} markerStyle={markers[i] ? bulletCss(el.paragraphs?.[i]?.bulletStyle ?? el.bulletStyle, runs[i]?.find((r) => r.text)?.fontSize ?? el.paragraphs?.[i]?.fontSize ?? base) : undefined}>
-      {tabbed && text.includes('\t') ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} />
+      {tabbedAt(text, i) ? <TabbedLine el={el} runs={runs[i] ?? [{ text }]} size={base} line={tabLine(text, i)!} />
         : runs[i] ? runs[i]!.map((r, k) => <RunSpan key={k} r={r} />) : TOKEN.test(text) ? <DynamicText text={text} /> : runText(text)}
     </ListLine>
   );

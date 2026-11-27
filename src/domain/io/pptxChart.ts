@@ -92,6 +92,16 @@ export function readChart(xml: MNode, theme: DmlTheme): ChartResult | null {
       const color = colorIn(path(s, 'spPr', 'solidFill'), theme)?.hex ?? colorIn(path(s, 'spPr', 'ln', 'solidFill'), theme)?.hex;
       const ser: ChartSeries = { name: name || `계열 ${series.length + 1}`, values, ...(color ? { color } : {}) };
       if (isXy) ser.xValues = nums(child(s, 'xVal'));
+      if (k === 'pie' || k === 'doughnut') {
+        // A slice's own fill (c:dPt), which its legend key shares (DeckCraft 6df9331b).
+        const pts: (string | null)[] = [];
+        for (const d of kids(s, 'dPt')) {
+          const idx = Number(child(d, 'idx')?.attrs.val);
+          const fill = colorIn(path(d, 'spPr', 'solidFill'), theme)?.hex;
+          if (Number.isInteger(idx) && idx >= 0 && idx < 10000 && fill) pts[idx] = fill;
+        }
+        if (pts.length) ser.pointColors = Array.from(pts, (c) => c ?? null);
+      }
       if (k === 'bubble') ser.sizes = nums(child(s, 'bubbleSize'));
       if (combo) {
         const sk: ChartSeriesKind = /^line/.test(k) ? (k === 'lineMarkers' ? 'lineMarkers' : 'line') : /^area/.test(k) ? 'area' : 'column';

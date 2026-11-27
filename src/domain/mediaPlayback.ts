@@ -53,3 +53,11 @@ export function cleanPlayback(pb: MediaPlayback): MediaPlayback | undefined {
   const out = Object.fromEntries(Object.entries(pb).filter(([k, v]) => v !== undefined && v !== false && (v !== 0 || k === 'volume'))) as MediaPlayback;
   return Object.keys(out).length ? out : undefined;
 }
+
+/**
+ * Whether a media object's frame (an audio icon, a video's picture) stays out of the slide show
+ * (재생 › 쇼 동안 숨기기, DeckCraft `MediaClip::hidden_during_show`): audio set to hide stays hidden
+ * even while it plays; a video set to hide shows while it plays.
+ */
+export const hiddenDuringShow = (kind: 'audio' | 'video', pb: MediaPlayback | undefined, playing: boolean) =>
+  !!pb?.hideDuringShow && (kind === 'audio' || !playing);

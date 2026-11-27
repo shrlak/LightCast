@@ -34,6 +34,9 @@ pub struct Series {
     /// Bubble: the bubble sizes.
     #[serde(default)]
     pub sizes: Vec<f64>,
+    /// Pie and doughnut: a slice's own colour (`c:dPt`), by point; `null` keeps the palette's.
+    #[serde(default)]
+    pub point_colors: Vec<Option<String>>,
 }
 
 #[derive(Deserialize)]
@@ -367,22 +370,43 @@ pub fn svg(r: ChartReq) -> Res {
     }
     let pie_like = matches!(kind, Kind::Pie | Kind::Doughnut);
     // Legend: one row at the bottom (pies list categories, hierarchies their top groups, others series).
-    let legend_items: Vec<(String, String)> = match kind {
-        Kind::Pie | Kind::Doughnut => (0..ncat).map(|i| (r.categories.get(i).cloned().unwrap_or_default(), ink.palette(i))).collect(),
-        Kind::Treemap | Kind::Sunburst => model_chart(&r, dm::ChartType::Treemap).category_tree().iter().enumerate().map(|(i, t)| (t.name.clone(), ink.palette(i))).collect(),
-        Kind::Waterfall => ["증가", "감소", "합계"].iter().enumerate().map(|(i, t)| (t.to_string(), ink.palette(i))).collect(),
+    // A line series' key is a stretch of its line (with its marker when the series has them), as
+    // PowerPoint draws it (DeckCraft 0175c6c2 / ca819f14); a pie's keys take the slices' own colours
+    // (`c:dPt`, DeckCraft 6df9331b).
+    let square = |(l, c): (String, String)| (l, c, Key::Square);
+    let legend_items: Vec<(String, String, Key)> = match kind {
+        Kind::Pie | Kind::Doughnut => (0..ncat).map(|i| (r.categories.get(i).cloned().unwrap_or_default(), pie_slice_color(&ink, series.first().copied(), i), Key::Square)).collect(),
+        Kind::Treemap | Kind::Sunburst => model_chart(&r, dm::ChartType::Treemap).category_tree().iter().enumerate().map(|(i, t)| square((t.name.clone(), ink.palette(i)))).collect(),
+        Kind::Waterfall => ["증가", "감소", "합계"].iter().enumerate().map(|(i, t)| square((t.to_string(), ink.palette(i)))).collect(),
         Kind::Funnel | Kind::Surface => vec![],
-        Kind::Pareto => vec![(series.first().map(|x| x.name.clone()).unwrap_or_default(), ink.color(0, &series.first().and_then(|x| x.color.clone()))), ("누적 %".to_string(), ink.palette(1))],
-        _ => series.iter().enumerate().map(|(i, x)| (x.name.clone(), ink.color(i, &x.color))).collect(),
+        Kind::Pareto => vec![
+            square((series.first().map(|x| x.name.clone()).unwrap_or_default(), ink.color(0, &series.first().and_then(|x| x.color.clone())))),
+            ("누적 %".to_string(), ink.palette(1), Key::Line { marker: true }),
+        ],
+        _ => series.iter().enumerate().map(|(i, x)| (x.name.clone(), ink.color(i, &x.color), legend_key(kind, x))).collect(),
     };
     let bottom_legend = if r.legend && !legend_items.is_empty() { fs * 2.0 + my } else { 0.0 };
     if bottom_legend > 0.0 {
-        let item_w: Vec<f64> = legend_items.iter().map(|(l, _)| fs * 1.4 + tw(l, fs) + fs).collect();
+        let item_w: Vec<f64> = legend_items.iter().map(|(l, _, _)| fs * 1.4 + tw(l, fs) + fs).collect();
         let total: f64 = item_w.iter().sum();
         let mut x = ((w - total) / 2.0).max(4.0);
         let y = h - my - fs * 0.9;
-        for ((l, c), iw) in legend_items.iter().zip(&item_w) {
-            let _ = write!(s, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}"/><text x="{}" y="{}">{}</text>"#, n(x), n(y - fs * 0.75), n(fs * 0.8), n(fs * 0.8), esc(c), n(x + fs * 1.1), n(y), esc(l));
+        for ((l, c, key), iw) in legend_items.iter().zip(&item_w) {
+            let (kx, ky, k) = (x, y - fs * 0.75, fs * 0.8);
+            match key {
+                Key::Square => {
+                    let _ = write!(s, r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}"/>"#, n(kx), n(ky), n(k), n(k), esc(c));
+                }
+                Key::Line { marker } => {
+                    // The series' line width (fs × 0.22), kept under 0.4 of the key's height.
+                    let mid = ky + k / 2.0;
+                    let _ = write!(s, r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="{}"/>"#, n(kx), n(mid), n(kx + k), n(mid), esc(c), n((fs * 0.22).min(k * 0.4)));
+                    if *marker {
+                        let _ = write!(s, r#"<circle cx="{}" cy="{}" r="{}" fill="{}"/>"#, n(kx + k / 2.0), n(mid), n(k * 0.3), esc(c));
+                    }
+                }
+            }
+            let _ = write!(s, r#"<text x="{}" y="{}">{}</text>"#, n(x + fs * 1.1), n(y), esc(l));
             x += iw;
         }
     }
@@ -409,6 +433,36 @@ pub fn svg(r: ChartReq) -> Res {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// A legend key: a filled square, or a stretch of a line series' line.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Key {
+    Square,
+    Line { marker: bool },
+}
+
+/// The legend key of series `x` in a chart of `kind`: line charts (and line series of a combo) show
+/// their line, with a marker where the series is drawn with markers; radar (not filled) shows its line and marker.
+fn legend_key(kind: Kind, x: &Series) -> Key {
+    match kind {
+        Kind::Line => Key::Line { marker: false },
+        // LightCast draws stacked lines with markers.
+        Kind::LineMarkers | Kind::LineStacked => Key::Line { marker: true },
+        // LightCast's radar marks each point.
+        Kind::Radar => Key::Line { marker: true },
+        Kind::Combo => match x.kind.as_deref() {
+            Some("line") => Key::Line { marker: false },
+            Some("lineMarkers") => Key::Line { marker: true },
+            _ => Key::Square,
+        },
+        _ => Key::Square,
+    }
+}
+
+/// Colour of pie slice `i`: its own (`c:dPt`), else the palette's. Slices and legend keys share it.
+fn pie_slice_color(ink: &Ink, s: Option<&Series>, i: usize) -> String {
+    s.and_then(|s| s.point_colors.get(i).cloned().flatten()).filter(|c| !c.is_empty()).unwrap_or_else(|| ink.palette(i))
+}
+
 fn draw_pie(s: &mut String, r: &ChartReq, kind: Kind, ink: &Ink, w: f64, top: f64, plot_bottom: f64, series: &[&Series], ncat: usize) {
     let fs = ink.fs;
     let vals: Vec<f64> = (0..ncat).map(|i| series.first().and_then(|x| x.values.get(i)).map(|v| fin(*v, 0.0).max(0.0)).unwrap_or(0.0)).collect();
@@ -426,7 +480,7 @@ fn draw_pie(s: &mut String, r: &ChartReq, kind: Kind, ink: &Ink, w: f64, top: f6
         let a1 = a0 + frac * std::f64::consts::TAU;
         let large = if a1 - a0 > std::f64::consts::PI { 1 } else { 0 };
         let (x0, y0, x1, y1) = (cx + rad * a0.cos(), cy + rad * a0.sin(), cx + rad * a1.cos(), cy + rad * a1.sin());
-        let c = ink.palette(i);
+        let c = pie_slice_color(ink, series.first().copied(), i);
         if frac >= 0.9999 {
             // One slice is the whole pie (a ring for a doughnut: the hole cut out even-odd).
             let ring = |rr: f64| format!("M{} {} a{} {} 0 1 0 {} 0 a{} {} 0 1 0 {} 0 Z", n(cx - rr), n(cy), n(rr), n(rr), n(2.0 * rr), n(rr), n(rr), n(-2.0 * rr));
