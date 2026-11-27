@@ -248,6 +248,8 @@ export interface ChartSeries {
   kind?: ChartSeriesKind; secondaryAxis?: boolean;
   /** Scatter and bubble: x values; bubble: sizes. */
   xValues?: number[]; sizes?: number[];
+  /** Pie and doughnut: a slice's own colour (PPTX `c:dPt`) by point; null keeps the palette's. Slices and legend keys use it. */
+  pointColors?: (string | null)[];
 }
 export interface ChartData {
   kind: ChartKind; title?: string; categories: string[]; series: ChartSeries[]; legend?: boolean; dataLabels?: boolean; textColor?: string;

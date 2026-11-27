@@ -540,7 +540,8 @@ fn funnel_radar_stock_surface_bubble_combo() {
     assert_eq!(count(&bubble, "fill-opacity=\"0.6\""), 3);
     let combo = svg_of(json!({"kind": "combo", "categories": ["a", "b", "c"],
         "series": [{"name": "매출", "values": [10, 20, 30]}, {"name": "비율", "values": [1, 2, 3], "kind": "lineMarkers", "secondaryAxis": true}]}));
-    assert!(count(&combo, "<circle") == 3, "line with markers over columns");
+    // Three markers on the line, and one on its legend key.
+    assert!(count(&combo, "<circle") == 4, "line with markers over columns");
 }
 
 #[test]
@@ -664,4 +665,40 @@ fn tables_past_the_cell_cap_are_refused_or_clamped() {
     let spans = json!({"rows": vec![Value::Array(vec![json!({"text": "", "rowSpan": 2}); 10]); 1_000]});
     let merged = ok(json!({"op": "table.edit", "table": spans, "action": "merge", "r": 998, "c": 0, "r1": 999, "c1": 9}));
     assert_eq!(merged["rows"].as_array().unwrap().len(), 1_000);
+}
+
+// ── DeckCraft 0175c6c2 / ca819f14 / 6df9331b: legend keys ───────────────────────────────────────
+
+#[test]
+fn a_line_chart_legend_key_is_the_series_line() {
+    let line = svg_of(json!({"kind": "line", "categories": ["a", "b"], "series": [{"name": "A", "values": [1, 2], "color": "#ff0000"}, {"name": "B", "values": [2, 1], "color": "#0000ff"}]}));
+    assert!(line.contains(r##"<line x1="##) && line.contains(r##"stroke="#ff0000""##), "the key is a stroke of the series colour: {line}");
+    assert!(!line.contains(r##"fill="#ff0000"/>"##), "and not a filled square");
+    // With markers, a marker sits on the key's line.
+    let markers = svg_of(json!({"kind": "lineMarkers", "categories": ["a", "b"], "series": [{"name": "A", "values": [1, 2], "color": "#ff0000"}], "dataLabels": false}));
+    let key_at = markers.find(r##"<line x1="##).expect("line key");
+    assert!(markers[key_at..].starts_with("<line") && markers[key_at..].split("<text").next().unwrap().contains("<circle"), "the marker is on the key: {markers}");
+    // A column chart keeps its squares; a combo's line series gets a line key and its column series a square.
+    let col = svg_of(json!({"kind": "column", "categories": ["a"], "series": [{"name": "A", "values": [1], "color": "#ff0000"}]}));
+    assert!(col.contains(r##"fill="#ff0000"/><text"##), "{col}");
+    let combo = svg_of(json!({"kind": "combo", "categories": ["a", "b"], "series": [
+        {"name": "C", "values": [1, 2], "color": "#00ff00", "kind": "column"},
+        {"name": "L", "values": [2, 1], "color": "#ff0000", "kind": "line"}]}));
+    assert!(combo.contains(r##"fill="#00ff00"/><text"##) && combo.contains(r##"stroke="#ff0000" stroke-width"##), "{combo}");
+    // Radar (lines, with a marker at each point) shows a line key with its marker; filled radar keeps the square.
+    let radar = svg_of(json!({"kind": "radar", "categories": ["a", "b", "c"], "series": [{"name": "A", "values": [1, 2, 3], "color": "#ff0000"}]}));
+    assert!(radar.contains(r##"<line x1="##), "{radar}");
+    assert_eq!(count(&radar, "<circle"), 4, "three point markers and the key's: {radar}");
+    let filled = svg_of(json!({"kind": "radarFilled", "categories": ["a", "b", "c"], "series": [{"name": "A", "values": [1, 2, 3], "color": "#ff0000"}]}));
+    assert!(filled.contains(r##"fill="#ff0000"/><text"##), "{filled}");
+}
+
+#[test]
+fn pie_slices_and_legend_keys_take_the_point_colours() {
+    let svg = svg_of(json!({"kind": "pie", "categories": ["a", "b", "c"], "series": [{"name": "S", "values": [3, 2, 1], "pointColors": ["#ff00ff", null, "#00ffff"]}]}));
+    assert_eq!(count(&svg, r##"fill="#ff00ff""##), 2, "the slice and its legend key: {svg}");
+    assert_eq!(count(&svg, r##"fill="#00ffff""##), 2, "{svg}");
+    // Without point colours the palette is used, slice and key alike.
+    let plain = svg_of(json!({"kind": "doughnut", "categories": ["a", "b"], "series": [{"name": "S", "values": [3, 2]}]}));
+    assert!(!plain.contains("#ff00ff"));
 }

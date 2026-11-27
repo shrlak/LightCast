@@ -7,10 +7,10 @@ LightCast (`engine/`) is built from DeckCraft's crates plus `engine/freecast-eng
 Last DeckCraft commit LightCast has been compared against and brought up to date with:
 
 ```
-DECKCRAFT_SYNCED=5b7b22dc5128eb329ca647d920797e37cb255224
+DECKCRAFT_SYNCED=74591abae8e70617b6b7ad092026262d0c562115
 ```
 
-(DeckCraft `origin/main` on 2026-11-26; its last non-merge commit is `a3386f3f`, supervised nightlies.)
+(DeckCraft `origin/main` on 2026-11-27; its last non-merge commit is `a0f0ad57`, tab stop past the edge against the hanging indent.)
 
 ## The routine (run by a scheduled Claude session; also fine to run by hand)
 
@@ -164,3 +164,24 @@ rebuilt for it: `src/domain/metafile/` is a self-contained TypeScript reader tha
     as fake clicks of the focused canvas in the context menu and the Eyedropper; browsers do not do that); clippy
     (`53e994b4`); update-dialog test timing (`bfdca1ce`); nightly packaging, signing and CI (`02f7fcdf`, `08ba5072`,
     `a3386f3f`).
+- `5b7b22d..74591ab` (10 non-merge commits, several from older branches merged on 2026-11-27), v1.3.6:
+  - Ported, text tab stops (`src/domain/tabStops.ts`, `TabbedLine` in `src/ui/SlideCanvas.tsx`): a hanging first line's
+    first tab goes to the paragraph's margin, an implicit left stop (`87af3184`; the nearer of it and an explicit stop
+    wins, a stop within half a point of it keeps its own alignment); only on the first line and only left to right, and
+    not when a bullet already fills the hanging indent (`fc253bdb`); a stop past the text area's right edge acts as one
+    at the edge, so right-aligned text after it ends at the margin (`5a6add63`), the edge being absolute, not moved in by
+    the line's indent (`1add4c13`); a stop past the edge is compared with the hanging indent where it takes effect
+    (`a0f0ad57`). `tabAdvance` / `layoutTabLine` take the line's `hang` and `right` (`TabLine`), `firstLineTabs` works
+    them out for a paragraph, and a tabbed line is now measured from where it really starts (box indent, margin and
+    first-line indent) instead of 0. A line with tabs in a hanging paragraph is laid out this way even without stops of
+    its own (before, CSS `tab-size` placed it). A wrapped later line of a tabbed paragraph is still not re-laid out.
+  - Already in LightCast (helper and test added): an audio icon with 쇼 동안 숨기기 stays hidden while it plays, a video
+    shows while it plays (`edb303d9`): `hiddenDuringShow` in `domain/mediaPlayback.ts`, used by `SlideCanvas`.
+  - Ported, charts (engine `freecast-engine/src/chart.rs`, the wasm was rebuilt): a line series' legend key is a stretch
+    of its line, with its marker where the series has markers (`0175c6c2`; line, lineMarkers, lineStacked, the line
+    series of a combo and of Pareto's 누적 %, and radar (`ca819f14`; LightCast's radar marks its points, so its key has
+    a marker); filled radar, columns, areas keep the square); a pie or doughnut takes each slice's own colour, `c:dPt`,
+    for the slice and its legend key (`6df9331b`): `ChartSeries.pointColors`, read by `readChart` in
+    `io/pptxChart.ts` and written back as the pie's slice colours by `io/pptxExport.ts`.
+  - Not applicable: the macOS nightly launcher (`ab3aaa19`). Tests: `tests/deckcraftSync6.test.ts` and the legend-key
+    tests in `engine/freecast-engine/src/tests.rs`.

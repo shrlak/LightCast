@@ -164,8 +164,12 @@ function addChartElement(pptx: PptxGenJS, s: PptxGenJS.Slide, el: SlideElement, 
     }
     case 'area': case 'areaStacked':
       return void s.addChart(CT.area, series, { ...common, barGrouping: ch.kind === 'areaStacked' ? 'stacked' : 'standard' });
-    case 'pie': case 'doughnut':
-      return void s.addChart(ch.kind === 'pie' ? CT.pie : CT.doughnut, first, common);
+    case 'pie': case 'doughnut': {
+      // Slices with their own colours (c:dPt) keep them; the others take the palette's.
+      const own = ch.series[0]?.pointColors;
+      const chartColors = own?.some(Boolean) ? paletteColors(ch.palette ?? 'colorful', rows).map((d, i) => hex(own[i] ?? undefined, d)) : undefined;
+      return void s.addChart(ch.kind === 'pie' ? CT.pie : CT.doughnut, first, { ...common, ...(chartColors ? { chartColors } : {}) });
+    }
     case 'radar': case 'radarFilled':
       return void s.addChart(CT.radar, series, { ...common, radarStyle: ch.kind === 'radarFilled' ? 'filled' : 'marker' });
     case 'scatter': {
